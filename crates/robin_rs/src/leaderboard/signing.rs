@@ -13,15 +13,14 @@ use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use robin_run_protocol::{
     CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
     CampaignContinuationPreflightRequestClaimV1, CampaignContinuationPreflightRequestV1,
-    CompetitionRunGrantRequestClaimV1, CompetitionRunGrantRequestV1,
     FreshRunPreflightRequestClaimV1, FreshRunPreflightRequestV1, LeaderboardCoSignRequestV1,
     ParticipantSignatureV1, PublicKey32, Signature64, SignatureAlgorithmV1, SubmissionEnvelopeV1,
     SubmissionOfferV1, SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, Validate,
 };
 #[cfg(target_arch = "wasm32")]
 use robin_run_protocol::{
-    NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1, ReplaySessionGenesisClaimV1,
-    ReplaySessionGenesisV1,
+    CompetitionRunGrantRequestClaimV1, CompetitionRunGrantRequestV1, NamedSeatJoinAttestationV1,
+    NamedSeatJoinClaimV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -34,9 +33,6 @@ struct BrowserCampaignContinuationSigningInput {
     offer: SubmissionOfferV1,
     claim: CampaignContinuationAuthorizationClaimV1,
 }
-
-pub const LEADERBOARD_WEB_ORIGIN_ENV: &str = "ROBINHOOD_LEADERBOARD_WEB_ORIGIN";
-pub const IDENTITY_SIGNER_ORIGIN_ENV: &str = "ROBINHOOD_IDENTITY_SIGNER_ORIGIN";
 
 #[cfg(target_arch = "wasm32")]
 const DEFAULT_SIGNER_ORIGIN: &str = "https://identity.robinhood.phiresky.xyz";
@@ -55,14 +51,12 @@ pub enum LeaderboardSigningError {
     IdentityNotClaimed,
     #[error("canonical leaderboard signing failed: {0}")]
     Canonical(String),
+    #[cfg(target_arch = "wasm32")]
     #[error("leaderboard bridge document exceeds {maximum} bytes")]
     DocumentTooLarge { maximum: usize },
+    #[cfg(target_arch = "wasm32")]
     #[error("leaderboard bridge document is not valid JSON: {0}")]
     InvalidJson(String),
-    #[error("leaderboard bridge caller origin does not match this deployment")]
-    OriginNotAuthorized,
-    #[error("the leaderboard identity signer must run in its isolated embedded document")]
-    SignerContext,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -141,25 +135,6 @@ fn sign_co_sign_request_with_key(
         public_key: native_public_key(key),
         signature: native_signature(key, &bytes),
     })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn sign_competition_run_grant_request(
-    claim: CompetitionRunGrantRequestClaimV1,
-) -> Result<CompetitionRunGrantRequestV1, LeaderboardSigningError> {
-    claim.validate().map_err(invalid_claim)?;
-    let key = native_key()?;
-    if claim.host_public_key != native_public_key(&key) {
-        return Err(LeaderboardSigningError::WrongIdentity);
-    }
-    let host_signature = native_signature(&key, &canonical(claim.signing_bytes())?);
-    let signed = CompetitionRunGrantRequestV1 {
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        host_signature,
-    };
-    signed.validate().map_err(invalid_claim)?;
-    Ok(signed)
 }
 
 /// Sign the only host-authored fresh-run preflight claim. Callers cannot

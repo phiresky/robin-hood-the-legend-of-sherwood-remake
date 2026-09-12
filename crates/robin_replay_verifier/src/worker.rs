@@ -864,14 +864,14 @@ fn validate_canonical_campaign_start(
         let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         ));
-        let status = files.lock_ranked_verifier_primary_path_with_locale(
-            config.raw_content().root(),
-            template.content_manifest.resource_locale_root.as_str(),
-        );
-        anyhow::ensure!(
-            status == robin_engine::sbfile::SBFILE_NO_ERROR,
-            "cannot confine mission setup data resolver: {status}"
-        );
+        files
+            .lock_ranked_verifier_primary_path_with_locale(
+                config.raw_content().root(),
+                template.content_manifest.resource_locale_root.as_str(),
+            )
+            .map_err(|error| {
+                anyhow::anyhow!("cannot confine mission setup data resolver: {error}")
+            })?;
         robin_engine::simulation_inputs::validate_canonical_mission_start_v1(
             &template.rules_config,
             profiles_document,

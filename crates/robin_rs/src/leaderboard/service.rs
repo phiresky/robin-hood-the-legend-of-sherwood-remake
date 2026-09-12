@@ -27,7 +27,6 @@ use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
 pub const DEFAULT_BOARD_PAGE_LIMIT: u16 = 50;
-pub const MAX_BOARD_PAGE_LIMIT: u16 = 100;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LeaderboardServiceError {
@@ -48,6 +47,7 @@ pub enum LeaderboardServiceError {
     #[error("signed artifacts do not match the exact bytes selected for upload")]
     ArtifactMismatch,
     #[error("leaderboard artifact response has no Content-Type header")]
+    #[cfg(test)]
     MissingContentType,
     #[error("starting campaign is mandatory for every ranked run")]
     MissingStartingCampaign,

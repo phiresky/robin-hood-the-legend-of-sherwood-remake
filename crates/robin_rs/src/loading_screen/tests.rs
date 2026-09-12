@@ -132,7 +132,9 @@ fn loading_pictures_use_only_the_supplied_preparation_reader() {
         .unwrap();
     std::fs::write(root.path().join("loading.pak"), encoded.repeat(3)).unwrap();
     let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-    assert_eq!(files.set_primary_path(root.path().to_str().unwrap()), 0);
+    files
+        .set_primary_path(root.path().to_str().unwrap())
+        .expect("mount fixture asset directory");
     let pictures = load_loose_loading_pictures(&files, "loading.pak").unwrap();
     assert!(pictures.iter().all(|loaded| loaded.data == picture.data));
     let isolated = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));

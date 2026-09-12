@@ -23,7 +23,6 @@ use projection::{
 };
 pub use runner::main;
 
-use std::fmt::Write as _;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
@@ -83,14 +82,16 @@ use route_reconstruction::*;
 mod reporting;
 use reporting::*;
 mod native_model;
+#[cfg(test)]
+use native_model::TRACE_NATIVE_MAX_REBLOCK_RECORDS;
 use native_model::{
     BinaryTraceFooter, BinaryTraceHeaderV68, BinaryTraceReader, BinaryTraceRecord,
     NativeReblockBinding, NativeStoragePolicy, TRACE_CONVERSION_QUARANTINE_SUFFIX,
     TRACE_NATIVE_BLOCK_RECORDS, TRACE_NATIVE_FOOTER_LEN, TRACE_NATIVE_FOOTER_MAGIC,
-    TRACE_NATIVE_LONG_DISTANCE_MATCHING, TRACE_NATIVE_MAX_REBLOCK_RECORDS,
-    TRACE_NATIVE_MAX_REBLOCK_WINDOW_LOG, TRACE_NATIVE_MIN_WINDOW_LOG, TRACE_NATIVE_SUFFIX,
-    TRACE_NATIVE_VERSION, TRACE_NATIVE_WINDOW_LOG, TRACE_NATIVE_ZSTD_LEVEL,
-    TRACE_REBLOCK_BINDING_SUFFIX, TRACE_REBLOCK_SOURCE_SUFFIX, TRACE_ZSTD_WINDOW_LOG_MAX,
+    TRACE_NATIVE_LONG_DISTANCE_MATCHING, TRACE_NATIVE_MAX_REBLOCK_WINDOW_LOG,
+    TRACE_NATIVE_MIN_WINDOW_LOG, TRACE_NATIVE_SUFFIX, TRACE_NATIVE_VERSION,
+    TRACE_NATIVE_WINDOW_LOG, TRACE_NATIVE_ZSTD_LEVEL, TRACE_REBLOCK_BINDING_SUFFIX,
+    TRACE_REBLOCK_SOURCE_SUFFIX, TRACE_ZSTD_WINDOW_LOG_MAX,
 };
 mod cli;
 #[cfg(test)]

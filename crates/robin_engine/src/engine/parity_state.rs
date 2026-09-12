@@ -9,6 +9,10 @@ mod projections;
 #[path = "parity_state/tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "parity_state/npc_tests.rs"]
+mod npc_tests;
+
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ParityEntityKind {
@@ -87,6 +91,20 @@ fn typed_float(value: f32) -> ParityFloat {
     }
 }
 
+fn typed_seek_point(
+    point: &crate::ai::SeekPoint,
+    position: projections::AiPosition,
+) -> projections::SeekPoint<'_> {
+    projections::SeekPoint {
+        position,
+        frame_when_full_interest: point.frame_when_full_interest,
+        directions: std::borrow::Cow::Borrowed(&point.directions),
+        last_calculated_interest: point.last_calculated_interest,
+        locked: point.locked,
+    }
+}
+
+#[cfg(test)]
 fn into_projection_fields(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     let serde_json::Value::Object(fields) = value else {
         panic!("parity projection fragment must be an object");
@@ -131,10 +149,8 @@ impl Engine {
             y: float(y),
             z: float(z),
         };
-        let jump_line = |index: Option<u32>| -> Value {
-            let Some(index) = index else {
-                return Value::Null;
-            };
+        let jump_line = |index: Option<u32>| {
+            let index = index?;
             let line = self
                 .inner
                 .world
@@ -143,9 +159,9 @@ impl Engine {
                 .jump_lines
                 .get(usize::try_from(index).expect("parity enemy jump-line index exceeds usize"))
                 .unwrap_or_else(|| panic!("parity enemy references missing jump line {index}"));
-            json!({
-                "a": point2(line.point_a.x, line.point_a.y),
-                "b": point2(line.point_b.x, line.point_b.y),
+            Some(projections::Line {
+                a: point2(line.point_a.x, line.point_a.y),
+                b: point2(line.point_b.x, line.point_b.y),
             })
         };
         let bbox = |bbox: crate::coordinates::MapBBox| {
@@ -381,7 +397,7 @@ impl Engine {
                 "trajectory": trajectory,
             })
         };
-        let resolve_ai_handle = |handle: u32| -> Value {
+        let resolve_ai_handle = |handle: u32| -> ParityEntityReference {
             let resolved = self
                 .inner
                 .world
@@ -389,26 +405,15 @@ impl Engine {
                 .occupied()
                 .find_map(|(candidate, _)| (candidate.index() == handle).then_some(candidate))
                 .unwrap_or_else(|| panic!("parity local AI references missing handle {handle}"));
-            entity_ref(resolved)
+            typed_entity_reference(resolved)
         };
-        let resolve_optional_ai_handle = |handle: Option<crate::ai::AiEntityHandle>| -> Value {
-            handle.map_or(Value::Null, |handle| resolve_ai_handle(handle.get()))
+        let resolve_optional_ai_handle = |handle: Option<crate::ai::AiEntityHandle>| {
+            handle.map(|handle| resolve_ai_handle(handle.get()))
         };
-        let ai_position = |position: crate::ai::Position| {
-            json!({
-                "map": point2(position.x, position.y),
-                "sector": sector(position.sector),
-                "layer": position.level,
-            })
-        };
-        let seek_point = |point: &crate::ai::SeekPoint| {
-            json!({
-                "position": ai_position(point.position),
-                "frame_when_full_interest": point.frame_when_full_interest,
-                "directions": &point.directions,
-                "last_calculated_interest": point.last_calculated_interest,
-                "locked": point.locked,
-            })
+        let ai_position = |position: crate::ai::Position| projections::AiPosition {
+            map: point2(position.x, position.y),
+            sector: sector(position.sector),
+            layer: position.level,
         };
         let known_strike_command = |strike: Option<crate::weapons::SwordStrike>| -> i32 {
             use crate::{element::Command, weapons::SwordStrike};
@@ -428,7 +433,7 @@ impl Engine {
                 }
             }
         };
-        let stimulus_state = |stimulus: &crate::ai::Stimulus| -> Value {
+        let stimulus_state = |stimulus: &crate::ai::Stimulus| -> projections::Stimulus {
             use crate::ai::{StimulusInfo, StimulusType};
             assert_ne!(
                 stimulus.stimulus_type,
@@ -436,85 +441,90 @@ impl Engine {
                 "parity local-AI stimulus contains Rust-only non-serializable type",
             );
             let (info_type, info) = match stimulus.info {
-                StimulusInfo::None => (0, json!({ "kind": "none" })),
+                StimulusInfo::None => (0, projections::StimulusInfo::None),
                 StimulusInfo::Noise(noise) => (
                     1,
-                    json!({
-                        "kind": "noise",
-                        "origin": {
-                            "map": point2(noise.origin.x, noise.origin.y),
-                            "sector": sector(noise.origin.sector),
-                            "layer": noise.origin.layer.map(crate::position_interface::Layer::get),
+                    projections::StimulusInfo::Noise {
+                        origin: projections::NoiseOrigin {
+                            map: point2(noise.origin.x, noise.origin.y),
+                            sector: sector(noise.origin.sector),
+                            layer: noise
+                                .origin
+                                .layer
+                                .map(crate::position_interface::Layer::get),
                         },
-                        "noise_type": noise.noise_type as u32,
-                        "volume": noise.volume, "elevation": noise.elevation,
-                    }),
+                        noise_type: noise.noise_type as u32,
+                        volume: noise.volume,
+                        elevation: noise.elevation,
+                    },
                 ),
                 StimulusInfo::Position(position) => (
                     2,
-                    json!({
-                        "kind": "position", "position": ai_position(position),
-                    }),
+                    projections::StimulusInfo::Position {
+                        position: ai_position(position),
+                    },
                 ),
                 StimulusInfo::Human(entity) => (
                     3,
-                    json!({
-                        "kind": "human", "entity": resolve_ai_handle(entity.get()),
-                    }),
+                    projections::StimulusInfo::Human {
+                        entity: resolve_ai_handle(entity.get()),
+                    },
                 ),
                 StimulusInfo::Hint(hint) => (
                     4,
-                    json!({
-                        "kind": "hint", "position": ai_position(hint.seek_point),
-                        "teller": resolve_ai_handle(hint.who_tells_me.get()), "seek_flags": hint.seek_flags,
-                    }),
+                    projections::StimulusInfo::Hint {
+                        position: ai_position(hint.seek_point),
+                        teller: resolve_ai_handle(hint.who_tells_me.get()),
+                        seek_flags: hint.seek_flags,
+                    },
                 ),
                 StimulusInfo::Object(entity) => (
                     5,
-                    json!({
-                        "kind": "object", "entity": resolve_ai_handle(entity.get()),
-                    }),
+                    projections::StimulusInfo::Object {
+                        entity: resolve_ai_handle(entity.get()),
+                    },
                 ),
                 StimulusInfo::Stolen(stolen) => (
                     6,
-                    json!({
-                        "kind": "stolen", "object": resolve_ai_handle(stolen.object.get()),
-                        "thief": resolve_ai_handle(stolen.thief.get()),
-                    }),
+                    projections::StimulusInfo::Stolen {
+                        object: resolve_ai_handle(stolen.object.get()),
+                        thief: resolve_ai_handle(stolen.thief.get()),
+                    },
                 ),
                 StimulusInfo::Combat(combat) => (
                     7,
-                    json!({
-                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc.get()),
-                        "enemy_position": ai_position(combat.enemy_position),
-                    }),
+                    projections::StimulusInfo::Combat {
+                        actor: resolve_ai_handle(combat.actor_npc.get()),
+                        enemy_position: ai_position(combat.enemy_position),
+                    },
                 ),
                 StimulusInfo::DoorCombat(combat) => (
                     8,
-                    json!({
-                        "kind": "door_combat", "delay": combat.delay, "direction": combat.direction,
-                        "goal": ai_position(combat.goal),
-                        "adversary": resolve_optional_ai_handle(combat.adversary),
-                    }),
+                    projections::StimulusInfo::DoorCombat {
+                        delay: combat.delay,
+                        direction: combat.direction,
+                        goal: ai_position(combat.goal),
+                        adversary: resolve_optional_ai_handle(combat.adversary),
+                    },
                 ),
-                StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
+                StimulusInfo::Index(value) => {
+                    (9, projections::StimulusInfo::Index { value: value })
+                }
                 StimulusInfo::LegacyInvalidType(raw) => {
                     panic!("parity local-AI stimulus retains active invalid type word {raw}")
                 }
             };
-            json!({
-                "stimulus_type": stimulus.stimulus_type as u32,
-                "info_type": info_type,
-                "owner": resolve_optional_ai_handle(stimulus.owner),
-                "to_whole_patrol": stimulus.to_whole_patrol,
-                "info": info,
-            })
+            projections::Stimulus {
+                stimulus_type: stimulus.stimulus_type as u32,
+                info_type: info_type,
+                owner: resolve_optional_ai_handle(stimulus.owner),
+                to_whole_patrol: stimulus.to_whole_patrol,
+                info: info,
+            }
         };
         let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
             use crate::ai::{StimulusInfo, StimulusType};
-            let Some(stimulus) = stimulus else {
-                return Value::Null;
-            };
+            let stimulus = stimulus?;
             let is_default = stimulus.stimulus_type == StimulusType::NoEvent
                 && matches!(
                     stimulus.info,
@@ -523,15 +533,15 @@ impl Engine {
                 && stimulus.owner.is_none()
                 && !stimulus.to_whole_patrol;
             if is_default {
-                Value::Null
+                None
             } else {
-                stimulus_state(stimulus)
+                Some(stimulus_state(stimulus))
             }
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
             let ai = npc.ai_brain.base()?;
-            let ai_door = |index: Option<crate::gate::DoorIndex>| -> Value {
-                let Some(index) = index else { return Value::Null };
+            let ai_door = |index: Option<crate::gate::DoorIndex>| {
+                let index = index?;
                 let door = self
                     .inner
                     .script_domains
@@ -544,14 +554,14 @@ impl Engine {
                     crate::gate::GateType::Jump => "jump",
                     crate::gate::GateType::None => "gate",
                 };
-                json!({
-                    "kind": kind,
-                    "sector_out": door.sector_out.get(),
-                    "sector_in": door.sector_in.get(),
-                    "layer_out": door.layer_out,
-                    "layer_in": door.layer_in,
-                    "point_out": point2(door.point_out.x, door.point_out.y),
-                    "point_in": point2(door.point_in.x, door.point_in.y),
+                Some(projections::Door {
+                    kind: kind.to_owned(),
+                    sector_out: door.sector_out.get(),
+                    sector_in: door.sector_in.get(),
+                    layer_out: door.layer_out,
+                    layer_in: door.layer_in,
+                    point_out: point2(door.point_out.x, door.point_out.y),
+                    point_in: point2(door.point_in.x, door.point_in.y),
                 })
             };
             let handles = |values: &[u32]| {
@@ -562,271 +572,324 @@ impl Engine {
                     .collect::<Vec<_>>()
             };
             let patrol_path_status = if let Some(path) = &ai.patrol_path {
-                json!({
-                    "current_waypoint_index": path.current_waypoint_index,
-                    "last_waypoint_index": path.last_waypoint_index,
-                    "forward": path.forward,
-                    "hiking_path_index": path.hiking_path_index.get(),
-                    "history": path.history.iter().map(|entry| json!({
-                        "position": ai_position(entry.position), "direction": entry.direction,
-                        "distance": entry.distance,
-                    })).collect::<Vec<_>>(),
-                })
+                projections::PatrolPathStatus {
+                    current_waypoint_index: path.current_waypoint_index,
+                    last_waypoint_index: path.last_waypoint_index,
+                    forward: path.forward,
+                    hiking_path_index: Some(path.hiking_path_index.get()),
+                    history: path
+                        .history
+                        .iter()
+                        .map(|entry| projections::PathHistory {
+                            position: ai_position(entry.position),
+                            direction: entry.direction,
+                            distance: entry.distance,
+                        })
+                        .collect::<Vec<_>>(),
+                }
             } else {
                 let path = &ai.detached_patrol_path_status;
-                json!({
-                    "current_waypoint_index": path.current_waypoint_index,
-                    "last_waypoint_index": path.last_waypoint_index,
-                    "forward": path.forward,
-                    "hiking_path_index": path.hiking_path_index.map_or(Value::Null, |id| json!(id.get())),
-                    "history": path.history.iter().map(|entry| json!({
-                        "position": ai_position(entry.position), "direction": entry.direction,
-                        "distance": entry.distance,
-                    })).collect::<Vec<_>>(),
-                })
+                projections::PatrolPathStatus {
+                    current_waypoint_index: path.current_waypoint_index,
+                    last_waypoint_index: path.last_waypoint_index,
+                    forward: path.forward,
+                    hiking_path_index: path.hiking_path_index.map(|id| id.get()),
+                    history: path
+                        .history
+                        .iter()
+                        .map(|entry| projections::PathHistory {
+                            position: ai_position(entry.position),
+                            direction: entry.direction,
+                            distance: entry.distance,
+                        })
+                        .collect::<Vec<_>>(),
+                }
             };
-            let mut state = json!({
-                "last_goto": {
-                    "destination": ai_position(ai.last_goto_destination),
-                    "flags": ai.last_goto_flags.bits(), "stuck_counter": ai.stuck_counter,
+            let mut state = projections::NpcAi {
+                subclass: None,
+                last_goto: projections::NpcAiLastGoto {
+                    destination: ai_position(ai.last_goto_destination),
+                    flags: ai.last_goto_flags.bits(),
+                    stuck_counter: ai.stuck_counter,
                 },
-                "forbidden_remarks": ai.forbidden_remark_ids,
-                "current_remark_flags": ai.current_remark_flags,
-                "owner": ai.owner_entity_id.map_or(Value::Null, entity_ref),
-                "state": ai.current_state as u32, "old_state": ai.old_state,
-                "substate": ai.current_substate as u32,
-                "music_alert": ai.current_music_alert_status as u32,
-                "timer_launch_substate": ai.substate_at_last_timer_launch as u32,
-                "attitude": ai.attitude as u32, "blood_alcohol": ai.blood_alcohol,
-                "initial_action": ai.initial_action, "number_of_looks": ai.number_of_looks,
-                "can_move": ai.can_move,
-                "path_control": {
-                    "stop_before_end": ai.stop_before_end_of_path,
-                    "use_max_norm": ai.use_max_norm_to_stop_before_end_of_path,
-                    "stop_distance": ai.stop_before_end_of_path_distance,
-                    "status": patrol_path_status,
-                    "has_patrol_path": ai.has_patrol_path,
-                    "macro_cursor": ai.has_patrol_path.then_some(ai.macro_command_offset),
+                forbidden_remarks: std::borrow::Cow::Borrowed(&ai.forbidden_remark_ids),
+                current_remark_flags: ai.current_remark_flags,
+                owner: ai.owner_entity_id.map(typed_entity_reference),
+                state: ai.current_state as u32,
+                old_state: ai.old_state,
+                substate: ai.current_substate as u32,
+                music_alert: ai.current_music_alert_status as u32,
+                timer_launch_substate: ai.substate_at_last_timer_launch as u32,
+                attitude: ai.attitude as u32,
+                blood_alcohol: ai.blood_alcohol,
+                initial_action: ai.initial_action,
+                number_of_looks: ai.number_of_looks,
+                can_move: ai.can_move,
+                path_control: projections::NpcAiPathControl {
+                    stop_before_end: ai.stop_before_end_of_path,
+                    use_max_norm: ai.use_max_norm_to_stop_before_end_of_path,
+                    stop_distance: ai.stop_before_end_of_path_distance,
+                    status: patrol_path_status,
+                    has_patrol_path: ai.has_patrol_path,
+                    macro_cursor: ai.has_patrol_path.then_some(ai.macro_command_offset),
                 },
-                "macro": {
-                    "remaining_bytes": ai.number_of_remaining_macro_bytes,
-                    "in_progress": ai.macro_in_progress,
-                    "started_this_frame": ai.macro_started_in_this_frame,
-                    "next_rand": ai.next_macro_rand,
-                    "next_rand_forecasted": ai.next_macro_rand_forecasted,
+                r#macro: projections::NpcAiMacro {
+                    remaining_bytes: ai.number_of_remaining_macro_bytes,
+                    in_progress: ai.macro_in_progress,
+                    started_this_frame: ai.macro_started_in_this_frame,
+                    next_rand: ai.next_macro_rand,
+                    next_rand_forecasted: ai.next_macro_rand_forecasted,
                 },
-                "targets": {
-                    "primary": resolve_optional_ai_handle(ai.primary_target),
-                    "friend_in_trouble": resolve_optional_ai_handle(ai.friend_in_trouble),
-                    "detected_body": resolve_optional_ai_handle(ai.detected_body),
-                    "interesting_object": resolve_optional_ai_handle(ai.interesting_object),
-                    "antagonist": resolve_optional_ai_handle(ai.antagonist),
-                    "last_stimulus_actor": resolve_optional_ai_handle(ai.last_stimulus_actor),
+                targets: projections::NpcAiTargets {
+                    primary: resolve_optional_ai_handle(ai.primary_target),
+                    friend_in_trouble: resolve_optional_ai_handle(ai.friend_in_trouble),
+                    detected_body: resolve_optional_ai_handle(ai.detected_body),
+                    interesting_object: resolve_optional_ai_handle(ai.interesting_object),
+                    antagonist: resolve_optional_ai_handle(ai.antagonist),
+                    last_stimulus_actor: resolve_optional_ai_handle(ai.last_stimulus_actor),
                 },
-                "timers": {
-                    "running": ai.timer_is_running, "ring": ai.when_does_timer_ring,
-                    "macro_running": ai.macro_timer_is_running,
-                    "macro_ring": ai.when_does_macro_timer_ring,
-                    "standing_around": ai.standing_around_timer,
+                timers: projections::NpcAiTimers {
+                    running: ai.timer_is_running,
+                    ring: ai.when_does_timer_ring,
+                    macro_running: ai.macro_timer_is_running,
+                    macro_ring: ai.when_does_macro_timer_ring,
+                    standing_around: ai.standing_around_timer,
                 },
-            });
-            state
-                .as_object_mut()
-                .expect("parity NPC AI state must be an object")
-                .extend(into_projection_fields(json!({
-                "sorrow": ai.sorrow_level,
-                "last_stimuli": ai.last_stimulus.map(|stimulus| stimulus as u32),
-                "last_stimulus_multiplicities": ai.last_stimulus_multiplicity,
-                "group": {
-                    "is_master": ai.is_master, "master": resolve_optional_ai_handle(ai.master),
-                    "us": handles(&ai.list_us), "alerted_us": handles(&ai.list_alerted_us),
-                    "staying_us": handles(&ai.list_staying_us),
+                sorrow: ai.sorrow_level,
+                last_stimuli: ai.last_stimulus.map(|stimulus| stimulus as u32),
+                last_stimulus_multiplicities: ai.last_stimulus_multiplicity,
+                group: projections::NpcAiGroup {
+                    is_master: ai.is_master,
+                    master: resolve_optional_ai_handle(ai.master),
+                    us: handles(&ai.list_us),
+                    alerted_us: handles(&ai.list_alerted_us),
+                    staying_us: handles(&ai.list_staying_us),
                 },
-                "seek_position": ai_position(ai.seek_position),
-                "alert_soldiers_point": ai_position(ai.alert_soldiers_point),
-                "first_try": ai.first_try,
-                "panic": {
-                    "center": point2(ai.panic_center_x, ai.panic_center_y),
-                    "lasting_runs": ai.lasting_panic_runs, "directed": ai.directed_panic,
+                seek_position: ai_position(ai.seek_position),
+                alert_soldiers_point: ai_position(ai.alert_soldiers_point),
+                first_try: ai.first_try,
+                panic: projections::NpcAiPanic {
+                    center: point2(ai.panic_center_x, ai.panic_center_y),
+                    lasting_runs: ai.lasting_panic_runs,
+                    directed: ai.directed_panic,
                 },
-                "movement_failures": {
-                    "could_not_reach": ai.couldnt_reachpoint,
-                    "already_on_point": ai.already_on_point, "already_turned": ai.already_turned,
+                movement_failures: projections::NpcAiMovementFailures {
+                    could_not_reach: ai.couldnt_reachpoint,
+                    already_on_point: ai.already_on_point,
+                    already_turned: ai.already_turned,
                 },
-                "likes_to_sit": ai.likes_to_sit_around, "special_action": ai.special_action,
-                "friends_alerted": ai.friends_are_alerted, "stay_at_home": ai.is_stay_at_home,
-                "locks": ai.locks_flag_field.bits(), "was_busy": ai.was_busy,
-                "stimulus_queue": ai.stimulus_queue.iter().map(stimulus_state).collect::<Vec<_>>(),
-                "script_locked": ai.script_locked, "remember_events": ai.remember_events,
-                "leave_house_number": ai.leave_house_number,
-                "legacy_continuation": {
-                    "remaining_tequila_gulps": ai.remaining_tequila_gulps,
-                    "last_hint_actuality": ai.last_hint_actuality,
-                    "last_hint_subject": ai.last_hint_subject as u32,
-                    "current_door": ai_door(ai.my_door_index),
-                    "looking_for_help_because_enemy_seen": ai.looking_for_help_because_enemy_seen,
+                likes_to_sit: ai.likes_to_sit_around,
+                special_action: ai.special_action,
+                friends_alerted: ai.friends_are_alerted,
+                stay_at_home: ai.is_stay_at_home,
+                locks: ai.locks_flag_field.bits(),
+                was_busy: ai.was_busy,
+                stimulus_queue: ai
+                    .stimulus_queue
+                    .iter()
+                    .map(stimulus_state)
+                    .collect::<Vec<_>>(),
+                script_locked: ai.script_locked,
+                remember_events: ai.remember_events,
+                leave_house_number: ai.leave_house_number,
+                legacy_continuation: projections::NpcAiLegacyContinuation {
+                    remaining_tequila_gulps: ai.remaining_tequila_gulps,
+                    last_hint_actuality: ai.last_hint_actuality,
+                    last_hint_subject: ai.last_hint_subject as u32,
+                    current_door: ai_door(ai.my_door_index),
+                    looking_for_help_because_enemy_seen: ai.looking_for_help_because_enemy_seen,
                 },
-                "object_memory": {
-                    "forgotten": handles(&ai.forgotten_objects),
-                    "desire": resolve_optional_ai_handle(ai.object_of_desire),
-                    "checkpoint_charly": resolve_optional_ai_handle(ai.checkpoint_charly),
-                    "synchronize_charly": resolve_optional_ai_handle(ai.synchronize_charly),
+                object_memory: projections::NpcAiObjectMemory {
+                    forgotten: handles(&ai.forgotten_objects),
+                    desire: resolve_optional_ai_handle(ai.object_of_desire),
+                    checkpoint_charly: resolve_optional_ai_handle(ai.checkpoint_charly),
+                    synchronize_charly: resolve_optional_ai_handle(ai.synchronize_charly),
                 },
-                "inside_halt": ai.inside_halt_method,
-                "synchronizing_actors": handles(&ai.synchronizing_actors),
-                "default_path_flags": ai.default_path_walking_flags.bits(),
-                })));
-            state
-                .as_object_mut()
-                .expect("parity NPC AI state must be an object")
-                .extend(into_projection_fields(json!({
-                "current_remark": ai.current_remark as u32,
-                "emoticon": {
-                    "type": ai.current_emoticon_type as u32,
-                    "expiration": ai.emoticon_expiration_date,
-                    "has_expiration": ai.emoticon_has_expiration_date,
+                inside_halt: ai.inside_halt_method,
+                synchronizing_actors: handles(&ai.synchronizing_actors),
+                default_path_flags: ai.default_path_walking_flags.bits(),
+                current_remark: ai.current_remark as u32,
+                emoticon: projections::NpcAiEmoticon {
+                    r#type: ai.current_emoticon_type as u32,
+                    expiration: ai.emoticon_expiration_date,
+                    has_expiration: ai.emoticon_has_expiration_date,
                 },
-                "knocked_out_in_money_fight": ai.knocked_out_in_money_fight,
-                "got_beggar_trick": ai.got_the_beggar_trick,
-                "reconnaissance": {
-                    "report_type": ai.my_reconnaissance_report.report_type as u32,
-                    "seek_position": ai_position(ai.my_reconnaissance_report.seek_position),
-                    "seen_bodies": handles(&ai.my_reconnaissance_report.seen_bodies),
-                    "charly": resolve_optional_ai_handle(ai.my_reconnaissance_report.charly),
-                    "charly_seen": ai.my_reconnaissance_report.charly_seen,
+                knocked_out_in_money_fight: ai.knocked_out_in_money_fight,
+                got_beggar_trick: ai.got_the_beggar_trick,
+                reconnaissance: projections::NpcAiReconnaissance {
+                    report_type: ai.my_reconnaissance_report.report_type as u32,
+                    seek_position: ai_position(ai.my_reconnaissance_report.seek_position),
+                    seen_bodies: handles(&ai.my_reconnaissance_report.seen_bodies),
+                    charly: resolve_optional_ai_handle(ai.my_reconnaissance_report.charly),
+                    charly_seen: ai.my_reconnaissance_report.charly_seen,
                 },
-                "patrol": {
-                    "chief": ai.patrol_chief.map_or(Value::Null, entity_ref),
-                    "active": ai.patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "missed": ai.missed_patrol_members.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "theoretical": ai.theoretical_patrol.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "stopped": ai.patrol_stopped, "direction": ai.patrol_direction,
+                patrol: projections::NpcAiPatrol {
+                    chief: ai.patrol_chief.map(typed_entity_reference),
+                    active: ai
+                        .patrol
+                        .iter()
+                        .copied()
+                        .map(typed_entity_reference)
+                        .collect::<Vec<_>>(),
+                    missed: ai
+                        .missed_patrol_members
+                        .iter()
+                        .copied()
+                        .map(typed_entity_reference)
+                        .collect::<Vec<_>>(),
+                    theoretical: ai
+                        .theoretical_patrol
+                        .iter()
+                        .copied()
+                        .map(typed_entity_reference)
+                        .collect::<Vec<_>>(),
+                    stopped: ai.patrol_stopped,
+                    direction: ai.patrol_direction,
                 },
-                })));
+            };
             let subclass = match &npc.ai_brain {
-                crate::element::AiBrain::Friendly(friendly) => Some(json!({
-                    "kind": "friendly",
-                    "fleeing_seen_enemy_counter": friendly.fleeing_seen_enemy_counter,
-                    "beggar_dont_talk_counter": friendly.beggar_dont_talk_counter,
-                    "wants_to_talk": friendly.wants_to_talk,
-                    "last_talk_partner": resolve_optional_ai_handle(friendly.last_talk_partner),
-                    "can_go_away": friendly.can_go_away,
-                })),
+                crate::element::AiBrain::Friendly(friendly) => Some(
+                    projections::NpcSubclass::Friendly(projections::FriendlyAi {
+                        kind: "friendly".to_owned(),
+                        fleeing_seen_enemy_counter: friendly.fleeing_seen_enemy_counter,
+                        beggar_dont_talk_counter: friendly.beggar_dont_talk_counter,
+                        wants_to_talk: friendly.wants_to_talk,
+                        last_talk_partner: resolve_optional_ai_handle(friendly.last_talk_partner),
+                        can_go_away: friendly.can_go_away,
+                    }),
+                ),
                 crate::element::AiBrain::Enemy(enemy) => {
-                    let mut subclass = json!({
-                    "kind": "enemy",
-                    "frame_when_missed_charly": enemy.frame_when_missed_charly,
-                    "frame_when_enemy_detected": enemy.base.frame_when_enemy_detected,
-                    "fleeing_seen_enemy_counter": enemy.fleeing_seen_enemy_counter,
-                    "pc_gone_direction": enemy.pc_gone_away_in_this_direction,
-                    "detected_something_there": ai_position(enemy.detected_something_there),
-                    "missed_pc": resolve_optional_ai_handle(enemy.missed_pc),
-                    "last_seek_direction_index": enemy.last_seek_direction_index,
-                    "beggar_to_examine": resolve_optional_ai_handle(enemy.beggar_to_examine),
-                    "pc_missed": enemy.pc_missed,
-                    "task_priorities": {
-                        "current": enemy.current_task_priority,
-                        "minimal": enemy.minimal_task_priority,
-                        "new": enemy.new_task_priority,
-                    },
-                    "different_checkpoints": enemy.number_of_different_checkpoints,
-                    "delta_sorrow": enemy.base.delta_sorrow_level,
-                    "thirsty": enemy.thirsty,
-                    "old_life_points": enemy.old_life_points,
-                    "initial_life_points": enemy.initial_life_points,
-                    "old_odds": enemy.old_odds,
-                    "position_change_locked_for_test": enemy.position_change_locked_for_test,
-                    "heard_nets": handles(&enemy.heard_nets),
-                    "other_seen_ale": handles(&enemy.other_seen_ale),
-                    "search_charly_way": enemy.search_charly_way.iter().copied().map(ai_position).collect::<Vec<_>>(),
-                    "missed_in_action": handles(&enemy.base.missed_in_action),
-                    "other_bodies_to_examine": handles(&enemy.other_bodies_to_examine),
-                    "beggars_to_control": handles(&enemy.beggars_to_control),
-                    "them": handles(&enemy.list_them),
-                    "ambush_point_array_reset": enemy.ambush_point_array_reset,
-                    "ambush_point_status": enemy.ambush_point_status.iter().map(|status| *status as u32).collect::<Vec<_>>(),
-                    "my_seek_points": &enemy.my_seek_points,
-                    "personal_seek_point_1": enemy.personal_seek_point_1.as_ref().map(&seek_point),
-                    "personal_seek_point_2": enemy.personal_seek_point_2.as_ref().map(seek_point),
-                    "seek_center": ai_position(enemy.seek_center),
-                    "actual_seek_point": enemy.actual_seek_point,
-                    "seek_point_view_directions": &enemy.seek_point_view_directions,
-                    "positions_of_beggars_to_control": enemy.positions_of_beggars_to_control.iter().copied().map(ai_position).collect::<Vec<_>>(),
-                    "seek_flags": enemy.seek_flags.bits(),
-                    "seen_dead_body": enemy.seen_dead_body,
-                    "seeking_charly": enemy.seeking_charly,
-                    });
-                    subclass
-                        .as_object_mut()
-                        .expect("parity enemy AI state must be an object")
-                        .extend(into_projection_fields(json!({
-                    "forced_next_battle_decision": enemy.forced_next_battle_decision as u32,
-                    "reset_battle_decision": enemy.reset_battle_decision,
-                    "synchronize_index": enemy.base.synchronize_index,
-                    "initial_view_cone": enemy.base.initial_view_cone as u32,
-                    "company_number": enemy.company_number,
-                    "left_combat_neighbour": resolve_optional_ai_handle(enemy.left_combat_neighbour),
-                    "right_combat_neighbour": resolve_optional_ai_handle(enemy.right_combat_neighbour),
-                    "attentive": enemy.attentive,
-                    "will_be_attentive": enemy.will_be_attentive,
-                    "forced_attentive": enemy.forced_attentive,
-                    "guarded_pc": enemy.guarded_pc.map_or(Value::Null, |id| entity_ref(EntityId::Pc(id))),
-                    "tower_guard": enemy.tower_guard,
-                    "combat_trainer": enemy.combat_trainer,
-                    "gather_position": ai_position(enemy.gather_position),
-                    "gather_direction": enemy.gather_direction,
-                    "gather_position_instructed": enemy.gather_position_instructed,
-                    "officers_position": ai_position(enemy.officers_position),
-                    "previous_state": enemy.previous_state,
-                    "previous_substate": enemy.previous_substate,
-                    "reported_to_officer": enemy.reported_to_officer,
-                    "missed_soldier_timer": enemy.missed_soldier_timer,
-                    "old_money": enemy.old_money,
-                    "other_seen_money": handles(&enemy.other_seen_money),
-                    "money_fight_enemies": handles(&enemy.money_fight_enemies),
-                    "money_fight_victims": handles(&enemy.money_fight_victims),
-                    "archer_behind_me": resolve_optional_ai_handle(enemy.archer_behind_me),
-                    "shield_bearer_before_me": resolve_optional_ai_handle(enemy.shield_bearer_before_me),
-                    "already_seen_bodies": handles(&enemy.already_seen_bodies),
-                    "my_line_jump": jump_line(enemy.my_line_jump),
-                    "shield_bearer_direction": enemy.shield_bearer_direction,
-                    "phalanx_aborted": enemy.phalanx_aborted,
-                    "changed_to_alert_path": enemy.changed_to_alert_path,
-                    })));
-                    subclass
-                        .as_object_mut()
-                        .expect("parity enemy AI state must be an object")
-                        .extend(into_projection_fields(json!({
-                    "shooting_point": enemy.my_shooting_point.map(|(sector_index, point_index)| json!({
-                        "sector_index": sector_index, "point_index": point_index,
-                    })),
-                    "archery_sector": enemy.my_archery_sector,
-                    "archery_sector_index": enemy.my_archery_sector_index,
-                    "archery_point_index": enemy.my_archery_point_index.0,
-                    "archery_point_increment": enemy.my_archery_point_increment,
-                    "enemy_seen_below": enemy.enemy_seen_below,
-                    "enemy_had_this_elevation": enemy.enemy_had_this_elevation,
-                    "known_enemy_strike_commands": [
-                        known_strike_command(enemy.known_enemy_strike_1),
-                        known_strike_command(enemy.known_enemy_strike_2),
-                        known_strike_command(enemy.known_enemy_strike_3),
-                    ],
-                    "last_stimulus_dispatched_to_patrol": patrol_stimulus(enemy.last_stimulus_dispatched_to_patrol.as_ref()),
-                    })));
-                    Some(subclass)
-                },
+                    let subclass = projections::EnemyAi {
+                        kind: "enemy".to_owned(),
+                        frame_when_missed_charly: enemy.frame_when_missed_charly,
+                        frame_when_enemy_detected: enemy.base.frame_when_enemy_detected,
+                        fleeing_seen_enemy_counter: enemy.fleeing_seen_enemy_counter,
+                        pc_gone_direction: enemy.pc_gone_away_in_this_direction,
+                        detected_something_there: ai_position(enemy.detected_something_there),
+                        missed_pc: resolve_optional_ai_handle(enemy.missed_pc),
+                        last_seek_direction_index: enemy.last_seek_direction_index,
+                        beggar_to_examine: resolve_optional_ai_handle(enemy.beggar_to_examine),
+                        pc_missed: enemy.pc_missed,
+                        task_priorities: projections::EnemyAiTaskPriorities {
+                            current: enemy.current_task_priority,
+                            minimal: enemy.minimal_task_priority,
+                            new: enemy.new_task_priority,
+                        },
+                        different_checkpoints: enemy.number_of_different_checkpoints,
+                        delta_sorrow: enemy.base.delta_sorrow_level,
+                        thirsty: enemy.thirsty,
+                        old_life_points: enemy.old_life_points,
+                        initial_life_points: enemy.initial_life_points,
+                        old_odds: enemy.old_odds,
+                        position_change_locked_for_test: enemy.position_change_locked_for_test,
+                        heard_nets: handles(&enemy.heard_nets),
+                        other_seen_ale: handles(&enemy.other_seen_ale),
+                        search_charly_way: enemy
+                            .search_charly_way
+                            .iter()
+                            .copied()
+                            .map(ai_position)
+                            .collect::<Vec<_>>(),
+                        missed_in_action: handles(&enemy.base.missed_in_action),
+                        other_bodies_to_examine: handles(&enemy.other_bodies_to_examine),
+                        beggars_to_control: handles(&enemy.beggars_to_control),
+                        them: handles(&enemy.list_them),
+                        ambush_point_array_reset: enemy.ambush_point_array_reset,
+                        ambush_point_status: enemy
+                            .ambush_point_status
+                            .iter()
+                            .map(|status| *status as u32)
+                            .collect::<Vec<_>>(),
+                        my_seek_points: std::borrow::Cow::Borrowed(&enemy.my_seek_points),
+                        personal_seek_point_1: enemy
+                            .personal_seek_point_1
+                            .as_ref()
+                            .map(|point| typed_seek_point(point, ai_position(point.position))),
+                        personal_seek_point_2: enemy
+                            .personal_seek_point_2
+                            .as_ref()
+                            .map(|point| typed_seek_point(point, ai_position(point.position))),
+                        seek_center: ai_position(enemy.seek_center),
+                        actual_seek_point: enemy.actual_seek_point,
+                        seek_point_view_directions: std::borrow::Cow::Borrowed(
+                            &enemy.seek_point_view_directions,
+                        ),
+                        positions_of_beggars_to_control: enemy
+                            .positions_of_beggars_to_control
+                            .iter()
+                            .copied()
+                            .map(ai_position)
+                            .collect::<Vec<_>>(),
+                        seek_flags: enemy.seek_flags.bits(),
+                        seen_dead_body: enemy.seen_dead_body,
+                        seeking_charly: enemy.seeking_charly,
+                        forced_next_battle_decision: enemy.forced_next_battle_decision as u32,
+                        reset_battle_decision: enemy.reset_battle_decision,
+                        synchronize_index: enemy.base.synchronize_index,
+                        initial_view_cone: enemy.base.initial_view_cone as u32,
+                        company_number: enemy.company_number,
+                        left_combat_neighbour: resolve_optional_ai_handle(
+                            enemy.left_combat_neighbour,
+                        ),
+                        right_combat_neighbour: resolve_optional_ai_handle(
+                            enemy.right_combat_neighbour,
+                        ),
+                        attentive: enemy.attentive,
+                        will_be_attentive: enemy.will_be_attentive,
+                        forced_attentive: enemy.forced_attentive,
+                        guarded_pc: enemy
+                            .guarded_pc
+                            .map(|id| typed_entity_reference(EntityId::Pc(id))),
+                        tower_guard: enemy.tower_guard,
+                        combat_trainer: enemy.combat_trainer,
+                        gather_position: ai_position(enemy.gather_position),
+                        gather_direction: enemy.gather_direction,
+                        gather_position_instructed: enemy.gather_position_instructed,
+                        officers_position: ai_position(enemy.officers_position),
+                        previous_state: enemy.previous_state,
+                        previous_substate: enemy.previous_substate,
+                        reported_to_officer: enemy.reported_to_officer,
+                        missed_soldier_timer: enemy.missed_soldier_timer,
+                        old_money: enemy.old_money,
+                        other_seen_money: handles(&enemy.other_seen_money),
+                        money_fight_enemies: handles(&enemy.money_fight_enemies),
+                        money_fight_victims: handles(&enemy.money_fight_victims),
+                        archer_behind_me: resolve_optional_ai_handle(enemy.archer_behind_me),
+                        shield_bearer_before_me: resolve_optional_ai_handle(
+                            enemy.shield_bearer_before_me,
+                        ),
+                        already_seen_bodies: handles(&enemy.already_seen_bodies),
+                        my_line_jump: jump_line(enemy.my_line_jump),
+                        shield_bearer_direction: enemy.shield_bearer_direction,
+                        phalanx_aborted: enemy.phalanx_aborted,
+                        changed_to_alert_path: enemy.changed_to_alert_path,
+                        shooting_point: enemy.my_shooting_point.map(
+                            |(sector_index, point_index)| projections::ShootingPoint {
+                                sector_index,
+                                point_index,
+                            },
+                        ),
+                        archery_sector: enemy.my_archery_sector,
+                        archery_sector_index: enemy.my_archery_sector_index,
+                        archery_point_index: enemy.my_archery_point_index.0,
+                        archery_point_increment: enemy.my_archery_point_increment,
+                        enemy_seen_below: enemy.enemy_seen_below,
+                        enemy_had_this_elevation: enemy.enemy_had_this_elevation,
+                        known_enemy_strike_commands: [
+                            known_strike_command(enemy.known_enemy_strike_1),
+                            known_strike_command(enemy.known_enemy_strike_2),
+                            known_strike_command(enemy.known_enemy_strike_3),
+                        ],
+                        last_stimulus_dispatched_to_patrol: patrol_stimulus(
+                            enemy.last_stimulus_dispatched_to_patrol.as_ref(),
+                        ),
+                    };
+                    Some(projections::NpcSubclass::Enemy(subclass))
+                }
                 crate::element::AiBrain::None => None,
             };
-            if let Some(subclass) = subclass {
-                state
-                    .as_object_mut()
-                    .expect("parity NPC AI state must be an object")
-                    .insert(
-                        "subclass".to_owned(),
-                        subclass,
-                    );
-            }
-            Some(state)
+            state.subclass = subclass;
+            Some(serde_json::to_value(state).expect("typed NPC parity must serialize"))
         });
         let human_continuation = entity.human_data().map(|human| {
             json!({

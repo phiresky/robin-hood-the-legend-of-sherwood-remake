@@ -524,6 +524,7 @@ impl SubmissionReceiptWatcher {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub fn enqueue_accepted(
         &mut self,
         accepted: &SubmissionAcceptedV1,
@@ -536,14 +537,17 @@ impl SubmissionReceiptWatcher {
         )
     }
 
+    #[cfg(test)]
     pub fn pending_count(&self) -> usize {
         self.store.pending.len()
     }
 
+    #[cfg(test)]
     pub fn is_tracking(&self, key: &SubmissionReceiptWatchKey) -> bool {
         self.store.pending.iter().any(|pending| &pending.key == key)
     }
 
+    #[cfg(test)]
     pub fn take_notice(&mut self) -> Option<ReceiptWatcherNotice> {
         self.notices.pop_front()
     }
@@ -1094,11 +1098,11 @@ fn classify_signing_error(
         Error::WrongIdentity
         | Error::IdentityNotClaimed
         | Error::InvalidClaim(_)
-        | Error::Canonical(_)
-        | Error::DocumentTooLarge { .. }
-        | Error::InvalidJson(_)
-        | Error::OriginNotAuthorized
-        | Error::SignerContext => ReceiptWatcherOperationError::Permanent(error.to_string()),
+        | Error::Canonical(_) => ReceiptWatcherOperationError::Permanent(error.to_string()),
+        #[cfg(target_arch = "wasm32")]
+        Error::DocumentTooLarge { .. } | Error::InvalidJson(_) => {
+            ReceiptWatcherOperationError::Permanent(error.to_string())
+        }
     }
 }
 
@@ -1122,10 +1126,11 @@ fn classify_service_error(error: LeaderboardServiceError) -> ReceiptWatcherOpera
         | Error::MissingStartingCampaign
         | Error::InvalidCompactReplay(_)
         | Error::UnexpectedContentType { .. }
-        | Error::MissingContentType
         | Error::RequestEncoding(_)
         | Error::HttpStatus { .. }
         | Error::Transport(_) => ReceiptWatcherOperationError::Permanent(error.to_string()),
+        #[cfg(test)]
+        Error::MissingContentType => ReceiptWatcherOperationError::Permanent(error.to_string()),
     }
 }
 

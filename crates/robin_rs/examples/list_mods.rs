@@ -7,6 +7,7 @@
 //! cargo run --example list_mods -- datadirs/mods
 //! ```
 
+use anyhow::Context as _;
 use robin_rs::mod_pack::{MissionStatus, enumerate_missions, scan_mods_dir};
 use std::path::Path;
 
@@ -16,7 +17,7 @@ struct Args {
     mods_root: String,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let mods_root = <Args as clap::Parser>::parse().mods_root;
     let mods = scan_mods_dir(Path::new(&mods_root));
     println!("Found {} mods under {mods_root}", mods.len());
@@ -33,12 +34,13 @@ fn main() {
         robin_util::asset_fs::AssetVfs::new(),
     ));
     for m in &mods {
-        assert_eq!(
-            files.add_overlay_path(m.mod_dir.to_str().expect("mod directory must be UTF-8")),
-            robin_engine::sbfile::SBFILE_NO_ERROR,
-            "failed to mount mod directory {}",
-            m.mod_dir.display()
-        );
+        let path = m
+            .mod_dir
+            .to_str()
+            .with_context(|| format!("mod directory is not UTF-8: {}", m.mod_dir.display()))?;
+        files
+            .add_overlay_path(path)
+            .with_context(|| format!("failed to mount mod directory {}", m.mod_dir.display()))?;
     }
     let entries = enumerate_missions(&mods, &files);
     println!("{} mission entries:", entries.len());
@@ -58,4 +60,5 @@ fn main() {
             }
         }
     }
+    Ok(())
 }

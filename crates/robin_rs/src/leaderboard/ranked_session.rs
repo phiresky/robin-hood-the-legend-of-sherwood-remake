@@ -9,14 +9,12 @@
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
-#[cfg(test)]
-use robin_run_protocol::InitialStateExpectationV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,
     CampaignContinuationPreflightGrantV1, CampaignContinuationPreflightRequestClaimV1,
     CampaignContinuationPreflightRequestV1, CampaignRosterContinuityV1, CanonicalDocument as _,
-    CompetitionRunGrantV1, Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
+    Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
     FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1,
     OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32,
     RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
@@ -25,6 +23,8 @@ use robin_run_protocol::{
     SignatureAlgorithmV1, SubmissionArtifactsV1, SubmissionEnvelopeV1, SubmissionOfferRequestV1,
     SubmissionOfferV1, Validate as _,
 };
+#[cfg(test)]
+use robin_run_protocol::{CompetitionRunGrantV1, InitialStateExpectationV1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
@@ -732,26 +732,6 @@ pub fn sign_named_seat_join(
     Ok(signed)
 }
 
-/// Complete a browser join after the isolated durable signer returns the
-/// signature for `claim.signing_bytes()`. This is intentionally typed: the
-/// caller cannot route an arbitrary payload through this API.
-pub fn complete_browser_named_seat_join(
-    claim: NamedSeatJoinClaimV1,
-    signature: [u8; 64],
-) -> Result<NamedSeatJoinAttestationV1, RankedSessionError> {
-    claim.validate().map_err(invalid_document)?;
-    let attestation = NamedSeatJoinAttestationV1 {
-        claim,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        signature: Signature64::from_bytes(signature),
-    };
-    verify_named_seat_join(
-        &attestation,
-        attestation.claim.transport_endpoint_id.as_bytes(),
-    )?;
-    Ok(attestation)
-}
-
 /// Verify a participant's durable identity and its binding to the exact
 /// authenticated transport endpoint. Browser durable and transport keys may
 /// differ; native callers pass the same key for both.
@@ -1249,6 +1229,9 @@ impl RankedSessionHost {
         Self::from_signed_genesis(genesis)
     }
 
+    /// Unadmitted session fixture; production construction requires an official
+    /// setup or an independently validated signed genesis.
+    #[cfg(test)]
     pub fn new(
         host_key: &SigningKey,
         network_protocol_version: u32,
@@ -1257,6 +1240,7 @@ impl RankedSessionHost {
         Self::new_with_competition_grant(host_key, network_protocol_version, ranked_session, None)
     }
 
+    #[cfg(test)]
     pub fn new_with_competition_grant(
         host_key: &SigningKey,
         network_protocol_version: u32,
@@ -1277,6 +1261,7 @@ impl RankedSessionHost {
         Self::from_signed_genesis(genesis)
     }
 
+    #[cfg(test)]
     fn prepare_genesis_claim(
         host_public_key: PublicKey32,
         network_protocol_version: u32,
@@ -2150,10 +2135,9 @@ impl robin_run_protocol::Validate for RankedCoSignContextV1 {
 }
 
 impl RankedCoSignContextV1 {
-    /// Derive the only closed request represented by this fully validated
-    /// context. Host transport uses this to publish context and request as one
-    /// inseparable operation; clients still use the stricter local-evidence
-    /// methods above before arming the result.
+    /// Derive the expected closed request for validation fixtures. Production
+    /// clients use the stricter local-evidence methods before arming a result.
+    #[cfg(test)]
     pub fn co_sign_request(
         &self,
     ) -> Result<robin_run_protocol::LeaderboardCoSignRequestV1, RankedSessionError> {

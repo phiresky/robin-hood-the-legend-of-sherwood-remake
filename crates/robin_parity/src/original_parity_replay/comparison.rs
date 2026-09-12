@@ -1024,7 +1024,6 @@ impl FrameComparison<'_> {
     }
 
     fn compare_detection(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
-        let frame = self.frame;
         let entity_map = self.entity_map;
         let differences = &mut self.differences;
         if let Some(expected_detection) = &expected.detection {
