@@ -164,7 +164,7 @@ impl Drop for MultiplayerRuntime {
 }
 
 mod ranked_port;
-#[cfg(test)]
+#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use ranked_port::require_admitted_remote_ranked_claim;
 pub(crate) use ranked_port::{
     RankedAuthorizationEvent, RankedMultiplayerPort, RankedMultiplayerRole,
