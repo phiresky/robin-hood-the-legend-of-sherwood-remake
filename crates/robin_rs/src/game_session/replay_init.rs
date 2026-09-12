@@ -538,7 +538,8 @@ mod tests {
             Default::default(),
             false,
             None,
-        );
+        )
+        .expect("raw replay rejection must precede fallible recording setup");
     }
 
     struct ControlledPrimary {
