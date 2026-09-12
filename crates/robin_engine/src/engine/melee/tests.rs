@@ -17,14 +17,7 @@ fn make_engine() -> EngineInner {
 }
 
 fn empty_mission_script() -> crate::engine::types::MissionScript {
-    let startup = ClassEntry {
-        source_file: "melee_test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
-        functions: Vec::new(),
-        quads: Vec::new(),
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("melee_test.scs".into());
     crate::engine::types::MissionScript::from_scb(ScbFile {
         version: SCB_VERSION,
         classes: vec![startup],

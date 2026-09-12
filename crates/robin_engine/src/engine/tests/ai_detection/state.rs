@@ -131,7 +131,7 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     member_ai.current_state = AiState::Default;
     member_ai.current_substate = Substate::DefaultPatrolEnrouteWaiting;
     engine.control.frame_counter = 0;
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
 
     crate::sim_rng::with_seed(0xA013_7A70, |sim| {
         engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
@@ -179,7 +179,7 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
         history: Vec::new(),
     });
     engine.control.frame_counter = 1;
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
 
     crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
         engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
@@ -515,7 +515,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
                 to_whole_patrol: false,
             });
 
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
                 engine.refresh_npc_view_for_npc(receiver_id, &positions);
@@ -603,7 +603,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     );
 
     engine.set_actors_frozen(true);
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     crate::sim_rng::with_seed(0x0A01_3F20, |sim| {
         engine.tick_actor_owner_envelopes(sim, &assets, &positions)
     });
@@ -684,16 +684,13 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             .extend([Camp::Royalists, Camp::Lacklandists]);
         let waker = make_test_ai_soldier(Camp::Royalists);
         let observer = make_test_ai_soldier(Camp::Lacklandists);
-        let (waker_id, observer_id) = if waker_before_observer {
-            (
-                engine.add_test_entity(waker),
-                engine.add_test_entity(observer),
-            )
-        } else {
-            let observer_id = engine.add_test_entity(observer);
-            let waker_id = engine.add_test_entity(waker);
-            (waker_id, observer_id)
-        };
+        let (waker_id, observer_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                waker,
+                observer,
+                waker_before_observer,
+            );
         let mut assets = LevelAssets::new();
         complete_test_runtime_fixture(&mut engine, &mut assets);
         let profiles = std::sync::Arc::make_mut(&mut assets.profile_manager);
@@ -759,7 +756,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
                 .unconscious
         );
 
-        let mut positions = engine.boundary_positions_snapshot();
+        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
         });

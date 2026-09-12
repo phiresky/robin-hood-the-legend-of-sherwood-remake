@@ -159,14 +159,7 @@ fn build_scb() -> ScbFile {
         quads: reject_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -1031,14 +1024,7 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
         quads: inner_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -5976,7 +5962,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .element_data_mut()
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.

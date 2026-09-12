@@ -4910,14 +4910,7 @@ fn scripted_waypoint_scb() -> crate::scb::ScbFile {
     };
     // `MissionScript::from_scb` requires a `StartUp` class to bind the
     // global instance against. Supply a stub so `from_scb` succeeds.
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
-        functions: Vec::new(),
-        quads: Vec::new(),
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -5182,14 +5175,7 @@ fn waypoint_script_heap_round_trips_through_serde() {
         }],
         quads: vec![begin, ret],
     };
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
-        functions: Vec::new(),
-        quads: Vec::new(),
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
     let scb = ScbFile {
         version: crate::scb::SCB_VERSION,
         classes: vec![startup, waypoint_class],

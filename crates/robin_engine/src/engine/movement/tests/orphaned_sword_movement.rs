@@ -12,16 +12,9 @@ mod suite {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn make_test_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        })
+        let mut entity = crate::engine::test_support::actors::make_test_pc(posture);
+        entity.position_iface_mut().clear_pathfinder_index();
+        entity
     }
 
     fn assets_with_test_pc_profile() -> LevelAssets {

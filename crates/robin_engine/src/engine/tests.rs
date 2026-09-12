@@ -1,5 +1,3 @@
-#![allow(unused_mut)]
-
 use super::movement::{
     assign_circular_dispatch_candidates, circular_dispatch_candidate_points,
     circular_dispatch_destinations, mercenary_formation_destinations,

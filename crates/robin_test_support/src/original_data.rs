@@ -96,3 +96,60 @@ pub fn resolve_data_path_from(
 
     Ok(resolved)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixture_configuration_is_required() {
+        let error = resolve_data_path_from(None, Path::new("Data"), FixtureKind::Directory)
+            .expect_err("missing explicit root must fail");
+        assert!(error.contains("ROBINHOOD_DATA_DIR is not set"));
+    }
+
+    #[test]
+    fn absolute_fixture_paths_are_rejected() {
+        let error = resolve_data_path_from(
+            Some(OsStr::new(env!("CARGO_MANIFEST_DIR"))),
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            FixtureKind::Directory,
+        )
+        .expect_err("fixture paths are root-relative");
+        assert!(error.contains("must be relative"));
+    }
+
+    #[test]
+    fn resolver_checks_the_expected_kind_and_missing_files() {
+        let root = Some(OsStr::new(env!("CARGO_MANIFEST_DIR")));
+        assert!(
+            resolve_data_path_from(root, Path::new("src"), FixtureKind::Directory)
+                .unwrap()
+                .is_dir()
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("src/lib.rs"), FixtureKind::File)
+                .unwrap()
+                .is_file()
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("src"), FixtureKind::File)
+                .unwrap_err()
+                .contains("not a file")
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("src/lib.rs"), FixtureKind::Directory)
+                .unwrap_err()
+                .contains("not a directory")
+        );
+        assert!(
+            resolve_data_path_from(
+                root,
+                Path::new("missing-required-fixture"),
+                FixtureKind::File
+            )
+            .unwrap_err()
+            .contains("cannot be resolved")
+        );
+    }
+}

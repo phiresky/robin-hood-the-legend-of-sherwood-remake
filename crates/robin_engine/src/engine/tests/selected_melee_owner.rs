@@ -36,7 +36,7 @@ fn set_map_position(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
 fn positions(
     engine: &EngineInner,
 ) -> crate::entities::EntitySlots<Option<crate::entities::BoundaryPosition>> {
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     positions
 }
 

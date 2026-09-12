@@ -25,6 +25,61 @@ fn architecture_contracts_share_one_parsed_source_inventory() {
     legacy_hourglass_adapters_are_test_only_and_use_explicit_input();
     host_crate_targets_use_engine_facade_instead_of_engine_inner();
     presentation_view_cannot_project_general_engine_authority();
+    production_entity_publication_has_no_fixture_behavior();
+}
+
+fn production_entity_publication_has_no_fixture_behavior() {
+    struct PublicationGuard {
+        methods: usize,
+    }
+    impl<'ast> Visit<'ast> for PublicationGuard {
+        fn visit_impl_item_fn(&mut self, method: &'ast syn::ImplItemFn) {
+            if !matches!(
+                method.sig.ident.to_string().as_str(),
+                "add_entity" | "add_entity_with_reserved_creation_order"
+            ) {
+                return;
+            }
+            self.methods += 1;
+            struct NoFixtureBehavior;
+            impl<'ast> Visit<'ast> for NoFixtureBehavior {
+                fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+                    if attribute.path().is_ident("cfg") {
+                        let cfg = attribute
+                            .meta
+                            .require_list()
+                            .expect("cfg arguments")
+                            .tokens
+                            .to_string();
+                        assert!(
+                            !cfg.contains("test"),
+                            "production publication must not vary in test builds: {cfg}"
+                        );
+                    }
+                    visit::visit_attribute(self, attribute);
+                }
+                fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+                    assert_ne!(
+                        call.method, "backfill_test_entity_identity",
+                        "fixture identity completion belongs to add_test_entity, not production publication"
+                    );
+                    visit::visit_expr_method_call(self, call);
+                }
+            }
+            NoFixtureBehavior.visit_impl_item_fn(method);
+        }
+    }
+    let mut guard = PublicationGuard { methods: 0 };
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rust_files(&manifest.join("src/engine"), &mut files);
+    for path in files {
+        guard.visit_file(&parse_rust_path(&path));
+    }
+    assert_eq!(
+        guard.methods, 2,
+        "both production publication entry points must remain guarded"
+    );
 }
 
 fn parse_rust(relative_path: &str) -> Rc<syn::File> {

@@ -100,7 +100,7 @@ fn pc_noise_refresh_invalidates_an_earlier_npc_tactical_snapshot() {
 
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     crate::sim_rng::with_seed(0xA013_0016, |sim| {
         engine.tick_actor_owner_envelopes(sim, &assets, &positions)
     });

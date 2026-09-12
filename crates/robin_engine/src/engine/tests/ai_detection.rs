@@ -163,7 +163,7 @@ fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
 }
 
 fn run_owner_envelopes(engine: &mut EngineInner, assets: &LevelAssets) {
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     crate::sim_rng::with_seed(0xB0A0_0013, |sim| {
         engine.tick_actor_owner_envelopes(sim, assets, &positions);
     });

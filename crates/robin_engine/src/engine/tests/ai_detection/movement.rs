@@ -31,7 +31,7 @@ fn fused_owner_gates_keep_fried_frozen_and_inactive_original_boundaries() {
         .get_mut(0)
         .expect("inactive PC fixture has a character profile")
         .endurance = 100;
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
 
     let (_, trace) = capture_actor_owner_envelope(|| {
         crate::sim_rng::with_seed(0xA013_6A7E, |sim| {
@@ -201,7 +201,7 @@ fn locked_owner_stops_at_gate_without_blocking_later_unlocked_owner() {
     ai.when_does_macro_timer_ring = u32::MAX;
     ai.emoticon_expiration_date = u32::MAX;
 
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     let (_, trace) = capture_npc_post_detection_tail_phases(|| {
         crate::sim_rng::with_seed(0xA013_10CC, |sim| {
             engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)

@@ -1,3 +1,4 @@
+use super::scenarios::bind_walking_sprite;
 use super::*;
 
 use crate::element_kinds::Command;
@@ -42,7 +43,7 @@ fn tick_production_owner_coordinator(
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
 ) {
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
 
@@ -912,7 +913,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
     // Body cadence is `(universal frame + observer creation order) % 8`.
     engine.control.frame_counter = 6;
-    let mut positions = engine.boundary_positions_snapshot();
+    let positions = engine.boundary_positions_snapshot();
     let observed_body_position = std::rc::Rc::new(std::cell::Cell::new(MapPoint::ZERO));
     let observed = observed_body_position.clone();
     crate::sight_obstacle::begin_parity_visibility_capture();
@@ -3699,17 +3700,15 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
             }),
         );
 
-        let (observer_id, target_id) = if observer_before_target {
-            let observer_id = engine.add_test_entity(observer);
-            let target_id = engine.add_test_entity(target);
-            (observer_id, target_id)
-        } else {
-            let target_id = engine.add_test_entity(target);
-            let observer_id = engine.add_test_entity(observer);
-            (observer_id, target_id)
-        };
+        let (observer_id, target_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                observer,
+                target,
+                observer_before_target,
+            );
 
-        let mut positions_before_movement = engine.boundary_positions_snapshot();
+        let positions_before_movement = engine.boundary_positions_snapshot();
 
         // This mutation is the smallest deterministic stand-in for the
         // globally batched tick_entity_movement between the captured input
@@ -3781,7 +3780,6 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     use crate::order::{Order, OrderType};
     use crate::position_interface::{Direction, SectorHandle};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     #[derive(Debug, PartialEq)]
     struct Observation {
@@ -3794,45 +3792,6 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         seeker_state_after_crossing_tolerance: SequenceState,
         seeker_after_next_tolerance_sample: MapPoint,
         seeker_state_after_next_tolerance_sample: SequenceState,
-    }
-
-    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
-        let action = OrderType::WalkingUpright;
-        let script = SpriteScript {
-            action_id: action as u16,
-            action_done: 0,
-            average_speed: 20.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 20,
-            frame_ids: vec![1],
-            delays: vec![0],
-            distances: vec![20],
-            offsets: vec![SpriteFrameOffset::ZERO],
-            sound_ids: vec![0],
-        };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[action as usize] = 0;
-        let mut sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
-            std::sync::Arc::new(conversion),
-        );
-
-        let element = engine
-            .get_entity_mut(entity_id)
-            .expect("movement fixture actor exists")
-            .element_data_mut();
-        let position = element.position_map();
-        let sector = element.sector();
-        sprite.position_iface.set_sector(sector);
-        sprite.position_iface.set_anti_collision_on(false);
-        sprite
-            .position_iface
-            .set_move_box(crate::coordinates::MoveBox::from_corners(
-                MapVec::new(-2.0, -2.0),
-                MapVec::new(2.0, 2.0),
-            ));
-        element.sprite = sprite;
-        element.set_position_map(position);
     }
 
     fn arm_movement(
@@ -3909,18 +3868,16 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .set_position_map(target_before_movement);
         target.element_data_mut().set_sector(SectorHandle::new(1));
 
-        let (seeker_id, target_id) = if seeker_before_target {
-            let seeker_id = engine.add_test_entity(seeker);
-            let target_id = engine.add_test_entity(target);
-            (seeker_id, target_id)
-        } else {
-            let target_id = engine.add_test_entity(target);
-            let seeker_id = engine.add_test_entity(seeker);
-            (seeker_id, target_id)
-        };
+        let (seeker_id, target_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                seeker,
+                target,
+                seeker_before_target,
+            );
 
-        bind_walking_sprite(&mut engine, seeker_id);
-        bind_walking_sprite(&mut engine, target_id);
+        bind_walking_sprite(&mut engine, seeker_id, false);
+        bind_walking_sprite(&mut engine, target_id, false);
         arm_movement(&mut engine, target_id, target_destination, None);
         let seeker_sequence = arm_movement(
             &mut engine,
@@ -4047,46 +4004,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
-        let action = OrderType::WalkingUpright;
-        let script = SpriteScript {
-            action_id: action as u16,
-            action_done: 0,
-            average_speed: 20.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 20,
-            frame_ids: vec![1],
-            delays: vec![0],
-            distances: vec![20],
-            offsets: vec![SpriteFrameOffset::ZERO],
-            sound_ids: vec![0],
-        };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[action as usize] = 0;
-        let mut sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
-            std::sync::Arc::new(conversion),
-        );
-
-        let element = engine
-            .get_entity_mut(entity_id)
-            .expect("anti-collision fixture actor exists")
-            .element_data_mut();
-        let position = element.position_map();
-        let sector = element.sector();
-        sprite.position_iface.set_sector(sector);
-        sprite.position_iface.set_anti_collision_on(true);
-        sprite
-            .position_iface
-            .set_move_box(crate::coordinates::MoveBox::from_corners(
-                MapVec::new(-2.0, -2.0),
-                MapVec::new(2.0, 2.0),
-            ));
-        element.sprite = sprite;
-        element.set_position_map(position);
-    }
 
     let mut engine = EngineInner::new();
     let destination = MapPoint::new(10.0, 0.0);
@@ -4105,8 +4022,8 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
 
     let mover_id = engine.add_test_entity(mover);
     let blocker_id = engine.add_test_entity(blocker);
-    bind_walking_sprite(&mut engine, mover_id);
-    bind_walking_sprite(&mut engine, blocker_id);
+    bind_walking_sprite(&mut engine, mover_id, true);
+    bind_walking_sprite(&mut engine, blocker_id, true);
 
     let mut movement =
         SequenceElement::new_movement(1, Command::Move, Some(mover_id), OrderType::WalkingUpright);

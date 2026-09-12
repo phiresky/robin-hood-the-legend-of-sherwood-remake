@@ -1,6 +1,17 @@
 //! Byte-exact opcode fixture encoders shared by script dispatch suites.
 use crate::vm::{Opcode, Quad};
 
+pub(crate) fn empty_startup_class(source_file: String) -> crate::scb::ClassEntry {
+    crate::scb::ClassEntry {
+        source_file,
+        class_name: "StartUp".into(),
+        size_of_member_variables: 0,
+        member_variables: Vec::new(),
+        functions: Vec::new(),
+        quads: Vec::new(),
+    }
+}
+
 #[test]
 fn fixture_encoders_preserve_operand_layouts() {
     assert_eq!(
