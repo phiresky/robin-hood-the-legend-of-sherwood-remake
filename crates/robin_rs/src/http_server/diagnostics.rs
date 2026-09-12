@@ -1,12 +1,15 @@
 //! Read-only RPC diagnostic builders. No request queue or transport ownership.
 use crate::http_server::ReplayStatus;
 use robin_engine::engine::{Engine, LevelAssets};
+#[cfg(any(feature = "script-rpc", target_arch = "wasm32"))]
+use robin_engine::natives as engine_natives;
 use robin_engine::{
     coordinates as engine_coordinates, element as engine_element, engine as engine_api,
-    natives as engine_natives, position_interface as engine_position_interface,
-    profiles as engine_profiles, scb as engine_scb, weapons as engine_weapons,
+    position_interface as engine_position_interface, profiles as engine_profiles,
+    scb as engine_scb, weapons as engine_weapons,
 };
 use robin_modding_tools::decompile as assets_decompile;
+#[cfg(any(feature = "script-rpc", target_arch = "wasm32"))]
 pub(crate) fn info_json() -> serde_json::Value {
     serde_json::json!({
         "name": "robin-hood-script-rpc",
@@ -29,6 +32,7 @@ pub(crate) fn info_json() -> serde_json::Value {
     })
 }
 
+#[cfg(any(feature = "script-rpc", target_arch = "wasm32"))]
 pub(crate) fn list_natives_json() -> serde_json::Value {
     let mut entries = Vec::new();
     for i in 0u32..512 {
