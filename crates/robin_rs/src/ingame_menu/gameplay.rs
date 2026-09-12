@@ -354,7 +354,7 @@ impl GameplayScreenState {
             sherwood_trading_editable,
         );
 
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
 
         Self {
             localized: LocalizedGameplayText::from_application_context(application_context),

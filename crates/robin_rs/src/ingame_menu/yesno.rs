@@ -159,7 +159,7 @@ impl YesNoModalState {
         focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
         focus.add_shortcut(ID_NO, KeyCode::Escape);
 
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
 
         Self {
             message,

@@ -82,7 +82,7 @@ impl TradingModalState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input = ModalInputState::from_window(window, transform);
+        let input = ModalInputState::from_window(window, transform);
         Self::build(resources, sectors, ransom, input)
     }
 

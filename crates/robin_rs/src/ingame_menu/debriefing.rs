@@ -611,7 +611,7 @@ impl DebriefingPageState {
             font.height() as i32,
             resources,
         );
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             title,
             body,
