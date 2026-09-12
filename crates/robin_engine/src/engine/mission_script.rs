@@ -114,6 +114,10 @@ pub struct MissionScript {
 
 /// Explicit save-owned projection; process-local state is reconstructed here,
 /// independently of raw rollback cloning and the native wire codec.
+/// This is not a field-skipping alias of `MissionScript`: the save boundary
+/// normalizes the manager to `ScriptManagerSnapshot` and rejects active
+/// callback stacks. A derived serializer with `call_stack` skipped would
+/// silently save an incomplete synchronous callback instead of rejecting it.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PersistedMissionScript {
     script_name: String,
@@ -201,6 +205,8 @@ impl PersistedMissionScript {
     }
 }
 
+/// Borrowed raw snapshot encoding avoids cloning the script manager. Keep it
+/// separate from the save-owned projection's normalized manager representation.
 #[derive(Serialize)]
 struct MissionScriptSnapshotRef<'a> {
     script_name: &'a str,

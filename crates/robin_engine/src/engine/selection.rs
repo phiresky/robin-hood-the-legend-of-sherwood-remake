@@ -1058,6 +1058,11 @@ impl EngineInner {
         let profile_idx = pc.profile_index;
 
         let Some(profile) = assets.profile_manager.get_character(profile_idx) else {
+            tracing::warn!(
+                ?pc_id,
+                ?profile_idx,
+                "PC action slot references a missing character profile"
+            );
             return false;
         };
         let action = profile
@@ -1116,6 +1121,7 @@ impl EngineInner {
             return false;
         };
         let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
+            tracing::warn!(?pc_id, profile_index = ?pc.profile_index, "PC action message references a missing character profile");
             return false;
         };
         let action = profile
