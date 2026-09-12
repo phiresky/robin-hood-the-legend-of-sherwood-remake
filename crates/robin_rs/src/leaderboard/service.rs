@@ -48,6 +48,8 @@ pub enum LeaderboardServiceError {
     BoardCursorMismatch,
     #[error("signed artifacts do not match the exact bytes selected for upload")]
     ArtifactMismatch,
+    #[error("leaderboard artifact response has no Content-Type header")]
+    MissingContentType,
     #[error("starting campaign is mandatory for every ranked run")]
     MissingStartingCampaign,
     #[error("replay is not the canonical current compact-bitcode artifact: {0}")]
@@ -496,7 +498,7 @@ pub fn decode_replay_download(
         .content_type
         .as_deref()
         .map(base_media_type)
-        .unwrap_or_default();
+        .ok_or(LeaderboardServiceError::MissingContentType)?;
     if !media_type.eq_ignore_ascii_case(RANKED_REPLAY_MEDIA_TYPE_V1)
         || expected.artifact.media_type != RANKED_REPLAY_MEDIA_TYPE_V1
         || u64::try_from(response.body.len()).ok() != Some(expected.artifact.byte_length)

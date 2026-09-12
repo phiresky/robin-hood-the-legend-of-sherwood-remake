@@ -898,9 +898,7 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn hex_hash(hash: &[u8; 32]) -> String {
-    robin_engine::spellforge::hex_hash(hash)
-}
+use robin_engine::spellforge::hex_hash;
 
 fn parse_hash(value: &str) -> Result<[u8; 32], String> {
     let mut hash = [0u8; 32];
