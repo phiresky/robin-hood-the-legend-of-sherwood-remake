@@ -4626,9 +4626,10 @@ fn safe_rejection_message(code: VerificationRejectionCodeV1) -> &'static str {
     }
 }
 
-fn configuration_error(context: &str, _error: impl std::fmt::Display) -> ApiError {
+fn configuration_error(context: &str, error: impl std::fmt::Display) -> ApiError {
     tracing::error!(
         error_code = "public_protocol_configuration",
+        error_type = std::any::type_name_of_val(&error),
         context,
         "server configuration violates the public protocol"
     );
@@ -6457,12 +6458,14 @@ mod tests {
             .check(address, ChallengePurpose::UsernameUpdate)
             .await
             .unwrap();
-        assert!(
+        assert!(matches!(
             limiter
                 .check(address, ChallengePurpose::UsernameUpdate)
-                .await
-                .is_err()
-        );
+                .await,
+            Err(ApiError::RateLimited {
+                retry_after_ms: 1..=60_000
+            })
+        ));
         limiter
             .check(address, ChallengePurpose::Submission)
             .await

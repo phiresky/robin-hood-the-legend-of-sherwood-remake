@@ -27,7 +27,7 @@ use robin_run_protocol::{
     official_full_campaign_completion_policy_v1,
 };
 
-pub(crate) fn artifact(byte: u8, media_type: &str) -> ArtifactRefV1 {
+pub fn artifact(byte: u8, media_type: &str) -> ArtifactRefV1 {
     ArtifactRefV1 {
         sha256: Digest32::from_bytes([byte; 32]),
         byte_length: 1,
@@ -35,7 +35,7 @@ pub(crate) fn artifact(byte: u8, media_type: &str) -> ArtifactRefV1 {
     }
 }
 
-pub(crate) fn simulation_components() -> Vec<SimulationContentComponentV1> {
+pub fn simulation_components() -> Vec<SimulationContentComponentV1> {
     [
         SimulationContentComponentKindV1::Profiles,
         SimulationContentComponentKindV1::LoadedLevel,
@@ -59,7 +59,7 @@ pub(crate) fn simulation_components() -> Vec<SimulationContentComponentV1> {
     .collect()
 }
 
-pub(crate) fn viewer_build() -> BuildManifestV1 {
+pub fn viewer_build() -> BuildManifestV1 {
     BuildManifestV1 {
         schema_version: SCHEMA_VERSION_V1,
         source_commit: "a".repeat(40),
@@ -86,7 +86,7 @@ pub(crate) fn viewer_build() -> BuildManifestV1 {
     }
 }
 
-pub(crate) fn build_tool(byte: u8, version: &str) -> BuildToolAuthorityV1 {
+pub fn build_tool(byte: u8, version: &str) -> BuildToolAuthorityV1 {
     BuildToolAuthorityV1 {
         version: version.to_owned(),
         authority_sha256: if version == robin_run_protocol::WASM_BINDGEN_CLI_VERSION_V1 {
@@ -97,7 +97,7 @@ pub(crate) fn build_tool(byte: u8, version: &str) -> BuildToolAuthorityV1 {
     }
 }
 
-pub(crate) fn viewer_build_v2() -> BuildManifestV2 {
+pub fn viewer_build_v2() -> BuildManifestV2 {
     let binaryen_authority: BuildToolAuthorityDocumentV1 = serde_json::from_str(include_str!(
         "../../../.github/tool-authorities/binaryen-wasm-opt-v132.json"
     ))
@@ -209,7 +209,7 @@ pub(crate) fn viewer_build_v2() -> BuildManifestV2 {
     }
 }
 
-pub(crate) fn viewer_profile(build: Digest32, content: Digest32) -> AdmissionProfile {
+pub fn viewer_profile(build: Digest32, content: Digest32) -> AdmissionProfile {
     AdmissionProfile {
         id: "viewer-profile".to_owned(),
         content_subject: OfficialContentSubjectV1::FieldMission {
@@ -250,7 +250,7 @@ pub(crate) fn viewer_profile(build: Digest32, content: Digest32) -> AdmissionPro
     }
 }
 
-pub(crate) fn viewer_content_manifest(edition: OfficialContentEditionV1) -> ContentManifestV1 {
+pub fn viewer_content_manifest(edition: OfficialContentEditionV1) -> ContentManifestV1 {
     ContentManifestV1 {
         schema_version: SCHEMA_VERSION_V1,
         name: match edition {
@@ -274,7 +274,7 @@ pub(crate) fn viewer_content_manifest(edition: OfficialContentEditionV1) -> Cont
     }
 }
 
-pub(crate) fn policy_identity(kind: ImmutablePolicyKindV1, byte: u8) -> ImmutablePolicyIdentityV1 {
+pub fn policy_identity(kind: ImmutablePolicyKindV1, byte: u8) -> ImmutablePolicyIdentityV1 {
     ImmutablePolicyIdentityV1 {
         kind,
         version: 1,
@@ -282,7 +282,7 @@ pub(crate) fn policy_identity(kind: ImmutablePolicyKindV1, byte: u8) -> Immutabl
     }
 }
 
-pub(crate) fn published_ruleset_fixture() -> PublishedRulesetV1 {
+pub fn published_ruleset_fixture() -> PublishedRulesetV1 {
     let manifest = RulesetManifestV1 {
         schema_version: SCHEMA_VERSION_V1,
         display_name: "Standard / Normal".to_owned(),
@@ -394,7 +394,7 @@ pub(crate) fn published_ruleset_fixture() -> PublishedRulesetV1 {
     published
 }
 
-pub(crate) async fn app_state(
+pub async fn app_state(
     config: crate::ServerConfig,
     campaign_directory: std::path::PathBuf,
 ) -> crate::web::AppState {

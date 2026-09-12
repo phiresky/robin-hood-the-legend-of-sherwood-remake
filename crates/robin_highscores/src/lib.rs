@@ -25,8 +25,8 @@ pub mod secure_fs;
 pub mod service;
 pub mod storage_admission;
 mod submission;
-#[cfg(test)]
-pub(crate) mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod verifier;
 pub mod web;
 
