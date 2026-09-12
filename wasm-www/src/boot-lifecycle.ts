@@ -71,7 +71,7 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
         withAbort(runtimeSignal, () => deps.loadRuntime(base, build.short !== 'local', build.source === 'latest', runtimeSignal));
     let wasm: RobinWasmModule;
     let content: BootContent;
-    let multiplayer: PreparedMultiplayerContent | undefined;
+    let shippingFiles: PreparedMultiplayerContent['shippingFiles'] | undefined;
     if (join === undefined) {
         // Default content is independent of WASM. Start core asset preloads as
         // soon as WASM is ready, and cancel siblings if either branch fails.
@@ -101,9 +101,10 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
             throw new Error('selected browser artifact has no multiplayer ticket entry point');
         }
         wasm.wasm_set_multiplayer_join_ticket(join.ticket.code, join.redeemed);
-        multiplayer = await withAbort(signal, () => deps.prepareContent(join.ticket, manifest, signal));
+        const multiplayer = await withAbort(signal, () => deps.prepareContent(join.ticket, manifest, signal));
         signal.throwIfAborted();
-        content = multiplayer;
+        content = { datadir: multiplayer.datadir, dataBaseUrl: multiplayer.dataBaseUrl };
+        shippingFiles = multiplayer.shippingFiles;
         deps.preloadLocalAssets(wasm, multiplayer.assets);
         await withAbort(signal, () => deps.preloadAssets(wasm, base, build.source === 'latest', signal));
     }
@@ -112,7 +113,10 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
     const rpc = deps.installRpc(wasm);
     deps.progress('boot', 'starting game…', 0.5);
     wasm.wasm_boot(content.datadir, content.dataBaseUrl);
-    if (multiplayer !== undefined) deps.preloadShippingFiles(wasm, multiplayer.shippingFiles);
+    if (shippingFiles !== undefined) {
+        deps.preloadShippingFiles(wasm, shippingFiles);
+        shippingFiles = undefined;
+    }
     deps.runtimeStarted();
     await withAbort(signal, () => rpc('info'));
     signal.throwIfAborted();
