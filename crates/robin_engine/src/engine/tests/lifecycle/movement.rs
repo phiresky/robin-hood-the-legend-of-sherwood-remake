@@ -74,11 +74,11 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
     let assets = LevelAssets::new();
     let mut engine = EngineInner::new();
 
-    begin_hourglass_phase_capture();
-    let result = engine
-        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
-        .code;
-    let phases = end_hourglass_phase_capture();
+    let (result, phases) = capture_hourglass_phases(|| {
+        engine
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+            .code
+    });
 
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(
@@ -119,11 +119,11 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     );
     engine.orders.pending_hades_kills.push(pending_victim);
 
-    begin_hourglass_phase_capture();
-    let result = engine
-        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
-        .code;
-    let phases = end_hourglass_phase_capture();
+    let (result, phases) = capture_hourglass_phases(|| {
+        engine
+            .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+            .code
+    });
 
     assert_eq!(result, GameCode::LevelInProgress);
     assert_eq!(

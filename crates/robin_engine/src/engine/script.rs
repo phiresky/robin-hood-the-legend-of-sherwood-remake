@@ -95,8 +95,8 @@ fn spellforge_event_names_cover_global_and_per_entity_contracts() {
 std::thread_local! {
     static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ACTIVE_DRIVER_SNAPSHOT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
-    static AI_STATE_CALLBACK_OBSERVATIONS: std::cell::RefCell<Option<Vec<AiStateCallbackObservation>>> = const { std::cell::RefCell::new(None) };
-    static MISSION_INITIALIZATION_PHASES: std::cell::RefCell<Option<Vec<MissionInitializationPhase>>> = const { std::cell::RefCell::new(None) };
+    static AI_STATE_CALLBACK_OBSERVATIONS: super::test_support::Probe<AiStateCallbackObservation> = const { super::test_support::Probe::new() };
+    static MISSION_INITIALIZATION_PHASES: super::test_support::Probe<MissionInitializationPhase> = const { super::test_support::Probe::new() };
 }
 
 #[cfg(test)]
@@ -110,30 +110,27 @@ pub(super) enum MissionInitializationPhase {
 pub(super) fn capture_mission_initialization_phases<R>(
     f: impl FnOnce() -> R,
 ) -> (R, Vec<MissionInitializationPhase>) {
-    MISSION_INITIALIZATION_PHASES.with(|phases| {
-        assert!(
-            phases.borrow().is_none(),
-            "mission initialization phase capture is already active"
-        );
-        *phases.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let phases = MISSION_INITIALIZATION_PHASES.with(|phases| {
-        phases
-            .borrow_mut()
-            .take()
-            .expect("mission initialization phase capture disappeared")
-    });
-    (result, phases)
+    MISSION_INITIALIZATION_PHASES.with(|phases| phases.capture(f))
 }
 
 #[cfg(test)]
 fn observe_mission_initialization_phase(phase: MissionInitializationPhase) {
-    MISSION_INITIALIZATION_PHASES.with(|phases| {
-        if let Some(phases) = phases.borrow_mut().as_mut() {
-            phases.push(phase);
-        }
+    MISSION_INITIALIZATION_PHASES.with(|phases| phases.record(phase));
+}
+
+#[test]
+fn initialization_observer_nested_capture_restores_outer_scope() {
+    use MissionInitializationPhase::{ScriptSectorOccupants, StartUpInitialize};
+    let (_, outer) = capture_mission_initialization_phases(|| {
+        observe_mission_initialization_phase(ScriptSectorOccupants);
+        let (_, nested) = capture_mission_initialization_phases(|| {
+            observe_mission_initialization_phase(StartUpInitialize);
+        });
+        assert_eq!(nested, [StartUpInitialize]);
+        observe_mission_initialization_phase(StartUpInitialize);
     });
+    assert_eq!(outer, [ScriptSectorOccupants, StartUpInitialize]);
+    assert!(capture_mission_initialization_phases(|| ()).1.is_empty());
 }
 
 #[cfg(test)]
@@ -149,21 +146,7 @@ pub(super) struct AiStateCallbackObservation {
 pub(super) fn capture_ai_state_callback_observations<R>(
     f: impl FnOnce() -> R,
 ) -> (R, Vec<AiStateCallbackObservation>) {
-    AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
-        assert!(
-            observations.borrow().is_none(),
-            "AI state callback observation capture is already active"
-        );
-        *observations.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let observations = AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
-        observations
-            .borrow_mut()
-            .take()
-            .expect("AI state callback observation capture disappeared")
-    });
-    (result, observations)
+    AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| observations.capture(f))
 }
 
 #[cfg(test)]
@@ -6002,14 +5985,12 @@ impl EngineInner {
                 })
                 .count();
             AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| {
-                if let Some(observations) = observations.borrow_mut().as_mut() {
-                    observations.push(AiStateCallbackObservation {
-                        owner,
-                        eye_status: ai_actor.eye_status,
-                        timer_is_running,
-                        body_references_to_owner,
-                    });
-                }
+                observations.record(AiStateCallbackObservation {
+                    owner,
+                    eye_status: ai_actor.eye_status,
+                    timer_is_running,
+                    body_references_to_owner,
+                });
             });
         }
         if let Err(error) = self.call_script_vm(

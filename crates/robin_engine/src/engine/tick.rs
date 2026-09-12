@@ -225,8 +225,8 @@ mod frozen_actor_entry_condolation_tests {
 
 #[cfg(test)]
 thread_local! {
-    static PROJECTILE_DERIVED_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, crate::element::ObjectType)>>> =
-        const { std::cell::RefCell::new(None) };
+    static PROJECTILE_DERIVED_TAIL_TRACE: super::test_support::Probe<(EntityId, crate::element::ObjectType)> =
+        const { super::test_support::Probe::new() };
 }
 
 pub(super) fn observe_projectile_derived_tail(
@@ -240,29 +240,14 @@ pub(super) fn observe_projectile_derived_tail(
         "projectile derived tail"
     );
     #[cfg(test)]
-    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((id, object_type));
-        }
-    });
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|probe| probe.record((id, object_type)));
 }
 
 #[cfg(test)]
 pub(super) fn capture_projectile_derived_tails<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, crate::element::ObjectType)>) {
-    PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        assert!(trace.borrow().is_none(), "tail capture is not re-entrant");
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let tails = PROJECTILE_DERIVED_TAIL_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("tail capture must remain active")
-    });
-    (result, tails)
+    PROJECTILE_DERIVED_TAIL_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1012,8 +997,8 @@ mod generic_actor_line_crossing_tests {
 
 #[cfg(test)]
 thread_local! {
-    static NPC_HOURGLASS_PHASE_TRACE: std::cell::RefCell<Option<Vec<NpcHourglassPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static NPC_HOURGLASS_PHASE_TRACE: super::test_support::Probe<NpcHourglassPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
@@ -1023,29 +1008,14 @@ fn observe_npc_hourglass_phase(phase: NpcHourglassPhase) {
         "npc hourglass phase"
     );
     #[cfg(test)]
-    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_npc_hourglass_phases<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<NpcHourglassPhase>) {
-    NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        assert!(trace.borrow().is_none(), "phase capture is not re-entrant");
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let phases = NPC_HOURGLASS_PHASE_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("phase capture must remain active")
-    });
-    (result, phases)
+    NPC_HOURGLASS_PHASE_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1059,8 +1029,8 @@ pub(super) enum ActorAnimationBoundaryPhase {
 
 #[cfg(test)]
 thread_local! {
-    static ACTOR_ANIMATION_BOUNDARY_TRACE: std::cell::RefCell<Option<Vec<ActorAnimationBoundaryPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static ACTOR_ANIMATION_BOUNDARY_TRACE: super::test_support::Probe<ActorAnimationBoundaryPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
@@ -1070,31 +1040,14 @@ fn observe_actor_animation_boundary(phase: ActorAnimationBoundaryPhase) {
         "actor animation boundary"
     );
     #[cfg(test)]
-    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_actor_animation_boundary<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<ActorAnimationBoundaryPhase>) {
-    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        assert!(
-            trace.borrow_mut().replace(Vec::new()).is_none(),
-            "actor animation boundary capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let phases = ACTOR_ANIMATION_BOUNDARY_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("actor animation boundary capture must remain active")
-    });
-    (result, phases)
+    ACTOR_ANIMATION_BOUNDARY_TRACE.with(|probe| probe.capture(f))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1112,8 +1065,8 @@ pub(super) enum ActorOwnerEnvelopePhase {
 
 #[cfg(test)]
 thread_local! {
-    static ACTOR_OWNER_ENVELOPE_TRACE: std::cell::RefCell<Option<Vec<ActorOwnerEnvelopePhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static ACTOR_OWNER_ENVELOPE_TRACE: super::test_support::Probe<ActorOwnerEnvelopePhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
@@ -1123,31 +1076,14 @@ fn observe_actor_owner_envelope(phase: ActorOwnerEnvelopePhase) {
         "actor owner envelope"
     );
     #[cfg(test)]
-    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(phase);
-        }
-    });
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
 pub(super) fn capture_actor_owner_envelope<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<ActorOwnerEnvelopePhase>) {
-    ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        assert!(
-            trace.borrow_mut().replace(Vec::new()).is_none(),
-            "actor-owner envelope capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let phases = ACTOR_OWNER_ENVELOPE_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("actor-owner envelope capture must remain active")
-    });
-    (result, phases)
+    ACTOR_OWNER_ENVELOPE_TRACE.with(|probe| probe.capture(f))
 }
 
 /// Exact base-Actor Execute identity selected at entry to one legacy slot.
@@ -2240,8 +2176,8 @@ fn time_hourglass_phase<T>(phase: HourglassPhase, f: impl FnOnce() -> T) -> T {
 
 #[cfg(test)]
 thread_local! {
-    static CAPTURED_HOURGLASS_PHASES: std::cell::RefCell<Option<Vec<HourglassPhase>>> =
-        const { std::cell::RefCell::new(None) };
+    static CAPTURED_HOURGLASS_PHASES: super::test_support::Probe<HourglassPhase> =
+        const { super::test_support::Probe::new() };
 }
 
 fn trace_hourglass_phase(phase: HourglassPhase) {
@@ -2251,35 +2187,43 @@ fn trace_hourglass_phase(phase: HourglassPhase) {
         "perform_hourglass phase"
     );
     #[cfg(test)]
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        if let Some(phases) = captured.borrow_mut().as_mut() {
-            phases.push(phase);
-        }
-    });
+    CAPTURED_HOURGLASS_PHASES.with(|probe| probe.record(phase));
 }
 
 #[cfg(test)]
-pub(super) fn begin_hourglass_phase_capture() {
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        let previous = captured.borrow_mut().replace(Vec::new());
-        assert!(previous.is_none(), "hourglass phase capture already active");
-    });
+pub(super) fn capture_hourglass_phases<T>(f: impl FnOnce() -> T) -> (T, Vec<HourglassPhase>) {
+    CAPTURED_HOURGLASS_PHASES.with(|probe| probe.capture(f))
 }
 
-#[cfg(test)]
-pub(super) fn end_hourglass_phase_capture() -> Vec<HourglassPhase> {
-    CAPTURED_HOURGLASS_PHASES.with(|captured| {
-        captured
-            .borrow_mut()
-            .take()
-            .expect("hourglass phase capture was not active")
-    })
+#[test]
+fn hourglass_observer_nested_captures_keep_their_own_order() {
+    trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+    let (value, outer) = capture_hourglass_phases(|| {
+        trace_hourglass_phase(HourglassPhase::DeferredEffectsStart);
+        let (nested_value, nested) = capture_hourglass_phases(|| {
+            trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+            17
+        });
+        assert_eq!(nested_value, 17);
+        assert_eq!(nested, [HourglassPhase::MissionAndMessages]);
+        trace_hourglass_phase(HourglassPhase::MissionAndMessages);
+        23
+    });
+    assert_eq!(value, 23);
+    assert_eq!(
+        outer,
+        [
+            HourglassPhase::DeferredEffectsStart,
+            HourglassPhase::MissionAndMessages
+        ]
+    );
+    assert!(capture_hourglass_phases(|| ()).1.is_empty());
 }
 
 #[cfg(test)]
 thread_local! {
-    static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: std::cell::RefCell<Option<Vec<EntityId>>> =
-        const { std::cell::RefCell::new(None) };
+    static CAPTURED_ORDERED_GAMEPLAY_ENTITIES: super::test_support::Probe<EntityId> =
+        const { super::test_support::Probe::new() };
 }
 
 fn observe_ordered_gameplay_entity(entity_id: EntityId) {
@@ -2289,29 +2233,12 @@ fn observe_ordered_gameplay_entity(entity_id: EntityId) {
         "ordered gameplay slot"
     );
     #[cfg(test)]
-    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        if let Some(entities) = captured.borrow_mut().as_mut() {
-            entities.push(entity_id);
-        }
-    });
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|probe| probe.record(entity_id));
 }
 
 #[cfg(test)]
 pub(super) fn capture_ordered_gameplay_entities<T>(f: impl FnOnce() -> T) -> (T, Vec<EntityId>) {
-    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        assert!(
-            captured.borrow_mut().replace(Vec::new()).is_none(),
-            "ordered gameplay capture is not re-entrant"
-        );
-    });
-    let result = f();
-    let entities = CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|captured| {
-        captured
-            .borrow_mut()
-            .take()
-            .expect("ordered gameplay capture must remain active")
-    });
-    (result, entities)
+    CAPTURED_ORDERED_GAMEPLAY_ENTITIES.with(|probe| probe.capture(f))
 }
 
 /// Move exclamations whose decoded-duration deadline has arrived into

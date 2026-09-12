@@ -37,14 +37,14 @@ const FX_PURSE_IMPACT: u32 = 506;
 
 #[cfg(test)]
 thread_local! {
-    static WATER_IMPACT_ORDER: std::cell::RefCell<Vec<&'static str>> = const {
-        std::cell::RefCell::new(Vec::new())
+    static WATER_IMPACT_ORDER: super::test_support::Probe<&'static str> = const {
+        super::test_support::Probe::new()
     };
 }
 
 #[cfg(test)]
 fn observe_water_impact_stage(stage: &'static str) {
-    WATER_IMPACT_ORDER.with(|order| order.borrow_mut().push(stage));
+    WATER_IMPACT_ORDER.with(|order| order.record(stage));
 }
 
 #[cfg(not(test))]
@@ -1491,9 +1491,12 @@ mod tests {
 
             let mut registered = EngineInner::new();
             let coin_id = registered.add_test_entity(landing_coin(material, dive, disappear));
-            WATER_IMPACT_ORDER.with(|order| order.borrow_mut().clear());
-            let result = registered.with_simulation_context(|engine, sim| {
-                engine.tick_purse_or_coin(sim, &assets, coin_id)
+            let (result, impact_order) = WATER_IMPACT_ORDER.with(|order| {
+                order.capture(|| {
+                    registered.with_simulation_context(|engine, sim| {
+                        engine.tick_purse_or_coin(sim, &assets, coin_id)
+                    })
+                })
             });
             assert!(result, "Coin ignores Projectile's terminal false result");
             let Some(Entity::Projectile(coin)) = registered.get_entity(coin_id) else {
@@ -1521,28 +1524,29 @@ mod tests {
                     .count(),
                 usize::from(expect_plouf)
             );
-            WATER_IMPACT_ORDER.with(|order| {
-                assert_eq!(
-                    order.borrow().as_slice(),
-                    if expect_plouf {
-                        &["titbit", "reset", "noise", "fx"][..]
-                    } else {
-                        &[]
-                    }
-                )
-            });
+            assert_eq!(
+                impact_order.as_slice(),
+                if expect_plouf {
+                    &["titbit", "reset", "noise", "fx"][..]
+                } else {
+                    &[]
+                }
+            );
 
             let mut unpublished = EngineInner::new();
-            WATER_IMPACT_ORDER.with(|order| order.borrow_mut().clear());
-            let new_id = unpublished.with_simulation_context(|engine, sim| {
-                engine.publish_primed_coin(
-                    sim,
-                    &assets,
-                    landing_coin(material, dive, disappear),
-                    MapPoint::new(100.0, 200.0),
-                    None,
-                    crate::position_interface::Layer::new(0),
-                )
+            let (new_id, impact_order) = WATER_IMPACT_ORDER.with(|order| {
+                order.capture(|| {
+                    unpublished.with_simulation_context(|engine, sim| {
+                        engine.publish_primed_coin(
+                            sim,
+                            &assets,
+                            landing_coin(material, dive, disappear),
+                            MapPoint::new(100.0, 200.0),
+                            None,
+                            crate::position_interface::Layer::new(0),
+                        )
+                    })
+                })
             });
             let Some(Entity::Projectile(coin)) = unpublished.get_entity(new_id) else {
                 panic!("prepublication terminal coin disappeared")
@@ -1556,16 +1560,14 @@ mod tests {
                 unpublished.feedback.titbit_manager.titbits().len(),
                 usize::from(expect_plouf)
             );
-            WATER_IMPACT_ORDER.with(|order| {
-                assert_eq!(
-                    order.borrow().as_slice(),
-                    if expect_plouf {
-                        &["titbit", "reset", "noise", "fx"][..]
-                    } else {
-                        &[]
-                    }
-                )
-            });
+            assert_eq!(
+                impact_order.as_slice(),
+                if expect_plouf {
+                    &["titbit", "reset", "noise", "fx"][..]
+                } else {
+                    &[]
+                }
+            );
         }
 
         let assets = purse_test_assets();
