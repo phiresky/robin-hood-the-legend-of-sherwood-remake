@@ -287,53 +287,55 @@ pub enum LegacyElementResolution {
 /// Element kinds supported by the v48 save format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LegacyDynamicElementFactory {
-    ActorPc,
-    Apple,
-    Arrow,
-    Coin,
-    Net,
-    Purse,
-    WaspNest,
-    Wasp,
-    Stone,
-    Ale,
-    SpyCape,
-    BonusAle,
-    BonusArrow,
-    BonusApple,
-    BonusLambLeg,
-    BonusNet,
-    BonusPlants,
-    BonusPurse,
-    BonusStone,
-    BonusWaspNest,
-    Scroll,
-    BonusAmulet,
-    BonusRansom,
-    BonusAmpulla,
-    BonusCoronationSpoon,
-    BonusRichardsCrown,
-    BonusRoyalSeal,
-    BonusRoyalSceptre,
-    BonusDomesdayBook,
-    BonusSwordOfTheState,
+    ActorPc = 0x0001,
+    Apple = 0x3002,
+    Arrow = 0x3001,
+    Coin = 0x3008,
+    Net = 0x3007,
+    Purse = 0x3003,
+    WaspNest = 0x3005,
+    Wasp = 0x3006,
+    Stone = 0x3004,
+    Ale = 0x3009,
+    SpyCape = 0x300a,
+    BonusAle = 0x4001,
+    BonusArrow = 0x4003,
+    BonusApple = 0x4004,
+    BonusLambLeg = 0x4006,
+    BonusNet = 0x4007,
+    BonusPlants = 0x4008,
+    BonusPurse = 0x4009,
+    BonusStone = 0x400a,
+    BonusWaspNest = 0x400b,
+    Scroll = 0x400c,
+    BonusAmulet = 0x4002,
+    BonusRansom = 0x400d,
+    BonusAmpulla = 0x400e,
+    BonusCoronationSpoon = 0x400f,
+    BonusRichardsCrown = 0x4010,
+    BonusRoyalSeal = 0x4011,
+    BonusRoyalSceptre = 0x4012,
+    BonusDomesdayBook = 0x4013,
+    BonusSwordOfTheState = 0x4014,
 }
 
 /// Concrete type identifiers accepted in an original-game v48 element table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[repr(u16)]
+#[derive(num_enum::TryFromPrimitive, num_enum::IntoPrimitive)]
 pub enum LegacyElementClass {
     ActorPc,
-    ActorNpc,
-    ActorNpcCivilian,
-    ActorNpcSoldier,
-    ActorAnimal,
-    ActorDog,
-    ActorCow,
-    ActorHen,
-    ActorPig,
-    ActorBird,
-    ActorCrocodile,
-    Object,
+    ActorNpc = 0x0101,
+    ActorNpcCivilian = 0x0102,
+    ActorNpcSoldier = 0x0103,
+    ActorAnimal = 0x0210,
+    ActorDog = 0x0211,
+    ActorCow = 0x0212,
+    ActorHen = 0x0213,
+    ActorPig = 0x0214,
+    ActorBird = 0x0215,
+    ActorCrocodile = 0x0216,
+    Object = 0x0301,
     Arrow,
     Apple,
     Purse,
@@ -348,7 +350,7 @@ pub enum LegacyElementClass {
     BonusAmulet,
     BonusArrow,
     BonusApple,
-    BonusBlazon,
+    BonusBlazon = 0x4005,
     BonusLambLeg,
     BonusNet,
     BonusPlants,
@@ -364,114 +366,19 @@ pub enum LegacyElementClass {
     BonusRoyalSceptre,
     BonusDomesdayBook,
     BonusSwordOfTheState,
-    Target,
-    Fx,
-    FxMasked,
-    Mobile,
+    Target = 0x0800,
+    Fx = 0x1001,
+    FxMasked = 0x1002,
+    Mobile = 0x1003,
 }
 
 impl LegacyElementClass {
     pub fn from_raw(value: u16) -> Option<Self> {
-        Some(match value {
-            0x0001 => Self::ActorPc,
-            0x0101 => Self::ActorNpc,
-            0x0102 => Self::ActorNpcCivilian,
-            0x0103 => Self::ActorNpcSoldier,
-            0x0210 => Self::ActorAnimal,
-            0x0211 => Self::ActorDog,
-            0x0212 => Self::ActorCow,
-            0x0213 => Self::ActorHen,
-            0x0214 => Self::ActorPig,
-            0x0215 => Self::ActorBird,
-            0x0216 => Self::ActorCrocodile,
-            0x0301 => Self::Object,
-            0x3001 => Self::Arrow,
-            0x3002 => Self::Apple,
-            0x3003 => Self::Purse,
-            0x3004 => Self::Stone,
-            0x3005 => Self::WaspNest,
-            0x3006 => Self::Wasp,
-            0x3007 => Self::Net,
-            0x3008 => Self::Coin,
-            0x3009 => Self::Ale,
-            0x300a => Self::SpyCape,
-            0x4001 => Self::BonusAle,
-            0x4002 => Self::BonusAmulet,
-            0x4003 => Self::BonusArrow,
-            0x4004 => Self::BonusApple,
-            0x4005 => Self::BonusBlazon,
-            0x4006 => Self::BonusLambLeg,
-            0x4007 => Self::BonusNet,
-            0x4008 => Self::BonusPlants,
-            0x4009 => Self::BonusPurse,
-            0x400a => Self::BonusStone,
-            0x400b => Self::BonusWaspNest,
-            0x400c => Self::Scroll,
-            0x400d => Self::BonusRansom,
-            0x400e => Self::BonusAmpulla,
-            0x400f => Self::BonusCoronationSpoon,
-            0x4010 => Self::BonusRichardsCrown,
-            0x4011 => Self::BonusRoyalSeal,
-            0x4012 => Self::BonusRoyalSceptre,
-            0x4013 => Self::BonusDomesdayBook,
-            0x4014 => Self::BonusSwordOfTheState,
-            0x0800 => Self::Target,
-            0x1001 => Self::Fx,
-            0x1002 => Self::FxMasked,
-            0x1003 => Self::Mobile,
-            _ => return None,
-        })
+        Self::try_from(value).ok()
     }
 
     pub fn raw(self) -> u16 {
-        match self {
-            Self::ActorPc => 0x0001,
-            Self::ActorNpc => 0x0101,
-            Self::ActorNpcCivilian => 0x0102,
-            Self::ActorNpcSoldier => 0x0103,
-            Self::ActorAnimal => 0x0210,
-            Self::ActorDog => 0x0211,
-            Self::ActorCow => 0x0212,
-            Self::ActorHen => 0x0213,
-            Self::ActorPig => 0x0214,
-            Self::ActorBird => 0x0215,
-            Self::ActorCrocodile => 0x0216,
-            Self::Object => 0x0301,
-            Self::Arrow => 0x3001,
-            Self::Apple => 0x3002,
-            Self::Purse => 0x3003,
-            Self::Stone => 0x3004,
-            Self::WaspNest => 0x3005,
-            Self::Wasp => 0x3006,
-            Self::Net => 0x3007,
-            Self::Coin => 0x3008,
-            Self::Ale => 0x3009,
-            Self::SpyCape => 0x300a,
-            Self::BonusAle => 0x4001,
-            Self::BonusAmulet => 0x4002,
-            Self::BonusArrow => 0x4003,
-            Self::BonusApple => 0x4004,
-            Self::BonusBlazon => 0x4005,
-            Self::BonusLambLeg => 0x4006,
-            Self::BonusNet => 0x4007,
-            Self::BonusPlants => 0x4008,
-            Self::BonusPurse => 0x4009,
-            Self::BonusStone => 0x400a,
-            Self::BonusWaspNest => 0x400b,
-            Self::Scroll => 0x400c,
-            Self::BonusRansom => 0x400d,
-            Self::BonusAmpulla => 0x400e,
-            Self::BonusCoronationSpoon => 0x400f,
-            Self::BonusRichardsCrown => 0x4010,
-            Self::BonusRoyalSeal => 0x4011,
-            Self::BonusRoyalSceptre => 0x4012,
-            Self::BonusDomesdayBook => 0x4013,
-            Self::BonusSwordOfTheState => 0x4014,
-            Self::Target => 0x0800,
-            Self::Fx => 0x1001,
-            Self::FxMasked => 0x1002,
-            Self::Mobile => 0x1003,
-        }
+        self.into()
     }
 
     pub fn dynamic_factory(self) -> Option<LegacyDynamicElementFactory> {
@@ -528,22 +435,11 @@ impl LegacyElementClass {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn config() -> LegacyElementReadConfig {
         LegacyElementReadConfig {
@@ -688,7 +584,7 @@ mod tests {
         });
         assert_eq!(error.offset, 10);
         assert_eq!(error.field, "elements[0].pc_description_index");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 
     #[test]

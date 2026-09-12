@@ -47,9 +47,7 @@ pub async fn show_leaderboard_settings(
         renderer.screen_height() as i32,
     );
     let (field_w, field_h) = resources.input_field_dimensions();
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (index, (label, tooltip)) in OPTIONS.iter().enumerate() {
         let id = u32::try_from(index).expect("leaderboard option index fits u32");
         frame.add_widget_absolute(widget_bridge::make_button(
@@ -117,8 +115,7 @@ pub async fn show_leaderboard_settings(
                 _ => {}
             }
         }
-        let events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let events = input.process_frame(&mut frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_SHOW_MISSION_END_BOARDS | ID_ALWAYS_SUBMIT => {

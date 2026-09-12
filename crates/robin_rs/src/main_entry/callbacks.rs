@@ -417,11 +417,13 @@ impl RustCallbacks {
         self.autosave
             .enqueue(
                 &self.save_manager,
-                host,
-                game,
-                engine,
-                mission_id,
-                profiles,
+                crate::autosave::AutosaveRequest {
+                    host,
+                    game,
+                    engine,
+                    mission_id,
+                    profiles,
+                },
                 thumbnail,
                 reason,
             )
@@ -444,11 +446,13 @@ impl RustCallbacks {
         self.autosave
             .enqueue_initial_with_thumbnail(
                 &self.save_manager,
-                host,
-                game,
-                engine,
-                mission_id,
-                profiles,
+                crate::autosave::AutosaveRequest {
+                    host,
+                    game,
+                    engine,
+                    mission_id,
+                    profiles,
+                },
                 thumbnail,
             )
             .map_err(|error| format!("{error:#}"))

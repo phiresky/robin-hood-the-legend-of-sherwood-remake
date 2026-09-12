@@ -1,3 +1,4 @@
+use super::scenarios::bind_walking_sprite;
 use super::*;
 
 use crate::element_kinds::Command;
@@ -42,10 +43,7 @@ fn tick_production_owner_coordinator(
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
 ) {
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let positions = engine.boundary_positions_snapshot();
     engine.tick_actor_owner_envelopes(sim, assets, &positions);
 }
 
@@ -97,7 +95,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(minimal_movement_test_mission());
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     {
         let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
         level.sectors.push(make_sector(
@@ -182,25 +180,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         engine
             .build_gate_movement_sequence(
                 &sim,
-                owner,
-                Some(source_sector),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct: true,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(140.0, 100.0),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: Some(source_sector),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct: true,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(140.0, 100.0),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: false,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::WalkingUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                false,
-                false,
             )
             .expect("building-exit route")
     });
@@ -231,25 +231,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            crate::position_interface::SectorHandle::new(64),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(0).expect("valid door index"),
-                direct: true,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(140.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: crate::position_interface::SectorHandle::new(64),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(0).expect("valid door index"),
+                    direct: true,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(140.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -275,25 +277,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            crate::position_interface::SectorHandle::new(274),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(3).expect("valid door index"),
-                direct: false,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(240.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: crate::position_interface::SectorHandle::new(274),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(3).expect("valid door index"),
+                    direct: false,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(240.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -322,25 +326,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            Some(exact_ordinary_alias),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(3).expect("valid door index"),
-                direct: false,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(240.0, 100.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: Some(exact_ordinary_alias),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(3).expect("valid door index"),
+                    direct: false,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(240.0, 100.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -358,31 +364,33 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.build_gate_movement_sequence(
             &sim,
-            owner,
-            Some(exact_building_alias),
-            vec![
-                GatePathStep {
-                    door_index: DoorIndex::new(1).expect("valid door index"),
-                    direct: true,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: Some(exact_building_alias),
+                gate_path: vec![
+                    GatePathStep {
+                        door_index: DoorIndex::new(1).expect("valid door index"),
+                        direct: true,
+                    },
+                    GatePathStep {
+                        door_index: DoorIndex::new(2).expect("valid door index"),
+                        direct: false,
+                    },
+                ],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(380.0, 100.0),
+                    tolerance: 0.0,
                 },
-                GatePathStep {
-                    door_index: DoorIndex::new(2).expect("valid door index"),
-                    direct: false,
-                },
-            ],
-            GoalShape::Point {
-                point: MapPoint::new(380.0, 100.0),
-                tolerance: 0.0,
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            false,
-            false,
         )
     });
     assert_eq!(
@@ -409,13 +417,14 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
 
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(minimal_movement_test_mission());
-    let carrier = engine.add_entity(make_test_pc(crate::element::Posture::CarryingOnShoulders));
+    let carrier =
+        engine.add_test_entity(make_test_pc(crate::element::Posture::CarryingOnShoulders));
     let mut rider_entity = make_test_pc(crate::element::Posture::OnShoulders);
     rider_entity
         .human_data_mut()
         .expect("test rider is human")
         .carrier = Some(carrier);
-    let rider = engine.add_entity(rider_entity);
+    let rider = engine.add_test_entity(rider_entity);
     let owner = line_jump_approach_owner(&engine, rider);
     engine.script_domains.interactables.doors.push(Door {
         point_out: MapPoint::new(20.0, 10.0),
@@ -439,26 +448,28 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
     let sequence_id = engine
         .build_gate_movement_sequence(
             &crate::sim_rng::test_context(),
-            owner,
-            SectorHandle::new(1),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(0).expect("valid door index"),
-                direct: true,
-            }],
-            GoalShape::Line {
-                line_index: source_line,
-                midpoint: MapPoint::new(60.0, 70.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: SectorHandle::new(1),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(0).expect("valid door index"),
+                    direct: true,
+                }],
+                goal: GoalShape::Line {
+                    line_index: source_line,
+                    midpoint: MapPoint::new(60.0, 70.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 2,
+                base_action: OrderType::RunningUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: tail,
+                append_arrival_speech: false,
+                append_recovery: false,
             },
-            2,
-            OrderType::RunningUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            tail,
-            false,
-            false,
         )
         .expect("cross-sector line-jump route");
     let sequence = engine
@@ -544,13 +555,13 @@ fn completed_step_back_publishes_history_at_motion_terminal() {
     let mut mover = make_test_ai_soldier(Camp::Royalists);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     let mut opponent = make_test_pc(crate::element::Posture::Upright);
     opponent.element_data_mut().active = true;
     opponent
         .element_data_mut()
         .set_position_map(MapPoint::new(200.0, 100.0));
-    let opponent_id = engine.add_entity(opponent);
+    let opponent_id = engine.add_test_entity(opponent);
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -665,13 +676,13 @@ fn final_waypoint_transition_that_stops_short_does_not_publish_step_back_history
     let mut mover = make_test_ai_soldier(Camp::Royalists);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     let mut opponent = make_test_pc(crate::element::Posture::Upright);
     opponent.element_data_mut().active = true;
     opponent
         .element_data_mut()
         .set_position_map(MapPoint::new(200.0, 100.0));
-    let opponent_id = engine.add_entity(opponent);
+    let opponent_id = engine.add_test_entity(opponent);
     engine
         .get_entity_mut(mover_id)
         .unwrap()
@@ -790,9 +801,9 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
     use std::sync::Arc;
 
     let mut engine = EngineInner::new();
-    let carrier = engine.add_entity(make_test_pc(Posture::CarryingCorpse));
-    let body = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let observer = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let carrier = engine.add_test_entity(make_test_pc(Posture::CarryingCorpse));
+    let body = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let observer = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     engine.world.install_original_creation_orders(
         std::collections::BTreeMap::from([(carrier, 1), (observer, 2), (body, 3)]),
         4,
@@ -902,10 +913,7 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
     // Body cadence is `(universal frame + observer creation order) % 8`.
     engine.control.frame_counter = 6;
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let positions = engine.boundary_positions_snapshot();
     let observed_body_position = std::rc::Rc::new(std::cell::Cell::new(MapPoint::ZERO));
     let observed = observed_body_position.clone();
     crate::sight_obstacle::begin_parity_visibility_capture();
@@ -1022,7 +1030,8 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let mut engine = EngineInner::new();
         install_door_sectors(&mut engine);
         engine.scripts.mission = Some(minimal_mission());
-        let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
         engine.script_domains.interactables.doors = vec![Door {
             point_out: MapPoint::new(1393.0, 502.0),
             point_in: MapPoint::new(1382.0, 480.0),
@@ -1036,25 +1045,27 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
-                owner,
-                crate::position_interface::SectorHandle::new(22),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(1381.5, 480.3),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: crate::position_interface::SectorHandle::new(22),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(1381.5, 480.3),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::WalkingUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: true,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::WalkingUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                true,
-                false,
             )
             .expect("door route");
         let sequence = engine
@@ -1149,7 +1160,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
             unreachable!()
         };
         pc.pc.has_lockpick = true;
-        let owner = engine.add_entity(pc_entity);
+        let owner = engine.add_test_entity(pc_entity);
         engine.script_domains.interactables.doors = vec![Door {
             point_out: MapPoint::new(1298.0, 539.0),
             point_in: MapPoint::new(1265.0, 505.0),
@@ -1165,25 +1176,27 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         let sequence_id = engine
             .build_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
-                owner,
-                crate::position_interface::SectorHandle::new(22),
-                vec![GatePathStep {
-                    door_index: DoorIndex::new(0).expect("valid door index"),
-                    direct,
-                }],
-                GoalShape::Point {
-                    point: MapPoint::new(1400.0, 600.0),
-                    tolerance: 0.0,
+                crate::engine::movement::GateRouteRequest {
+                    entity_id: owner,
+                    source_sector: crate::position_interface::SectorHandle::new(22),
+                    gate_path: vec![GatePathStep {
+                        door_index: DoorIndex::new(0).expect("valid door index"),
+                        direct,
+                    }],
+                    goal: GoalShape::Point {
+                        point: MapPoint::new(1400.0, 600.0),
+                        tolerance: 0.0,
+                    },
+                    goal_layer: 0,
+                    base_action: OrderType::RunningUpright,
+                    move_after_last_door: true,
+                    speed_factor: 1.0,
+                    initial_flags: MoveFlags::empty(),
+                    prefix_elements: Vec::new(),
+                    tail_elements: Vec::new(),
+                    append_arrival_speech: false,
+                    append_recovery: false,
                 },
-                0,
-                OrderType::RunningUpright,
-                true,
-                1.0,
-                MoveFlags::empty(),
-                Vec::new(),
-                Vec::new(),
-                false,
-                false,
             )
             .expect("locked door route");
         let sequence = engine
@@ -1240,9 +1253,9 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     let sim = crate::sim_rng::SimulationContext::with_seed_and_config(1, config);
 
     let mut engine = EngineInner::new();
-    let first_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let dead_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let last_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let first_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let dead_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let last_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     // The fixture graph has no nodes, so every A* search fails; it still needs
@@ -1262,7 +1275,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     }
     engine.world.pathfinder.states = vec![vec![0x5555_5555]];
 
-    let mut launch_waiting_move = |engine: &mut EngineInner, owner| {
+    let launch_waiting_move = |engine: &mut EngineInner, owner| {
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveWaiting,
@@ -1367,9 +1380,9 @@ fn expired_failed_path_dispatches_owner_card_at_paths_barrier() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let earlier_timer_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let expired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let nonexpired_owner = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let earlier_timer_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let expired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let nonexpired_owner = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -1495,7 +1508,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
     use crate::sequence::{MoveFlags, Sequence, SequenceElement, SequenceElementData};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let owner = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
 
     let mut selected = SequenceElement::new(1, Command::Generic, Some(owner));
     selected
@@ -1545,7 +1558,7 @@ fn make_fast_does_not_postprocess_an_unrelated_live_movement() {
 #[test]
 fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1577,7 +1590,7 @@ fn menacing_ai_move_keeps_stop_menace_and_move_in_one_ordered_sequence() {
 #[test]
 fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let source_sector = crate::position_interface::SectorHandle::new(7);
     {
         let entity = engine.get_entity_mut(owner).unwrap();
@@ -1737,7 +1750,7 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let (rider, sequence, order_id) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
-    let later = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
+    let later = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.set_actors_frozen(true);
     let callback_closed = std::rc::Rc::new(std::cell::Cell::new(false));
     let callback_observed = callback_closed.clone();
@@ -1780,7 +1793,7 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
 #[should_panic(expected = "GALOPP Execute callback owner Soldier(SoldierId(0)) is not a rider")]
 fn galopp_execute_callback_rejects_non_rider_owner() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 }
 
@@ -1788,7 +1801,7 @@ fn galopp_execute_callback_rejects_non_rider_owner() {
 #[should_panic(expected = "disappeared before its synchronous GALOPP Execute callback")]
 fn galopp_execute_callback_rejects_missing_selected_owner() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     engine.remove_entity(owner);
     engine.dispatch_galopp_loop_event(&crate::sim_rng::test_context(), &LevelAssets::new(), owner);
 }
@@ -1950,7 +1963,7 @@ fn install_rider_charge_fixture(
     soldier
         .element
         .set_position_map(MapPoint::new(100.0, 100.0));
-    let rider_id = engine.add_entity(rider);
+    let rider_id = engine.add_test_entity(rider);
 
     let order_id = engine.orders.allocate_order_id();
     let mut order = Order::new(order_type, 300.0, 100.0, order_id);
@@ -2037,7 +2050,7 @@ fn add_charge_victim(engine: &mut EngineInner, position: MapPoint) -> EntityId {
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -4.0, -4.0, 4.0, 4.0,
         ));
-    engine.add_entity(victim)
+    engine.add_test_entity(victim)
 }
 
 fn install_charge_victim_motion(
@@ -2120,7 +2133,7 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
     mover
         .element_data_mut()
         .publish_order_posture(Posture::Upright);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
     install_charge_victim_motion(
         &mut engine,
         mover_id,
@@ -2139,8 +2152,8 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
         .and_then(|actor| actor.active_movement.sequence_id)
         .expect("movement is armed");
 
-    let foreign_owner = engine.add_entity(make_test_pc(Posture::Upright));
-    let nested_owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let foreign_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let nested_owner = engine.add_test_entity(make_test_pc(Posture::Upright));
     let foreign_seq = engine
         .orders
         .sequence_manager
@@ -2393,7 +2406,7 @@ fn rider_charge_initializes_once_resamples_geometry_and_keeps_wrong_layer_pendin
         100.0 + 100.0 * forward_x + 30.0 * side_x,
         100.0 + 100.0 * forward_y + 30.0 * side_y,
     ));
-    let victim_id = engine.add_entity(victim);
+    let victim_id = engine.add_test_entity(victim);
     let sim = crate::sim_rng::test_context();
 
     engine.tick_entity_movement(&sim, &assets);
@@ -2853,7 +2866,7 @@ fn rider_charge_perform_motion_uses_live_anti_collision_diversion() {
     obstacle
         .element_data_mut()
         .set_position_map(MapPoint::new(108.0, 102.0));
-    engine.add_entity(obstacle);
+    engine.add_test_entity(obstacle);
 
     tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
 
@@ -3446,7 +3459,7 @@ fn current_movement_bootstraps_from_waiting_with_destination_state() {
     let mut mover = make_test_pc(Posture::Upright);
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let action = OrderType::WalkingUpright;
     let script = SpriteScript {
@@ -3550,7 +3563,7 @@ fn move_waiting_freeze_does_not_enter_destination_motion() {
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(position);
     mover.actor_data_mut().unwrap().action_state = ActionState::Moving;
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let preserved_action = OrderType::TransitionWaitingUprightRunningUpright;
     let script = SpriteScript {
@@ -3687,22 +3700,15 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
             }),
         );
 
-        let (observer_id, target_id) = if observer_before_target {
-            let observer_id = engine.add_entity(observer);
-            let target_id = engine.add_entity(target);
-            (observer_id, target_id)
-        } else {
-            let target_id = engine.add_entity(target);
-            let observer_id = engine.add_entity(observer);
-            (observer_id, target_id)
-        };
+        let (observer_id, target_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                observer,
+                target,
+                observer_before_target,
+            );
 
-        let mut positions_before_movement =
-            crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-        for (entity_id, entity) in engine.world.entities.occupied() {
-            positions_before_movement[entity_id] =
-                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-        }
+        let positions_before_movement = engine.boundary_positions_snapshot();
 
         // This mutation is the smallest deterministic stand-in for the
         // globally batched tick_entity_movement between the captured input
@@ -3774,7 +3780,6 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     use crate::order::{Order, OrderType};
     use crate::position_interface::{Direction, SectorHandle};
     use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     #[derive(Debug, PartialEq)]
     struct Observation {
@@ -3787,45 +3792,6 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
         seeker_state_after_crossing_tolerance: SequenceState,
         seeker_after_next_tolerance_sample: MapPoint,
         seeker_state_after_next_tolerance_sample: SequenceState,
-    }
-
-    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
-        let action = OrderType::WalkingUpright;
-        let script = SpriteScript {
-            action_id: action as u16,
-            action_done: 0,
-            average_speed: 20.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 20,
-            frame_ids: vec![1],
-            delays: vec![0],
-            distances: vec![20],
-            offsets: vec![SpriteFrameOffset::ZERO],
-            sound_ids: vec![0],
-        };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[action as usize] = 0;
-        let mut sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
-            std::sync::Arc::new(conversion),
-        );
-
-        let element = engine
-            .get_entity_mut(entity_id)
-            .expect("movement fixture actor exists")
-            .element_data_mut();
-        let position = element.position_map();
-        let sector = element.sector();
-        sprite.position_iface.set_sector(sector);
-        sprite.position_iface.set_anti_collision_on(false);
-        sprite
-            .position_iface
-            .set_move_box(crate::coordinates::MoveBox::from_corners(
-                MapVec::new(-2.0, -2.0),
-                MapVec::new(2.0, 2.0),
-            ));
-        element.sprite = sprite;
-        element.set_position_map(position);
     }
 
     fn arm_movement(
@@ -3902,18 +3868,16 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
             .set_position_map(target_before_movement);
         target.element_data_mut().set_sector(SectorHandle::new(1));
 
-        let (seeker_id, target_id) = if seeker_before_target {
-            let seeker_id = engine.add_entity(seeker);
-            let target_id = engine.add_entity(target);
-            (seeker_id, target_id)
-        } else {
-            let target_id = engine.add_entity(target);
-            let seeker_id = engine.add_entity(seeker);
-            (seeker_id, target_id)
-        };
+        let (seeker_id, target_id) =
+            crate::engine::test_support::actors::add_pair_in_creation_order(
+                &mut engine,
+                seeker,
+                target,
+                seeker_before_target,
+            );
 
-        bind_walking_sprite(&mut engine, seeker_id);
-        bind_walking_sprite(&mut engine, target_id);
+        bind_walking_sprite(&mut engine, seeker_id, false);
+        bind_walking_sprite(&mut engine, target_id, false);
         arm_movement(&mut engine, target_id, target_destination, None);
         let seeker_sequence = arm_movement(
             &mut engine,
@@ -4040,46 +4004,6 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     use crate::order::{Order, OrderType};
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequenceElementData, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
-    fn bind_walking_sprite(engine: &mut EngineInner, entity_id: EntityId) {
-        let action = OrderType::WalkingUpright;
-        let script = SpriteScript {
-            action_id: action as u16,
-            action_done: 0,
-            average_speed: 20.0,
-            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
-            sum_distance: 20,
-            frame_ids: vec![1],
-            delays: vec![0],
-            distances: vec![20],
-            offsets: vec![SpriteFrameOffset::ZERO],
-            sound_ids: vec![0],
-        };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
-        conversion[action as usize] = 0;
-        let mut sprite = crate::sprite::Sprite::new(
-            std::sync::Arc::new(vec![script; 16]),
-            std::sync::Arc::new(conversion),
-        );
-
-        let element = engine
-            .get_entity_mut(entity_id)
-            .expect("anti-collision fixture actor exists")
-            .element_data_mut();
-        let position = element.position_map();
-        let sector = element.sector();
-        sprite.position_iface.set_sector(sector);
-        sprite.position_iface.set_anti_collision_on(true);
-        sprite
-            .position_iface
-            .set_move_box(crate::coordinates::MoveBox::from_corners(
-                MapVec::new(-2.0, -2.0),
-                MapVec::new(2.0, 2.0),
-            ));
-        element.sprite = sprite;
-        element.set_position_map(position);
-    }
 
     let mut engine = EngineInner::new();
     let destination = MapPoint::new(10.0, 0.0);
@@ -4096,10 +4020,10 @@ fn final_arrival_step_runs_actor_anti_collision_before_snapping() {
     blocker.element_data_mut().set_position_map(destination);
     blocker.element_data_mut().set_sector(SectorHandle::new(1));
 
-    let mover_id = engine.add_entity(mover);
-    let blocker_id = engine.add_entity(blocker);
-    bind_walking_sprite(&mut engine, mover_id);
-    bind_walking_sprite(&mut engine, blocker_id);
+    let mover_id = engine.add_test_entity(mover);
+    let blocker_id = engine.add_test_entity(blocker);
+    bind_walking_sprite(&mut engine, mover_id, true);
+    bind_walking_sprite(&mut engine, blocker_id, true);
 
     let mut movement =
         SequenceElement::new_movement(1, Command::Move, Some(mover_id), OrderType::WalkingUpright);
@@ -4188,7 +4112,7 @@ fn deviated_blocked_post_step_arrival_pops_intermediate_waypoint_without_snappin
     mover.element_data_mut().active = true;
     mover.element_data_mut().set_position_map(start);
     mover.element_data_mut().set_sector(SectorHandle::new(1));
-    let mover_id = engine.add_entity(mover);
+    let mover_id = engine.add_test_entity(mover);
 
     let action = OrderType::WalkingUpright;
     let script = SpriteScript {
@@ -4342,7 +4266,7 @@ fn npc_hourglass_tail_drains_old_lock_queue_only_after_unlock() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
-    let soldier_id = engine.add_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let soldier_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let ai = engine
@@ -4418,9 +4342,9 @@ fn deferred_wakeup_pc_applies_specific_blink_inline_to_opposite_camp_npcs() {
     use crate::element::{Camp, Posture};
 
     let mut engine = EngineInner::new();
-    let waker = engine.add_entity(make_test_pc(Posture::Upright));
-    let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_pc(Posture::Upright));
+    let same_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
@@ -4450,9 +4374,9 @@ fn deferred_wakeup_soldier_defers_blink_until_its_creation_slot() {
         .global
         .soldier_camps
         .extend([Camp::Royalists, Camp::Lacklandists]);
-    let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let same_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let same_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, same_camp_npc, waker);
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
@@ -4485,8 +4409,8 @@ fn deferred_wakeup_soldier_skips_blink_when_npcs_cannot_be_enemies() {
     use crate::element::Camp;
 
     let mut engine = EngineInner::new();
-    let waker = engine.add_entity(make_test_ai_soldier(Camp::Royalists));
-    let opposite_camp_npc = engine.add_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let waker = engine.add_test_entity(make_test_ai_soldier(Camp::Royalists));
+    let opposite_camp_npc = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     install_seen_enemy(&mut engine, opposite_camp_npc, waker);
 
     engine

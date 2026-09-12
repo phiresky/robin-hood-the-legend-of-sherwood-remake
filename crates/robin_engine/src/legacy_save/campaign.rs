@@ -6,6 +6,7 @@
 //! order. The returned `engine_offset` is therefore an independently checked
 //! boundary, not a scan for the next checkpoint.
 
+use super::read_helpers::DEFAULT_LIST_LIMIT;
 use enum_map::enum_map;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -58,16 +59,16 @@ pub struct LegacyCampaignLimits {
 impl Default for LegacyCampaignLimits {
     fn default() -> Self {
         Self {
-            missions: 4096,
-            mission_links: 4096,
-            characters: 4096,
-            character_links: 4096,
+            missions: DEFAULT_LIST_LIMIT,
+            mission_links: DEFAULT_LIST_LIMIT,
+            characters: DEFAULT_LIST_LIMIT,
+            character_links: DEFAULT_LIST_LIMIT,
             production_sectors: 64,
-            production_occupants: 4096,
-            collected_relics: 4096,
+            production_occupants: DEFAULT_LIST_LIMIT,
+            collected_relics: DEFAULT_LIST_LIMIT,
             peasant_names: 65535,
             last_played_missions: 3,
-            wide_string_code_units: 4096,
+            wide_string_code_units: DEFAULT_LIST_LIMIT,
         }
     }
 }
@@ -851,10 +852,7 @@ fn map_mission_status(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
     use std::path::{Path, PathBuf};
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
@@ -863,14 +861,7 @@ mod tests {
     };
     use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn minimal_campaign_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -934,16 +925,11 @@ mod tests {
             LegacyCampaignStream::read(reader, &LegacyCampaignLimits::default()).unwrap_err()
         });
         assert_eq!(error.field, "last_pseudo_mission_id");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 
     #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use robin_test_support::original_data;
 
     fn repository_fixture(relative: &str) -> PathBuf {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

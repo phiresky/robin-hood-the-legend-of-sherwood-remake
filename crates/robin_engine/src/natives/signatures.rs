@@ -5,6 +5,13 @@
 
 use super::NativeFn;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(super) enum NativeYieldPolicy {
+    Never,
+    Always,
+    Conditional,
+}
+
 /// Engine word representation shared by native adapters. Historical type
 /// spellings remain in the registry for documentation and ABI identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -170,285 +177,285 @@ macro_rules! native_registry {
     ($consumer:ident) => {
         $consumer! {
             original {
-            InitGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua);
-            SetGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua);
-            GetGlobal => ("int", [("int", "iID")], lua);
-            GetActorScript => ("Actor", [("int", "iPosition")], lua);
-            GetDoorScript => ("Door", [("int", "iPosition")], lua);
-            GetPatchScript => ("Patch", [("int", "iPosition")], lua);
-            GetLocationScript => ("Location", [("int", "iPosition")], lua);
-            GetSoundSourceScript => ("SoundSource", [("int", "iPosition")], lua);
-            GetBuildingScript => ("Building", [("int", "iPosition")], lua);
-            GetWayScript => ("Way", [("int", "iPosition")], lua);
-            GetActorIndex => ("int", [("Actor", "actor")], lua);
-            GetDoorIndex => ("int", [("Door", "door")], lua);
-            GetPatchIndex => ("int", [("Patch", "patch")], lua);
-            GetLocationIndex => ("int", [("Location", "location")], lua);
-            GetSoundSourceIndex => ("int", [("SoundSource", "soundsource")], lua);
-            GetBuildingIndex => ("int", [("Building", "building")], lua);
-            GetWayIndex => ("int", [("Way", "way")], lua);
-            StartDialog => ("void", [("int", "iDialogue")], lua);
-            ScrollCameraTo => ("bool", [("Location", "location")], lua);
-            ScrollCameraSlowlyTo => ("bool", [("Location", "location"), ("float", "fSpeed")], lua);
-            JumpCameraTo => ("bool", [("Location", "location")], lua);
-            SetZoomLevel => ("bool", [("float", "fZoom")], lua);
-            DisplayMap => ("bool", [("bool", "bDisplay")], lua);
-            DisplayConsole => ("void", [], lua);
-            CustomizeMinimapDisplay => ("void", [("Actor", "actor"), ("int", "iKindOfDot")], lua);
-            DefineFlatTrajectoryZone => ("void", [("Location", "pLocation"), ("int", "iApex")], lua);
-            AddShortBriefing => ("void", [("int", "iID"), ("bool", "bPrimary")], lua);
-            DoneShortBriefing => ("void", [("int", "iID")], lua);
-            ChooseVictoryDefeatText => ("void", [("int", "iID")], lua);
-            ForceCheckVictory => ("void", [], lua);
-            Start => ("bool", [], lua);
-            Thanx => ("bool", [], lua);
-            Then => ("int", [], lua);
-            RecordScrollCameraTo => ("bool", [("Location", "location")], lua);
-            RecordJumpCameraTo => ("bool", [("Location", "location")], lua);
-            RecordSetZoom => ("bool", [("float", "fZoomLevel")], lua);
-            RecordDisplayMap => ("bool", [("bool", "bDisplay")], lua);
-            RecordActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua);
-            RecordCharacterAvailable => ("bool", [("Actor", "actor"), ("bool", "bAvailable")], lua);
-            RecordLockCameraOn => ("bool", [("Actor", "actor")], lua);
-            RecordClearCameraLock => ("bool", [], lua);
-            RecordPlayDialog => ("bool", [("int", "iDialogID")], lua);
-            RecordMoveCameraTo => ("bool", [("Location", "destination"), ("int", "iSpeed")], lua);
-            RecordSendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua);
-            RecordSendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua);
-            RecordMove => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle")], lua);
-            RecordEnterGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua);
-            RecordLeaveGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua);
-            RecordTurnTo => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
-            RecordPlayAnim => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
-            RecordPlayAnimLoop => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
-            RecordPlayAnimFreeze => ("bool", [("Actor", "actor"), ("int", "iId")], lua);
-            RecordLockAI => ("bool", [("Actor", "actor")], lua);
-            RecordUnlockAI => ("bool", [("Actor", "actor")], lua);
-            RecordLockUser => ("bool", [], lua);
-            RecordUnLockUser => ("bool", [], lua);
-            RecordTimer => ("bool", [("int", "iFrames")], lua);
-            RecordSeekActor => ("bool", [("Actor", "actor"), ("Actor", "target"), ("int", "iStyle"), ("float", "fTolerance")], lua);
-            RecordStopSeek => ("bool", [("Actor", "actor")], lua);
-            RecordAction => ("bool", [("Actor", "actor"), ("int", "iID"), ("int", "iValue")], lua);
-            RecordReplaceAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim"), ("int", "iNewAnim")], lua);
-            RecordRestoreAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim")], lua);
-            RecordSpeakPC => ("bool", [("Actor", "actor"), ("int", "iRemarkID"), ("int", "iRemarkVariant")], lua);
-            RecordTakeCorpse => ("int", [("Actor", "taker"), ("Actor", "corpse"), ("int", "iStyle")], lua);
-            RecordMoveIntoBuilding => ("bool", [("Actor", "actor"), ("Location", "pointBeforeDoor"), ("int", "iStyle")], lua);
-            RecordLeaveCorpse => ("bool", [("Actor", "actor")], lua);
-            ResetAnim => ("bool", [("Actor", "actor")], lua);
-            RecordStartMobileElement => ("void", [("int", "iIndex")], lua);
-            RecordStopMobileElement => ("void", [("int", "iIndex")], lua);
-            RecordSpeak => ("bool", [("Actor", "actor"), ("int", "iRemarkID")], lua);
-            RecordSeekActorMessage => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID")], lua);
-            RecordSeekActorMessageWithArguments => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID"), ("int", "iArg1"), ("int", "iArg2")], lua);
-            RecordActivateMobileElement => ("void", [("int", "iIndex")], lua);
-            RecordDeactivateMobileElement => ("void", [("int", "iIndex")], lua);
-            ThisActor => ("Actor", [], lua);
-            GetNumberOfActorsInEngine => ("int", [], lua);
-            IsActorAnimation => ("bool", [("Actor", "actor")], lua);
-            IsActorObject => ("bool", [("Actor", "actor")], lua);
-            IsActorCharacter => ("bool", [("Actor", "actor")], lua);
-            IsActorPC => ("bool", [("Actor", "actor")], lua);
-            IsActorNPC => ("bool", [("Actor", "actor")], lua);
-            IsActorSoldier => ("bool", [("Actor", "actor")], lua);
-            IsActorCivilian => ("bool", [("Actor", "actor")], lua);
-            IsActorAnimal => ("bool", [("Actor", "actor")], lua);
-            IsActorCart => ("bool", [("Actor", "actor")], lua);
-            IsNull => ("bool", [("Actor", "actor")], lua);
-            IsActorEqual => ("bool", [("Actor", "one"), ("Actor", "two")], lua);
-            IsActorDead => ("bool", [("Actor", "actor")], lua);
-            IsActorKO => ("bool", [("Actor", "actor")], lua);
-            IsActorTied => ("bool", [("Actor", "actor")], lua);
-            IsActorHS => ("bool", [("Actor", "actor")], lua);
-            GetActorPosture => ("int", [("Actor", "actor")], lua);
-            SetActorPosture => ("void", [("Actor", "actor"), ("int", "iPosture")], lua);
-            GetActorDirection => ("int", [("Actor", "actor")], lua);
-            SetActorDirection => ("bool", [("Actor", "actor"), ("int", "iDirection")], lua);
-            GetActorLocation => ("Location", [("Actor", "actor")], lua);
-            SetActorLocation => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
-            IsInside => ("bool", [("Actor", "actor"), ("Location", "location")], lua);
-            IsInsideBuilding => ("bool", [("Actor", "actor"), ("Building", "building")], lua);
-            UnBlip => ("bool", [("Actor", "actor")], lua);
-            GetMovementStyle => ("int", [("Actor", "actor")], lua);
-            GetCurrentAction => ("int", [("Actor", "actor")], lua);
-            InflictPain => ("void", [("Actor", "actor"), ("int", "iDamage"), ("bool", "bStun")], lua);
-            StopActor => ("bool", [("Actor", "actor")], lua);
-            Sees => ("bool", [("Actor", "actorNPC"), ("Actor", "actorTarget")], lua);
-            EnableViewCone => ("void", [("Actor", "actor")], lua);
-            GetOutlineDisplay => ("bool", [], lua);
-            SetOutlineDisplay => ("void", [("bool", "bDisplay")], lua);
-            PrototypeFilterEvent => ("bool", [("Actor", "prototype"), ("Actor", "actorSource"), ("int", "iEvent")], lua);
-            SendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua);
-            SendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua);
-            God => ("Actor", [], lua);
-            Select => ("bool", [("int", "selectCode")], lua);
-            Deactivate => ("bool", [("Actor", "actor")], lua);
-            Activate => ("bool", [("Actor", "actor")], lua);
-            SetActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua);
-            IsActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction")], lua);
-            SetPersistentProperty => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iAmount")], lua);
-            GetPersistentProperty => ("int", [("Actor", "actor"), ("int", "iProperty")], lua);
-            IsAnyCivilianDead => ("bool", [], lua);
-            IsAnyEnemyDead => ("bool", [], lua);
-            GetOverallEnemyAlert => ("int", [], lua);
-            GetOverallCivilianAlert => ("int", [], lua);
-            SetAIAlertStatus => ("bool", [("Actor", "actor"), ("int", "iStatus")], lua);
-            GetAIAlertStatus => ("int", [("Actor", "actor")], lua);
-            SetAIState => ("bool", [("Actor", "actor"), ("int", "iState")], lua);
-            GetAIState => ("int", [("Actor", "actor")], lua);
-            SetAIAttitude => ("bool", [("Actor", "actor"), ("int", "iAttitude")], lua);
-            GetAIAttitude => ("int", [("Actor", "actor")], lua);
-            SetAILevel => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iLevel")], lua);
-            StareActor => ("void", [("Actor", "actor"), ("Actor", "actorTarget"), ("bool", "bTurnSprite")], lua);
-            StareLocation => ("void", [("Actor", "actor"), ("Location", "locPoint"), ("bool", "bTurnSprite")], lua);
-            AssignPath => ("void", [("Actor", "actor"), ("Way", "myWay")], lua);
-            AssignPost => ("void", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection")], lua);
-            LockAI => ("void", [("Actor", "actor"), ("bool", "bRememberEvents")], lua);
-            UnlockAI => ("void", [("Actor", "actor")], lua);
-            ForceBattleDecision => ("void", [("Actor", "actor"), ("int", "iDecision")], lua);
-            MakeNoise => ("void", [("Location", "location"), ("int", "iTypeID")], lua);
-            Freeze => ("void", [("Actor", "actor"), ("bool", "bFrozen")], lua);
-            FreezeAll => ("void", [("bool", "bFrozen")], lua);
-            SetPathWalkingStyle => ("void", [("Actor", "NPC"), ("int", "i0Walking1Running2Backward")], lua);
-            GetSoldierRank => ("int", [("Actor", "actor")], lua);
-            IsAnimationActive => ("bool", [("Actor", "actor")], lua);
-            SetAnimationState => ("bool", [("Actor", "actor"), ("bool", "bState")], lua);
-            IsPatchApplied => ("bool", [("Patch", "patch")], lua);
-            ApplyPatch => ("bool", [("Patch", "patch")], lua);
-            ResetPatch => ("bool", [("Patch", "patch")], lua);
-            SuspendAllSoundSources => ("bool", [], lua);
-            ResumeAllSoundSources => ("bool", [], lua);
-            ActivateSoundSource => ("bool", [("SoundSource", "source")], lua);
-            DeactivateSoundSource => ("bool", [("SoundSource", "source")], lua);
-            DestroySoundSource => ("bool", [("SoundSource", "source")], lua);
-            CleanFromHisBuildingBeforeTeleport => ("bool", [("Actor", "actor")], no_lua);
-            CleanFromScriptZoneBeforeTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua);
-            AddToScriptZoneAfterTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua);
-            SetCorpseExistsInBuilding => ("void", [("Actor", "pActor")], no_lua);
+            InitGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua, ScriptCore, Never);
+            SetGlobal => ("void", [("int", "iID"), ("int", "iValue")], lua, ScriptCore, Never);
+            GetGlobal => ("int", [("int", "iID")], lua, ScriptCore, Never);
+            GetActorScript => ("Actor", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetDoorScript => ("Door", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetPatchScript => ("Patch", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetLocationScript => ("Location", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetSoundSourceScript => ("SoundSource", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetBuildingScript => ("Building", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetWayScript => ("Way", [("int", "iPosition")], lua, ScriptCore, Never);
+            GetActorIndex => ("int", [("Actor", "actor")], lua, ScriptCore, Never);
+            GetDoorIndex => ("int", [("Door", "door")], lua, ScriptCore, Never);
+            GetPatchIndex => ("int", [("Patch", "patch")], lua, ScriptCore, Never);
+            GetLocationIndex => ("int", [("Location", "location")], lua, ScriptCore, Never);
+            GetSoundSourceIndex => ("int", [("SoundSource", "soundsource")], lua, ScriptCore, Never);
+            GetBuildingIndex => ("int", [("Building", "building")], lua, ScriptCore, Never);
+            GetWayIndex => ("int", [("Way", "way")], lua, ScriptCore, Never);
+            StartDialog => ("void", [("int", "iDialogue")], lua, Sequences, Never);
+            ScrollCameraTo => ("bool", [("Location", "location")], lua, Sequences, Never);
+            ScrollCameraSlowlyTo => ("bool", [("Location", "location"), ("float", "fSpeed")], lua, Sequences, Never);
+            JumpCameraTo => ("bool", [("Location", "location")], lua, Sequences, Never);
+            SetZoomLevel => ("bool", [("float", "fZoom")], lua, Sequences, Never);
+            DisplayMap => ("bool", [("bool", "bDisplay")], lua, Sequences, Never);
+            DisplayConsole => ("void", [], lua, Sequences, Never);
+            CustomizeMinimapDisplay => ("void", [("Actor", "actor"), ("int", "iKindOfDot")], lua, Sequences, Never);
+            DefineFlatTrajectoryZone => ("void", [("Location", "pLocation"), ("int", "iApex")], lua, Sequences, Never);
+            AddShortBriefing => ("void", [("int", "iID"), ("bool", "bPrimary")], lua, Sequences, Never);
+            DoneShortBriefing => ("void", [("int", "iID")], lua, Sequences, Never);
+            ChooseVictoryDefeatText => ("void", [("int", "iID")], lua, Sequences, Never);
+            ForceCheckVictory => ("void", [], lua, ScriptCore, Never);
+            Start => ("bool", [], lua, ScriptCore, Never);
+            Thanx => ("bool", [], lua, ScriptCore, Always);
+            Then => ("int", [], lua, ScriptCore, Never);
+            RecordScrollCameraTo => ("bool", [("Location", "location")], lua, Sequences, Never);
+            RecordJumpCameraTo => ("bool", [("Location", "location")], lua, Sequences, Never);
+            RecordSetZoom => ("bool", [("float", "fZoomLevel")], lua, Sequences, Never);
+            RecordDisplayMap => ("bool", [("bool", "bDisplay")], lua, Sequences, Never);
+            RecordActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua, Sequences, Never);
+            RecordCharacterAvailable => ("bool", [("Actor", "actor"), ("bool", "bAvailable")], lua, Sequences, Never);
+            RecordLockCameraOn => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            RecordClearCameraLock => ("bool", [], lua, Sequences, Never);
+            RecordPlayDialog => ("bool", [("int", "iDialogID")], lua, Sequences, Never);
+            RecordMoveCameraTo => ("bool", [("Location", "destination"), ("int", "iSpeed")], lua, Sequences, Never);
+            RecordSendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua, Sequences, Never);
+            RecordSendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua, Sequences, Never);
+            RecordMove => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle")], lua, Sequences, Never);
+            RecordEnterGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua, Sequences, Never);
+            RecordLeaveGame => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection"), ("int", "iStyle")], lua, Sequences, Never);
+            RecordTurnTo => ("bool", [("Actor", "actor"), ("Location", "location")], lua, Sequences, Never);
+            RecordPlayAnim => ("bool", [("Actor", "actor"), ("int", "iId")], lua, Sequences, Never);
+            RecordPlayAnimLoop => ("bool", [("Actor", "actor"), ("int", "iId")], lua, Sequences, Never);
+            RecordPlayAnimFreeze => ("bool", [("Actor", "actor"), ("int", "iId")], lua, Sequences, Never);
+            RecordLockAI => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            RecordUnlockAI => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            RecordLockUser => ("bool", [], lua, Sequences, Never);
+            RecordUnLockUser => ("bool", [], lua, Sequences, Never);
+            RecordTimer => ("bool", [("int", "iFrames")], lua, Sequences, Never);
+            RecordSeekActor => ("bool", [("Actor", "actor"), ("Actor", "target"), ("int", "iStyle"), ("float", "fTolerance")], lua, Sequences, Never);
+            RecordStopSeek => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            RecordAction => ("bool", [("Actor", "actor"), ("int", "iID"), ("int", "iValue")], lua, Sequences, Never);
+            RecordReplaceAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim"), ("int", "iNewAnim")], lua, Sequences, Never);
+            RecordRestoreAnim => ("bool", [("Actor", "actor"), ("int", "iOriginalAnim")], lua, Sequences, Never);
+            RecordSpeakPC => ("bool", [("Actor", "actor"), ("int", "iRemarkID"), ("int", "iRemarkVariant")], lua, Sequences, Never);
+            RecordTakeCorpse => ("int", [("Actor", "taker"), ("Actor", "corpse"), ("int", "iStyle")], lua, Sequences, Never);
+            RecordMoveIntoBuilding => ("bool", [("Actor", "actor"), ("Location", "pointBeforeDoor"), ("int", "iStyle")], lua, Sequences, Never);
+            RecordLeaveCorpse => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            ResetAnim => ("bool", [("Actor", "actor")], lua, Sequences, Never);
+            RecordStartMobileElement => ("void", [("int", "iIndex")], lua, Sequences, Never);
+            RecordStopMobileElement => ("void", [("int", "iIndex")], lua, Sequences, Never);
+            RecordSpeak => ("bool", [("Actor", "actor"), ("int", "iRemarkID")], lua, Sequences, Never);
+            RecordSeekActorMessage => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID")], lua, Sequences, Never);
+            RecordSeekActorMessageWithArguments => ("bool", [("Actor", "pActor"), ("Actor", "pTarget"), ("int", "iStyle"), ("float", "fDistance"), ("Actor", "pActorEvent"), ("int", "iID"), ("int", "iArg1"), ("int", "iArg2")], lua, Sequences, Never);
+            RecordActivateMobileElement => ("void", [("int", "iIndex")], lua, Sequences, Never);
+            RecordDeactivateMobileElement => ("void", [("int", "iIndex")], lua, Sequences, Never);
+            ThisActor => ("Actor", [], lua, Actors, Never);
+            GetNumberOfActorsInEngine => ("int", [], lua, Actors, Never);
+            IsActorAnimation => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorObject => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorCharacter => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorPC => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorNPC => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorSoldier => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorCivilian => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorAnimal => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsActorCart => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsNull => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            IsActorEqual => ("bool", [("Actor", "one"), ("Actor", "two")], lua, ScriptCore, Never);
+            IsActorDead => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            IsActorKO => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            IsActorTied => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            IsActorHS => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            GetActorPosture => ("int", [("Actor", "actor")], lua, Actors, Never);
+            SetActorPosture => ("void", [("Actor", "actor"), ("int", "iPosture")], lua, Actors, Always);
+            GetActorDirection => ("int", [("Actor", "actor")], lua, Actors, Never);
+            SetActorDirection => ("bool", [("Actor", "actor"), ("int", "iDirection")], lua, Actors, Never);
+            GetActorLocation => ("Location", [("Actor", "actor")], lua, Actors, Never);
+            SetActorLocation => ("bool", [("Actor", "actor"), ("Location", "location")], lua, Actors, Always);
+            IsInside => ("bool", [("Actor", "actor"), ("Location", "location")], lua, Actors, Never);
+            IsInsideBuilding => ("bool", [("Actor", "actor"), ("Building", "building")], lua, Actors, Never);
+            UnBlip => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            GetMovementStyle => ("int", [("Actor", "actor")], lua, Actors, Never);
+            GetCurrentAction => ("int", [("Actor", "actor")], lua, Actors, Never);
+            InflictPain => ("void", [("Actor", "actor"), ("int", "iDamage"), ("bool", "bStun")], lua, Actors, Conditional);
+            StopActor => ("bool", [("Actor", "actor")], lua, ScriptCore, Always);
+            Sees => ("bool", [("Actor", "actorNPC"), ("Actor", "actorTarget")], lua, Actors, Never);
+            EnableViewCone => ("void", [("Actor", "actor")], lua, Actors, Conditional);
+            GetOutlineDisplay => ("bool", [], lua, Sequences, Never);
+            SetOutlineDisplay => ("void", [("bool", "bDisplay")], lua, Sequences, Never);
+            PrototypeFilterEvent => ("bool", [("Actor", "prototype"), ("Actor", "actorSource"), ("int", "iEvent")], lua, Actors, Always);
+            SendMessage => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode")], lua, Actors, Always);
+            SendMessageWithArguments => ("void", [("Actor", "actReceiver"), ("int", "iMessageCode"), ("int", "iArgument1"), ("int", "iArgument2")], lua, Actors, Always);
+            God => ("Actor", [], lua, ScriptCore, Never);
+            Select => ("bool", [("int", "selectCode")], lua, ScriptCore, Never);
+            Deactivate => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            Activate => ("bool", [("Actor", "actor")], lua, ScriptCore, Never);
+            SetActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction"), ("bool", "bAvailable")], lua, Actors, Never);
+            IsActionAvailable => ("bool", [("Actor", "actor"), ("int", "iAction")], lua, Actors, Never);
+            SetPersistentProperty => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iAmount")], lua, Actors, Conditional);
+            GetPersistentProperty => ("int", [("Actor", "actor"), ("int", "iProperty")], lua, Actors, Never);
+            IsAnyCivilianDead => ("bool", [], lua, Actors, Never);
+            IsAnyEnemyDead => ("bool", [], lua, Actors, Never);
+            GetOverallEnemyAlert => ("int", [], lua, Actors, Never);
+            GetOverallCivilianAlert => ("int", [], lua, Actors, Never);
+            SetAIAlertStatus => ("bool", [("Actor", "actor"), ("int", "iStatus")], lua, Ai, Never);
+            GetAIAlertStatus => ("int", [("Actor", "actor")], lua, Ai, Never);
+            SetAIState => ("bool", [("Actor", "actor"), ("int", "iState")], lua, Ai, Conditional);
+            GetAIState => ("int", [("Actor", "actor")], lua, Ai, Never);
+            SetAIAttitude => ("bool", [("Actor", "actor"), ("int", "iAttitude")], lua, Ai, Never);
+            GetAIAttitude => ("int", [("Actor", "actor")], lua, Ai, Never);
+            SetAILevel => ("bool", [("Actor", "actor"), ("int", "iProperty"), ("int", "iLevel")], lua, Ai, Never);
+            StareActor => ("void", [("Actor", "actor"), ("Actor", "actorTarget"), ("bool", "bTurnSprite")], lua, Ai, Always);
+            StareLocation => ("void", [("Actor", "actor"), ("Location", "locPoint"), ("bool", "bTurnSprite")], lua, Ai, Always);
+            AssignPath => ("void", [("Actor", "actor"), ("Way", "myWay")], lua, Ai, Always);
+            AssignPost => ("void", [("Actor", "actor"), ("Location", "location"), ("int", "iDirection")], lua, Ai, Always);
+            LockAI => ("void", [("Actor", "actor"), ("bool", "bRememberEvents")], lua, ScriptCore, Always);
+            UnlockAI => ("void", [("Actor", "actor")], lua, ScriptCore, Always);
+            ForceBattleDecision => ("void", [("Actor", "actor"), ("int", "iDecision")], lua, Ai, Never);
+            MakeNoise => ("void", [("Location", "location"), ("int", "iTypeID")], lua, Ai, Never);
+            Freeze => ("void", [("Actor", "actor"), ("bool", "bFrozen")], lua, ScriptCore, Never);
+            FreezeAll => ("void", [("bool", "bFrozen")], lua, ScriptCore, Never);
+            SetPathWalkingStyle => ("void", [("Actor", "NPC"), ("int", "i0Walking1Running2Backward")], lua, Ai, Always);
+            GetSoldierRank => ("int", [("Actor", "actor")], lua, Ai, Never);
+            IsAnimationActive => ("bool", [("Actor", "actor")], lua, World, Never);
+            SetAnimationState => ("bool", [("Actor", "actor"), ("bool", "bState")], lua, World, Never);
+            IsPatchApplied => ("bool", [("Patch", "patch")], lua, World, Never);
+            ApplyPatch => ("bool", [("Patch", "patch")], lua, World, Never);
+            ResetPatch => ("bool", [("Patch", "patch")], lua, World, Never);
+            SuspendAllSoundSources => ("bool", [], lua, World, Never);
+            ResumeAllSoundSources => ("bool", [], lua, World, Never);
+            ActivateSoundSource => ("bool", [("SoundSource", "source")], lua, World, Never);
+            DeactivateSoundSource => ("bool", [("SoundSource", "source")], lua, World, Never);
+            DestroySoundSource => ("bool", [("SoundSource", "source")], lua, World, Never);
+            CleanFromHisBuildingBeforeTeleport => ("bool", [("Actor", "actor")], no_lua, World, Never);
+            CleanFromScriptZoneBeforeTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua, World, Never);
+            AddToScriptZoneAfterTeleport => ("bool", [("Actor", "actor"), ("Location", "cestLaZone")], no_lua, World, Never);
+            SetCorpseExistsInBuilding => ("void", [("Actor", "pActor")], no_lua, World, Never);
             // TODO(original parity): available script API declarations
             // spell ID 156 as `PutActorInBulding`. Rust retains its established
             // corrected public spelling.
-            PutActorInBuilding => ("void", [("Actor", "actor"), ("Building", "building")], no_lua);
-            SetBuildingActive => ("void", [("Building", "building"), ("bool", "bActive")], lua);
-            GetAnyActorInsideBuilding => ("Actor", [("Building", "building")], lua);
-            NoWhere => ("Location", [], lua);
-            GetDistance => ("int", [("Location", "here"), ("Location", "there")], lua);
-            Rand => ("int", [("int", "iMaximum")], lua);
-            PrintConsole => ("void", [("int", "iValue")], lua);
-            GetSizeOfMissionTeam => ("int", [], lua);
-            GetPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua);
-            AddPCToMissionTeam => ("void", [("Actor", "actor")], lua);
-            RemovePCFromMissionTeam => ("void", [("Actor", "actor")], lua);
-            GetNumberOfObligatoryPCsInMissionTeam => ("int", [], lua);
-            GetObligatoryPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua);
-            IsPCObligatoryInMissionTeam => ("bool", [("Actor", "actor")], lua);
-            IsMissionTeamValid => ("bool", [], lua);
-            GetLastPlayedMission => ("int", [], lua);
-            GetNextPlayedMission => ("int", [], lua);
-            IsMenToBlazonConversionMode => ("bool", [], no_lua);
-            GetNumberOfBeamMes => ("int", [], no_lua);
-            MoveBeamMe => ("void", [("int", "iIndex"), ("Location", "pLocation")], no_lua);
-            SetCompanyNumber => ("void", [("Actor", "pActor"), ("int", "iNumber")], lua);
-            SetAlwaysAttentive => ("void", [("Actor", "actor"), ("bool", "bYes")], lua);
-            WinBlazon => ("void", [("Actor", "blazon")], lua);
-            LoseBlazon => ("void", [("Actor", "blazon")], lua);
-            SetInvisible => ("void", [("Actor", "actor"), ("bool", "bHollow")], lua);
-            IsInvisible => ("bool", [("Actor", "actor")], lua);
-            IsDoorLockedPC => ("bool", [("Door", "door")], lua);
-            IsDoorUnlockable => ("bool", [("Door", "door")], lua);
-            IsDoorLockedNPCCivilian => ("bool", [("Door", "door")], lua);
-            IsDoorLockedNPCVillain => ("bool", [("Door", "door")], lua);
-            SetDoorLockedPC => ("void", [("Door", "door"), ("bool", "bState")], lua);
-            SetDoorUnlockable => ("void", [("Door", "door"), ("bool", "bState")], lua);
-            SetDoorLockedNPCCivilian => ("void", [("Door", "door"), ("bool", "bState")], lua);
-            SetDoorLockedNPCVillain => ("void", [("Door", "door"), ("bool", "bState")], lua);
-            SetDoorSpecialAutorisation => ("void", [("Door", "door"), ("Actor", "actor"), ("bool", "bDirect")], lua);
-            ActivateDoorMouseSector => ("void", [("bool", "bActive"), ("Door", "door")], lua);
-            ThisScroll => ("Actor", [], lua);
-            GetScrollStatus => ("int", [("Actor", "scroll")], lua);
-            SetScrollStatus => ("void", [("Actor", "scroll"), ("int", "iStatus")], lua);
-            GetCustomCampaignValue => ("int", [("int", "iIndex")], lua);
-            SetCustomCampaignValue => ("void", [("int", "iIndex"), ("int", "iValue")], lua);
-            GetCustomNPCValue => ("int", [("Actor", "actor"), ("int", "iIndex")], lua);
-            SetCustomNPCValue => ("void", [("Actor", "actor"), ("int", "iIndex"), ("int", "iValue")], lua);
-            RegisterAsProductionSector => ("void", [("int", "iType"), ("Location", "sector"), ("int", "iProductionSpeed")], lua);
-            AddProductionPoint => ("void", [("int", "iType"), ("Location", "point")], lua);
-            GetActorForBeamMe => ("Actor", [("int", "iIndex")], lua);
-            DisplayPopupText => ("void", [("int", "iPopupTextID")], lua);
-            RecordDisplayPopupText => ("void", [("int", "iPopupTextID")], lua);
-            GetNumberOfActorsInSector => ("int", [("Location", "loc")], lua);
-            GetActorInSector => ("Actor", [("Location", "loc"), ("int", "iIndex")], lua);
-            BitwiseAnd => ("int", [("int", "i"), ("int", "j")], lua);
-            BitwiseOr => ("int", [("int", "i"), ("int", "j")], lua);
-            BitwiseXor => ("int", [("int", "i"), ("int", "j")], lua);
-            HasPCAction => ("bool", [("Actor", "actPC"), ("int", "iActionCode")], lua);
-            HasAnyPCAction => ("bool", [("int", "iActionCode")], lua);
-            GetRobin => ("Actor", [], lua);
-            RecordMoveNear => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle"), ("int", "iTolerance")], lua);
-            ComputeLocationBetween => ("Location", [("Location", "locA"), ("Location", "locB"), ("float", "fLambdaBetweenZeroAndOne")], lua);
-            DeclareAsCombatTrainer => ("void", [("Actor", "actor")], lua);
-            GetRelic => ("Actor", [("int", "iID")], lua);
-            GetNumberOfPCs => ("int", [], lua);
-            GetPC => ("Actor", [("int", "i")], lua);
-            AddAsSubordinate => ("void", [("Actor", "actChief"), ("Actor", "actSubordinate")], lua);
-            RemoveAllSubordinates => ("void", [("Actor", "actChief")], lua);
-            SwitchToAlertPath => ("void", [("Actor", "actSoldier")], lua);
-            IsActorRider => ("bool", [("Actor", "actWhoever")], lua);
-            IsUnblipped => ("bool", [("Actor", "actWhoever")], lua);
-            IsBlazonWon => ("bool", [("Actor", "blazon")], lua);
-            AddRepulsivePoint => ("int", [("Location", "location"), ("float", "fRadius"), ("float", "fActionRadius"), ("int", "iFlags")], lua);
-            SetViewRadius => ("void", [("int", "iRadius")], lua);
-            RecordFreezeAll => ("void", [("bool", "bFreeze")], lua);
-            DeleteRepulsivePoint => ("void", [("int", "iID")], lua);
-            SetNPCEmoticon => ("void", [("Actor", "actNPC"), ("int", "iEmoticonType"), ("int", "iTime")], lua);
-            ConfiscateMoney => ("void", [("Actor", "actCapitalist")], lua);
-            AreAllPCsInside => ("bool", [("Location", "location")], lua);
-            AreAllEnemiesInsideHS => ("bool", [("Location", "locZone")], lua);
-            AddPCToGang => ("void", [("Actor", "actor")], lua);
-            AttachScrollToNPC => ("void", [("Actor", "actNPC"), ("Actor", "scroll")], lua);
-            AreAllBlazonsWon => ("bool", [], lua);
-            IsBonusItemPickedUp => ("bool", [("Actor", "actItem")], lua);
-            GetRansomMoney => ("int", [], lua);
-            SetRansomMoney => ("void", [("int", "iRansomMoneyAmount")], lua);
-            GetDifficultyLevel => ("int", [], lua);
-            DisplaySherwoodReport => ("void", [], lua);
-            IsActorActive => ("bool", [("Actor", "actor")], lua);
-            AddFarmerToGang => ("void", [("int", "iType"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua);
-            SetExperiences => ("void", [("Actor", "actor"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua);
-            RecordUnBlip => ("bool", [("Actor", "pActor")], lua);
-            SetPatchAnimationActive => ("void", [("Patch", "patch"), ("bool", "bActive")], lua);
-            GetNumberOfPCsAlive => ("int", [], lua);
-            AreAllPCsAliveInside => ("bool", [("Location", "location")], lua);
-            TransformHandleTargetToTakeTarget => ("void", [("Actor", "actTarget")], lua);
-            IsPCSelected => ("bool", [("Actor", "actPC")], lua);
-            GetNumberOfSelectedPCs => ("int", [], lua);
-            GetSelectedPC => ("Actor", [("int", "iIndex")], lua);
-            PlayTrapJingle => ("void", [], lua);
-            MakePCCrouched => ("void", [("Actor", "actPC")], lua);
-            HasAnyPCActionWhoIsInThisLevelOrCouldMaybeComeFromSherwood => ("bool", [("int", "iActionCode")], lua);
-            LockPatch => ("void", [("Patch", "patch"), ("bool", "bLocked")], lua);
-            HasAnyActivePCAction => ("bool", [("int", "iActionCode")], lua);
-            GetPCType => ("int", [("Actor", "actPC")], lua);
-            SelectActorPC => ("void", [("Actor", "actPCOrGodForAllPCs"), ("bool", "bSelectOrUnselect")], lua);
-            HasAnyActionSelected => ("bool", [("Actor", "actPC")], lua);
-            GetActorActionState => ("int", [("Actor", "actor")], lua);
-            SetActorActionState => ("void", [("Actor", "actor"), ("int", "iActionState")], lua);
-            SecretAgentsAreBackInSherwood => ("bool", [], lua);
-            FadeToBlack => ("void", [("int", "iSpeed")], lua);
-            LinkTargetToFX => ("void", [("Actor", "actTarget"), ("Actor", "actFX")], lua);
-            ForbidNPCRemark => ("void", [("Actor", "actNPC"), ("int", "iRemark"), ("bool", "bTrueMeansForbidFalseMeansAllow")], lua);
+            PutActorInBuilding => ("void", [("Actor", "actor"), ("Building", "building")], no_lua, World, Never);
+            SetBuildingActive => ("void", [("Building", "building"), ("bool", "bActive")], lua, World, Never);
+            GetAnyActorInsideBuilding => ("Actor", [("Building", "building")], lua, World, Never);
+            NoWhere => ("Location", [], lua, ScriptCore, Never);
+            GetDistance => ("int", [("Location", "here"), ("Location", "there")], lua, ScriptCore, Never);
+            Rand => ("int", [("int", "iMaximum")], lua, ScriptCore, Never);
+            PrintConsole => ("void", [("int", "iValue")], lua, ScriptCore, Never);
+            GetSizeOfMissionTeam => ("int", [], lua, ScriptCore, Never);
+            GetPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua, Campaign, Never);
+            AddPCToMissionTeam => ("void", [("Actor", "actor")], lua, Campaign, Never);
+            RemovePCFromMissionTeam => ("void", [("Actor", "actor")], lua, Campaign, Never);
+            GetNumberOfObligatoryPCsInMissionTeam => ("int", [], lua, Campaign, Never);
+            GetObligatoryPCFromMissionTeam => ("Actor", [("int", "ulPC")], lua, Campaign, Never);
+            IsPCObligatoryInMissionTeam => ("bool", [("Actor", "actor")], lua, Campaign, Never);
+            IsMissionTeamValid => ("bool", [], lua, ScriptCore, Never);
+            GetLastPlayedMission => ("int", [], lua, ScriptCore, Never);
+            GetNextPlayedMission => ("int", [], lua, ScriptCore, Never);
+            IsMenToBlazonConversionMode => ("bool", [], no_lua, Campaign, Never);
+            GetNumberOfBeamMes => ("int", [], no_lua, Campaign, Never);
+            MoveBeamMe => ("void", [("int", "iIndex"), ("Location", "pLocation")], no_lua, Campaign, Never);
+            SetCompanyNumber => ("void", [("Actor", "pActor"), ("int", "iNumber")], lua, Actors, Never);
+            SetAlwaysAttentive => ("void", [("Actor", "actor"), ("bool", "bYes")], lua, Actors, Conditional);
+            WinBlazon => ("void", [("Actor", "blazon")], lua, Campaign, Never);
+            LoseBlazon => ("void", [("Actor", "blazon")], lua, Campaign, Never);
+            SetInvisible => ("void", [("Actor", "actor"), ("bool", "bHollow")], lua, Actors, Never);
+            IsInvisible => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            IsDoorLockedPC => ("bool", [("Door", "door")], lua, World, Never);
+            IsDoorUnlockable => ("bool", [("Door", "door")], lua, World, Never);
+            IsDoorLockedNPCCivilian => ("bool", [("Door", "door")], lua, World, Never);
+            IsDoorLockedNPCVillain => ("bool", [("Door", "door")], lua, World, Never);
+            SetDoorLockedPC => ("void", [("Door", "door"), ("bool", "bState")], lua, World, Never);
+            SetDoorUnlockable => ("void", [("Door", "door"), ("bool", "bState")], lua, World, Never);
+            SetDoorLockedNPCCivilian => ("void", [("Door", "door"), ("bool", "bState")], lua, World, Never);
+            SetDoorLockedNPCVillain => ("void", [("Door", "door"), ("bool", "bState")], lua, World, Never);
+            SetDoorSpecialAutorisation => ("void", [("Door", "door"), ("Actor", "actor"), ("bool", "bDirect")], lua, World, Never);
+            ActivateDoorMouseSector => ("void", [("bool", "bActive"), ("Door", "door")], lua, World, Never);
+            ThisScroll => ("Actor", [], lua, World, Never);
+            GetScrollStatus => ("int", [("Actor", "scroll")], lua, World, Never);
+            SetScrollStatus => ("void", [("Actor", "scroll"), ("int", "iStatus")], lua, World, Never);
+            GetCustomCampaignValue => ("int", [("int", "iIndex")], lua, ScriptCore, Never);
+            SetCustomCampaignValue => ("void", [("int", "iIndex"), ("int", "iValue")], lua, ScriptCore, Never);
+            GetCustomNPCValue => ("int", [("Actor", "actor"), ("int", "iIndex")], lua, ScriptCore, Never);
+            SetCustomNPCValue => ("void", [("Actor", "actor"), ("int", "iIndex"), ("int", "iValue")], lua, ScriptCore, Never);
+            RegisterAsProductionSector => ("void", [("int", "iType"), ("Location", "sector"), ("int", "iProductionSpeed")], lua, Campaign, Never);
+            AddProductionPoint => ("void", [("int", "iType"), ("Location", "point")], lua, Campaign, Never);
+            GetActorForBeamMe => ("Actor", [("int", "iIndex")], lua, Campaign, Never);
+            DisplayPopupText => ("void", [("int", "iPopupTextID")], lua, Sequences, Never);
+            RecordDisplayPopupText => ("void", [("int", "iPopupTextID")], lua, Sequences, Never);
+            GetNumberOfActorsInSector => ("int", [("Location", "loc")], lua, Campaign, Never);
+            GetActorInSector => ("Actor", [("Location", "loc"), ("int", "iIndex")], lua, Campaign, Never);
+            BitwiseAnd => ("int", [("int", "i"), ("int", "j")], lua, ScriptCore, Never);
+            BitwiseOr => ("int", [("int", "i"), ("int", "j")], lua, ScriptCore, Never);
+            BitwiseXor => ("int", [("int", "i"), ("int", "j")], lua, ScriptCore, Never);
+            HasPCAction => ("bool", [("Actor", "actPC"), ("int", "iActionCode")], lua, Actors, Never);
+            HasAnyPCAction => ("bool", [("int", "iActionCode")], lua, Actors, Never);
+            GetRobin => ("Actor", [], lua, Campaign, Never);
+            RecordMoveNear => ("bool", [("Actor", "actor"), ("Location", "location"), ("int", "iStyle"), ("int", "iTolerance")], lua, Sequences, Never);
+            ComputeLocationBetween => ("Location", [("Location", "locA"), ("Location", "locB"), ("float", "fLambdaBetweenZeroAndOne")], lua, Campaign, Never);
+            DeclareAsCombatTrainer => ("void", [("Actor", "actor")], lua, Ai, Never);
+            GetRelic => ("Actor", [("int", "iID")], lua, Campaign, Never);
+            GetNumberOfPCs => ("int", [], lua, ScriptCore, Never);
+            GetPC => ("Actor", [("int", "i")], lua, ScriptCore, Never);
+            AddAsSubordinate => ("void", [("Actor", "actChief"), ("Actor", "actSubordinate")], lua, Ai, Never);
+            RemoveAllSubordinates => ("void", [("Actor", "actChief")], lua, Ai, Always);
+            SwitchToAlertPath => ("void", [("Actor", "actSoldier")], lua, Ai, Always);
+            IsActorRider => ("bool", [("Actor", "actWhoever")], lua, Actors, Never);
+            IsUnblipped => ("bool", [("Actor", "actWhoever")], lua, Actors, Never);
+            IsBlazonWon => ("bool", [("Actor", "blazon")], lua, Campaign, Never);
+            AddRepulsivePoint => ("int", [("Location", "location"), ("float", "fRadius"), ("float", "fActionRadius"), ("int", "iFlags")], lua, Ai, Never);
+            SetViewRadius => ("void", [("int", "iRadius")], lua, Sequences, Never);
+            RecordFreezeAll => ("void", [("bool", "bFreeze")], lua, Sequences, Never);
+            DeleteRepulsivePoint => ("void", [("int", "iID")], lua, Ai, Never);
+            SetNPCEmoticon => ("void", [("Actor", "actNPC"), ("int", "iEmoticonType"), ("int", "iTime")], lua, Ai, Never);
+            ConfiscateMoney => ("void", [("Actor", "actCapitalist")], lua, Campaign, Never);
+            AreAllPCsInside => ("bool", [("Location", "location")], lua, World, Never);
+            AreAllEnemiesInsideHS => ("bool", [("Location", "locZone")], lua, World, Never);
+            AddPCToGang => ("void", [("Actor", "actor")], lua, Campaign, Never);
+            AttachScrollToNPC => ("void", [("Actor", "actNPC"), ("Actor", "scroll")], lua, World, Never);
+            AreAllBlazonsWon => ("bool", [], lua, ScriptCore, Never);
+            IsBonusItemPickedUp => ("bool", [("Actor", "actItem")], lua, Campaign, Never);
+            GetRansomMoney => ("int", [], lua, ScriptCore, Never);
+            SetRansomMoney => ("void", [("int", "iRansomMoneyAmount")], lua, ScriptCore, Never);
+            GetDifficultyLevel => ("int", [], lua, ScriptCore, Never);
+            DisplaySherwoodReport => ("void", [], lua, Sequences, Never);
+            IsActorActive => ("bool", [("Actor", "actor")], lua, Actors, Never);
+            AddFarmerToGang => ("void", [("int", "iType"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua, Campaign, Never);
+            SetExperiences => ("void", [("Actor", "actor"), ("int", "iExperienceSword"), ("int", "iExperienceBow")], lua, Campaign, Never);
+            RecordUnBlip => ("bool", [("Actor", "pActor")], lua, Sequences, Never);
+            SetPatchAnimationActive => ("void", [("Patch", "patch"), ("bool", "bActive")], lua, World, Never);
+            GetNumberOfPCsAlive => ("int", [], lua, ScriptCore, Never);
+            AreAllPCsAliveInside => ("bool", [("Location", "location")], lua, World, Never);
+            TransformHandleTargetToTakeTarget => ("void", [("Actor", "actTarget")], lua, Campaign, Never);
+            IsPCSelected => ("bool", [("Actor", "actPC")], lua, Campaign, Never);
+            GetNumberOfSelectedPCs => ("int", [], lua, Campaign, Never);
+            GetSelectedPC => ("Actor", [("int", "iIndex")], lua, Campaign, Never);
+            PlayTrapJingle => ("void", [], lua, Sequences, Never);
+            MakePCCrouched => ("void", [("Actor", "actPC")], lua, Actors, Never);
+            HasAnyPCActionWhoIsInThisLevelOrCouldMaybeComeFromSherwood => ("bool", [("int", "iActionCode")], lua, ScriptCore, Never);
+            LockPatch => ("void", [("Patch", "patch"), ("bool", "bLocked")], lua, World, Never);
+            HasAnyActivePCAction => ("bool", [("int", "iActionCode")], lua, Actors, Never);
+            GetPCType => ("int", [("Actor", "actPC")], lua, Campaign, Never);
+            SelectActorPC => ("void", [("Actor", "actPCOrGodForAllPCs"), ("bool", "bSelectOrUnselect")], lua, Campaign, Never);
+            HasAnyActionSelected => ("bool", [("Actor", "actPC")], lua, Actors, Never);
+            GetActorActionState => ("int", [("Actor", "actor")], lua, Actors, Never);
+            SetActorActionState => ("void", [("Actor", "actor"), ("int", "iActionState")], lua, Actors, Always);
+            SecretAgentsAreBackInSherwood => ("bool", [], lua, ScriptCore, Never);
+            FadeToBlack => ("void", [("int", "iSpeed")], lua, Sequences, Never);
+            LinkTargetToFX => ("void", [("Actor", "actTarget"), ("Actor", "actFX")], lua, World, Never);
+            ForbidNPCRemark => ("void", [("Actor", "actNPC"), ("int", "iRemark"), ("bool", "bTrueMeansForbidFalseMeansAllow")], lua, Ai, Never);
             }
             rust_extensions {
-            Reveal => ("int", [("Actor", "actActor")], lua);
-            AddObjective => ("int", [("int", "iObjectiveID"), ("bool", "bIsMainObjective")], lua);
-            CompleteObjective => ("int", [("int", "iObjectiveID")], lua);
-            IsActorOutOfAction => ("bool", [("Actor", "actActor")], lua);
-            SetPatrolShouldRun => ("void", [("Actor", "actPatrolLeader"), ("bool", "bShouldRun")], lua);
-            SequenceReveal => ("int", [("Actor", "actActor")], lua);
-            GetActorAllegiance => ("int", [("Actor", "actActor")], lua);
-            GetDiplomacyRelationship => ("int", [("int", "iFirst"), ("int", "iSecond")], lua);
-            SetDiplomacyRelationship => ("void", [("int", "iFirst"), ("int", "iSecond"), ("int", "iRelationship")], lua);
+            Reveal => ("int", [("Actor", "actActor")], lua, Campaign, Never);
+            AddObjective => ("int", [("int", "iObjectiveID"), ("bool", "bIsMainObjective")], lua, Campaign, Never);
+            CompleteObjective => ("int", [("int", "iObjectiveID")], lua, Campaign, Never);
+            IsActorOutOfAction => ("bool", [("Actor", "actActor")], lua, Campaign, Never);
+            SetPatrolShouldRun => ("void", [("Actor", "actPatrolLeader"), ("bool", "bShouldRun")], lua, Campaign, Never);
+            SequenceReveal => ("int", [("Actor", "actActor")], lua, Campaign, Never);
+            GetActorAllegiance => ("int", [("Actor", "actActor")], lua, ScriptCore, Never);
+            GetDiplomacyRelationship => ("int", [("int", "iFirst"), ("int", "iSecond")], lua, ScriptCore, Never);
+            SetDiplomacyRelationship => ("void", [("int", "iFirst"), ("int", "iSecond"), ("int", "iRelationship")], lua, ScriptCore, Never);
             }
         }
     };
@@ -481,12 +488,33 @@ macro_rules! signature {
 macro_rules! define_native_metadata {
     (
         original {
-            $( $original:ident => ($original_return:literal, $original_params:tt, $original_lua:ident); )*
+            $( $original:ident => ($original_return:literal, $original_params:tt, $original_lua:ident, $original_domain:ident, $original_yield:ident); )*
         }
         rust_extensions {
-            $( $extension:ident => ($extension_return:literal, $extension_params:tt, $extension_lua:ident); )*
+            $( $extension:ident => ($extension_return:literal, $extension_params:tt, $extension_lua:ident, $extension_domain:ident, $extension_yield:ident); )*
         }
     ) => {
+        impl NativeFn {
+            pub(super) fn domain(self) -> super::dispatch::NativeDomain {
+                match self {
+                    $(Self::$original => super::dispatch::NativeDomain::$original_domain,)*
+                    $(Self::$extension => super::dispatch::NativeDomain::$extension_domain,)*
+                }
+            }
+
+            pub(super) fn yield_policy(self) -> NativeYieldPolicy {
+                match self {
+                    $(Self::$original => NativeYieldPolicy::$original_yield,)*
+                    $(Self::$extension => NativeYieldPolicy::$extension_yield,)*
+                }
+            }
+
+            /// Whether any valid call can suspend into the engine driver.
+            pub fn may_yield(self) -> bool {
+                !matches!(self.yield_policy(), NativeYieldPolicy::Never)
+            }
+        }
+
         /// Complete registry in numeric ID order.
         pub const NATIVE_REGISTRY: &[NativeDefinition] = &[
             $(
@@ -518,9 +546,16 @@ macro_rules! define_native_metadata {
 native_registry!(define_native_metadata);
 
 pub fn native_definition_by_index(index: u32) -> Option<&'static NativeDefinition> {
+    let position = if index < super::ORIGINAL_NATIVE_COUNT {
+        index
+    } else {
+        index
+            .checked_sub(super::RUST_EXTENSION_NATIVE_START)?
+            .checked_add(super::ORIGINAL_NATIVE_COUNT)?
+    };
     NATIVE_REGISTRY
-        .iter()
-        .find(|definition| definition.native as u32 == index)
+        .get(usize::try_from(position).ok()?)
+        .filter(|definition| definition.native as u32 == index)
 }
 
 pub fn native_definition_by_name(name: &str) -> Option<&'static NativeDefinition> {
@@ -543,6 +578,42 @@ mod tests {
 
     use super::*;
     use crate::natives::{ORIGINAL_NATIVE_COUNT, RUST_EXTENSION_NATIVE_START, native_name};
+
+    #[test]
+    fn synchronous_ai_natives_are_rejected_before_direct_host_mutation() {
+        for native in [
+            NativeFn::StareActor,
+            NativeFn::StareLocation,
+            NativeFn::AssignPath,
+            NativeFn::AssignPost,
+            NativeFn::SetPathWalkingStyle,
+            NativeFn::SwitchToAlertPath,
+            NativeFn::RemoveAllSubordinates,
+            NativeFn::StopActor,
+            NativeFn::LockAI,
+            NativeFn::UnlockAI,
+        ] {
+            assert_eq!(native.yield_policy(), NativeYieldPolicy::Always, "{native}");
+            assert!(native.may_yield(), "{native}");
+        }
+        assert!(!NativeFn::GetGlobal.may_yield());
+        assert_eq!(
+            NativeFn::SetAIState.yield_policy(),
+            NativeYieldPolicy::Conditional
+        );
+    }
+
+    #[test]
+    fn native_lookup_rejects_out_of_range_ids() {
+        assert!(native_definition_by_index(NATIVE_REGISTRY.len() as u32).is_none());
+        assert!(native_definition_by_index(u32::MAX).is_none());
+        for definition in NATIVE_REGISTRY {
+            assert_eq!(
+                native_definition_by_index(definition.native as u32),
+                Some(definition)
+            );
+        }
+    }
 
     #[test]
     fn registry_has_exhaustive_unique_ids_names_and_signatures() {

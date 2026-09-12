@@ -229,9 +229,7 @@ pub async fn show_host_distribution_attestation(
         (back_label.as_str(), true),
     ];
     let bottom = align_bottom_right(&labels, button_w, button_h);
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     frame.add_widget_absolute(widget_bridge::make_button(
         ID_ACCEPT,
         &bottom[0].label,
@@ -248,8 +246,7 @@ pub async fn show_host_distribution_attestation(
         bottom[1].w,
         bottom[1].h,
     ));
-    let mut input = ModalInputState::new();
-    input.seed_mouse_from_window(event_pump, transform);
+    let mut input = ModalInputState::from_window(event_pump, transform);
     loop {
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
@@ -265,8 +262,7 @@ pub async fn show_host_distribution_attestation(
                 return Ok(None);
             }
         }
-        let events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let events = input.process_frame(&mut frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_CANCEL => return Ok(None),
@@ -368,7 +364,7 @@ pub async fn show_host_distribution_attestation(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -407,9 +403,7 @@ pub async fn show_spellforge_consent(
         (back_label.as_str(), true),
     ];
     let bottom = align_bottom_right(&labels, button_w, button_h);
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     frame.add_widget_absolute(widget_bridge::make_button(
         ID_ACCEPT,
         &bottom[0].label,
@@ -426,8 +420,7 @@ pub async fn show_spellforge_consent(
         bottom[1].w,
         bottom[1].h,
     ));
-    let mut input = ModalInputState::new();
-    input.seed_mouse_from_window(event_pump, transform);
+    let mut input = ModalInputState::from_window(event_pump, transform);
     let mut status = String::new();
 
     loop {
@@ -446,8 +439,7 @@ pub async fn show_spellforge_consent(
             }
             // Deliberately no Return/KpEnter approval accelerator.
         }
-        let events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let events = input.process_frame(&mut frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_CANCEL => return Ok(SpellforgeConsentOutcome::Cancelled),
@@ -599,7 +591,7 @@ pub async fn show_spellforge_consent(
             cursor.draw(renderer, transform, &input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -636,8 +628,7 @@ impl SpellforgeContentSettingsState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input = ModalInputState::new();
-        input.seed_mouse_from_window(event_pump, transform);
+        let mut input = ModalInputState::from_window(event_pump, transform);
         let mut state = Self {
             page: 0,
             status: String::new(),
@@ -679,9 +670,7 @@ impl SpellforgeContentSettingsState {
         let (field_w, field_h) = resources.input_field_dimensions();
         let field_w = field_w.min(592);
         let field_h = field_h.min(34);
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         let revoke_font = resources
             .menu_button_font_any(true)
             .unwrap_or_else(|| panic!("Spellforge content settings require a menu-button font"));
@@ -786,8 +775,7 @@ impl SpellforgeContentSettingsState {
             }
         }
 
-        let events = self.frame.process_input(&self.input.as_widget_input());
-        self.input.end_frame();
+        let events = self.input.process_frame(&mut self.frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
                 ID_BACK => return SpellforgeContentSettingsOutcome::Closed,
@@ -1002,7 +990,7 @@ pub async fn show_spellforge_content_settings(
             resources,
             cursor.as_ref(),
         ) {
-            SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ms(16).await,
+            SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ui_frame().await,
             SpellforgeContentSettingsOutcome::Closed
             | SpellforgeContentSettingsOutcome::ExitRequested => return,
         }

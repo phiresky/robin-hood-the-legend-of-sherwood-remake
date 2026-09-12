@@ -100,6 +100,21 @@ cargo build --locked -p robin_rs --example export_runtime_contract
 target/debug/examples/export_runtime_contract --check wasm-www/runtime-contract.json
 ```
 
+Small inspection tools are built on demand:
+
+```sh
+cargo build -p robin_rs --example count_quads --example list_mods --example verify_rollback
+target/debug/examples/count_quads datadirs/demo_leicester_ecoste/Data/Levels/Dem_Lei_MP.scb
+target/debug/examples/list_mods datadirs/mods
+target/debug/examples/verify_rollback --data-dir datadirs/demo_leicester_ecoste
+```
+
+`count_quads` inspects the supplied SCB; `list_mods` reports launchable and broken
+mod entries. `verify_rollback` runs the Original-loader determinism probe; its
+`--data-dir` overrides `ROBINHOOD_DATA_DIR`. The completed sprite research probes
+and one-time schema-10 replay migration are retained in Git history, not built
+as maintained tools. The operational sprite benchmarks remain opt-in examples.
+
 The Ubuntu 26.04 CI job installs the native library development packages it needs.
 The services suite also needs bubblewrap 0.11.1 or newer and a system POSIX shell. Its runner
 allows unprivileged user namespaces for the verifier launched through a pinned
@@ -123,7 +138,9 @@ backend. Install the wasm standard library with
 Ordinary tests use checked-in or synthetic fixtures. Original-data tests are
 explicitly ignored with a reason; when selected, missing/invalid fixtures fail
 setup instead of appearing as passing tests. The common resolver lives in
-`test-support/original_data.rs` and is included only by test modules.
+the dev-only `robin_test_support` crate. Fixture gates first enumerate the
+compiled tests using the same target, features and selector as execution, and
+fail if the selection is empty; renaming a fixture cannot silently remove coverage.
 
 ```sh
 ROBINHOOD_DATA_DIR=/absolute/path/to/leicester-demo bash scripts/check-quality.sh fixtures-demo
@@ -315,3 +332,24 @@ leaderboard eligibility and recorded post-restore hash validation are covered by
 ranked-resimulation and client archive tests. The fixture retains original
 prefix hashes only: persisted-load reconciliation can change the state, so a
 pre-save checkpoint must not be reused as a post-load expected hash.
+
+## Wire format freezes
+
+Native parity traces and shipping assets have independent codec contracts.
+`robin_parity` pins crates.io `bitcode` 0.6.9 for authoritative v68 traces;
+shipping assets pin the workspace `bitcode` git revision for datadir v16 and
+mission v8. Two sources are intentional: dependency deduplication must not
+silently change either format. Updating one codec requires checking its frozen
+contract independently, not assuming a matching package version is compatible.
+
+Shipping's independent frozen-layout checks live in
+`robin_assets/src/shipping_v16_contract.rs` and `shipping_v8_contract.rs` and run
+with `cargo test -p robin_assets`. Native trace checks run with
+`cargo test -p robin_parity`; validate real frozen replay evidence before
+changing its codec or layout. Runtime native readers accept v68 only; older
+artifacts require offline migration, never a fallback decode guess.
+
+Layout changes require an explicit version/magic bump and regeneration or an
+offline migration tool. Do not update frozen descriptors merely to make a
+changed live layout pass. Authored sprite envelopes use separately versioned,
+budget-preflighted JSON and do not relax the shipping or replay wire contracts.

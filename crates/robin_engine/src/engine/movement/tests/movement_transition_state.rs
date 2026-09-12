@@ -21,7 +21,7 @@ mod suite {
         let sim = crate::sim_rng::test_context();
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -32,7 +32,7 @@ mod suite {
             human: HumanData::default(),
             pc: PcData::default(),
         }));
-        let target = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let target = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorSoldier;
@@ -115,7 +115,7 @@ mod suite {
                 },
                 ..Default::default()
             };
-            engine.add_entity(Entity::Soldier(ActorSoldier {
+            engine.add_test_entity(Entity::Soldier(ActorSoldier {
                 element,
                 actor: ActorData::default(),
                 human: HumanData::default(),
@@ -249,7 +249,7 @@ mod suite {
         opponent
             .element_data_mut()
             .set_position_map(MapPoint::new(120.0, 90.0));
-        let opponent = engine.add_entity(opponent);
+        let opponent = engine.add_test_entity(opponent);
 
         let mut owner_entity = Entity::Pc(ActorPc {
             element: {
@@ -292,7 +292,7 @@ mod suite {
         owner_entity
             .position_iface_mut()
             .set_anti_collision_on(false);
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
 
         {
             let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);
@@ -463,7 +463,7 @@ mod suite {
         opponent
             .element_data_mut()
             .set_position_map(MapPoint::new(100.0, 80.0));
-        let opponent = engine.add_entity(opponent);
+        let opponent = engine.add_test_entity(opponent);
 
         let mut owner_entity = Entity::Pc(ActorPc {
             element: {
@@ -504,7 +504,7 @@ mod suite {
         owner_entity
             .position_iface_mut()
             .set_anti_collision_on(false);
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
         engine
             .script_domains
             .interactables
@@ -589,7 +589,7 @@ mod suite {
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
 
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 action_state: ActionState::Waiting,
@@ -772,7 +772,7 @@ mod suite {
             },
             ..Default::default()
         };
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData {
                 action_state: ActionState::MovingFast,
@@ -1031,7 +1031,7 @@ mod suite {
     #[test]
     fn stale_nonselected_final_pop_does_not_clear_live_replacement_goal() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1155,7 +1155,7 @@ mod suite {
     #[test]
     fn terminal_movement_handoff_advances_live_move_waiting_order_without_seek_metadata() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1291,7 +1291,7 @@ mod suite {
     #[test]
     fn terminal_group_move_handoff_requires_causally_released_successor() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1366,7 +1366,7 @@ mod suite {
     #[test]
     fn normally_arrived_group_move_has_no_completed_sibling_handoff() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
                 initial_element.kind = ElementKind::ActorPc;
@@ -1518,7 +1518,7 @@ mod suite {
                 ));
             element.sprite.position_iface.set_anti_collision_on(false);
             element.set_position_map(MapPoint::new(50.0, 50.0));
-            let owner = engine.add_entity(Entity::Pc(ActorPc {
+            let owner = engine.add_test_entity(Entity::Pc(ActorPc {
                 element,
                 actor: ActorData::default(),
                 human: HumanData::default(),
@@ -1676,7 +1676,7 @@ mod suite {
         element.sprite.position_iface.set_anti_collision_on(false);
         element.set_position_map(MapPoint::new(100.0, 100.0));
         element.set_direction_instantly(6);
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 action_state: ActionState::Waiting,
@@ -1790,7 +1790,7 @@ mod suite {
         element.sprite.position_iface.set_map_goal(destination);
         element.sprite.position_iface.compute_increment_all(true);
         element.set_direction_goal(0);
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 action_state: ActionState::Waiting,
@@ -2004,7 +2004,7 @@ mod suite {
         ));
         owner_element.set_position_map(MapPoint::new(100.0, 100.0));
         owner_element.set_direction_goal(7);
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element: owner_element,
             actor: ActorData {
                 action_state: ActionState::Moving,
@@ -2037,7 +2037,7 @@ mod suite {
             crate::position_interface::SectorHandle::new(1).unwrap(),
         ));
         target_element.set_position_map(MapPoint::new(100.0 + distance, 100.0));
-        let target = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let target = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: target_element,
             actor: ActorData::default(),
             human: HumanData {

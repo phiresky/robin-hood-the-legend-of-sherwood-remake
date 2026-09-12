@@ -123,14 +123,10 @@ impl EngineInner {
                             actor_id: entity_id,
                         },
                     );
-                    let base = self
-                        .world
-                        .entities
-                        .get_mut(entity_id)
-                        .and_then(Entity::ai_controller_mut)
-                        .unwrap_or_else(|| {
-                            panic!("unconscious NPC {} lost its AI", entity_id.index())
-                        });
+                    let base = self.world.entities.expect_ai_controller_mut(
+                        entity_id,
+                        format_args!("unconscious NPC {} lost its AI", entity_id.index()),
+                    );
                     base.current_remark = crate::ai::Remark::TheSoundOfSilence;
                     base.current_remark_flags = 0;
                     self.cancel_exclamation_callbacks(entity_id.index());
@@ -226,9 +222,10 @@ impl EngineInner {
         };
         self.world
             .entities
-            .get_mut(entity_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("hurt-speech owner {} has no AI", entity_id.index()))
+            .expect_ai_controller_mut(
+                entity_id,
+                format_args!("hurt-speech owner {} has no AI", entity_id.index()),
+            )
             .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
         self.drain_ai_owner_work_for(sim, assets, entity_id);
 

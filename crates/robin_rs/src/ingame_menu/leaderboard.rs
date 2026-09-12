@@ -107,8 +107,7 @@ impl MissionEndLeaderboardScreen {
                 outcome = self.apply(action).or(outcome);
             }
         }
-        let widget_events = self.frame.process_input(&self.input.as_widget_input());
-        self.input.end_frame();
+        let widget_events = self.input.process_frame(&mut self.frame);
         if let Some(id) = widget_bridge::find_activated(&widget_events)
             && let Some(action) = self.widget_action(id)
         {

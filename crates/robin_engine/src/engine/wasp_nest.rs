@@ -738,7 +738,7 @@ mod tests {
                 ..ProjectileData::default()
             },
         };
-        engine.add_entity(Entity::Projectile(nest))
+        engine.add_test_entity(Entity::Projectile(nest))
     }
 
     fn empty_assets() -> LevelAssets {
@@ -940,7 +940,7 @@ mod tests {
                 y: 0.0,
                 z: 0.0,
             };
-            let soldier_id = engine.add_entity(make_soldier(soldier_pos));
+            let soldier_id = engine.add_test_entity(make_soldier(soldier_pos));
 
             // Pre-burst nest (same pattern as the other tests).
             make_nest_at(&mut engine);

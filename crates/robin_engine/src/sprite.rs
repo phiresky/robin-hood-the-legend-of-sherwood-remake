@@ -177,15 +177,27 @@ pub(crate) fn sprite_row_diagnostic_creation_order(
     frame: u32,
     resolve_creation_order: impl FnOnce() -> u32,
 ) -> Option<u32> {
-    std::env::var_os("PARITY_DEBUG_SPRITE_ROW")?;
-    let required = |name: &str| {
-        std::env::var(name)
-            .unwrap_or_else(|_| panic!("{name} is required when PARITY_DEBUG_SPRITE_ROW is set"))
-            .parse::<u32>()
-            .unwrap_or_else(|error| panic!("invalid {name} for sprite-row diagnostic: {error}"))
-    };
-    let required_frame = required("PARITY_DEBUG_SPRITE_ROW_FRAME");
-    let required_creation_order = required("PARITY_DEBUG_SPRITE_ROW_CREATION_ORDER");
+    // Diagnostic configuration is process-local and sampled only on first use.
+    // Keep required filters strict; optional broad matches are unsafe for this probe.
+    static FILTER: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    let &(required_frame, required_creation_order) = FILTER
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_SPRITE_ROW")?;
+            let required = |name: &str| {
+                std::env::var(name)
+                    .unwrap_or_else(|_| {
+                        panic!("{name} is required when PARITY_DEBUG_SPRITE_ROW is set")
+                    })
+                    .parse::<u32>()
+                    .unwrap_or_else(|error| {
+                        panic!("invalid {name} for sprite-row diagnostic: {error}")
+                    })
+            };
+            let required_frame = required("PARITY_DEBUG_SPRITE_ROW_FRAME");
+            let required_creation_order = required("PARITY_DEBUG_SPRITE_ROW_CREATION_ORDER");
+            Some((required_frame, required_creation_order))
+        })
+        .as_ref()?;
     if frame != required_frame {
         return None;
     }

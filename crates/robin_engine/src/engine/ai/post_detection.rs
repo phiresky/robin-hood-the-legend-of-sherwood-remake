@@ -3,8 +3,7 @@
 
 use super::*;
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum NpcPostDetectionTailPhase {
     Ambush,
     Deafness,
@@ -21,41 +20,24 @@ pub(crate) enum NpcPostDetectionTailPhase {
 
 #[cfg(test)]
 thread_local! {
-    static NPC_POST_DETECTION_TAIL_TRACE: std::cell::RefCell<Option<Vec<(EntityId, NpcPostDetectionTailPhase)>>> =
-        const { std::cell::RefCell::new(None) };
+    static NPC_POST_DETECTION_TAIL_TRACE: crate::engine::test_support::Probe<(EntityId, NpcPostDetectionTailPhase)> =
+        const { crate::engine::test_support::Probe::new() };
 }
 
 #[cfg(test)]
 fn observe_npc_post_detection_tail_phase(npc_id: EntityId, phase: NpcPostDetectionTailPhase) {
-    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((npc_id, phase));
-        }
-    });
+    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| trace.record((npc_id, phase)));
 }
 
 #[cfg(not(test))]
-fn observe_npc_post_detection_tail_phase(_npc_id: EntityId, _phase: ()) {}
+#[inline(always)]
+fn observe_npc_post_detection_tail_phase(_npc_id: EntityId, _phase: NpcPostDetectionTailPhase) {}
 
 #[cfg(test)]
 pub(crate) fn capture_npc_post_detection_tail_phases<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, NpcPostDetectionTailPhase)>) {
-    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
-        assert!(
-            trace.borrow().is_none(),
-            "tail phase capture is not re-entrant"
-        );
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let phases = NPC_POST_DETECTION_TAIL_TRACE.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("tail phase capture must remain active")
-    });
-    (result, phases)
+    NPC_POST_DETECTION_TAIL_TRACE.with(|trace| trace.capture(f))
 }
 
 /// Final scan aggregate attached to the contiguous Enemy stimulus block queued
@@ -219,75 +201,42 @@ impl EngineInner {
             npc_id.index()
         );
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ambush);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_refresh_ambush_points_for_npc(sim, npc_id, assets);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Deafness);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_npc_refresh_deafness_for_npc(npc_id);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Busy);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_npc_busy_edge_detect_for_npc(npc_id);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Ladder);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_npc_stuck_on_ladder_for_npc(sim, npc_id, assets);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::RandomSpeech);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_civilian_random_speech_for_npc(sim, npc_id, assets);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::LockGate);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         if self.tick_npc_lock_gate_for_npc(npc_id) {
             self.bored_owner_boundary_debug(npc_id, "lock_gate_return");
             return;
         }
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::SixteenthFrame);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_periodic_ai_for_npc(sim, npc_id, assets);
         self.bored_owner_boundary_debug(npc_id, "after_periodic");
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::NormalTimer);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_ai_normal_timer_for_npc(sim, npc_id, assets);
         self.bored_owner_boundary_debug(npc_id, "after_normal_timer");
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::MacroTimer);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_ai_macro_timer_for_npc(sim, npc_id, assets);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::Emoticon);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_npc_emoticon_expiration_for_npc(npc_id);
 
-        #[cfg(test)]
         observe_npc_post_detection_tail_phase(npc_id, NpcPostDetectionTailPhase::QueuedStimuli);
-        #[cfg(not(test))]
-        observe_npc_post_detection_tail_phase(npc_id, ());
         self.tick_ai_queued_stimuli_for_npc(sim, npc_id, assets);
         self.bored_owner_boundary_debug(npc_id, "exit");
     }
@@ -597,20 +546,12 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get(npc_id) else {
                     break;
                 };
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
@@ -897,20 +838,12 @@ impl EngineInner {
                     )
                 });
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {

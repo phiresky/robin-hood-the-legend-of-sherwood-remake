@@ -8,9 +8,8 @@
 use super::sherwood_flow::{SherwoodCampaignFlow, SherwoodConfirmationAction};
 use super::ui_task_state::{ActiveUiTask, OptionsTaskState, SaveLoadTaskState};
 use super::{
-    HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
-    center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
-    request_sherwood_trading_panel, required_menu_resources, sherwood_trading_access,
+    HandlerAction, MissionFrame, dispatch_local_command, dispatch_local_commands,
+    required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
 use crate::audio_backend::KiraAudioBackend;
@@ -36,6 +35,7 @@ use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
+use robin_engine::element as engine_element;
 use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
@@ -1189,10 +1189,12 @@ fn on_world_click(
                 engine,
                 assets,
                 map_pt,
-                shift_held,
-                planning_held,
-                ctrl_held,
-                is_double,
+                crate::game_input::ClickModifiers {
+                    shift: shift_held,
+                    planning: planning_held,
+                    control: ctrl_held,
+                    double: is_double,
+                },
             );
         }
         let queued_action = if planning_held {
@@ -2600,4 +2602,108 @@ mod shift_planning_tests {
             PortraitActionRightClick::Cancel
         );
     }
+}
+
+/// Snapshot the three live gates shared by every player-facing route into the
+/// Sherwood trading panel. The authoritative command repeats these checks.
+pub(super) fn sherwood_trading_access(
+    host: &Host,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+) -> crate::host::SherwoodTradingAccess {
+    crate::host::SherwoodTradingAccess {
+        local_is_host: host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+        enabled: engine.sim_config().sherwood_trading,
+        in_sherwood: engine.is_sherwood(profiles),
+    }
+}
+
+pub(super) fn request_sherwood_trading_panel(
+    host: &mut Host,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+) -> Result<(), robin_engine::trading::TradeRejectReason> {
+    let access = sherwood_trading_access(host, engine, profiles);
+    host.effects.request_sherwood_trading(access)
+}
+
+pub(super) fn center_on_reselected_portrait_pc(
+    host: &mut Host,
+    engine: &Engine,
+    local_seat: engine_player_command::PlayerId,
+    pc_id: engine_element::EntityId,
+    append: bool,
+    area: PortraitHitArea,
+) -> bool {
+    if append
+        || !matches!(
+            area,
+            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
+        )
+        || !engine.hero_selection(local_seat).contains(&pc_id)
+    {
+        return false;
+    }
+
+    let Some(entity) = engine.get_entity(pc_id) else {
+        tracing::warn!("Portrait reselect: selected PC {:?} is missing", pc_id);
+        return false;
+    };
+
+    // Selecting an already-selected portrait is rewritten into a
+    // `MSG_CENTER_ON` before the normal `MSG_SELECT_CHARACTER_WITH_ECHO`
+    // flow continues.
+    host.frontend
+        .viewport
+        .center_on_point(entity.position_iface().map_position());
+    true
+}
+
+pub(super) fn allied_portrait_center(
+    engine: &Engine,
+    members: &[engine_element::EntityId],
+) -> Option<robin_engine::coordinates::MapPoint> {
+    let mut count = 0_u32;
+    let mut sum_x = 0.0_f32;
+    let mut sum_y = 0.0_f32;
+    for member in members {
+        let Some(entity) = engine.get_entity(*member) else {
+            tracing::warn!(?member, "Allied portrait center: group member is missing");
+            continue;
+        };
+        let point = entity.position_iface().map_position();
+        count += 1;
+        sum_x += point.x;
+        sum_y += point.y;
+    }
+    (count > 0).then(|| {
+        let reciprocal = 1.0 / count as f32;
+        robin_engine::coordinates::MapPoint::new(sum_x * reciprocal, sum_y * reciprocal)
+    })
+}
+
+pub(super) fn center_on_reselected_allied_portrait(
+    host: &mut Host,
+    engine: &Engine,
+    local_seat: engine_player_command::PlayerId,
+    members: &[engine_element::EntityId],
+    append: bool,
+    area: PortraitHitArea,
+) -> bool {
+    if append
+        || !matches!(
+            area,
+            PortraitHitArea::TopScroll | PortraitHitArea::BottomScroll | PortraitHitArea::Visage
+        )
+        || engine.tactical_selection(local_seat) != members
+    {
+        return false;
+    }
+
+    let Some(center) = allied_portrait_center(engine, members) else {
+        tracing::warn!("Allied portrait reselect: group has no live members");
+        return false;
+    };
+    host.frontend.viewport.center_on_point(center);
+    true
 }

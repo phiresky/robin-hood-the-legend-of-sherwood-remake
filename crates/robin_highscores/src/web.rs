@@ -20,7 +20,9 @@ use crate::db::{BoardComposition, BoardCursor, BoardRow};
 #[cfg(test)]
 use crate::db::{SubmissionUploadIntent, SubmissionUploadReservation};
 use crate::error::ApiError;
-use crate::identity::{validate_username, verify_signature};
+use crate::identity::validate_username;
+#[cfg(test)]
+use crate::identity::verify_signature;
 #[cfg(test)]
 use crate::model::NewSubmission;
 use crate::model::{ChallengePurpose, ParticipantClaim};
@@ -72,7 +74,7 @@ use robin_run_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -273,7 +275,14 @@ impl ChallengeRateLimiter {
             values.pop_front();
         }
         if values.len() >= self.maximum_per_minute {
-            return Err(ApiError::QueueFull);
+            let retry_after = values.front().map_or(Duration::from_secs(60), |first| {
+                (*first + Duration::from_secs(60)).saturating_duration_since(now)
+            });
+            return Err(ApiError::RateLimited {
+                retry_after_ms: u64::try_from(retry_after.as_millis())
+                    .expect("a sixty-second rate limit fits in u64 milliseconds")
+                    .max(1),
+            });
         }
         values.push_back(now);
         Ok(())
@@ -566,9 +575,10 @@ async fn database_fence_gate(
         Err(error) => {
             tracing::error!(
                 error_code = "database_fence_owner",
+                task_panicked = error.is_panic(),
+                task_cancelled = error.is_cancelled(),
                 "database fence-owner task failed"
             );
-            let _ = error;
             Err(ApiError::Unavailable)
         }
     }
@@ -1062,7 +1072,7 @@ async fn leaderboard_metadata(
         earlier.categories.dedup();
         true
     });
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+    let now = crate::model::now_unix_ms()?;
     let mut competitions = state
         .config
         .competitions
@@ -1105,17 +1115,12 @@ async fn fresh_run_preflight_grant(
     Json(request): Json<FreshRunPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<FreshRunPreflightGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.signing_bytes()?,
+    )?;
     if !state
         .database
         .identity_exists(request.claim.host_public_key.as_bytes())
@@ -1160,9 +1165,7 @@ async fn fresh_run_preflight_grant(
         return Err(ApiError::Internal);
     }
 
-    let admitted_at_unix_ms =
-        u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+    let admitted_at_unix_ms = crate::model::now_unix_ms()?;
     let expires_at_unix_ms = admitted_at_unix_ms
         .checked_add(
             state
@@ -1194,11 +1197,7 @@ async fn fresh_run_preflight_grant(
         admitted_at_unix_ms,
         expires_at_unix_ms,
     };
-    let authority_signature = signing_key.sign(
-        &claim
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    );
+    let authority_signature = signing_key.sign(&claim.signing_bytes()?);
     let grant = FreshRunPreflightGrantV1 {
         claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
@@ -1222,27 +1221,17 @@ async fn campaign_continuation_preflight_grant(
     Json(request): Json<CampaignContinuationPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<CampaignContinuationPreflightGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .claim
-            .host_signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
-    verify_signature(
+        &request.claim.host_signing_bytes()?,
+    )?;
+    verify_request_signature(
         request.claim.campaign_controller_public_key.as_bytes(),
         request.controller_signature.as_bytes(),
-        &request
-            .claim
-            .controller_signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.claim.controller_signing_bytes()?,
+    )?;
     for public_key in &request.claim.participant_public_keys {
         if !state
             .database
@@ -1321,9 +1310,7 @@ async fn campaign_continuation_preflight_grant(
     if authority_public_key != published.manifest.run_preflight_grant_public_key {
         return Err(ApiError::Internal);
     }
-    let admitted_at_unix_ms =
-        u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+    let admitted_at_unix_ms = crate::model::now_unix_ms()?;
     let expires_at_unix_ms = admitted_at_unix_ms
         .checked_add(
             state
@@ -1360,11 +1347,7 @@ async fn campaign_continuation_preflight_grant(
         admitted_at_unix_ms,
         expires_at_unix_ms,
     };
-    let authority_signature = signing_key.sign(
-        &claim
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    );
+    let authority_signature = signing_key.sign(&claim.signing_bytes()?);
     let grant = CampaignContinuationPreflightGrantV1 {
         claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
@@ -1384,17 +1367,12 @@ async fn competition_run_grant(
     Json(request): Json<CompetitionRunGrantRequestV1>,
 ) -> Result<(StatusCode, Json<CompetitionRunGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.signing_bytes()?,
+    )?;
     if !state
         .database
         .identity_exists(request.claim.host_public_key.as_bytes())
@@ -1508,9 +1486,7 @@ async fn submission_offer(
     Json(request): Json<SubmissionOfferRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOfferV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     if usize::from(request.participant_instance_count) != request.participant_claims.len() {
         return Err(ApiError::BadRequest(
             "every ranked participant instance must have a distinct authenticated key and attestation"
@@ -1570,16 +1546,12 @@ async fn submission_offer(
                 "fresh-run preflight authority does not match the current ruleset".to_owned(),
             ));
         }
-        verify_signature(
+        verify_request_signature(
             grant.claim.grant_authority_public_key.as_bytes(),
             grant.authority_signature.as_bytes(),
-            &grant
-                .signing_bytes()
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
-        let now = u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+            &grant.signing_bytes()?,
+        )?;
+        let now = crate::model::now_unix_ms()?;
         if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
             return Err(ApiError::Conflict(
                 "fresh-run preflight grant is not active under server time".to_owned(),
@@ -1604,16 +1576,12 @@ async fn submission_offer(
                 "continuation preflight authority does not match the current ruleset".to_owned(),
             ));
         }
-        verify_signature(
+        verify_request_signature(
             grant.claim.grant_authority_public_key.as_bytes(),
             grant.authority_signature.as_bytes(),
-            &grant
-                .signing_bytes()
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
-        let now = u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+            &grant.signing_bytes()?,
+        )?;
+        let now = crate::model::now_unix_ms()?;
         if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
             return Err(ApiError::Conflict(
                 "campaign continuation preflight grant is not active under server time".to_owned(),
@@ -1631,15 +1599,12 @@ async fn submission_offer(
             competition
                 .validate_run_grant(grant)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            verify_signature(
+            verify_request_signature(
                 grant.claim.grant_authority_public_key.as_bytes(),
                 grant.authority_signature.as_bytes(),
-                &grant
-                    .signing_bytes()
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-            )
-            .map_err(|_| ApiError::Unauthorized)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+                &grant.signing_bytes()?,
+            )?;
+            let now = crate::model::now_unix_ms()?;
             if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
                 return Err(ApiError::Conflict(
                     "competition run grant is not active under server time".to_owned(),
@@ -1713,7 +1678,7 @@ async fn submission_offer(
                     schema_version: SCHEMA_VERSION_V1,
                     upload_challenge_id: OpaqueId::new(challenge.id.clone())
                         .map_err(|error| crate::db::DbError::ResultInvariant(error.to_string()))?,
-                    upload_challenge_nonce: ChallengeNonce32::from_bytes(challenge.nonce),
+                    upload_challenge_nonce: challenge.nonce,
                     expires_at_unix_ms: challenge.expires_at_ms,
                     max_concurrent_players: request.max_concurrent_players,
                     participant_instance_count: request.participant_instance_count,
@@ -1769,16 +1734,14 @@ async fn submit(
     let metadata_bytes = read_bounded_field(metadata, state.config.max_metadata_bytes).await?;
     let signed: SignedSubmissionV1 = serde_json::from_slice(&metadata_bytes)
         .map_err(|error| ApiError::BadRequest(format!("invalid submission JSON: {error}")))?;
-    signed
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    signed.validate()?;
     let artifacts = &signed.submission.artifacts;
     if artifacts.replay.replay_schema_version != RANKED_REPLAY_SCHEMA_VERSION {
         return Err(ApiError::BadRequest(format!(
             "ranked submissions require replay schema {RANKED_REPLAY_SCHEMA_VERSION}"
         )));
     }
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+    let now = crate::model::now_unix_ms()?;
     if signed.submission.offer.expires_at_unix_ms < now {
         return Err(ApiError::Conflict(
             "submission offer has expired".to_owned(),
@@ -2035,9 +1998,7 @@ async fn submission_owner_status_challenge(
     Json(request): Json<SubmissionOwnerStatusChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOwnerStatusChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::OwnerStatus).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     let issued = state
         .database
         .issue_owner_status_challenge(
@@ -2049,7 +2010,7 @@ async fn submission_owner_status_challenge(
     let challenge = SubmissionOwnerStatusChallengeV1 {
         schema_version: SCHEMA_VERSION_V1,
         owner_status_challenge_id: opaque(&issued.id)?,
-        owner_status_challenge_nonce: ChallengeNonce32::from_bytes(issued.nonce),
+        owner_status_challenge_nonce: issued.nonce,
         expires_at_unix_ms: issued.expires_at_ms,
         controller_public_key: request.controller_public_key,
         submission_id: request.submission_id,
@@ -2065,21 +2026,16 @@ async fn submission_private_status(
     Path(submission_id): Path<String>,
     Json(envelope): Json<SubmissionOwnerStatusEnvelopeV1>,
 ) -> Result<Json<SubmissionOwnerStatusResponseV1>, ApiError> {
-    envelope
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    envelope.validate()?;
     if envelope.challenge.submission_id.as_str() != submission_id {
         return Err(ApiError::Unauthorized);
     }
-    let signing_bytes = envelope
-        .signing_bytes()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    let signing_bytes = envelope.signing_bytes()?;
+    verify_request_signature(
         envelope.challenge.controller_public_key.as_bytes(),
         envelope.signature.as_bytes(),
         &signing_bytes,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+    )?;
     let lifecycle = state
         .database
         .consume_owner_status_challenge(
@@ -2142,30 +2098,14 @@ async fn content_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .content_manifests
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.content_manifests)
 }
 
 async fn campaign_content_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .campaign_content_manifests
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.campaign_content_manifests)
 }
 
 async fn rules_config(
@@ -2233,30 +2173,22 @@ async fn competition_manifest_route(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .competitions
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.competitions)
 }
 
 async fn policy_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .policies
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.policies)
+}
+
+fn registry_document<T: CanonicalDocument>(
+    value: &str,
+    documents: &BTreeMap<Digest32, T>,
+) -> Result<Response, ApiError> {
+    let key = digest(value).map_err(|_| ApiError::NotFound)?;
+    immutable_json(documents.get(&key).ok_or(ApiError::NotFound)?)
 }
 
 fn immutable_json<T: CanonicalDocument>(document: &T) -> Result<Response, ApiError> {
@@ -2286,9 +2218,7 @@ async fn leaderboard(
     State(state): State<AppState>,
     Query(query): Query<LeaderboardQueryV1>,
 ) -> Result<Json<LeaderboardPageV1>, ApiError> {
-    query
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    query.validate()?;
     if u32::from(query.limit) > state.config.max_page_size {
         return Err(ApiError::BadRequest(format!(
             "limit exceeds server maximum {}",
@@ -3003,9 +2933,7 @@ async fn username_challenge(
     Json(request): Json<UsernameChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<UsernameChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::UsernameUpdate).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     let challenge = state
         .database
         .issue_challenge(
@@ -3021,7 +2949,7 @@ async fn username_challenge(
         Json(UsernameChallengeV1 {
             schema_version: SCHEMA_VERSION_V1,
             username_challenge_id: opaque(&challenge.id)?,
-            username_challenge_nonce: ChallengeNonce32::from_bytes(challenge.nonce),
+            username_challenge_nonce: challenge.nonce,
             expires_at_unix_ms: challenge.expires_at_ms,
         }),
     ))
@@ -3032,9 +2960,7 @@ async fn update_username(
     Path(public_key): Path<String>,
     Json(update): Json<UsernameUpdateEnvelopeV1>,
 ) -> Result<Json<PlayerProfileV1>, ApiError> {
-    update
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    update.validate()?;
     let path_key = PublicKey32::from_str(&public_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if path_key != update.public_key {
@@ -3044,14 +2970,11 @@ async fn update_username(
     }
     let username = validate_username(&update.username)
         .map_err(|message| ApiError::BadRequest(message.to_owned()))?;
-    verify_signature(
+    verify_request_signature(
         update.public_key.as_bytes(),
         update.signature.as_bytes(),
-        &update
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &update.signing_bytes()?,
+    )?;
     state
         .database
         .apply_username_update(
@@ -3079,9 +3002,7 @@ async fn player_run_history(
     Path(public_key): Path<String>,
     Query(query): Query<PlayerRunHistoryQueryV1>,
 ) -> Result<Json<PlayerRunHistoryPageV1>, ApiError> {
-    query
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    query.validate()?;
     if u32::from(query.limit) > state.config.max_page_size {
         return Err(ApiError::BadRequest(format!(
             "limit exceeds server maximum {}",
@@ -3275,9 +3196,7 @@ async fn deletion_challenge(
     Json(request): Json<DeletionChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<DeletionChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Deletion).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     // Do not check target ownership before authentication. A check here would
     // let anyone submit candidate public keys and link an anonymous run to its
     // durable owner. The exact target and key are signed into the returned
@@ -3296,7 +3215,7 @@ async fn deletion_challenge(
     let challenge = DeletionChallengeV1 {
         schema_version: SCHEMA_VERSION_V1,
         deletion_challenge_id: opaque(&issued.id)?,
-        deletion_challenge_nonce: ChallengeNonce32::from_bytes(issued.nonce),
+        deletion_challenge_nonce: issued.nonce,
         expires_at_unix_ms: issued.expires_at_ms,
         public_key: request.public_key,
         target: request.target,
@@ -3318,18 +3237,13 @@ async fn deletion_request(
     State(state): State<AppState>,
     Json(request): Json<DeletionRequestEnvelopeV1>,
 ) -> Result<Json<DeletionReceiptV1>, ApiError> {
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.challenge.public_key.as_bytes(),
         request.signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+        &request.signing_bytes()?,
+    )?;
+    let now = crate::model::now_unix_ms()?;
     if request.challenge.expires_at_unix_ms < now {
         return Err(ApiError::Conflict(
             "deletion challenge has expired".to_owned(),
@@ -3375,9 +3289,7 @@ async fn abuse_report(
     headers: HeaderMap,
     Json(report): Json<AbuseReportV1>,
 ) -> Result<(StatusCode, Json<AbuseReportAcceptedV1>), ApiError> {
-    report
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    report.validate()?;
     let (target_kind, target_id) = match &report.target {
         AbuseReportTargetV1::Run { run_id } => ("run", run_id.as_str().to_owned()),
         AbuseReportTargetV1::Player { public_key } => ("player", public_key.to_string()),
@@ -3391,11 +3303,8 @@ async fn abuse_report(
     };
     let address = effective_client_ip(&state.config, peer, &headers)?;
     let active_ruleset_ids = active_ruleset_ids(&state.config);
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &state.cursor_hmac_key);
-    let reporter_ip_hash: [u8; 32] = ring::hmac::sign(&key, address.to_string().as_bytes())
-        .as_ref()
-        .try_into()
-        .map_err(|_| ApiError::Internal)?;
+    let reporter_ip_hash =
+        crate::authentication::sign(&state.cursor_hmac_key, address.to_string().as_bytes());
     let (report_id, received_at_unix_ms) = state
         .database
         .insert_abuse_report(
@@ -3780,9 +3689,7 @@ fn profile_with_session_config(
     profile: &AdmissionProfile,
     ranked: &robin_run_protocol::RankedSessionConfigV1,
 ) -> Result<AdmissionProfile, ApiError> {
-    ranked
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    ranked.validate()?;
     let published = config
         .manifests
         .rulesets
@@ -3833,6 +3740,43 @@ fn profile_with_session_config(
     Ok(derived)
 }
 
+fn matching_admission_profiles<'a>(
+    config: &'a ServerConfig,
+    mission_id: &str,
+    subject: &robin_run_protocol::OfficialContentSubjectV1,
+    ruleset: Digest32,
+    scope: &str,
+    required_profile: Option<&str>,
+) -> Vec<&'a AdmissionProfile> {
+    let ruleset = ruleset.to_string();
+    config
+        .admission_profiles
+        .iter()
+        .filter(|profile| {
+            profile.mission_id() == mission_id
+                && &profile.content_subject == subject
+                && profile.ruleset_id == ruleset
+                && profile
+                    .allowed_scopes
+                    .iter()
+                    .any(|allowed| allowed == scope)
+                && required_profile.is_none_or(|required| profile.id == required)
+        })
+        .collect()
+}
+
+fn active_competition_by_digest(
+    config: &ServerConfig,
+    requested: Digest32,
+) -> Result<(&CompetitionConfig, CompetitionManifestV1), ApiError> {
+    let (competition, manifest) = competition_by_digest(config, requested)?;
+    let now = crate::model::now_unix_ms()?;
+    if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
+        return Err(ApiError::Conflict("competition is not active".to_owned()));
+    }
+    Ok((competition, manifest))
+}
+
 fn select_fresh_run_profile<'a>(
     config: &'a ServerConfig,
     request: &FreshRunPreflightRequestV1,
@@ -3845,31 +3789,24 @@ fn select_fresh_run_profile<'a>(
     let competition_profile = ranked
         .competition_manifest_sha256
         .map(|digest| {
-            let (competition, manifest) = competition_by_digest(config, digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, digest)?;
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let profile = config
-        .admission_profiles
-        .iter()
-        .find(|profile| {
-            profile.mission_id() == ranked.mission_id
-                && profile.content_subject == ranked.content_subject
-                && profile.ruleset_id == ranked.ruleset_manifest_sha256.to_string()
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == scope)
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .ok_or(ApiError::NotFound)?;
+    let profile = matching_admission_profiles(
+        config,
+        ranked.mission_id.as_str(),
+        &ranked.content_subject,
+        ranked.ruleset_manifest_sha256,
+        scope,
+        competition_profile,
+    )
+    .into_iter()
+    .next()
+    .ok_or(ApiError::NotFound)?;
     let published = config
         .manifests
         .rulesets
@@ -3958,31 +3895,24 @@ fn select_continuation_preflight_profile<'a>(
     let competition_profile = ranked
         .competition_manifest_sha256
         .map(|digest| {
-            let (competition, manifest) = competition_by_digest(config, digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, digest)?;
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let profile = config
-        .admission_profiles
-        .iter()
-        .find(|profile| {
-            profile.mission_id() == ranked.mission_id
-                && profile.content_subject == ranked.content_subject
-                && profile.ruleset_id == ranked.ruleset_manifest_sha256.to_string()
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == "campaign_continuation")
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .ok_or(ApiError::NotFound)?;
+    let profile = matching_admission_profiles(
+        config,
+        ranked.mission_id.as_str(),
+        &ranked.content_subject,
+        ranked.ruleset_manifest_sha256,
+        "campaign_continuation",
+        competition_profile,
+    )
+    .into_iter()
+    .next()
+    .ok_or(ApiError::NotFound)?;
     let published = config
         .manifests
         .rulesets
@@ -4051,16 +3981,11 @@ fn select_profile<'a>(
     request: &SubmissionOfferRequestV1,
     scope: &str,
 ) -> Result<&'a AdmissionProfile, ApiError> {
-    let requested_ruleset = request.ruleset_manifest_sha256.to_string();
     let competition_profile = request
         .competition_manifest_sha256
         .as_ref()
         .map(|requested_digest| {
-            let (competition, manifest) = competition_by_digest(config, *requested_digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, *requested_digest)?;
             let category_matches = matches!(
                 (scope, &manifest.subject),
                 (
@@ -4085,21 +4010,14 @@ fn select_profile<'a>(
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let matches = config
-        .admission_profiles
-        .iter()
-        .filter(|profile| {
-            profile.mission_id() == request.mission_id
-                && profile.content_subject
-                    == request.session_genesis.claim.ranked_session.content_subject
-                && profile.ruleset_id == requested_ruleset
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == scope)
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .collect::<Vec<_>>();
+    let matches = matching_admission_profiles(
+        config,
+        request.mission_id.as_str(),
+        &request.session_genesis.claim.ranked_session.content_subject,
+        request.ruleset_manifest_sha256,
+        scope,
+        competition_profile,
+    );
     let profile = match matches.as_slice() {
         [profile] => *profile,
         [] => Err(ApiError::BadRequest(
@@ -4485,31 +4403,33 @@ fn aggregate_public_participants(
         .collect()
 }
 
+fn verify_request_signature(
+    public_key: &[u8; 32],
+    signature: &[u8; 64],
+    signing_bytes: &[u8],
+) -> Result<(), ApiError> {
+    crate::identity::verify_signature(public_key, signature, signing_bytes)
+        .map_err(|_| ApiError::Unauthorized)
+}
+
 fn verify_session_attestations(request: &SubmissionOfferRequestV1) -> Result<(), ApiError> {
-    let genesis_bytes = request
-        .session_genesis
-        .signing_bytes()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    let genesis_bytes = request.session_genesis.signing_bytes()?;
+    verify_request_signature(
         request.session_genesis.claim.host_public_key.as_bytes(),
         request.session_genesis.host_signature.as_bytes(),
         &genesis_bytes,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+    )?;
 
     for claim in request.participant_claims.iter().skip(1) {
         let attestation = claim.join_attestation.as_ref().ok_or_else(|| {
             ApiError::BadRequest("authenticated guest has no join attestation".to_owned())
         })?;
-        let bytes = attestation
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        verify_signature(
+        let bytes = attestation.signing_bytes()?;
+        verify_request_signature(
             attestation.claim.public_key.as_bytes(),
             attestation.signature.as_bytes(),
             &bytes,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
+        )?;
     }
     Ok(())
 }
@@ -4611,8 +4531,7 @@ fn encode_cursor(cursor: &CursorToken, key: &[u8; 32]) -> Result<String, ApiErro
 
 fn encode_cursor_envelope<T: Serialize>(cursor: &T, key: &[u8; 32]) -> Result<String, ApiError> {
     let bytes = serde_json::to_vec(cursor).map_err(internal_json)?;
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    let signature = ring::hmac::sign(&signing_key, &bytes);
+    let signature = crate::authentication::sign(key, &bytes);
     let mut authenticated = bytes;
     authenticated.extend_from_slice(signature.as_ref());
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(authenticated))
@@ -4632,8 +4551,7 @@ fn decode_cursor_envelope<T: serde::de::DeserializeOwned>(
         return Err(ApiError::BadRequest("cursor is not valid".to_owned()));
     }
     let (bytes, signature) = authenticated.split_at(authenticated.len() - 32);
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    ring::hmac::verify(&signing_key, bytes, signature)
+    crate::authentication::verify(key, bytes, signature)
         .map_err(|_| ApiError::BadRequest("cursor authentication failed".to_owned()))?;
     serde_json::from_slice(bytes)
         .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))
@@ -4708,53 +4626,42 @@ fn safe_rejection_message(code: VerificationRejectionCodeV1) -> &'static str {
     }
 }
 
-fn configuration_error(context: &str, _error: impl std::fmt::Display) -> ApiError {
+fn configuration_error(context: &str, error: impl std::fmt::Display) -> ApiError {
     tracing::error!(
         error_code = "public_protocol_configuration",
+        error_type = std::any::type_name_of_val(&error),
         context,
         "server configuration violates the public protocol"
     );
     ApiError::Internal
 }
 
-fn internal_json(_error: serde_json::Error) -> ApiError {
+fn internal_json(error: serde_json::Error) -> ApiError {
     tracing::error!(
         error_code = "internal_json_serialization",
+        category = ?error.classify(),
         "internal JSON serialization failed"
     );
     ApiError::Internal
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
+    use crate::test_support::{
+        artifact, published_ruleset_fixture, viewer_build, viewer_build_v2,
+        viewer_content_manifest, viewer_profile,
+    };
     use bytes::Bytes;
     use ed25519_dalek::SigningKey;
     use futures_util::stream;
     use http_body_util::BodyExt as _;
     use robin_run_protocol::{
-        ActiveTimeDefinitionV1, AnonymousParticipantPolicyV1, ArtifactRefV1,
-        BrowserIdentitySignerBuildIdentityV2, BrowserIdentitySignerBuildRecipeV2,
-        BrowserIdentitySignerDeploymentPolicyV2, BrowserPagesArtifactV2,
-        BrowserPagesShellBuildIdentityV2, BrowserPagesShellBuildRecipeV2,
-        BrowserViewerBuildIdentityV2, BrowserViewerEngineBuildIdentityV2,
-        BrowserViewerEngineBuildRecipeV2, BuildManifestV1, BuildManifestV2,
-        BuildToolAuthorityDocumentV1, BuildToolAuthorityV1, CampaignAggregationConsentPolicyV1,
-        CampaignCompletionPolicyRequirementV1, CanonicalCampaignStateKindV1,
-        CanonicalCampaignStatePinV1, CanonicalCampaignStateRequirementV1, CanonicalStartPolicyV1,
-        ContentClosureKindV1, ContentManifestV1, FrameCountingPolicyV1, FullCampaignChainPolicyV1,
-        FullCampaignTimeAggregationV1, ImmutablePolicyIdentityV1, ImmutablePolicyKindV1,
-        InputProvenanceEligibilityV1, LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1,
-        LeaderboardCoSignRequestV1, MetricRankingPolicyV1, NamedArtifactV1,
-        NamedParticipantPolicyV1, NativeBuildPlatformV2, NativeLinkageV2, OfficialContentEditionV1,
-        OfficialContentSubjectV1, PaginationTieBreakV1, ParticipantEligibilityV1,
-        PublishedRulesetV1, RANKED_REPLAY_VERIFIER_MEDIA_TYPE_V2, RulesConfigConstraintV1,
-        RulesetManifestV1, RulesetSeedPolicyV1, RunCompositionPolicyV1, RustToolchainAuthorityV1,
-        SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1, ScoreAlgorithmV1, ScoreOverflowPolicyV1,
-        SimulationContentComponentKindV1, SimulationContentComponentV1,
-        SimulationSpeechTimingSourceV1, TerminalResultPolicyV1, VerifierBuildIdentityV2,
-        ViewerArtifactRoleV1, VisibleTiePolicyV1, official_achievement_policies_v1,
-        official_full_campaign_completion_policy_v1,
+        AnonymousParticipantPolicyV1, ArtifactRefV1, CanonicalCampaignStateKindV1,
+        CanonicalCampaignStatePinV1, CanonicalCampaignStateRequirementV1, ImmutablePolicyKindV1,
+        LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1,
+        OfficialContentEditionV1, OfficialContentSubjectV1, PublishedRulesetV1,
+        RulesConfigConstraintV1,
     };
     use sha2::Sha256;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -5134,256 +5041,6 @@ pub(crate) mod tests {
         }
     }
 
-    fn artifact(byte: u8, media_type: &str) -> ArtifactRefV1 {
-        ArtifactRefV1 {
-            sha256: Digest32::from_bytes([byte; 32]),
-            byte_length: 1,
-            media_type: media_type.to_owned(),
-        }
-    }
-
-    fn simulation_components() -> Vec<SimulationContentComponentV1> {
-        [
-            SimulationContentComponentKindV1::Profiles,
-            SimulationContentComponentKindV1::LoadedLevel,
-            SimulationContentComponentKindV1::MissionScripts,
-            SimulationContentComponentKindV1::SpriteSimulationMetadata,
-            SimulationContentComponentKindV1::MapGeometryMetadata,
-            SimulationContentComponentKindV1::LocalizedDeterministicText,
-            SimulationContentComponentKindV1::SoundDurationTables,
-            SimulationContentComponentKindV1::InterfaceSimulationMetadata,
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(index, kind)| SimulationContentComponentV1 {
-            kind,
-            component_schema_version: 1,
-            artifact: artifact(
-                u8::try_from(index).unwrap() + 20,
-                SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1,
-            ),
-        })
-        .collect()
-    }
-
-    pub(crate) fn viewer_build() -> BuildManifestV1 {
-        BuildManifestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            source_commit: "a".repeat(40),
-            cargo_lock_sha256: Digest32::from_bytes([1; 32]),
-            target_triple: "wasm32-unknown-emscripten".to_owned(),
-            cargo_profile: "release".to_owned(),
-            cargo_features: vec!["replay".to_owned()],
-            replay_schema_version: RANKED_REPLAY_SCHEMA_VERSION,
-            save_schema_version: robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1,
-            network_protocol_version:
-                robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1,
-            verifier: artifact(2, "application/x-executable"),
-            viewer_artifacts: vec![
-                NamedArtifactV1 {
-                    path: "viewer/entry.js".to_owned(),
-                    role: ViewerArtifactRoleV1::EntryJavaScript,
-                    artifact: artifact(3, "text/javascript"),
-                },
-                NamedArtifactV1 {
-                    path: "viewer/robin.wasm".to_owned(),
-                    role: ViewerArtifactRoleV1::WebAssembly,
-                    artifact: artifact(4, "application/wasm"),
-                },
-            ],
-        }
-    }
-
-    fn build_tool(byte: u8, version: &str) -> BuildToolAuthorityV1 {
-        BuildToolAuthorityV1 {
-            version: version.to_owned(),
-            authority_sha256: if version == robin_run_protocol::WASM_BINDGEN_CLI_VERSION_V1 {
-                robin_run_protocol::WASM_BINDGEN_CLI_AUTHORITY_SHA256_V1
-            } else {
-                Digest32::from_bytes([byte; 32])
-            },
-        }
-    }
-
-    pub(crate) fn viewer_build_v2() -> BuildManifestV2 {
-        let binaryen_authority: BuildToolAuthorityDocumentV1 = serde_json::from_str(include_str!(
-            "../../../.github/tool-authorities/binaryen-wasm-opt-v132.json"
-        ))
-        .unwrap();
-        let wabt_authority: BuildToolAuthorityDocumentV1 = serde_json::from_str(include_str!(
-            "../../../.github/tool-authorities/wabt-wasm-strip-v1.0.41.json"
-        ))
-        .unwrap();
-        let rust_toolchain = RustToolchainAuthorityV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            channel: "nightly-2026-08-25".to_owned(),
-            components: vec![
-                "rust-src".to_owned(),
-                "rustc-codegen-cranelift-preview".to_owned(),
-            ],
-            targets: vec!["wasm32-unknown-unknown".to_owned()],
-        };
-        let rust_toolchain_sha256 = rust_toolchain.canonical_digest().unwrap();
-        BuildManifestV2 {
-            schema_version: 2,
-            source_commit: "b".repeat(40),
-            cargo_lock_sha256: Digest32::from_bytes([41; 32]),
-            replay_schema_version: RANKED_REPLAY_SCHEMA_VERSION,
-            save_schema_version: robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1,
-            network_protocol_version:
-                robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1,
-            verifier: VerifierBuildIdentityV2 {
-                platform: NativeBuildPlatformV2::X86_64UnknownLinuxMusl,
-                target_triple: "x86_64-unknown-linux-musl".to_owned(),
-                cargo_profile: "release".to_owned(),
-                cargo_features: Vec::new(),
-                cargo_package: "robin_replay_verifier".to_owned(),
-                cargo_binary: "robin-replay-verifier".to_owned(),
-                linkage: NativeLinkageV2::FullyStaticNoInterpreterOrNeededLibraries,
-                artifact: artifact(42, RANKED_REPLAY_VERIFIER_MEDIA_TYPE_V2),
-            },
-            viewer: BrowserViewerBuildIdentityV2 {
-                engine: BrowserViewerEngineBuildIdentityV2 {
-                    target_triple: "wasm32-unknown-unknown".to_owned(),
-                    cargo_profile: "wasm-release".to_owned(),
-                    cargo_features: vec!["audio".to_owned()],
-                    cargo_package: "robin_rs".to_owned(),
-                    cargo_binary: "robin".to_owned(),
-                    recipe: BrowserViewerEngineBuildRecipeV2::WasmBindgenWebBinaryenOzStripDebugDwarfWabtStripV1,
-                    rust_toolchain: rust_toolchain.clone(),
-                    rust_toolchain_sha256,
-                    wasm_bindgen_cli: build_tool(43, "0.2.127"),
-                    binaryen_wasm_opt: BuildToolAuthorityV1 {
-                        version: binaryen_authority.version.clone(),
-                        authority_sha256: binaryen_authority.canonical_digest().unwrap(),
-                    },
-                    wabt_wasm_strip: BuildToolAuthorityV1 {
-                        version: wabt_authority.version.clone(),
-                        authority_sha256: wabt_authority.canonical_digest().unwrap(),
-                    },
-                    artifacts: vec![
-                        NamedArtifactV1 {
-                            path: "viewer/robin.js".to_owned(),
-                            role: ViewerArtifactRoleV1::EntryJavaScript,
-                            artifact: artifact(46, "text/javascript"),
-                        },
-                        NamedArtifactV1 {
-                            path: "viewer/robin_bg.wasm".to_owned(),
-                            role: ViewerArtifactRoleV1::WebAssembly,
-                            artifact: artifact(47, "application/wasm"),
-                        },
-                    ],
-                },
-                pages_shell: BrowserPagesShellBuildIdentityV2 {
-                    recipe: BrowserPagesShellBuildRecipeV2::PnpmFrozenLockfileViteStaticShellV1,
-                    node: build_tool(48, "24.19.0"),
-                    pnpm: build_tool(49, "12.3.4"),
-                    package_json_sha256: Digest32::from_bytes([50; 32]),
-                    pnpm_lock_sha256: Digest32::from_bytes([51; 32]),
-                    public_origin_artifacts: vec![BrowserPagesArtifactV2 {
-                        path: "index.html".to_owned(),
-                        artifact: artifact(52, "text/html"),
-                    }],
-                },
-                identity_signer: BrowserIdentitySignerBuildIdentityV2 {
-                    target_triple: "wasm32-unknown-unknown".to_owned(),
-                    cargo_profile: "wasm-release".to_owned(),
-                    cargo_features: vec!["identity-signer-bridge".to_owned()],
-                    cargo_package: "robin_rs".to_owned(),
-                    cargo_binary: "leaderboard_identity_bridge".to_owned(),
-                    recipe: BrowserIdentitySignerBuildRecipeV2::WasmBindgenWebSeparateOriginBridgeV1,
-                    deployment_policy: BrowserIdentitySignerDeploymentPolicyV2::SeparateAllowlistedOriginCspFrameAncestorsAndBridgeShaV1,
-                    rust_toolchain,
-                    rust_toolchain_sha256,
-                    wasm_bindgen_cli: build_tool(43, "0.2.127"),
-                    identity_signer_origin_artifacts: vec![
-                        BrowserPagesArtifactV2 {
-                            path: "identity-signer/bridge/leaderboard_identity_bridge.js"
-                                .to_owned(),
-                            artifact: artifact(55, "text/javascript"),
-                        },
-                        BrowserPagesArtifactV2 {
-                            path: "identity-signer/bridge/leaderboard_identity_bridge_bg.wasm"
-                                .to_owned(),
-                            artifact: artifact(56, "application/wasm"),
-                        },
-                        BrowserPagesArtifactV2 {
-                            path: "identity-signer/index.html".to_owned(),
-                            artifact: artifact(54, "text/html"),
-                        },
-                    ],
-                },
-            },
-        }
-    }
-
-    fn viewer_profile(build: Digest32, content: Digest32) -> AdmissionProfile {
-        AdmissionProfile {
-            id: "viewer-profile".to_owned(),
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: "mission".to_owned(),
-            },
-            mission_display_name: "Mission".to_owned(),
-            allowed_scopes: vec!["individual_level".to_owned()],
-            build_manifest_id: build.to_string(),
-            content_manifest_id: content.to_string(),
-            campaign_content_manifest_id: None,
-            config_id: Digest32::from_bytes([5; 32]).to_string(),
-            ruleset_id: Digest32::from_bytes([6; 32]).to_string(),
-            template_id: "template".to_owned(),
-            canonical_campaign_state: CanonicalCampaignStatePinV1 {
-                requirement: CanonicalCampaignStateRequirementV1 {
-                    edition: OfficialContentEditionV1::Demo,
-                    kind: CanonicalCampaignStateKindV1::IndividualTemplate,
-                    rules_config_sha256: Digest32::from_bytes([5; 32]),
-                },
-                artifact: ArtifactRefV1 {
-                    sha256: Digest32::from_bytes([7; 32]),
-                    byte_length: 7,
-                    media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-                },
-            },
-            canonical_campaign_state_path: Some(std::path::PathBuf::from(
-                "/private/campaign-state",
-            )),
-            allowed_metrics: vec!["original_score".to_owned()],
-            ruleset_display_name: "Standard".to_owned(),
-            preset_id: "standard".to_owned(),
-            preset_name: "Standard".to_owned(),
-            difficulty_id: "normal".to_owned(),
-            difficulty_name: "Normal".to_owned(),
-            build_display_name: "Viewer build".to_owned(),
-            viewer_engine_build: "viewer".to_owned(),
-            viewer_available: true,
-            viewer_unavailable_reason: None,
-            viewer_content_requirement: Some(ViewerContentRequirementConfig::BundledDemo),
-        }
-    }
-
-    fn viewer_content_manifest(edition: OfficialContentEditionV1) -> ContentManifestV1 {
-        ContentManifestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            name: match edition {
-                OfficialContentEditionV1::Demo => "demo",
-                OfficialContentEditionV1::Full => "full",
-            }
-            .to_owned(),
-            edition,
-            subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: "mission".to_owned(),
-            },
-            closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
-            resource_locale_root: robin_run_protocol::ResourceLocaleRootV1::new(match edition {
-                OfficialContentEditionV1::Demo => "1033",
-                OfficialContentEditionV1::Full => "2047",
-            })
-            .unwrap(),
-            speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
-            components: simulation_components(),
-        }
-    }
-
     async fn viewer_launch_over_http(
         config: ServerConfig,
         profile: AdmissionProfile,
@@ -5417,126 +5074,6 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
-    }
-
-    fn policy_identity(kind: ImmutablePolicyKindV1, byte: u8) -> ImmutablePolicyIdentityV1 {
-        ImmutablePolicyIdentityV1 {
-            kind,
-            version: 1,
-            manifest_sha256: Digest32::from_bytes([byte; 32]),
-        }
-    }
-
-    pub(crate) fn published_ruleset_fixture() -> PublishedRulesetV1 {
-        let manifest = RulesetManifestV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            display_name: "Standard / Normal".to_owned(),
-            preset_id: OpaqueId::new("standard").unwrap(),
-            preset_name: "Standard".to_owned(),
-            difficulty_id: OpaqueId::new("normal").unwrap(),
-            difficulty_name: "Normal".to_owned(),
-            rules_config_sha256: Digest32::from_bytes([5; 32]),
-            rules_config_constraint: RulesConfigConstraintV1::ExactCanonicalDigestOnly,
-            allowed_build_manifest_sha256: vec![Digest32::from_bytes([8; 32])],
-            allowed_content_manifest_sha256: vec![Digest32::from_bytes([9; 32])],
-            allowed_campaign_content_manifest_sha256: vec![Digest32::from_bytes([10; 32])],
-            board_scopes: vec![
-                RulesetBoardScopeV1::IndividualLevel,
-                RulesetBoardScopeV1::CampaignMission,
-                RulesetBoardScopeV1::FullCampaign,
-            ],
-            campaign_completion_policy: CampaignCompletionPolicyRequirementV1::Required(
-                official_full_campaign_completion_policy_v1(),
-            ),
-            metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
-            metric_ranking: vec![
-                MetricRankingPolicyV1::OriginalScoreDescending,
-                MetricRankingPolicyV1::FastestSuccessAscending,
-            ],
-            achievement_policies: official_achievement_policies_v1(),
-            canonical_start_policy:
-                CanonicalStartPolicyV1::RulesConfigBoundOperatorStateAndVerifiedPredecessor,
-            canonical_campaign_state: CanonicalCampaignStateRequirementV1 {
-                edition: OfficialContentEditionV1::Demo,
-                kind: CanonicalCampaignStateKindV1::IndividualTemplate,
-                rules_config_sha256: Digest32::from_bytes([5; 32]),
-            },
-            run_preflight_grant_public_key: PublicKey32::from_bytes(
-                ed25519_dalek::SigningKey::from_bytes(&[0x46; 32])
-                    .verifying_key()
-                    .to_bytes(),
-            ),
-            full_campaign_chain_policy:
-                FullCampaignChainPolicyV1::CanonicalGenesisEveryFieldAndHeadquartersSessionIndependentCompletion,
-            campaign_roster_continuity:
-                CampaignRosterContinuityV1::UnionOfVerifiedSessionSubsets,
-            campaign_aggregation_consent_policy:
-                CampaignAggregationConsentPolicyV1::EveryAuthenticatedKeyFinalCosignsEachSession,
-            participant_eligibility: ParticipantEligibilityV1 {
-                allow_single_player: true,
-                allow_multiplayer: true,
-                named_policy:
-                    NamedParticipantPolicyV1::HostGenesisGuestTransportJoinAttestationAndFinalCosign,
-                anonymous_policy:
-                    AnonymousParticipantPolicyV1::AllowedAuthenticatedButPubliclyRedacted,
-                minimum_max_concurrent_players: 1,
-                maximum_max_concurrent_players: robin_run_protocol::MAX_REPLAY_SEATS_V1,
-                maximum_participant_instances:
-                    robin_run_protocol::MAX_PARTICIPANT_INSTANCES_V1,
-            },
-            replay_schema_versions: vec![RANKED_REPLAY_SCHEMA_VERSION],
-            network_protocol_versions: vec![
-                robin_run_protocol::CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1,
-            ],
-            input_provenance_policy: policy_identity(
-                ImmutablePolicyKindV1::InputProvenance,
-                10,
-            ),
-            command_admission_policy: policy_identity(
-                ImmutablePolicyKindV1::CommandAdmission,
-                11,
-            ),
-            submission_admission_policy: policy_identity(
-                ImmutablePolicyKindV1::SubmissionAdmission,
-                12,
-            ),
-            verifier_policy: policy_identity(ImmutablePolicyKindV1::Verification, 13),
-            input_provenance_eligibility:
-                InputProvenanceEligibilityV1::CurrentSchemaCanonicalReplayOnly,
-            terminal_result_policy: TerminalResultPolicyV1::IndependentlyReachedWonOnly,
-            score_algorithm:
-                ScoreAlgorithmV1::OriginalMissionAttemptWrappingSubtotalCampaignDeltaV1,
-            score_overflow_policy: ScoreOverflowPolicyV1::RejectCampaignOrAggregateOverflow,
-            visible_tie_policy: VisibleTiePolicyV1::EqualPrimaryMetricSharesRank,
-            pagination_tie_break:
-                PaginationTieBreakV1::AcceptedSequenceThenVerificationTimeThenRunIdOnly,
-            tick_duration: TickDurationV1 {
-                numerator_micros: 50_000,
-                denominator: 1,
-            },
-            active_time_definition: ActiveTimeDefinitionV1::SuccessfulSimulationTicks,
-            frame_counting_policy:
-                FrameCountingPolicyV1::ZeroBasedEventsBeforeExclusiveReplayFrameCount,
-            full_campaign_time_aggregation:
-                FullCampaignTimeAggregationV1::CheckedSumEveryVerifiedFieldAndHeadquartersSession,
-            run_composition_policy:
-                RunCompositionPolicyV1::MissionSingleReplayFullCampaignOrderedSessionsNoSyntheticReplay,
-            main_board_seed_policy: RulesetSeedPolicyV1::Open,
-            competition_seed_policy: RulesetSeedPolicyV1::ServerPinned,
-            allow_save_creation: true,
-            allow_autosave: true,
-            allow_state_load: false,
-            allow_mission_restart: false,
-        };
-        let ruleset_manifest_sha256 = manifest.canonical_digest().unwrap();
-        let published = PublishedRulesetV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            ruleset_manifest_sha256,
-            manifest,
-            operational_status: RulesetOperationalStatusV1::Active,
-        };
-        published.validate().unwrap();
-        published
     }
 
     #[test]
@@ -5903,21 +5440,9 @@ pub(crate) mod tests {
             config.admission_profiles.push(profile);
         }
         config.manifests = Arc::new(registry);
-        let state = AppState {
-            database: Database::migrate(&config).await.unwrap(),
-            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            campaign_store: CampaignStore::create(directory.path().join("campaigns"), 1024)
-                .await
-                .unwrap(),
-            config,
-            cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
-            competition_run_grant_secret_key: None,
-            run_preflight_grant_secret_key: None,
-            challenge_rate_limiter: ChallengeRateLimiter::new(10),
-        };
+        let state =
+            crate::test_support::app_state(config.clone(), directory.path().join("campaigns"))
+                .await;
         let Json(metadata) = leaderboard_metadata(State(state)).await.unwrap();
         assert_eq!(
             metadata
@@ -5993,21 +5518,9 @@ pub(crate) mod tests {
             manifests: Arc::new(registry),
             ..Default::default()
         };
-        let state = AppState {
-            database: Database::migrate(&config).await.unwrap(),
-            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            campaign_store: CampaignStore::create(directory.path().join("campaigns"), 1024)
-                .await
-                .unwrap(),
-            config,
-            cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
-            competition_run_grant_secret_key: None,
-            run_preflight_grant_secret_key: None,
-            challenge_rate_limiter: ChallengeRateLimiter::new(10),
-        };
+        let state =
+            crate::test_support::app_state(config.clone(), directory.path().join("campaigns"))
+                .await;
         let app = router(state).unwrap();
 
         let response = app
@@ -6090,21 +5603,9 @@ pub(crate) mod tests {
             manifests: Arc::new(registry),
             ..Default::default()
         };
-        let state = AppState {
-            database: Database::migrate(&config).await.unwrap(),
-            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            campaign_store: CampaignStore::create(directory.path().join("campaigns"), 1024)
-                .await
-                .unwrap(),
-            config,
-            cursor_hmac_key: [1; 32],
-            backup_authority_hmac_key: [1; 32],
-            competition_run_grant_secret_key: None,
-            run_preflight_grant_secret_key: None,
-            challenge_rate_limiter: ChallengeRateLimiter::new(10),
-        };
+        let state =
+            crate::test_support::app_state(config.clone(), directory.path().join("campaigns"))
+                .await;
         let app = router(state).unwrap();
 
         let response = app
@@ -6506,7 +6007,12 @@ pub(crate) mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, public_key, username)
+            .apply_username_update(
+                &challenge.id,
+                challenge.nonce.into_bytes(),
+                public_key,
+                username,
+            )
             .await
             .unwrap();
     }
@@ -6952,12 +6458,14 @@ pub(crate) mod tests {
             .check(address, ChallengePurpose::UsernameUpdate)
             .await
             .unwrap();
-        assert!(
+        assert!(matches!(
             limiter
                 .check(address, ChallengePurpose::UsernameUpdate)
-                .await
-                .is_err()
-        );
+                .await,
+            Err(ApiError::RateLimited {
+                retry_after_ms: 1..=60_000
+            })
+        ));
         limiter
             .check(address, ChallengePurpose::Submission)
             .await
@@ -7030,7 +6538,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, key, "Tuck")
+            .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, "Tuck")
             .await
             .unwrap();
         let (report_id, _) = database

@@ -23,13 +23,8 @@
 
 use crate::gfx_types::{Point, Rect as ScreenRect};
 
-use crate::hud_sprite::screen_rect_to_sprite_bbox;
-#[cfg(test)]
-use crate::ingame_menu::layout::BTN_STATE_PRESSED;
 use crate::ingame_menu::layout::{BTN_STATE_HOVER, BTN_STATE_NORMAL, button_sprite_state};
-use crate::native_font::Font;
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
-use robin_assets::resource_manager::ResourceManager;
+use crate::renderer::Renderer;
 use robin_engine::resource_ids::{
     RHID_CONVERT_MONEY_TO_BLAZONS, RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL,
     RHID_FLOATING_OK, RHID_GO_TO_EXIT,
@@ -287,182 +282,47 @@ impl SherwoodHudLayout {
     }
 }
 
-use crate::hud_sprite::{SpriteBank, load_bank};
+pub type SherwoodButtonSprites = crate::hud_sprite::ButtonSprites<SherwoodButton, 5>;
+pub type SherwoodHoverState = crate::hud_sprite::HoverState<SherwoodButton>;
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
-pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
-    let mut sprites = SherwoodButtonSprites::default();
-    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
-    let handle = upload.handle();
-    sprites.go_to_exit[BTN_STATE_NORMAL] = Some((upload, 1, 1));
-    assert_eq!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
-            .unwrap()
-            .0,
-        handle
-    );
-    renderer.draw_surface(handle, None, None, 0).unwrap();
-    sprites.retire(renderer);
-    sprites.retire(renderer);
-    assert!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_NORMAL, 0)
-            .is_none()
-    );
-    assert!(renderer.surface_dimensions(handle).is_err());
-    assert_eq!(
-        &renderer.try_capture_frame_rgba().unwrap().2[..4],
-        &[248, 252, 248, 255]
-    );
-}
-
-#[test]
-fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
-    let mut sprites = SherwoodButtonSprites::default();
-    sprites.go_to_exit[BTN_STATE_NORMAL] =
-        Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
-    sprites.go_to_exit[BTN_STATE_PRESSED] =
-        Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
-    assert_eq!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
-            .unwrap()
-            .1,
-        7
-    );
-    assert_eq!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_PRESSED, 0)
-            .unwrap()
-            .1,
-        8
-    );
-    let restored: SherwoodButtonSprites =
-        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
-    assert!(
-        restored
-            .frame(SherwoodButton::GoToExit, BTN_STATE_NORMAL, 0)
-            .is_none()
-    );
-    sprites.go_to_exit[BTN_STATE_NORMAL] = None;
-    assert!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
-            .is_none()
-    );
-    assert_eq!(
-        sprites
-            .frame(SherwoodButton::GoToExit, BTN_STATE_PRESSED, 0)
-            .unwrap()
-            .1,
-        8
-    );
-}
-
-/// Cached sprite surface ids for the four Sherwood HUD buttons.
-///
-/// Resource IDs: `RHID_DISPLAY_CAMPAIGN_MAP` (251), `RHID_GO_TO_EXIT`
-/// (241), `RHID_FLOATING_OK` (281 — Start), `RHID_FLOATING_CANCEL`
-/// (282 — Quit).  Each resource is a multi-sub-id BTTN strip:
-/// disabled, normal, focused, selected.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
-pub struct SherwoodButtonSprites {
-    #[serde(skip)]
-    display_campaign_map: SpriteBank,
-    #[serde(skip)]
-    go_to_exit: SpriteBank,
-    #[serde(skip)]
-    start_mission: SpriteBank,
-    #[serde(skip)]
-    quit_mission: SpriteBank,
-    #[serde(skip)]
-    sherwood_trading: SpriteBank,
-}
-
-impl SherwoodButtonSprites {
-    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
-        let banks = [
-            &mut self.display_campaign_map,
-            &mut self.go_to_exit,
-            &mut self.start_mission,
-            &mut self.quit_mission,
-            &mut self.sherwood_trading,
-        ];
-        crate::hud_sprite::retire(renderer, banks);
+impl crate::hud_sprite::HudButton<5> for SherwoodButton {
+    const ALL: [Self; 5] = [
+        Self::DisplayCampaignMap,
+        Self::GoToExit,
+        Self::StartMission,
+        Self::QuitMission,
+        Self::SherwoodTrading,
+    ];
+    fn index(self) -> usize {
+        self as usize
     }
-
-    /// Load button sprites from the attached DEFAULT.RES.  Missing
-    /// resources fall back to `None`; `draw_with_sprites` then skips
-    /// the button entirely (no fallback rect — see `draw_with_sprites`).
-    pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
-        Self {
-            display_campaign_map: load_bank(
-                res,
-                renderer,
-                RHID_DISPLAY_CAMPAIGN_MAP,
-                "DisplayCampaignMap",
-            ),
-            go_to_exit: load_bank(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
-            start_mission: load_bank(res, renderer, RHID_FLOATING_OK, "StartMission"),
-            quit_mission: load_bank(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
-            // Reuse the shipped money-conversion button: its coin/ransom
-            // imagery is the closest authored visual for item sales.
-            sherwood_trading: load_bank(
-                res,
-                renderer,
-                RHID_CONVERT_MONEY_TO_BLAZONS,
-                "SherwoodTrading",
-            ),
+    fn resource(self) -> (i32, &'static str) {
+        match self {
+            Self::DisplayCampaignMap => (RHID_DISPLAY_CAMPAIGN_MAP, "DisplayCampaignMap"),
+            Self::GoToExit => (RHID_GO_TO_EXIT, "GoToExit"),
+            Self::StartMission => (RHID_FLOATING_OK, "StartMission"),
+            Self::QuitMission => (RHID_FLOATING_CANCEL, "QuitMission"),
+            Self::SherwoodTrading => (RHID_CONVERT_MONEY_TO_BLAZONS, "SherwoodTrading"),
         }
     }
-
-    fn frames(&self, btn: SherwoodButton) -> &SpriteBank {
-        match btn {
-            SherwoodButton::DisplayCampaignMap => &self.display_campaign_map,
-            SherwoodButton::GoToExit => &self.go_to_exit,
-            SherwoodButton::StartMission => &self.start_mission,
-            SherwoodButton::QuitMission => &self.quit_mission,
-            SherwoodButton::SherwoodTrading => &self.sherwood_trading,
-        }
-    }
-
-    fn frame(
-        &self,
-        btn: SherwoodButton,
-        state: usize,
-        frame_counter: u32,
-    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
-        let frames = self.frames(btn);
-        let state = if btn == SherwoodButton::DisplayCampaignMap && state == BTN_STATE_NORMAL {
-            // The original game starts blinking with a 25-tick interval:
-            // 25 frames normal, 25 frames focused, repeating.
-            if (frame_counter / 25) & 1 == 1 {
-                BTN_STATE_HOVER
-            } else {
-                BTN_STATE_NORMAL
-            }
+    fn frame_state(self, state: usize, frame_counter: u32) -> usize {
+        if self == Self::DisplayCampaignMap
+            && state == BTN_STATE_NORMAL
+            && (frame_counter / 25) & 1 == 1
+        {
+            BTN_STATE_HOVER
         } else {
             state
-        };
-        crate::hud_sprite::frame(frames, state)
+        }
     }
-
-    fn size(&self, btn: SherwoodButton) -> Option<(u16, u16)> {
-        let frames = self.frames(btn);
-        crate::hud_sprite::size(frames)
+    fn shadow(self) -> bool {
+        matches!(
+            self,
+            Self::StartMission | Self::QuitMission | Self::SherwoodTrading
+        )
     }
 }
 
-/// Transient per-frame hover snapshot used by the draw routine.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SherwoodHoverState {
-    pub hovered: Option<SherwoodButton>,
-    pub mouse_pressed: bool,
-}
-
-/// Draw the Sherwood HUD buttons using loaded sprite surfaces.  A
-/// button with no loaded sprite is simply skipped (no fallback rect).
 pub fn draw_with_sprites(
     renderer: &mut Renderer,
     layout: &SherwoodHudLayout,
@@ -503,61 +363,11 @@ pub fn draw_with_sprites(
         let is_hovered = hover.hovered == Some(btn);
         let pressed = is_hovered && hover.mouse_pressed && enabled;
         let state = button_sprite_state(enabled, is_hovered, pressed);
-        if let Some((sid, _sw, _sh)) = sprites.frame(btn, state, frame_counter) {
-            // Blit centred inside the hit-test rect.  The sprite is
-            // typically authored at the button's native size, but we
-            // blit into the logical rect anyway so the visuals track
-            // our layout.
-            let dst = screen_rect_to_sprite_bbox(*rect);
-            if matches!(
-                btn,
-                SherwoodButton::StartMission
-                    | SherwoodButton::QuitMission
-                    | SherwoodButton::SherwoodTrading
-            ) {
-                renderer
-                    .draw_surface_with_shadow(
-                        sid,
-                        None,
-                        Some(&dst),
-                        50, // Default shadow intensity.
-                        BLIT_SOURCE_TRANSPARENT,
-                    )
-                    .expect("live HUD upload");
-            } else {
-                renderer
-                    .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
-                    .expect("live HUD upload");
-            }
-        }
-        // No placeholder-rect fallback — a missing sprite simply means
-        // the button isn't drawn.  The old "Go" / "Back" / "Map" label
-        // rectangles showed through in release builds when a resource
-        // lookup quietly failed.
+        sprites.draw(renderer, btn, *rect, state, frame_counter);
     }
 }
 
-/// Hover tracker for the four Sherwood button tooltips.  Thin wrapper
-/// around the shared hover tracker keyed directly on `SherwoodButton`,
-/// matching [`crate::zoom_hud::ZoomTooltipTracker`].
-#[derive(Default, Clone)]
-pub struct SherwoodTooltipTracker {
-    inner: crate::ui_panel::HoverTooltipTracker<SherwoodButton>,
-}
-
-impl SherwoodTooltipTracker {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn update(&mut self, hovered: Option<SherwoodButton>) {
-        self.inner.update(hovered);
-    }
-
-    pub fn ready_button(&self) -> Option<SherwoodButton> {
-        self.inner.ready_slot()
-    }
-}
+pub type SherwoodTooltipTracker = crate::hud_sprite::ButtonTooltipTracker<SherwoodButton>;
 
 /// Menu-text id for the Start/Quit mission button tooltip in the
 /// current mode: Sherwood + men-to-blazon → Farmers-to-blazon /
@@ -612,34 +422,7 @@ pub fn sherwood_button_tooltip_mt_id(
     }
 }
 
-/// Draw the hover tooltip for the Sherwood HUD buttons.  Does nothing
-/// when no tooltip is ready or the font stack isn't available.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_tooltip(
-    renderer: &mut Renderer,
-    ready_button: Option<SherwoodButton>,
-    tooltip_text: impl Fn(SherwoodButton) -> Option<String>,
-    font: &Font,
-    shadow: Option<&Font>,
-    mouse_x: i32,
-    mouse_y: i32,
-    cursor_size: (i32, i32),
-) {
-    if let Some(btn) = ready_button
-        && let Some(text) = tooltip_text(btn)
-        && !text.is_empty()
-    {
-        crate::ui_panel::draw_screen_tooltip(
-            renderer,
-            font,
-            shadow,
-            &text,
-            mouse_x,
-            mouse_y,
-            cursor_size,
-        );
-    }
-}
+pub use crate::hud_sprite::{TooltipPlacement, draw_tooltip};
 
 #[cfg(test)]
 mod tests {

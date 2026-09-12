@@ -79,7 +79,7 @@ pub fn build_blazon_bar_state(
 /// `peasants_to_convert / peasant_to_blazon_quotation`.  Returns 0
 /// outside men-to-blazon conversion mode or when no blazon mission is
 /// armed (the conversion-mode flag normally implies a blazon mission
-/// is set, but defensively return 0 here when it is not).
+/// is set; a missing mission is reported as inconsistent state).
 fn compute_additional_blazons(
     campaign: &Campaign,
     profiles: &crate::profiles::ProfileManager,
@@ -89,6 +89,7 @@ fn compute_additional_blazons(
         return 0;
     }
     let Some(blazon_idx) = campaign.blazon_mission_idx else {
+        tracing::warn!("men-to-blazon conversion is enabled without a blazon mission");
         return 0;
     };
     let quotation = campaign.missions[blazon_idx]

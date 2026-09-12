@@ -248,7 +248,7 @@ fn tick_admission_crosses_pending_arrow_refresh_before_hourglass() {
         .set_old_position(WorldPoint3D::new(-1.0, 0.0, 0.0));
     let arrow = engine
         .inner
-        .add_entity(Entity::Projectile(ElementProjectile {
+        .add_test_entity(Entity::Projectile(ElementProjectile {
             element,
             object: ObjectData {
                 object_type: ObjectType::Arrow,
@@ -313,7 +313,7 @@ fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
             distance: 11,
         }],
     };
-    let id = inner.add_entity(crate::element::Entity::Soldier(
+    let id = inner.add_test_entity(crate::element::Entity::Soldier(
         crate::element::ActorSoldier {
             element: {
                 let mut initial_element = crate::element::ElementData::default();
@@ -750,7 +750,7 @@ fn selection_boundary_fixture() -> (Engine, LevelAssets, EntityId, crate::sequen
         });
     let pc_id = engine
         .inner
-        .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        .add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -856,7 +856,7 @@ fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
     let spawned_id =
         current
             .inner
-            .add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            .add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();
                     initial_element.kind = crate::element::ElementKind::Fx;
@@ -1700,7 +1700,7 @@ fn parity_runtime_projects_current_sprite_top_left_for_ordinary_entities() {
         .position_iface
         .set_cached_sprite_position(crate::coordinates::MapPoint::new(1688.0, 150.0));
     element.set_position_map(crate::coordinates::MapPoint::new(1836.2246, 301.3214));
-    let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+    let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
         element,
         fx: Default::default(),
     }));
@@ -1731,7 +1731,7 @@ fn parity_runtime_preserves_target_cached_sprite_anchor() {
         .position_iface
         .set_cached_sprite_position(crate::coordinates::MapPoint::new(2791.0, 171.0));
     element.set_position_map_preserving_3d(crate::coordinates::MapPoint::new(2823.0, 312.0));
-    let id = inner.add_entity(crate::element::Entity::Target(
+    let id = inner.add_test_entity(crate::element::Entity::Target(
         crate::element::ElementTarget {
             element,
             fx: Default::default(),
@@ -1793,7 +1793,7 @@ fn parity_runtime_refreshes_bank_dimensions_only_after_recorded_boundary() {
         ],
         ..Default::default()
     }]);
-    let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+    let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Fx;
@@ -1865,7 +1865,7 @@ fn missing_draw_view_skips_presentation_cache_refresh() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
         ..Default::default()
     }]);
-    let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+    let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
         element: {
             let mut initial_element = crate::element::ElementData::default();
             initial_element.kind = crate::element::ElementKind::Fx;
@@ -1982,7 +1982,7 @@ fn parity_runtime_projection_ordinal_includes_original_default_ground_slot() {
                 dz: 0.0,
             }),
         );
-        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+        let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
             element,
             fx: Default::default(),
         }));
@@ -2242,8 +2242,8 @@ fn parity_pc_registry_preserves_original_order_not_portrait_order() {
             pc: crate::element::PcData::default(),
         })
     };
-    let first = inner.add_entity(new_pc());
-    let second = inner.add_entity(new_pc());
+    let first = inner.add_test_entity(new_pc());
+    let second = inner.add_test_entity(new_pc());
     inner.world.pc_ids = vec![first, second];
     inner.world.original_pc_registry_ids = vec![second, first];
 
@@ -2413,8 +2413,8 @@ fn parity_world_interactables_preserves_ordered_building_and_zone_state() {
             pc: crate::element::PcData::default(),
         })
     };
-    let first = inner.add_entity(new_pc());
-    let second = inner.add_entity(new_pc());
+    let first = inner.add_test_entity(new_pc());
+    let second = inner.add_test_entity(new_pc());
     inner.script_domains.buildings.occupants.push(vec![
         crate::natives::ScriptHandleCodec::actor_handle(second),
         crate::natives::ScriptHandleCodec::actor_handle(first),
@@ -2654,7 +2654,7 @@ fn legacy_additional_arrow_refreshes_advance_real_sprite_state() {
             ..Default::default()
         },
     };
-    let id = inner.add_entity(crate::element::Entity::Projectile(projectile));
+    let id = inner.add_test_entity(crate::element::Entity::Projectile(projectile));
     let mut engine = Engine {
         inner,
         bootstrap_open: false,
@@ -2926,7 +2926,7 @@ fn failed_construction_returns_the_same_campaign_allocation() {
 
     let mut assets = LevelAssets::new();
     assets.profile_manager = std::sync::Arc::new(profiles);
-    let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+    let mut loaded = crate::level_data::LoadedLevel::empty();
     loaded.mission.soldiers.push(crate::level_data::RawSoldier {
         position_x: 0,
         position_y: 0,

@@ -122,7 +122,7 @@ fn two_engines_execute_different_rhs_and_bytecode_concurrently() {
                     )
                     .unwrap();
                 sprite.current_row = 0;
-                let owner = engine.add_entity(Entity::Fx(ElementFx {
+                let owner = engine.add_test_entity(Entity::Fx(ElementFx {
                     element: {
                         let mut initial_element = ElementData::default();
                         initial_element.kind = ElementKind::Fx;

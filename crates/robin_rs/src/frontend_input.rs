@@ -12,13 +12,10 @@ pub(crate) struct FrontendPointerSequence {
     mouse_way: crate::mouse_way::MouseWay,
 }
 
-impl<'de> Deserialize<'de> for FrontendPointerSequence {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live pointer sequences cannot be restored",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    FrontendPointerSequence,
+    "live pointer sequences cannot be restored"
+);
 
 impl FrontendPointerSequence {
     pub(crate) fn capture(&self) -> &FrontendPointerCapture {
@@ -207,14 +204,15 @@ impl FrontendPointerCapture {
         self.right_double_click_pending = clicks >= 2;
     }
 
-    pub fn take_right_double_click(&mut self) -> bool {
+    fn take_right_double_click(&mut self) -> bool {
         std::mem::take(&mut self.right_double_click_pending)
     }
 
-    pub fn capture_touch_plan(&mut self) {
+    fn capture_touch_plan(&mut self) {
         self.touch_plan_captured = true;
     }
-    pub fn touch_plan_captured(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn touch_plan_captured(&self) -> bool {
         self.touch_plan_captured
     }
     /// Admit presses only when enabled, but retire an already captured sequence
@@ -259,7 +257,7 @@ impl FrontendPointerCapture {
 
     /// Modal close, engine cancellation and snapshot restoration all retire
     /// the complete pointer sequence, including deferred release metadata.
-    pub fn cancel_sequence(&mut self) {
+    fn cancel_sequence(&mut self) {
         *self = Self::default();
     }
 }

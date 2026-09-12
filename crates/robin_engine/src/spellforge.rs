@@ -903,12 +903,7 @@ fn extend_journal_digest(previous: [u8; 32], event: &SpellforgeEventRecord) -> [
 }
 
 pub fn hex_hash(hash: &[u8; 32]) -> String {
-    use std::fmt::Write as _;
-    let mut output = String::with_capacity(64);
-    for byte in hash {
-        write!(&mut output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
+    hex::encode(hash)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

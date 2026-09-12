@@ -75,7 +75,7 @@ mod suite {
                 .expect("zero is a valid test pathfinder index"),
         );
         element.set_position_map(source);
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),
             human: HumanData::default(),

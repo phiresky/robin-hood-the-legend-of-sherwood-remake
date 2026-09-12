@@ -66,9 +66,7 @@ pub(crate) async fn show_movies(
     loop {
         // Build the frame fresh each frame so state changes are picked up
         // (matches the pattern other in-place sub-menus use).
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
             ID_INTRO,
             &intro_label,
@@ -183,7 +181,7 @@ pub(crate) async fn show_movies(
         } else {
             // No `RHID_MENU_BACKGROUND_2` available — fall back to dim so
             // we at least get visible button chrome.
-            renderer.render_gpu_rect(0, 0, MENU_W, MENU_H, 0, 0, 0, 255);
+            renderer.render_gpu_rect(0, 0, MENU_W, MENU_H, [0, 0, 0, 255]);
         }
 
         // Title — centre the string horizontally inside the 0..500 column,

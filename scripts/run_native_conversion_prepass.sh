@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # Normalize one drained parity corpus to native bitcode with durable per-trace
 # evidence. For production, PINNED_RUNNER_OR_BUNDLE is an immutable bundle
 # directory and TRUST_SHA256 is RUNNER_BUNDLE_SHA256_V1:
@@ -34,39 +37,9 @@ minimum_free_kib=${NATIVE_CONVERT_MIN_FREE_KIB:-10485760}
 minimum_available_kib_per_job=${NATIVE_CONVERT_MIN_AVAILABLE_KIB_PER_JOB:-8388608}
 meminfo_path=${NATIVE_CONVERT_TEST_MEMINFO:-/proc/meminfo}
 
-fail() {
-    printf 'error: %s\n' "$*" >&2
-    exit 2
-}
 
-sha256_file() {
-    local result
-    result=$(sha256sum -- "$1") || return 1
-    printf '%s\n' "${result%% *}"
-}
 
-normalize_bounded_uint() {
-    local LC_ALL=C value=$1 limit=$2
-    [[ "$value" =~ ^[0-9]+$ ]] || return 1
-    while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
-        value=${value#0}
-    done
-    if (( ${#value} > ${#limit} )) \
-        || { (( ${#value} == ${#limit} )) && [[ "$value" > "$limit" ]]; }
-    then
-        return 1
-    fi
-    printf '%s\n' "$value"
-}
 
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 
 [[ "$jobs" =~ ^[0-9]+$ ]] \
     || fail 'NATIVE_CONVERT_JOBS must be an unsigned integer between 1 and 8'

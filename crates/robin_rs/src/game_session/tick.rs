@@ -219,11 +219,7 @@ pub(super) fn post_render_engine_cleanup(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_steps(
     steps: Vec<crate::http_server::PendingStep>,
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    dev: &mut engine_api::DevState,
-    game: &mut Game,
+    mutation: super::runtime::MissionMutation<'_>,
     timeline: &mut super::runtime::TimelineRuntime,
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
@@ -236,6 +232,13 @@ pub(super) fn drain_steps(
     if steps.is_empty() {
         return;
     }
+    let super::runtime::MissionMutation {
+        manager,
+        host,
+        assets,
+        dev,
+        game,
+    } = mutation;
 
     for step in steps {
         // Keep the response handle intact: every branch below consumes the

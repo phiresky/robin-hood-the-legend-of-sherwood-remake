@@ -138,18 +138,10 @@ crate::bitcode_adapters::impl_native_bitcode_flags!(ConditionFlags, u16);
     bitcode::Decode,
 )]
 pub struct CombatPosition {
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub attacker: Option<AiEntityHandle>,
     pub attacker_position: Position,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub target: Option<AiEntityHandle>,
     pub target_position: Position,
     pub target_direction: u16,
@@ -158,17 +150,9 @@ pub struct CombatPosition {
     pub bonus: i16,
     pub estimated_damage: i16,
     pub line_position: bool,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub left_neighbour: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub right_neighbour: Option<AiEntityHandle>,
     /// Jump-line index when the combat position sits across a jump line
     /// (table-swordfight case); `None` otherwise.
@@ -418,18 +402,13 @@ pub(crate) fn soldier_detects_target_360(
         viewer_ground_z,
     );
     let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_z - viewer_z;
-    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
-        return false;
-    }
-    crate::sight_obstacle::is_reachable_3d(
+    detection_360_geometry(
+        crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+        crate::coordinates::WorldPoint3D::new(target_ground.x, target_ground.y, target_z),
+        (viewer_radius as f32).powi(2),
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_z],
-        [target_ground.x, target_ground.y, target_z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
+    .1
 }
 
 pub fn soldier_is_able_to_help_state(
@@ -621,7 +600,7 @@ pub struct FighterSnapshot {
     /// `AttackingApproachingNewEnemy` or `AttackingMovingAroundOldEnemy`, the
     /// scorer treats the fighter as moving toward `position`; otherwise it
     /// scores at `seek_position`.
-    pub current_substate: u32,
+    pub current_substate: Substate,
     /// The handle of the archer hiding behind this shield bearer, or 0.
     /// Derived during snapshot building from the reverse
     /// `shield_bearer_before_me` link so archers can't double-claim a
@@ -672,12 +651,12 @@ pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
 
 /// Dot product of two 2D vectors.
 pub(super) fn dot2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.0 + a.1 * b.1
+    crate::geo2d::dot(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// 2D determinant (cross product Z component): positive if b is to the left of a.
 pub(super) fn det2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.1 - a.1 * b.0
+    crate::geo2d::cross(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// Max-norm (Chebyshev distance) of a 2D vector.
@@ -744,24 +723,7 @@ pub(super) fn ai_square_distance_world(
 }
 
 #[cfg(test)]
-mod raw_element_distance_tests {
-    use super::ai_square_distance_world;
-    use crate::coordinates::WorldPoint3D;
-
-    #[test]
-    fn door_endpoint_is_not_substituted_for_literal_body_point() {
-        // Arrow protection compares PHALANX_ATTACK_DISTANCE (100) with
-        // squared distance to the nearest enemy. A PC can be physically outside that
-        // radius while AI Position() has already snapped it to the near door
-        // endpoint; Original uses the physical body point.
-        let owner = WorldPoint3D::new(0.0, 0.0, 0.0);
-        let literal_body = WorldPoint3D::new(101.0, 0.0, 0.0);
-        let ai_door_endpoint = WorldPoint3D::new(99.0, 0.0, 0.0);
-
-        assert!(ai_square_distance_world(&literal_body, &owner) >= 100.0 * 100.0);
-        assert!(ai_square_distance_world(&ai_door_endpoint, &owner) < 100.0 * 100.0);
-    }
-}
+mod raw_element_distance_tests;
 
 /// The AI's stretched **3D** Chebyshev distance.
 ///
@@ -867,48 +829,7 @@ fn step_back_direction_sector(direction: u16, relative_direction: i16) -> u16 {
 }
 
 #[cfg(test)]
-mod step_back_direction_tests {
-    use super::{
-        iso_norm, iso_normalize, sector_to_vector_iso, step_back_direction_sector, vec_to_sector_ar,
-    };
-
-    #[test]
-    fn zero_vector_normalization_preserves_original_nan_result() {
-        // The shipped game produces NaN when normalizing a zero vector. Schema-14 seed
-        // 1000000, linux2 P002 Savegame_029 replay-010 frame 4851 exercises
-        // this through swordfight observation reconsideration.
-        let zero = std::hint::black_box(0.0_f32);
-        let normalized = iso_normalize(
-            (zero, zero),
-            std::hint::black_box(crate::position_interface::ASPECT_RATIO),
-        );
-        assert_eq!(normalized.0.to_bits(), 0xffc0_0000);
-        assert_eq!(normalized.1.to_bits(), 0xffc0_0000);
-    }
-
-    #[test]
-    fn negative_step_back_offsets_keep_signed_remainder() {
-        assert_eq!(step_back_direction_sector(1, -2), 15);
-        assert_eq!(step_back_direction_sector(1, -1), 0);
-    }
-
-    #[test]
-    fn positive_step_back_offsets_keep_source_modulo_fifteen() {
-        assert_eq!(step_back_direction_sector(15, 1), 1);
-    }
-
-    #[test]
-    fn step_back_geometry_honours_swordfight_aspect_ratio() {
-        let vertical = (0.0, 40.0);
-        assert_eq!(iso_norm(vertical, 1.0), 40.0);
-        assert!(iso_norm(vertical, crate::position_interface::ASPECT_RATIO) > 69.0);
-
-        let sector = vec_to_sector_ar(vertical.0, vertical.1, 1.0);
-        let direction = sector_to_vector_iso(sector, 1.0);
-        assert_eq!(sector, 8);
-        assert_eq!(direction, (0.0, 1.0));
-    }
-}
+mod step_back_direction_tests;
 
 /// Returns `true` iff the enemy is sufficiently below the viewer
 /// that an archer should bend down to bow-down posture.  The inputs
@@ -949,88 +870,7 @@ pub(super) fn enemy_is_below_me(
 }
 
 #[cfg(test)]
-mod enemy_below_tests {
-    use super::*;
-
-    fn context() -> AiContext {
-        AiContext {
-            posture: crate::element::Posture::Upright,
-            elevation: 105.001_01,
-            ..AiContext::test_fixture()
-        }
-    }
-
-    #[test]
-    fn door_transition_uses_literal_live_ground_position() {
-        // Savegame_021 seed replay: the projected map coordinates differ by
-        // only (5, 8), but elevation projection puts the target more than
-        // seven world-Y units away while it is less than one unit lower.
-        let target = crate::coordinates::WorldPoint3D::new(577.0, 2_472.219, 104.218_95);
-        assert!(!enemy_is_below_me(
-            &context(),
-            Some(Position {
-                x: 572.0,
-                y: 2360.0,
-                ..Position::default()
-            }),
-            Some(target),
-        ));
-    }
-
-    #[test]
-    fn nearby_lower_target_is_below() {
-        let target = crate::coordinates::WorldPoint3D::new(572.0, 2465.001, 104.0);
-        assert!(enemy_is_below_me(
-            &context(),
-            Some(Position {
-                x: 572.0,
-                y: 2360.0,
-                ..Position::default()
-            }),
-            Some(target),
-        ));
-    }
-
-    #[test]
-    fn moving_archer_uses_post_execute_live_position_at_detection_boundary() {
-        // schema14 seed1000000, linux3/P003/Savegame_043/replay-004,
-        // frame 8310. Soldier 88's own Execute has advanced five map-Y units
-        // before the NPC update checks whether its enemy is below. That movement is just
-        // enough to put PC 169 inside the vertical-distance cone and select
-        // EquipBowDown at frame 8320.
-        let ctx = AiContext {
-            posture: crate::element::Posture::Upright,
-            elevation: 150.001,
-            ..AiContext::test_fixture()
-        };
-        let target = crate::coordinates::WorldPoint3D::new(1_031.413_8, 2_002.76, 107.499_275);
-        let owner_after_execute = Position {
-            x: 1_061.203_9,
-            y: 1_865.277_8,
-            ..Position::default()
-        };
-        assert!(enemy_is_below_me(
-            &ctx,
-            Some(owner_after_execute),
-            Some(target),
-        ));
-
-        let owner_before_execute = Position {
-            y: owner_after_execute.y + 5.0,
-            ..owner_after_execute
-        };
-        assert!(
-            !enemy_is_below_me(&ctx, Some(owner_before_execute), Some(target)),
-            "the tick-start position is across the exact Original cone boundary"
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "target's literal live position")]
-    fn missing_required_target_geometry_is_not_fake_not_below() {
-        let _ = enemy_is_below_me(&context(), Some(Position::default()), None);
-    }
-}
+mod enemy_below_tests;
 
 /// Compute a retreat position away from `pos_enemy`.
 ///
@@ -1099,59 +939,40 @@ pub fn propose_good_step_back_goal(
     None
 }
 
-/// Check if a fighter's substate (as u32) is one of the 13 stationary/observing
+/// Check if a fighter's substate is one of the 13 stationary/observing
 /// combat substates used by combat-observation step selection.
 /// Only friends in these substates contribute to the left/right dispersion
 /// calculation.
-pub(super) fn is_observing_combat_substate(substate: u32) -> bool {
+pub(super) fn is_observing_combat_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingObserve as u32
-            || s == Substate::AttackingObserveAndMove as u32
-            || s == Substate::AttackingProtectingWithShield as u32
-            || s == Substate::AttackingAdvancingWithShield as u32
-            || s == Substate::AttackingBowRunningBehindShieldBearer as u32
-            || s == Substate::AttackingBowCorrectingPosition as u32
-            || s == Substate::AttackingPhalanx as u32
-            || s == Substate::AttackingRunningToPhalanx as u32
-            || s == Substate::AttackingBowShooting as u32
-            || s == Substate::AttackingBowLoading as u32
-            || s == Substate::AttackingBowAiming as u32
-            || s == Substate::AttackingBowObserving as u32
-            || s == Substate::AttackingBowObservingLoading as u32
-    )
-}
-
-/// u32-keyed mirror of `Substate::is_any_swordfight`. Used by
-/// swordfight observation reconsideration to bump multiplicity for allies
-/// actively committed to a swordfight against their primary target.
-pub(crate) fn is_any_swordfight_substate(substate: u32) -> bool {
-    use crate::ai::Substate;
-    matches!(
-        substate,
-        s if s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
-            || s == Substate::AttackingSwordfight as u32
-            || s == Substate::AttackingSwordfightSpecialStrike as u32
-            || s == Substate::AttackingSwordfightParade as u32
-            || s == Substate::AttackingApproachingNewEnemy as u32
-            || s == Substate::AttackingSwordfightStepBack as u32
-            || s == Substate::AttackingMovingAroundOldEnemy as u32
+        Substate::AttackingObserve
+            | Substate::AttackingObserveAndMove
+            | Substate::AttackingProtectingWithShield
+            | Substate::AttackingAdvancingWithShield
+            | Substate::AttackingBowRunningBehindShieldBearer
+            | Substate::AttackingBowCorrectingPosition
+            | Substate::AttackingPhalanx
+            | Substate::AttackingRunningToPhalanx
+            | Substate::AttackingBowShooting
+            | Substate::AttackingBowLoading
+            | Substate::AttackingBowAiming
+            | Substate::AttackingBowObserving
+            | Substate::AttackingBowObservingLoading
     )
 }
 
 /// The three substates the attack-opportunity gate in
 /// swordfight observation reconsideration checks: a friend already approaching
 /// the same target preempts our opportunistic charge.
-pub(super) fn is_walking_running_charging_substate(substate: u32) -> bool {
+pub(super) fn is_walking_running_charging_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
+        Substate::AttackingWalkingToEnemy
+            | Substate::AttackingRunningToEnemy
+            | Substate::AttackingChargingEnemy
     )
 }
 
@@ -1727,356 +1548,30 @@ pub(super) fn resolve_seek_point_mut<'a>(
 }
 
 #[cfg(test)]
-mod required_combat_input_tests {
-    use super::*;
-
-    #[test]
-    fn formation_proposal_round_trip_preserves_live_slot_zero() {
-        let position = CombatPosition {
-            attacker: Some(AiEntityHandle::new(0)),
-            target: Some(AiEntityHandle::new(2)),
-            left_neighbour: Some(AiEntityHandle::new(0)),
-            right_neighbour: None,
-            ..CombatPosition::default()
-        };
-        let json = serde_json::to_string(&position).unwrap();
-        assert!(json.contains(r#""attacker":{"entity":0}"#));
-        assert!(json.contains(r#""left_neighbour":{"entity":0}"#));
-        let restored: CombatPosition = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.attacker, Some(AiEntityHandle::new(0)));
-        assert_eq!(restored.left_neighbour, Some(AiEntityHandle::new(0)));
-        assert_eq!(restored.right_neighbour, None);
-    }
-
-    fn combat_position() -> CombatPosition {
-        CombatPosition {
-            attacker: Some(AiEntityHandle::new(1)),
-            target: Some(AiEntityHandle::new(2)),
-            attacker_position: Position::default(),
-            target_position: Position {
-                x: 10.0,
-                ..Position::default()
-            },
-            ..CombatPosition::default()
-        }
-    }
-
-    fn fighter(handle: HumanHandle) -> FighterSnapshot {
-        FighterSnapshot {
-            handle,
-            sword_range_maximal: 100,
-            hth_weapon_id: 1,
-            ..FighterSnapshot::default()
-        }
-    }
-
-    fn view(fighters: &[FighterSnapshot]) -> FighterView<'_> {
-        FighterView {
-            near: fighters,
-            registry: &[],
-        }
-    }
-
-    #[test]
-    #[should_panic(expected = "combat position target 2 is absent")]
-    fn damage_evaluation_rejects_a_missing_selected_target() {
-        let fighters = [fighter(1)];
-        let mut position = combat_position();
-        estimate_damage(
-            1,
-            &mut position,
-            view(&fighters),
-            &crate::profiles::ProfileManager::new(),
-            50,
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
-    fn damage_evaluation_rejects_a_missing_required_weapon() {
-        let fighters = [fighter(1), fighter(2)];
-        let mut position = combat_position();
-        estimate_damage(
-            1,
-            &mut position,
-            view(&fighters),
-            &crate::profiles::ProfileManager::new(),
-            50,
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "fighter 1 requires missing HtH weapon profile 1")]
-    fn damage_evaluation_resolves_combatants_through_the_full_registry() {
-        // Attacker 1 stands outside the neighbour radius but is still named by
-        // the us/them lists, so evaluation must reach it through the registry
-        // and get as far as the weapon lookup.
-        let near = [fighter(2)];
-        let registry = [fighter(1), fighter(2)];
-        let mut position = combat_position();
-        estimate_damage(
-            1,
-            &mut position,
-            FighterView {
-                near: &near,
-                registry: &registry,
-            },
-            &crate::profiles::ProfileManager::new(),
-            50,
-        );
-    }
-
-    #[test]
-    fn damage_evaluation_reuses_the_combat_position_cache() {
-        let mut position = combat_position();
-        position.estimated_damage = 123;
-        assert_eq!(
-            estimate_damage(
-                1,
-                &mut position,
-                view(&[]),
-                &crate::profiles::ProfileManager::new(),
-                50,
-            ),
-            123
-        );
-    }
-
-    #[test]
-    fn damage_protection_uses_live_target_facing_not_proposed_facing() {
-        use crate::profiles::{
-            HtHWeaponProfile, ThrustProfile, WeaponThrustDirection, WeaponThrustKind,
-        };
-
-        let mut weapon = HtHWeaponProfile {
-            // Front is unprotected while the left side absorbs 90%. If the
-            // proposed facing leaks into protection calculation, this test returns 1
-            // damage instead of the Original's 10.
-            protection_by_localization: [0, 0, 90, 0, 0],
-            ..HtHWeaponProfile::default()
-        };
-        weapon.thrusts[0] = ThrustProfile {
-            kind: WeaponThrustKind::Straight,
-            direction: WeaponThrustDirection::NonApplicable,
-            cutting: 90,
-            maximal_distance: 100,
-            ..ThrustProfile::default()
-        };
-        let mut profiles = crate::profiles::ProfileManager::new();
-        profiles.hth_weapons.push(weapon);
-
-        let attacker = FighterSnapshot {
-            position: Position {
-                y: -10.0,
-                ..Position::default()
-            },
-            ..fighter(1)
-        };
-        let target = FighterSnapshot {
-            // Live facing is sector 0. The hypothetical combat position says
-            // sector 4, as combat-position evaluation may do when the defender is
-            // expected to turn toward a proposed attacker position.
-            direction: 0,
-            position: Position::default(),
-            ..fighter(2)
-        };
-        let fighters = [attacker, target];
-        let mut position = CombatPosition {
-            attacker: Some(AiEntityHandle::new(1)),
-            attacker_position: Position::default(),
-            target: Some(AiEntityHandle::new(2)),
-            target_position: Position {
-                x: 10.0,
-                ..Position::default()
-            },
-            target_direction: 4,
-            ..CombatPosition::default()
-        };
-
-        assert_eq!(
-            estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
-            10
-        );
-    }
-
-    #[test]
-    fn damage_protection_sector_uses_live_ground_y() {
-        use crate::profiles::{
-            HtHWeaponProfile, ThrustProfile, WeaponThrustDirection, WeaponThrustKind,
-        };
-
-        let mut weapon = HtHWeaponProfile {
-            // With Original ground coordinates the attacker is on the
-            // defender's protected left. Ignoring elevation instead puts the
-            // same two projected map positions directly in front.
-            protection_by_localization: [0, 0, 90, 0, 0],
-            ..HtHWeaponProfile::default()
-        };
-        weapon.thrusts[0] = ThrustProfile {
-            kind: WeaponThrustKind::Straight,
-            direction: WeaponThrustDirection::NonApplicable,
-            cutting: 90,
-            maximal_distance: 100,
-            ..ThrustProfile::default()
-        };
-        let mut profiles = crate::profiles::ProfileManager::new();
-        profiles.hth_weapons.push(weapon);
-
-        let attacker = FighterSnapshot {
-            position: Position {
-                x: 155.0,
-                y: 104.0,
-                ..Position::default()
-            },
-            elevation: 0.0,
-            ..fighter(1)
-        };
-        let target = FighterSnapshot {
-            position: Position::default(),
-            elevation: 150.0,
-            direction: 6,
-            ..fighter(2)
-        };
-        let fighters = [attacker, target];
-        let mut position = CombatPosition {
-            attacker: Some(AiEntityHandle::new(1)),
-            attacker_position: Position::default(),
-            target: Some(AiEntityHandle::new(2)),
-            target_position: Position {
-                x: 10.0,
-                ..Position::default()
-            },
-            ..CombatPosition::default()
-        };
-
-        assert_eq!(
-            estimate_damage(1, &mut position, view(&fighters), &profiles, 0),
-            1
-        );
-    }
-
-    #[test]
-    fn combat_position_score_truncates_distance_before_fractional_penalty() {
-        let mut position = CombatPosition {
-            attacker_position: Position {
-                x: 52.9,
-                ..Position::default()
-            },
-            change_position: true,
-            ..CombatPosition::default()
-        };
-        let mut friends = [];
-        let mut enemies = [];
-        assert_eq!(
-            evaluate_combat_position_full(
-                1,
-                &Position::default(),
-                &[],
-                &mut position,
-                &mut friends,
-                &mut enemies,
-                view(&[]),
-                &crate::profiles::ProfileManager::new(),
-                50,
-            ),
-            -7
-        );
-    }
-
-    #[test]
-    fn nearest_opponent_keeps_first_fractional_uword_tie() {
-        let maurice = FighterSnapshot {
-            handle: 10,
-            opponent_handles: vec![0, 30],
-            ..FighterSnapshot::default()
-        };
-        let first = FighterSnapshot {
-            handle: 0,
-            position: Position {
-                x: 10.9,
-                ..Position::default()
-            },
-            ..FighterSnapshot::default()
-        };
-        let fractionally_nearer = FighterSnapshot {
-            handle: 30,
-            position: Position {
-                x: 10.1,
-                ..Position::default()
-            },
-            ..FighterSnapshot::default()
-        };
-        let fighters = [maurice, first, fractionally_nearer];
-        assert_eq!(
-            calculate_opponent_nearest_to_rene(
-                |handle| fighters.iter().find(|f| f.handle == handle),
-                10,
-                &Position::default(),
-            ),
-            Some(AiEntityHandle::new(0)),
-        );
-    }
-
-    /// `CalculateOpponentOfMauriceWhoIsNearestToRene` dereferences Maurice's
-    /// live opponent pointers, so an opponent outside the caller's
-    /// proximity-limited `nearby_fighters` snapshot still participates. The
-    /// lookup closure resolves through the complete registry.
-    #[test]
-    fn nearest_opponent_resolves_opponents_outside_the_nearby_snapshot() {
-        let maurice = FighterSnapshot {
-            handle: 10,
-            opponent_handles: vec![20, 30],
-            ..FighterSnapshot::default()
-        };
-        let far_but_nearest = FighterSnapshot {
-            handle: 30,
-            position: Position {
-                x: 5.0,
-                ..Position::default()
-            },
-            ..FighterSnapshot::default()
-        };
-        let near_snapshot_entry = FighterSnapshot {
-            handle: 20,
-            position: Position {
-                x: 40.0,
-                ..Position::default()
-            },
-            ..FighterSnapshot::default()
-        };
-        // `nearby` deliberately omits handle 30 — only the wider registry
-        // knows about it, exactly like a fighter beyond the 500-unit radius.
-        let nearby = [maurice.clone(), near_snapshot_entry.clone()];
-        let registry = [maurice, near_snapshot_entry, far_but_nearest];
-        assert_eq!(
-            calculate_opponent_nearest_to_rene(
-                |handle| nearby
-                    .iter()
-                    .find(|f| f.handle == handle)
-                    .or_else(|| registry.iter().find(|f| f.handle == handle)),
-                10,
-                &Position::default(),
-            ),
-            Some(AiEntityHandle::new(30)),
-            "an opponent known only to the complete registry must still win the maximum-norm scan"
-        );
-    }
-}
+mod required_combat_input_tests;
 
 #[cfg(test)]
-mod swordfight_substate_tests {
-    use super::*;
+mod swordfight_substate_tests;
 
-    #[test]
-    fn broad_swordfight_family_includes_approach_and_special_strike() {
-        assert!(is_any_swordfight_substate(
-            crate::ai::Substate::AttackingRunningToEnemy as u32
-        ));
-        assert!(is_any_swordfight_substate(
-            crate::ai::Substate::AttackingSwordfightSpecialStrike as u32
-        ));
-        assert!(!is_any_swordfight_substate(
-            crate::ai::Substate::AttackingTooProudToAttack as u32
-        ));
+#[track_caller]
+pub(super) fn detection_360_geometry(
+    viewer: crate::coordinates::WorldPoint3D,
+    target: crate::coordinates::WorldPoint3D,
+    sq_radius: f32,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> (f32, bool) {
+    let dx = target.x - viewer.x;
+    let dy = (target.y - viewer.y) * INVERSE_ASPECT_RATIO;
+    let dz = target.z - viewer.z;
+    let sq_distance = dx * dx + dy * dy + dz * dz;
+    if sq_distance > sq_radius {
+        return (sq_distance, false);
     }
+    let visible = crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer.x, viewer.y, viewer.z],
+        [target.x, target.y, target.z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    );
+    (sq_distance, visible)
 }

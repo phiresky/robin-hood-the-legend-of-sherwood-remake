@@ -1022,18 +1022,18 @@ mod display_order_tests {
     #[test]
     fn elevation_zero_fx_render_only_in_background_pass() {
         let mut engine = EngineInner::new();
-        let background = engine.add_entity(fx_entity(
+        let background = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(10.0, 20.0, 0.0),
             Vec::new(),
             None,
         ));
-        let elevated = engine.add_entity(fx_entity(
+        let elevated = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(10.0, 30.0, 10.0),
             Vec::new(),
             None,
         ));
 
-        let second_background = engine.add_entity(fx_entity(
+        let second_background = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(20.0, 20.0, 0.0),
             Vec::new(),
             None,
@@ -1048,7 +1048,7 @@ mod display_order_tests {
     #[test]
     fn minimap_dot_info_does_not_query_allegiance_for_fx() {
         let mut engine = EngineInner::new();
-        let fx = engine.add_entity(fx_entity(
+        let fx = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(10.0, 20.0, 0.0),
             Vec::new(),
             None,
@@ -1066,12 +1066,12 @@ mod display_order_tests {
     #[test]
     fn elevated_interior_fx_sort_behind_closing_patch() {
         let mut engine = EngineInner::new();
-        let interior_fire = engine.add_entity(fx_entity(
+        let interior_fire = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(100.0, 110.0, 10.0),
             Vec::new(),
             None,
         ));
-        let closing_patch = engine.add_entity(fx_entity(
+        let closing_patch = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(100.0, 210.0, 10.0),
             vec![MapPoint::new(0.0, 150.0), MapPoint::new(300.0, 150.0)],
             crate::patch::PatchIndex::new(0),
@@ -1086,17 +1086,17 @@ mod display_order_tests {
     #[test]
     fn nan_display_depth_is_totalized_after_finite_entities() {
         let mut engine = EngineInner::new();
-        let far = engine.add_entity(fx_entity(
+        let far = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(10.0, 200.0, 10.0),
             Vec::new(),
             None,
         ));
-        let unordered = engine.add_entity(fx_entity(
+        let unordered = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(f32::NAN, f32::NAN, f32::NAN),
             Vec::new(),
             None,
         ));
-        let near = engine.add_entity(fx_entity(
+        let near = engine.add_test_entity(fx_entity(
             WorldPoint3D::new(10.0, 100.0, 10.0),
             Vec::new(),
             None,

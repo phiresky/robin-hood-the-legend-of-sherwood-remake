@@ -12,10 +12,11 @@ use super::{
     BackgroundTexture, FontAtlas, ManagedSurface, MaskAlpha, MaskAtlasBounds, OUTLINE_PAD,
     SpriteCacheKey, SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg,
     outline_cache_key, rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba,
-    sprite_rgba_for_upload, upload_counter, upload_rgba_texture,
+    sprite_rgba_for_upload, upload_rgba_texture,
 };
 
 pub(super) struct GpuResources {
+    pub(super) uploads: super::diagnostics::UploadCounters,
     pub(super) managed_surfaces: HashMap<u32, ManagedSurface>,
     next_id: u32,
     pub(super) bit_depth: u16,
@@ -118,7 +119,7 @@ impl GpuResources {
         // Counted where the per-sprite `upload_rgba_texture` used to be,
         // so the `uploads/f` FPS line stays comparable across the
         // migration.
-        upload_counter::inc("sprite atlas insert");
+        self.uploads.inc("sprite atlas insert");
         SpriteResidency(self.sprite_atlas.insert(
             gpu,
             &self.bgl_tex,
@@ -313,7 +314,7 @@ impl GpuResources {
         // Preserve original binary bytes. The nearest-sampled binary shader
         // tests nonzero, so expanding every byte to 255 would only add a full
         // bitmap allocation/pass (including unused atlas page space).
-        upload_counter::inc("mask alpha");
+        self.uploads.inc("mask alpha");
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&format!("mask alpha {mask_index}")),
             size: wgpu::Extent3d {
@@ -385,7 +386,7 @@ impl GpuResources {
         )?;
         let width = u32::from(width);
         let height = u32::from(height);
-        upload_counter::inc("occlusion depth");
+        self.uploads.inc("occlusion depth");
         // Store the high/low bytes separately. R16Unorm requires an optional
         // native wgpu feature, while Rg8Unorm is portable to WebGL/WebGPU too.
         let mut encoded = Vec::with_capacity(encoded_len);
@@ -457,6 +458,7 @@ impl GpuResources {
         white_bg: wgpu::BindGroup,
     ) -> Self {
         Self {
+            uploads: Default::default(),
             managed_surfaces: HashMap::new(),
             next_id: 2,
             bit_depth: 16,
@@ -530,7 +532,14 @@ impl GpuResources {
             return false;
         }
         let rgba = rgb565_to_rgba_opaque(pixels, width as usize, height as usize);
-        let (_texture, view) = upload_rgba_texture(gpu, &rgba, width, height, "background texture");
+        let (_texture, view) = upload_rgba_texture(
+            gpu,
+            &self.uploads,
+            &rgba,
+            width,
+            height,
+            "background texture",
+        );
         let bind_group = make_tex_bg(
             &gpu.device,
             &self.bgl_tex,
@@ -561,7 +570,8 @@ impl GpuResources {
         self.font_atlas_cache
             .retain(|_, atlas| atlas.font_lifetime.strong_count() > 0);
         let (rgba, width, height) = font.build_rgba_atlas();
-        let (texture, view) = upload_rgba_texture(gpu, &rgba, width, height, "font atlas");
+        let (texture, view) =
+            upload_rgba_texture(gpu, &self.uploads, &rgba, width, height, "font atlas");
         let bind_group = make_tex_bg(
             &gpu.device,
             &self.bgl_tex,

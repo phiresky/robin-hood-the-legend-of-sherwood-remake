@@ -175,12 +175,6 @@ pub struct MenuButton {
     pub h: i32,
 }
 
-impl MenuButton {
-    pub fn contains_virt(&self, vx: i32, vy: i32) -> bool {
-        vx >= self.x && vx < self.x + self.w && vy >= self.y && vy < self.y + self.h
-    }
-}
-
 /// Stacks the buttons flush to the bottom-right of the virtual 640x480
 /// window with a fixed spacing.
 pub fn align_bottom_right(labels: &[(&str, bool)], btn_w: i32, btn_h: i32) -> Vec<MenuButton> {
@@ -226,6 +220,29 @@ pub fn align_bottom_right_in(
         .collect()
 }
 
+/// Horizontal placement for a row of buttons.
+///
+/// Given a list of button widths, returns the left-edge x of each button
+/// so the whole row is centered within the window (width `window_w`) with
+/// `gap` pixels between neighbours.
+pub fn center_horizontally_x(widths: &[i32], window_w: i32, gap: i32) -> Vec<i32> {
+    if widths.is_empty() {
+        return Vec::new();
+    }
+    let mut x = centered_row_start(widths.iter().sum(), widths.len(), window_w, gap);
+    let mut xs = Vec::with_capacity(widths.len());
+    for &w in widths {
+        xs.push(x);
+        x += w + gap;
+    }
+    xs
+}
+
+fn centered_row_start(content_width: i32, count: usize, window_w: i32, gap: i32) -> i32 {
+    let total = content_width + gap * (count as i32 - 1).max(0);
+    (window_w - total) / 2
+}
+
 /// Lays out buttons on one horizontal row, centred inside the 640x480
 /// window at the shared y of the first entry.
 pub fn center_horizontally(
@@ -238,9 +255,7 @@ pub fn center_horizontally(
     if labels.is_empty() {
         return Vec::new();
     }
-    let n = labels.len() as i32;
-    let total_w = n * btn_w + (n - 1) * spacing;
-    let start_x = (MENU_W - total_w) / 2;
+    let start_x = centered_row_start(labels.len() as i32 * btn_w, labels.len(), MENU_W, spacing);
     labels
         .iter()
         .enumerate()
@@ -277,12 +292,6 @@ pub struct MenuRect {
     pub y: i32,
     pub w: i32,
     pub h: i32,
-}
-
-impl MenuRect {
-    pub fn contains_virt(&self, vx: i32, vy: i32) -> bool {
-        vx >= self.x && vx < self.x + self.w && vy >= self.y && vy < self.y + self.h
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -393,6 +402,23 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
 /// Draw the shared dark panel/input fallback used when a menu bitmap is
 /// unavailable.
 pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
+    draw_colored_panel(
+        renderer,
+        transform,
+        rect,
+        Renderer::create_color_16(30, 25, 15),
+        Renderer::create_color_16(180, 160, 100),
+    );
+}
+
+/// Draw a panel with the screen's explicit palette.
+pub fn draw_colored_panel(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    rect: &MenuRect,
+    fill: u16,
+    edge: u16,
+) {
     let (sx, sy) = transform.to_screen(rect.x, rect.y);
     renderer.fill_screen(
         Some(&BBox::from_coords(
@@ -401,15 +427,9 @@ pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, re
             (sx + rect.w) as f32,
             (sy + rect.h) as f32,
         )),
-        Renderer::create_color_16(30, 25, 15),
+        fill,
     );
-    renderer.draw_rect_outline_screen(
-        sx,
-        sy,
-        sx + rect.w,
-        sy + rect.h,
-        Renderer::create_color_16(180, 160, 100),
-    );
+    renderer.draw_rect_outline_screen(sx, sy, sx + rect.w, sy + rect.h, edge);
 }
 
 /// Render a slider widget — a 0..10 horizontal track with a thumb
@@ -497,18 +517,7 @@ pub fn render_text_virt(
     vy: i32,
 ) {
     let (sx, sy) = transform.to_screen(vx, vy);
-    render_text_screen(renderer, font, text, sx, sy);
-}
-
-/// Render text directly at a screen position.
-///
-/// Builds a small ARGB8888 surface sized to the glyph bounding box and
-/// blits it with `BLENDMODE_BLEND`.  Per-pixel alpha blend against the
-/// destination so anti-aliased edges fade into the background
-/// (parchment, menu frame, …) instead of being written verbatim and
-/// leaving a green halo.
-pub fn render_text_screen(renderer: &mut Renderer, font: &NativeFont, text: &str, x: i32, y: i32) {
-    renderer.render_text_argb(font, text, x, y);
+    renderer.render_text_argb(font, text, sx, sy);
 }
 
 /// `Font`-polymorphic version of `render_text_virt`. Dispatches the
@@ -578,15 +587,6 @@ pub struct WrappedLine {
     /// greedy wrap break).  Justified alignment must leave these lines
     /// un-justified.
     pub paragraph_end: bool,
-}
-
-/// Wrap text greedily, clipping to the supplied box height.
-///
-/// Implements orphan avoidance: if the final line of a paragraph would
-/// contain a single ≤5-character word, the previous line's last word
-/// is bumped down.
-pub fn wrap_text(font: &NativeFont, text: &str, box_w: i32, max_lines: usize) -> WrapResult {
-    wrap_text_by(text, box_w, max_lines, |text| font.text_width(text))
 }
 
 fn wrap_text_by(
@@ -700,43 +700,6 @@ fn wrap_text_by(
     WrapResult { remaining, lines }
 }
 
-/// Per-character wrap fallback for boxes too narrow to fit any word
-/// (e.g. the 60-px portrait name strip), or for unspaced scripts like
-/// Japanese/Chinese.  Walks `text` character by character, breaks the
-/// line when the next glyph would exceed `box_w`, and clips at
-/// `max_lines` — characters that don't fit are returned as the
-/// `remaining` string.
-pub fn wrap_text_per_char(
-    font: &NativeFont,
-    text: &str,
-    box_w: i32,
-    max_lines: usize,
-) -> WrapResult {
-    let characters = text
-        .char_indices()
-        .map(|(index, ch)| (index, &text[index..index + ch.len_utf8()]));
-    wrap_text_units(text, box_w, max_lines, characters, |unit| {
-        font.text_width(unit)
-    })
-}
-
-/// Measure the height needed to render `text` inside a box of the
-/// given width and height, matching the shared wrap path used by
-/// [`render_text_in_box`].
-///
-/// Uses the renderer's layout pipeline, including kerning insets, narrow-word
-/// fallback, orphan avoidance, and the same clipped line budget.
-pub fn measure_text_height_in_box(font: &NativeFont, text: &str, box_w: i32, box_h: i32) -> i32 {
-    measure_text_height_in_box_by(
-        text,
-        box_w,
-        box_h,
-        font.height() as i32,
-        |text| font.text_width(text),
-        |text, width, limit| wrap_text_per_char(font, text, width, limit),
-    )
-}
-
 pub fn measure_text_height_in_box_font(font: &Font, text: &str, box_w: i32, box_h: i32) -> i32 {
     measure_text_height_in_box_by(
         text,
@@ -772,37 +735,6 @@ fn measure_text_height_in_box_by(
     height
 }
 
-/// Render text inside a virtual box, with horizontal alignment and a
-/// configurable maximum height in lines.  Returns the unrendered
-/// remainder for callers implementing pagination.  Defaults to
-/// `VAlign::Top`; use [`render_text_in_box_aligned`] to pick a
-/// different vertical alignment.
-#[allow(clippy::too_many_arguments)]
-pub fn render_text_in_box(
-    renderer: &mut Renderer,
-    font: &NativeFont,
-    transform: MenuTransform,
-    text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
-    align: TextAlign,
-) -> String {
-    render_text_in_box_aligned(
-        renderer,
-        font,
-        transform,
-        text,
-        box_x,
-        box_y,
-        box_w,
-        box_h,
-        align,
-        VAlign::Top,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn render_text_in_box_font(
     renderer: &mut Renderer,
@@ -829,136 +761,7 @@ pub fn render_text_in_box_font(
     )
 }
 
-/// Widget state for the popup-scroll text renderer's 4-state font
-/// table.  The popup-scroll text widget is never interactive in-game
-/// so only `Default` is ever hit, but the API exposes all four for
-/// completeness.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum TextWidgetState {
-    Disabled,
-    Default,
-    Focused,
-    Selected,
-}
-
-/// 4-font table indexed by [`TextWidgetState`].  The popup-scroll
-/// builder passes the same font for all four states, so the common
-/// case is to construct via [`Self::uniform`].  We store borrows so
-/// callers don't have to clone the native font handles.
-#[derive(Copy, Clone)]
-pub struct TextFontTable<'a> {
-    pub disabled: Option<&'a NativeFont>,
-    pub default: Option<&'a NativeFont>,
-    pub focused: Option<&'a NativeFont>,
-    pub selected: Option<&'a NativeFont>,
-}
-
-impl<'a> TextFontTable<'a> {
-    /// Build a table where every state resolves to the same font.
-    pub fn uniform(font: Option<&'a NativeFont>) -> Self {
-        Self {
-            disabled: font,
-            default: font,
-            focused: font,
-            selected: font,
-        }
-    }
-
-    /// Pick the font for the given widget state, falling back to
-    /// `default` when the requested slot is unset.
-    pub fn pick(&self, state: TextWidgetState) -> Option<&'a NativeFont> {
-        let slot = match state {
-            TextWidgetState::Disabled => self.disabled,
-            TextWidgetState::Default => self.default,
-            TextWidgetState::Focused => self.focused,
-            TextWidgetState::Selected => self.selected,
-        };
-        slot.or(self.default)
-    }
-}
-
-/// Render text inside a box with a rectangular carve-out in the
-/// top-right corner, flowing text around the reserved area in two
-/// passes:
-///   1. **Beside the dropped initial** — narrower box on the left
-///      (`box_w - drop_cap_w`), spanning `ceil(drop_cap_h / line_h)`
-///      lines.
-///   2. **Below the dropped initial** — full-width continuation for
-///      whatever didn't fit in pass 1.
-///
-/// `drop_cap_w`/`drop_cap_h` of 0 disables the carve-out and delegates
-/// directly to [`render_text_in_box`].  `fonts.pick(state)` selects
-/// the font for the current widget state.
-///
-/// Returns the unrendered remainder for pagination, identical to
-/// [`render_text_in_box`].
-#[allow(clippy::too_many_arguments)]
-pub fn render_text_in_box_with_drop_cap(
-    renderer: &mut Renderer,
-    fonts: &TextFontTable<'_>,
-    state: TextWidgetState,
-    transform: MenuTransform,
-    text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
-    drop_cap_w: i32,
-    drop_cap_h: i32,
-    align: TextAlign,
-) -> String {
-    let Some(font) = fonts.pick(state) else {
-        return text.to_string();
-    };
-
-    if drop_cap_w <= 0 || drop_cap_h <= 0 {
-        return render_text_in_box(
-            renderer, font, transform, text, box_x, box_y, box_w, box_h, align,
-        );
-    }
-
-    let line_h = font.height() as i32;
-    if line_h <= 0 {
-        return text.to_string();
-    }
-
-    // Number of lines the carve-out spans: `drop_cap_h / line_h`,
-    // rounded up.  The font's own line-spacing constant is folded into
-    // `line_h` (we don't have it separately) — the small discrepancy
-    // of a few pixels across many lines is covered by the ceil rule.
-    let mut di_lines = drop_cap_h / line_h;
-    if drop_cap_h % line_h != 0 {
-        di_lines += 1;
-    }
-    let carveout_h = (di_lines * line_h).min(box_h);
-    let narrow_w = (box_w - drop_cap_w).max(0);
-
-    // Part 1: beside the drop cap (narrower left column).  If the drop
-    // cap fills the full width, skip directly to the below-cap pass —
-    // clamping the drop-cap width to the box width makes the first
-    // render a no-op and pushes everything into the second pass.
-    let remainder = if narrow_w > 0 && carveout_h > 0 {
-        render_text_in_box(
-            renderer, font, transform, text, box_x, box_y, narrow_w, carveout_h, align,
-        )
-    } else {
-        text.to_string()
-    };
-    // Part 2: full width, below the carve-out.
-    if remainder.is_empty() {
-        return String::new();
-    }
-    let below_y = box_y + carveout_h;
-    let below_h = (box_h - carveout_h).max(0);
-    if below_h == 0 {
-        return remainder;
-    }
-    render_text_in_box(
-        renderer, font, transform, &remainder, box_x, below_y, box_w, below_h, align,
-    )
-}
-
-/// Polymorphic-font version of [`render_text_in_box_with_drop_cap`].
+/// Render text around a drop cap, returning the remainder for pagination.
 #[allow(clippy::too_many_arguments)]
 pub fn render_text_in_box_with_drop_cap_font(
     renderer: &mut Renderer,
@@ -1003,45 +806,6 @@ pub fn render_text_in_box_with_drop_cap_font(
     }
     render_text_in_box_font(
         renderer, font, transform, &remainder, box_x, below_y, box_w, below_h, align,
-    )
-}
-
-/// Like [`render_text_in_box`] but with an explicit vertical alignment.
-///
-/// `VAlign::Center` uses the font baseline (baseline at
-/// `box_y + (box_h - baseline) / 2`), which biases the visual centre
-/// of the letters against the box midline.
-///
-/// Only the boxed branch is implemented — the early-out at `box_w <=
-/// 0` returns immediately and there's no zero-width / single-point
-/// anchor path.  Every Rust caller passes a real box (widget rect or
-/// layout-computed region), so the degenerate "zero-width refresh
-/// box, single-point anchor" path never fires.  If a future caller
-/// needs single-point right/centred anchoring, add a dedicated
-/// `render_text_aligned_at_point` helper rather than resurrecting
-/// the missing branch here.
-#[allow(clippy::too_many_arguments)]
-pub fn render_text_in_box_aligned(
-    renderer: &mut Renderer,
-    font: &NativeFont,
-    transform: MenuTransform,
-    text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
-    align: TextAlign,
-    valign: VAlign,
-) -> String {
-    render_text_in_box_by(
-        text,
-        [box_x, box_y, box_w, box_h],
-        (font.height() as i32, font.baseline() as i32),
-        align,
-        valign,
-        |text| font.text_width(text),
-        |text, width, limit| wrap_text_per_char(font, text, width, limit),
-        |line, x, y| render_text_virt(renderer, font, transform, line, x, y),
     )
 }
 
@@ -1162,7 +926,7 @@ fn any_word_wider_than_font(font: &Font, text: &str, max_w: i32) -> bool {
         .any(|word| font.text_width(word) > max_w)
 }
 
-/// Polymorphic counterpart to [`wrap_text_per_char`]. This is required
+/// Per-character wrapping is required
 /// for locale-selected TrueType fonts because Japanese, Chinese, and
 /// other unspaced scripts otherwise become one overflowing "word". Extended
 /// grapheme clusters are indivisible so wrapping cannot detach a combining

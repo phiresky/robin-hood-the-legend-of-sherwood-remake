@@ -9,6 +9,5 @@ pub mod content_manifest;
 pub mod job_config;
 pub mod request_auth;
 pub mod result_projection;
-pub mod strict_json;
 pub mod worker;
 pub mod worker_process;

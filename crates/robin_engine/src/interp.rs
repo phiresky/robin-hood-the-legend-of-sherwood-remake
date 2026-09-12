@@ -370,9 +370,12 @@ impl<T: HostFunctions + ?Sized> HostFunctions for Box<T> {
     bitcode::Decode,
 )]
 pub struct Vm {
-    /// Static area, shared across VM instances in the real engine. For
-    /// single-function test harnesses we give each Vm its own.
-    pub static_area: Vec<u8>,
+    /// Copy-on-write view of the manager's shared static area. Suspended VMs
+    /// retain their last observed bytes, preserving the save and state-hash
+    /// contract, but snapshots and read-only callbacks no longer copy 4 KiB.
+    /// TODO: remove these per-instance wire bytes in a versioned state-schema
+    /// migration; they are not the authoritative shared script memory.
+    pub static_area: std::sync::Arc<Vec<u8>>,
     /// Class instance heap.
     pub heap: Vec<u8>,
     /// Call stack. The topmost frame is the one currently executing.
@@ -419,9 +422,17 @@ pub struct VmActivationState {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::with_heap_size(4096)
+    }
+
+    pub(crate) fn with_heap_size(heap_size: usize) -> Self {
+        static EMPTY_STATIC_AREA: std::sync::OnceLock<std::sync::Arc<Vec<u8>>> =
+            std::sync::OnceLock::new();
         Self {
-            static_area: vec![0; 4096],
-            heap: vec![0; 4096],
+            static_area: EMPTY_STATIC_AREA
+                .get_or_init(|| std::sync::Arc::new(vec![0; 4096]))
+                .clone(),
+            heap: vec![0; heap_size],
             frames: vec![Frame::default()],
             outgoing_params: Vec::new(),
             native_stack: NativeStack::default(),
@@ -484,7 +495,7 @@ impl Vm {
 
     fn bytes_mut(&mut self, region: u16) -> &mut [u8] {
         match region {
-            REGION_STATIC => &mut self.static_area,
+            REGION_STATIC => std::sync::Arc::make_mut(&mut self.static_area).as_mut_slice(),
             REGION_HEAP => &mut self.heap,
             REGION_VOLATILE => &mut self.current_frame_mut().volatile,
             REGION_TEMP => &mut self.current_frame_mut().temporary,
@@ -916,6 +927,36 @@ impl Default for Vm {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_static_memory_preserves_wire_hash_and_snapshot_isolation() {
+        use robin_util::state_hash::StateHash;
+        use std::hash::Hasher;
+        use std::sync::Arc;
+
+        let bytes = (0..4096).map(|i| (i % 251) as u8).collect::<Vec<_>>();
+        let mut vm = super::Vm::new();
+        vm.static_area = Arc::new(bytes.clone());
+        let snapshot = vm.clone();
+        assert!(Arc::ptr_eq(&vm.static_area, &snapshot.static_area));
+        assert_eq!(bitcode::encode(&bytes), bitcode::encode(&vm.static_area));
+        assert_eq!(
+            serde_json::to_value(&bytes).unwrap(),
+            serde_json::to_value(&vm.static_area).unwrap()
+        );
+        let mut old_hash = std::collections::hash_map::DefaultHasher::new();
+        let mut shared_hash = std::collections::hash_map::DefaultHasher::new();
+        bytes.state_hash(&mut old_hash);
+        vm.static_area.state_hash(&mut shared_hash);
+        assert_eq!(old_hash.finish(), shared_hash.finish());
+
+        vm.write_i32(0, 0x12345678);
+        assert_eq!(&snapshot.static_area[..], &bytes);
+        assert_eq!(vm.read_i32(0), 0x12345678);
+        assert!(!Arc::ptr_eq(&vm.static_area, &snapshot.static_area));
+        let decoded: super::Vm = bitcode::decode(&bitcode::encode(&vm)).unwrap();
+        assert_eq!(decoded.static_area, vm.static_area);
+    }
+
     use super::*;
     use crate::vm::{BinaryOp, Instruction::*};
 

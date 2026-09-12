@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # Incrementally attest exact EOF for completed native recordings while capture
 # is still active.  This is deliberately separate from final corpus validation:
 # it never freezes a corpus-wide manifest. It takes the shared outer/native
@@ -44,43 +47,13 @@ loadavg_path=${INCREMENTAL_EOF_LOADAVG_PATH:-/proc/loadavg}
 exact_eof_marker='parity trace matched every recorded frame'
 result_validator="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/parity_result.py"
 
-fail() {
-    printf 'error: %s\n' "$*" >&2
-    exit 2
-}
 
-sha256_file() {
-    local value
-    value=$(sha256sum -- "$1") || return 1
-    printf '%s\n' "${value%% *}"
-}
 
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 
 is_uint() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
-normalize_bounded_uint() {
-    local value=$1 limit=$2
-    is_uint "$value" || return 1
-    while [[ ${#value} -gt 1 && $value == 0* ]]; do
-        value=${value#0}
-    done
-    if (( ${#value} > ${#limit} )) \
-        || { (( ${#value} == ${#limit} )) && [[ $value > $limit ]]; }
-    then
-        return 1
-    fi
-    printf '%s\n' "$value"
-}
 
 is_nonnegative_number() {
     [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
@@ -95,14 +68,6 @@ path_has_newline() {
     [[ "$1" == *$'\n'* ]]
 }
 
-runner_bundle_digest() {
-    local bundle=$1 main_sha lib_sha value
-    main_sha=$(sha256_file "$bundle/SHA256SUMS") || return 1
-    lib_sha=$(sha256_file "$bundle/LIB_SHA256SUMS") || return 1
-    value=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$main_sha" "$lib_sha" | sha256sum) || return 1
-    printf '%s\n' "${value%% *}"
-}
 
 verify_bundle() {
     local manifest line path

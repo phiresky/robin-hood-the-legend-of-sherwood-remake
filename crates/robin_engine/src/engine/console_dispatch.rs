@@ -1530,8 +1530,8 @@ mod tests {
         let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        let id_blipped = engine.add_entity(soldier(true));
-        let id_plain = engine.add_entity(soldier(false));
+        let id_blipped = engine.add_test_entity(soldier(true));
+        let id_plain = engine.add_test_entity(soldier(false));
 
         let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UBIQUITY");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
@@ -1552,7 +1552,7 @@ mod tests {
         let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        let id = engine.add_entity(soldier(false));
+        let id = engine.add_test_entity(soldier(false));
         // Sanity: starts vulnerable.
         assert!(
             !engine
@@ -1603,7 +1603,7 @@ mod tests {
         let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        let id = engine.add_entity(soldier(false));
+        let id = engine.add_test_entity(soldier(false));
         {
             let e = engine.get_entity(id).unwrap().enemy_ai().unwrap();
             assert!(!e.attentive);
@@ -1627,8 +1627,8 @@ mod tests {
         let sim = &sim_context;
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
-        engine.add_entity(soldier(false));
-        engine.add_entity(soldier(false));
+        engine.add_test_entity(soldier(false));
+        engine.add_test_entity(soldier(false));
         assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
         let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE");
         assert_eq!(
@@ -1645,7 +1645,7 @@ mod tests {
         let mut dev = DevState::default();
         let mut engine = EngineInner::new();
         dev.console.use_final = true;
-        engine.add_entity(soldier(true));
+        engine.add_test_entity(soldier(true));
         let resp = engine.run_console_command(sim, &assets(), &mut dev, &mut None, "UNBLIP");
         assert!(matches!(resp, ConsoleResponse::Ok(_)));
     }

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # Normalize and validate an already-created ordered set of schema-16 corpora.
 # This supervisor is intentionally serial: capture drains first, conversion
 # prepasses share one authenticated protocol-2 bundle, and final validation
@@ -58,39 +61,9 @@ memory_psi_path=/proc/pressure/memory
 cpu_psi_path=/proc/pressure/cpu
 vmstat_path=/proc/vmstat
 
-fail() {
-    printf 'error: %s\n' "$*" >&2
-    exit 2
-}
 
-sha256_file() {
-    local result
-    result=$(sha256sum -- "$1") || return 1
-    printf '%s\n' "${result%% *}"
-}
 
-normalize_bounded_uint() {
-    local value=$1 limit=$2
-    [[ "$value" =~ ^[0-9]+$ ]] || return 1
-    while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
-        value=${value#0}
-    done
-    if (( ${#value} > ${#limit} )) \
-        || { (( ${#value} == ${#limit} )) && [[ "$value" > "$limit" ]]; }
-    then
-        return 1
-    fi
-    printf '%s\n' "$value"
-}
 
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 
 write_phase() {
     local phase=$1
@@ -133,14 +106,6 @@ verify_script() {
         || fail "required script hash mismatch: $path"
 }
 
-runner_bundle_digest() {
-    local bundle=$1 main_sha lib_sha result
-    main_sha=$(sha256_file "$bundle/SHA256SUMS") || return 1
-    lib_sha=$(sha256_file "$bundle/LIB_SHA256SUMS") || return 1
-    result=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$main_sha" "$lib_sha" | sha256sum) || return 1
-    printf '%s\n' "${result%% *}"
-}
 
 verify_bundle() {
     local bundle=$1

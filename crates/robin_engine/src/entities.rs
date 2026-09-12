@@ -34,8 +34,8 @@ macro_rules! typed_entity_accessors {
     bitcode::Decode,
 )]
 #[serde(transparent)]
-pub struct Entities(
-    Vec<Option<Entity>>,
+pub struct Entities {
+    slots: Vec<Option<Entity>>,
     /// Transient per-slot invalidation counters for derived runtime caches.
     ///
     /// A mutable borrow is conservatively treated as a mutation. The counters
@@ -44,8 +44,8 @@ pub struct Entities(
     #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
-    Vec<u64>,
-);
+    generations: Vec<u64>,
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -53,7 +53,7 @@ pub(crate) struct PersistedEntities(Vec<Option<crate::element::PersistedEntity>>
 
 impl PersistedEntities {
     pub(crate) fn capture(value: &Entities) -> Self {
-        let Entities(slots, _) = value;
+        let Entities { slots, .. } = value;
         Self(
             slots
                 .iter()
@@ -63,13 +63,14 @@ impl PersistedEntities {
     }
 
     pub(crate) fn into_runtime(self) -> Entities {
-        Entities(
-            self.0
+        Entities {
+            slots: self
+                .0
                 .into_iter()
                 .map(|slot| slot.map(crate::element::PersistedEntity::into_runtime))
                 .collect(),
-            Vec::new(),
-        )
+            generations: Vec::new(),
+        }
     }
 }
 
@@ -85,41 +86,41 @@ impl Entities {
     /// raw slots. Runtime code should use typed IDs and entity accessors.
     pub fn from_legacy_slots(slots: Vec<Option<Entity>>) -> Self {
         let generations = vec![0; slots.len()];
-        Self(slots, generations)
+        Self { slots, generations }
     }
 
     /// Exact sparse slots used by the current native engine snapshot codec.
     pub(crate) fn snapshot_slots(&self) -> &[Option<Entity>] {
-        &self.0
+        &self.slots
     }
 
     /// Restore exact sparse slots from the current native snapshot codec.
     pub(crate) fn from_snapshot_slots(slots: Vec<Option<Entity>>) -> Self {
         let generations = vec![0; slots.len()];
-        Self(slots, generations)
+        Self { slots, generations }
     }
 
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.slots.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.slots.is_empty()
     }
 
     pub fn push(&mut self, entity: Option<Entity>) {
         self.ensure_generation_slots();
-        self.1.push(u64::from(entity.is_some()));
-        self.0.push(entity);
+        self.generations.push(u64::from(entity.is_some()));
+        self.slots.push(entity);
     }
 
     pub fn resize(&mut self, new_len: usize, value: Option<Entity>) {
-        let old_len = self.0.len();
-        self.0.resize(new_len, value);
-        self.1.resize(new_len, 0);
+        let old_len = self.slots.len();
+        self.slots.resize(new_len, value);
+        self.generations.resize(new_len, 0);
         if new_len > old_len {
-            let initial = u64::from(self.0[old_len..].iter().any(Option::is_some));
-            self.1[old_len..].fill(initial);
+            let initial = u64::from(self.slots[old_len..].iter().any(Option::is_some));
+            self.generations[old_len..].fill(initial);
         }
     }
 
@@ -128,23 +129,26 @@ impl Entities {
     /// Deserialized entity stores start at generation zero. Any subsequent
     /// mutable access advances the addressed slot before handing out `&mut`.
     pub(crate) fn generation<I: Into<EntityId>>(&self, id: I) -> u64 {
-        self.1.get(id.into().index() as usize).copied().unwrap_or(0)
+        self.generations
+            .get(id.into().index() as usize)
+            .copied()
+            .unwrap_or(0)
     }
 
     fn ensure_generation_slots(&mut self) {
-        self.1.resize(self.0.len(), 0);
+        self.generations.resize(self.slots.len(), 0);
     }
 
     fn bump_generation(&mut self, index: usize) {
         self.ensure_generation_slots();
-        self.1[index] = self.1[index].wrapping_add(1);
+        self.generations[index] = self.generations[index].wrapping_add(1);
     }
 
     fn slots_mut(&mut self) -> impl Iterator<Item = (usize, &mut Option<Entity>, &mut u64)> + '_ {
         self.ensure_generation_slots();
-        self.0
+        self.slots
             .iter_mut()
-            .zip(self.1.iter_mut())
+            .zip(self.generations.iter_mut())
             .enumerate()
             .map(|(index, (slot, generation))| (index, slot, generation))
     }
@@ -156,7 +160,7 @@ impl Entities {
     /// that contract when resolving building tenants. New simulation code should carry an [`EntityId`]
     /// instead of retaining this raw slot number.
     pub fn id_at_legacy_slot(&self, slot: u32) -> Option<EntityId> {
-        let entity = self.0.get(slot as usize)?.as_ref()?;
+        let entity = self.slots.get(slot as usize)?.as_ref()?;
         Some(EntityId::new(slot, entity.entity_id_kind()))
     }
 
@@ -165,7 +169,7 @@ impl Entities {
     /// The returned ID is derived from the current occupant, so callers
     /// cannot accidentally invent an ID kind for a legacy slot.
     pub fn get_legacy_slot(&self, slot: u32) -> Option<(EntityId, &Entity)> {
-        let entity = self.0.get(slot as usize)?.as_ref()?;
+        let entity = self.slots.get(slot as usize)?.as_ref()?;
         let id = EntityId::new(slot, entity.entity_id_kind());
         Some((id, entity))
     }
@@ -174,11 +178,11 @@ impl Entities {
     /// slot. Prefer typed accessors outside legacy parsing/script boundaries.
     pub fn get_legacy_slot_mut(&mut self, slot: u32) -> Option<(EntityId, &mut Entity)> {
         let index = slot as usize;
-        if self.0.get(index)?.is_none() {
+        if self.slots.get(index)?.is_none() {
             return None;
         }
         self.bump_generation(index);
-        let entity = self.0.get_mut(slot as usize)?.as_mut()?;
+        let entity = self.slots.get_mut(slot as usize)?.as_mut()?;
         let id = EntityId::new(slot, entity.entity_id_kind());
         Some((id, entity))
     }
@@ -189,17 +193,17 @@ impl Entities {
     }
 
     fn checked_slot(&self, id: EntityId) -> Option<&Option<Entity>> {
-        let slot = self.0.get(id.index() as usize)?;
+        let slot = self.slots.get(id.index() as usize)?;
         Self::slot_matches_id(slot, id).then_some(slot)
     }
 
     fn checked_slot_mut(&mut self, id: EntityId) -> Option<&mut Option<Entity>> {
         let index = id.index() as usize;
-        if !Self::slot_matches_id(self.0.get(index)?, id) {
+        if !Self::slot_matches_id(self.slots.get(index)?, id) {
             return None;
         }
         self.bump_generation(index);
-        self.0.get_mut(index)
+        self.slots.get_mut(index)
     }
 
     pub fn get<I: Into<EntityId>>(&self, id: I) -> Option<&Entity> {
@@ -270,7 +274,7 @@ impl Entities {
     typed_entity_accessors!(get_net, get_net_mut, NetId, as_net, as_net_mut, ElementNet);
 
     pub fn occupied(&self) -> impl Iterator<Item = (EntityId, &Entity)> + '_ {
-        self.0.iter().enumerate().filter_map(|(idx, slot)| {
+        self.slots.iter().enumerate().filter_map(|(idx, slot)| {
             slot.as_ref()
                 .map(|entity| (EntityId::new(idx as u32, entity.entity_id_kind()), entity))
         })
@@ -412,7 +416,7 @@ impl Entities {
     }
 
     pub fn pcs(&self) -> impl Iterator<Item = (PcId, &ActorPc)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -433,7 +437,7 @@ impl Entities {
     }
 
     pub fn soldiers(&self) -> impl Iterator<Item = (SoldierId, &ActorSoldier)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -471,7 +475,7 @@ impl Entities {
     }
 
     pub fn civilians(&self) -> impl Iterator<Item = (CivilianId, &ActorCivilian)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -492,7 +496,7 @@ impl Entities {
     }
 
     pub fn fxs(&self) -> impl Iterator<Item = (FxId, &ElementFx)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -513,7 +517,7 @@ impl Entities {
     }
 
     pub fn targets(&self) -> impl Iterator<Item = (TargetId, &ElementTarget)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -523,7 +527,7 @@ impl Entities {
     }
 
     pub fn bonuses(&self) -> impl Iterator<Item = (BonusId, &ElementBonus)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -533,7 +537,7 @@ impl Entities {
     }
 
     pub fn scrolls(&self) -> impl Iterator<Item = (ScrollId, &ElementScroll)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -554,7 +558,7 @@ impl Entities {
     }
 
     pub fn projectiles(&self) -> impl Iterator<Item = (ProjectileId, &ElementProjectile)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -577,7 +581,7 @@ impl Entities {
     }
 
     pub fn nets(&self) -> impl Iterator<Item = (NetId, &ElementNet)> + '_ {
-        self.0
+        self.slots
             .iter()
             .enumerate()
             .filter_map(|(idx, slot)| match slot {
@@ -981,5 +985,83 @@ mod tests {
         let mut entities = Entities::new();
         entities.push(None);
         assert!(entities[PcId(0)].is_none());
+    }
+}
+
+impl Entities {
+    /// Required AI controller, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_ai_controller_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::ai::AiController {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required AI controller"))
+    }
+    /// Required enemy AI, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_enemy_ai_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::ai_enemy::EnemyAi {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .enemy_ai_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required enemy AI"))
+    }
+    /// Required NPC actor state, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_ai_actor_data_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::element::AiActorData {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_actor_data_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
+    }
+}
+
+#[cfg(test)]
+mod required_ai_access_tests {
+    use super::*;
+    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
+
+    #[test]
+    fn typed_ai_access_preserves_one_arena_generation_increment_per_borrow() {
+        let mut entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        ))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        let before = entities.generation(id);
+        entities.expect_ai_controller_mut(id, format_args!("controller test"));
+        assert_eq!(entities.generation(id), before + 1);
+        entities.expect_enemy_ai_mut(id, format_args!("enemy test"));
+        assert_eq!(entities.generation(id), before + 2);
+        entities.expect_ai_actor_data_mut(id, format_args!("actor test"));
+        assert_eq!(entities.generation(id), before + 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no required AI controller")]
+    fn absent_pc_brain_is_not_a_synthetic_controller() {
+        let mut entities =
+            Entities::from_legacy_slots(vec![Some(make_test_pc(crate::element::Posture::Upright))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        entities.expect_ai_controller_mut(id, format_args!("NPC dispatch"));
+    }
+
+    #[test]
+    #[should_panic(expected = "disappeared")]
+    fn missing_owner_is_distinct_from_missing_brain() {
+        Entities::new().expect_enemy_ai_mut(
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            format_args!("NPC dispatch"),
+        );
     }
 }

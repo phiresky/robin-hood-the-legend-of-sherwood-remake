@@ -219,40 +219,18 @@ impl EngineInner {
         let selected_grid_sector = hit
             .sector_idx
             .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)));
-        let (is_lift_click, is_door_click_sector, is_jump_click) = selected_grid_sector
-            .map(|sector| group_move_sector_kinds(sector.sector_type))
-            .unwrap_or((false, false, false));
-        let jump_underlying_sector = selected_grid_sector
-            .filter(|sector| sector.sector_type.is_jump())
-            .and_then(|sector| sector.underlying_sector)
-            .and_then(|index| {
-                self.world
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(usize::from(index))
-                    .map(|sector| (sector.sector_number, index, sector.layer))
-            });
-        let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
-        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
-            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
-        });
-        let exact_recorded_goal_is_non_door = goal_override.is_some()
-            && goal_sector_index_override
-                .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
-                .is_some_and(|sector| !sector.sector_type.is_door());
-        let suppress_spatial_door = group_move_masks_spatial_door_for_recorded_goal(
-            exact_recorded_goal_is_non_door,
-            door_route_override,
-        );
-        let spatial_clicked_door_index = (!suppress_spatial_door)
-            .then(|| clicked_sector_door_index.or(clicked_polygon_door_index))
-            .flatten();
-        let spatial_is_door_click = !suppress_spatial_door
-            && (is_door_click_sector || spatial_clicked_door_index.is_some());
-        let (_, _, bypass_formation_authorization) = group_move_door_selection(
-            spatial_clicked_door_index,
-            spatial_is_door_click,
+        let GroupMoveClick {
+            is_lift_click,
+            is_jump_click,
+            jump_underlying_sector,
+            clicked_door_index: _,
+            is_door_click: _,
+            bypass_formation_authorization,
+        } = self.classify_group_move_click(
+            selected_grid_sector,
+            click_point,
+            goal_override,
+            goal_sector_index_override,
             door_route_override,
         );
         let (goal_sector, goal_layer) = group_move_route_goal(goal_override, hit.sector, hit.layer);
@@ -544,43 +522,20 @@ impl EngineInner {
         let selected_grid_sector = hit
             .sector_idx
             .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)));
-        let (is_lift_click, is_door_click_sector, is_jump_click) = selected_grid_sector
-            .map(|sector| group_move_sector_kinds(sector.sector_type))
-            .unwrap_or((false, false, false));
-        let jump_underlying_sector = selected_grid_sector
-            .filter(|sector| sector.sector_type.is_jump())
-            .and_then(|sector| sector.underlying_sector)
-            .and_then(|index| {
-                self.world
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(usize::from(index))
-                    .map(|sector| (sector.sector_number, index, sector.layer))
-            });
-        let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
-        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
-            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
-        });
-        let exact_recorded_goal_is_non_door = goal_override.is_some()
-            && goal_sector_index_override
-                .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
-                .is_some_and(|sector| !sector.sector_type.is_door());
-        let suppress_spatial_door = group_move_masks_spatial_door_for_recorded_goal(
-            exact_recorded_goal_is_non_door,
+        let GroupMoveClick {
+            is_lift_click,
+            is_jump_click,
+            jump_underlying_sector,
+            clicked_door_index,
+            is_door_click,
+            bypass_formation_authorization,
+        } = self.classify_group_move_click(
+            selected_grid_sector,
+            click_point,
+            goal_override,
+            goal_sector_index_override,
             door_route_override,
         );
-        let spatial_clicked_door_index = (!suppress_spatial_door)
-            .then(|| clicked_sector_door_index.or(clicked_polygon_door_index))
-            .flatten();
-        let spatial_is_door_click = !suppress_spatial_door
-            && (is_door_click_sector || spatial_clicked_door_index.is_some());
-        let (clicked_door_index, is_door_click, bypass_formation_authorization) =
-            group_move_door_selection(
-                spatial_clicked_door_index,
-                spatial_is_door_click,
-                door_route_override,
-            );
         let (route_goal_sector, route_goal_layer) =
             group_move_route_goal(goal_override, hit.sector, hit.layer);
         let route_goal_sector_index = resolve_group_move_route_goal_index(
@@ -986,23 +941,26 @@ impl EngineInner {
                     };
                     self.build_gate_movement_sequence(
                         sim,
-                        approach_owner,
-                        (!source_and_line_are_same_sector).then_some(*src_sector),
-                        gate_path,
-                        GoalShape::Line {
-                            line_index: source_line_idx,
-                            midpoint: source_line_midpoint,
-                            tolerance: 0.0,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: approach_owner,
+                            source_sector: (!source_and_line_are_same_sector)
+                                .then_some(*src_sector),
+                            gate_path: gate_path,
+                            goal: GoalShape::Line {
+                                line_index: source_line_idx,
+                                midpoint: source_line_midpoint,
+                                tolerance: 0.0,
+                            },
+                            goal_layer: source_line.layer,
+                            base_action: player_group_move_action(run),
+                            move_after_last_door: true,
+                            speed_factor: 1.0,
+                            initial_flags: crate::sequence::MoveFlags::empty(),
+                            prefix_elements: Vec::new(),
+                            tail_elements: tail,
+                            append_arrival_speech: false,
+                            append_recovery: false,
                         },
-                        source_line.layer,
-                        player_group_move_action(run),
-                        true,
-                        1.0,
-                        crate::sequence::MoveFlags::empty(),
-                        Vec::new(),
-                        tail,
-                        false,
-                        false,
                     )
                     .unwrap_or_else(|| {
                         panic!(
@@ -1420,19 +1378,21 @@ impl EngineInner {
                     };
                     let _ = self.build_gate_movement_sequence(
                         sim,
-                        *pc_id,
-                        Some(path_src_sector),
-                        gate_steps,
-                        goal_shape,
-                        pc_effective_layer,
-                        player_group_move_action(run),
-                        door_goal.is_none(),
-                        1.0,
-                        crate::sequence::MoveFlags::empty(),
-                        Vec::new(),
-                        Vec::new(),
-                        owner_is_pc,
-                        true,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: *pc_id,
+                            source_sector: Some(path_src_sector),
+                            gate_path: gate_steps,
+                            goal: goal_shape,
+                            goal_layer: pc_effective_layer,
+                            base_action: player_group_move_action(run),
+                            move_after_last_door: door_goal.is_none(),
+                            speed_factor: 1.0,
+                            initial_flags: crate::sequence::MoveFlags::empty(),
+                            prefix_elements: Vec::new(),
+                            tail_elements: Vec::new(),
+                            append_arrival_speech: owner_is_pc,
+                            append_recovery: true,
+                        },
                     );
                     if show_marker && !is_door_click {
                         self.feedback.ground_mark.add_mark(
@@ -1506,5 +1466,77 @@ fn recorded_qa_move_route(
         goal_sector: sector,
         goal_sector_index: sector_index,
         goal_layer: layer,
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct GroupMoveClick {
+    is_lift_click: bool,
+    is_jump_click: bool,
+    jump_underlying_sector: Option<(
+        crate::sector::SectorNumber,
+        crate::fast_find_grid::SectorIndex,
+        u16,
+    )>,
+    clicked_door_index: Option<u32>,
+    is_door_click: bool,
+    bypass_formation_authorization: bool,
+}
+
+impl EngineInner {
+    fn classify_group_move_click(
+        &self,
+        selected_grid_sector: Option<&crate::fast_find_grid::GridSector>,
+        click_point: MapPoint,
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        door_route_override: Option<bool>,
+    ) -> GroupMoveClick {
+        let (is_lift_click, is_door_click_sector, is_jump_click) = selected_grid_sector
+            .map(|sector| group_move_sector_kinds(sector.sector_type))
+            .unwrap_or((false, false, false));
+        let jump_underlying_sector = selected_grid_sector
+            .filter(|sector| sector.sector_type.is_jump())
+            .and_then(|sector| sector.underlying_sector)
+            .and_then(|index| {
+                self.world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .get(usize::from(index))
+                    .map(|sector| (sector.sector_number, index, sector.layer))
+            });
+        let clicked_sector_door_index = selected_grid_sector.and_then(|sector| sector.door_index);
+        let clicked_polygon_door_index = self.scripts.mission.as_ref().and_then(|_| {
+            door_click_polygon_at(&self.script_domains.interactables.doors, click_point)
+        });
+        let exact_recorded_goal_is_non_door = goal_override.is_some()
+            && goal_sector_index_override
+                .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)))
+                .is_some_and(|sector| !sector.sector_type.is_door());
+        let suppress_spatial_door = group_move_masks_spatial_door_for_recorded_goal(
+            exact_recorded_goal_is_non_door,
+            door_route_override,
+        );
+        let spatial_clicked_door_index = (!suppress_spatial_door)
+            .then(|| clicked_sector_door_index.or(clicked_polygon_door_index))
+            .flatten();
+        let spatial_is_door_click = !suppress_spatial_door
+            && (is_door_click_sector || spatial_clicked_door_index.is_some());
+        let (clicked_door_index, is_door_click, bypass_formation_authorization) =
+            group_move_door_selection(
+                spatial_clicked_door_index,
+                spatial_is_door_click,
+                door_route_override,
+            );
+
+        GroupMoveClick {
+            is_lift_click,
+            is_jump_click,
+            jump_underlying_sector,
+            clicked_door_index,
+            is_door_click,
+            bypass_formation_authorization,
+        }
     }
 }

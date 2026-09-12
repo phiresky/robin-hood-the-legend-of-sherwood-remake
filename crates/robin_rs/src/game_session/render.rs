@@ -544,7 +544,7 @@ fn begin_screenshot_rgba(
     request: &crate::http_server::ScreenshotRequest,
     ctx: &mut RenderContext<'_>,
 ) -> Result<crate::renderer::PendingCapture, String> {
-    let scratch_dev = crate::rpc_screenshot::screenshot_dev_state(dev, &request.flags);
+    let scratch_dev = crate::http_server::screenshot::screenshot_dev_state(dev, &request.flags);
 
     if request.full_map {
         begin_wide_map_rgba(
@@ -1289,35 +1289,37 @@ fn render_frame_with_hud(
         .zoom_presentation(zoom_frame_id)
         .unwrap_or_else(|err| panic!("render_frame requires prepared zoom presentation: {err}"));
 
-    // Unpack once — the function body is long and every deref is
-    // noisy.  All fields are `&'a mut T` / `&'a T`, so this is a
-    // reborrow, not a move.
+    render_world_pass(engine, host, assets, dev, &presentation, ctx);
+    // Scene captures stop after world-space effects, before gameplay feedback and HUD.
+    if draw_hud {
+        render_overlay_pass(
+            engine,
+            display,
+            host,
+            assets,
+            dev,
+            &presentation,
+            zoom_presentation,
+            zoom_mouse,
+            ctx,
+        );
+    }
+}
+
+fn render_world_pass(
+    engine: &PresentationView<'_>,
+    host: &HostDraw<'_>,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    presentation: &FramePresentationInputs,
+    ctx: &mut RenderContext<'_>,
+) {
     let renderer = &mut *ctx.renderer;
-    let cursor_renderer = ctx.cursor_renderer;
     let selection_mark_renderer = ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
-    let console_overlay = ctx.console_overlay;
-    let hud_tooltips = ctx.hud_tooltips;
-    let mouse_trail_renderer = ctx.mouse_trail_renderer;
-    let portrait_cache = ctx.portrait_cache;
-    let menu_resources = ctx.menu_resources;
     let hud_fonts = ctx.hud_fonts;
-    let short_briefing_strings = ctx.short_briefing_strings;
     let threaded_input = ctx.threaded_input;
-    let sherwood_layout = ctx.sherwood_layout;
-    let sherwood_enable = ctx.sherwood_enable;
-    let sherwood_sprites = ctx.sherwood_sprites;
-    let zoom_layout = ctx.zoom_layout;
-    let zoom_sprites = ctx.zoom_sprites;
-    let corner_layout = ctx.corner_layout;
-    let corner_sprites = ctx.corner_sprites;
-    let stature_layout = ctx.stature_layout;
-    let stature_sprites = ctx.stature_sprites;
     let pause_menu = ctx.pause_menu;
-    let game = ctx.game;
-    let shift_held = ctx.shift_held;
-    let rewind_active = ctx.rewind_active;
-    let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
     let local_seat = host.local_seat;
     // Pre-update captures may still hold a stale selection. Filter their
     // presentation without committing live selected-view state.
@@ -1351,14 +1353,14 @@ fn render_frame_with_hud(
     // Original-game parity: elevation-zero
     // background animations before ShowDetectionPolygon. Elevated patch FX
     // stay in the normal sorted entity pass.
-    render_bg_animations_gpu(engine, host, &presentation, renderer);
+    render_bg_animations_gpu(engine, host, presentation, renderer);
 
     // Darken the map inside the selected view element's vision cone (if
     // any). The original game draws this immediately after background animations and
     // before door overlays, selection marks, ground marks, and elements.
     render_view_cone_overlay(
         host,
-        &presentation,
+        presentation,
         engine,
         assets,
         selected_view_element,
@@ -1425,7 +1427,7 @@ fn render_frame_with_hud(
     titbit_renderer.begin_frame();
     render_entities_gpu(
         host,
-        &presentation,
+        presentation,
         engine,
         assets,
         dev,
@@ -1436,7 +1438,7 @@ fn render_frame_with_hud(
     // ── GPU phase: selection / hover outlines ──
     // Draws coloured outline masks for selected PCs and the hovered
     // entity (focused by the cursor).
-    render_selection_outlines_gpu(host, &presentation, engine, renderer);
+    render_selection_outlines_gpu(host, presentation, engine, renderer);
     // One-frame Mark() consumption happens after the last display-refresh
     // sample, so every presentation of this fixed tick sees the same marks.
 
@@ -1524,15 +1526,46 @@ fn render_frame_with_hud(
         )
     });
     render_door_overlays(host, engine, assets, renderer, physical_shift_held);
+}
 
-    // Scene-only captures deliberately stop at the last world-space pass.
-    // Keeping this boundary after titbits preserves entity status effects and
-    // other mission-authored world visuals, while excluding the panel,
-    // minimap, information bars, buttons, tooltips, console, and cursor.
-    if !draw_hud {
-        return;
-    }
-
+#[allow(clippy::too_many_arguments)]
+fn render_overlay_pass(
+    engine: &PresentationView<'_>,
+    display: &engine_api::HostDisplayState,
+    host: &HostDraw<'_>,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    presentation: &FramePresentationInputs,
+    zoom_presentation: crate::presentation::ZoomPresentation,
+    zoom_mouse: engine_coordinates::ScreenPoint,
+    ctx: &mut RenderContext<'_>,
+) {
+    let renderer = &mut *ctx.renderer;
+    let cursor_renderer = ctx.cursor_renderer;
+    let titbit_renderer = &mut *ctx.titbit_renderer;
+    let console_overlay = ctx.console_overlay;
+    let hud_tooltips = ctx.hud_tooltips;
+    let mouse_trail_renderer = ctx.mouse_trail_renderer;
+    let portrait_cache = ctx.portrait_cache;
+    let menu_resources = ctx.menu_resources;
+    let hud_fonts = ctx.hud_fonts;
+    let short_briefing_strings = ctx.short_briefing_strings;
+    let threaded_input = ctx.threaded_input;
+    let sherwood_layout = ctx.sherwood_layout;
+    let sherwood_enable = ctx.sherwood_enable;
+    let sherwood_sprites = ctx.sherwood_sprites;
+    let zoom_layout = ctx.zoom_layout;
+    let zoom_sprites = ctx.zoom_sprites;
+    let corner_layout = ctx.corner_layout;
+    let corner_sprites = ctx.corner_sprites;
+    let stature_layout = ctx.stature_layout;
+    let stature_sprites = ctx.stature_sprites;
+    let pause_menu = ctx.pause_menu;
+    let game = ctx.game;
+    let shift_held = ctx.shift_held;
+    let rewind_active = ctx.rewind_active;
+    let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
+    let local_seat = host.local_seat;
     // ── GPU phase: multi-selection rubber band box ──
     crate::game_render::draw_multi_selection_box(host, engine, renderer);
 
@@ -1649,7 +1682,6 @@ fn render_frame_with_hud(
             crate::ui_panel::draw_requirements_bar(
                 renderer,
                 portrait_cache,
-                campaign,
                 &assets.profile_manager,
                 &req,
             );
@@ -1723,11 +1755,12 @@ fn render_frame_with_hud(
                     sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
                         .map(|mt_id| resources.menu_text.get(mt_id))
                 },
-                &fonts.tooltip_font,
-                fonts.shadow_font.as_ref(),
-                mp.x as i32,
-                mp.y as i32,
-                (cw as i32, ch as i32),
+                sherwood_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
             );
         }
     }
@@ -1829,11 +1862,12 @@ fn render_frame_with_hud(
                     let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
                     resources.menu_text.get(mt_id)
                 },
-                &fonts.tooltip_font,
-                fonts.shadow_font.as_ref(),
-                mp.x as i32,
-                mp.y as i32,
-                (cw as i32, ch as i32),
+                stature_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
             );
         }
 
@@ -1965,7 +1999,7 @@ fn render_frame_with_hud(
         // Renders ransom and amulet values in the top-left corner
         // with a drop-shadow background font.
         render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
-        render_mission_countdown(&presentation, engine, renderer, fonts);
+        render_mission_countdown(presentation, engine, renderer, fonts);
 
         crate::achievement_hud::render_trackers(
             engine,
@@ -2078,7 +2112,7 @@ fn render_frame_with_hud(
         if alpha > 0 {
             let sw = renderer.screen_width() as i32;
             let sh = renderer.screen_height() as i32;
-            renderer.render_gpu_rect(0, 0, sw, sh, 0, 0, 0, alpha);
+            renderer.render_gpu_rect(0, 0, sw, sh, [0, 0, 0, alpha]);
         }
     }
 
@@ -2107,7 +2141,7 @@ pub(super) fn draw_rewind_icon(
     let sz = size as f32;
     let total_width = (2.0 * width) as i32;
     // Semi-opaque dark backdrop for contrast.
-    renderer.render_gpu_rect(x - 6, y - 4, total_width + 12, size + 8, 0, 0, 0, 140);
+    renderer.render_gpu_rect(x - 6, y - 4, total_width + 12, size + 8, [0, 0, 0, 140]);
     for triangle_idx in 0..2 {
         let tri_x = x as f32 + triangle_idx as f32 * width;
         let ty = y as f32;
@@ -2117,10 +2151,7 @@ pub(super) fn draw_rewind_icon(
                 (tri_x + width, ty),      // base top-right
                 (tri_x + width, ty + sz), // base bottom-right
             ],
-            255,
-            255,
-            255,
-            220,
+            [255, 255, 255, 220],
         );
     }
 }

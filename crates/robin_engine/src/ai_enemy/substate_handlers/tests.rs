@@ -1237,12 +1237,14 @@ fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
         ai.base.current_substate = substate;
 
         ai.think_expected_attacking_event(
-            &sim,
             &Stimulus::new(StimulusType::EventDone),
             &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
+            crate::ai_enemy::ThinkEnv {
+                sim: &sim,
+                ctx: &AiContext::test_fixture(),
+                tick: &AiPerTickData::stub(),
+                grid: None,
+            },
         );
 
         assert_eq!(ai.base.current_state, AiState::Attacking);
@@ -1250,12 +1252,14 @@ fn archer_waiting_on_shooting_path_returns_to_duty_only_on_timer() {
         assert!(ai.base.outbox.reentrant.owner_work.is_empty());
 
         ai.think_expected_attacking_event(
-            &sim,
             &Stimulus::new(StimulusType::EventTimer),
             &mut AiGlobalState::default(),
-            &AiContext::test_fixture(),
-            &AiPerTickData::stub(),
-            None,
+            crate::ai_enemy::ThinkEnv {
+                sim: &sim,
+                ctx: &AiContext::test_fixture(),
+                tick: &AiPerTickData::stub(),
+                grid: None,
+            },
         );
 
         assert!(matches!(
@@ -1273,12 +1277,14 @@ fn fleeing_hiding_timer_invokes_enemy_return_to_duty() {
     ai.base.current_substate = Substate::FleeingHiding;
 
     let handled = ai.think_expected_fleeing_event(
-        &sim,
         &Stimulus::new(StimulusType::EventTimer),
         &mut AiGlobalState::default(),
-        &AiContext::test_fixture(),
-        &AiPerTickData::stub(),
-        None,
+        crate::ai_enemy::ThinkEnv {
+            sim: &sim,
+            ctx: &AiContext::test_fixture(),
+            tick: &AiPerTickData::stub(),
+            grid: None,
+        },
     );
 
     assert!(handled);
@@ -1635,11 +1641,13 @@ fn phalanx_shield_reestablish_uses_raw_door_passing_target_position() {
         });
 
     ai.attacking_phalanx(
-        &sim,
         StimulusType::EventTimer,
-        &AiContext::test_fixture(),
-        &tick,
-        None,
+        crate::ai_enemy::ThinkEnv {
+            sim: &sim,
+            ctx: &AiContext::test_fixture(),
+            tick: &tick,
+            grid: None,
+        },
     );
 
     let element = ai.base.outbox.actor.launch_sequences[0]
@@ -2574,12 +2582,14 @@ fn run_reactiontime_turning(
     };
 
     ai.think_expected_attacking_event(
-        &sim,
         &Stimulus::new(StimulusType::EventDone),
         &mut AiGlobalState::default(),
-        &ctx,
-        &AiPerTickData::stub(),
-        None,
+        crate::ai_enemy::ThinkEnv {
+            sim: &sim,
+            ctx: &ctx,
+            tick: &AiPerTickData::stub(),
+            grid: None,
+        },
     );
     ai
 }

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;

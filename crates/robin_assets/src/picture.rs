@@ -176,11 +176,9 @@ fn is_jxl_signature(bytes: &[u8]) -> bool {
 
 /// Seek to an absolute byte position (SEEK_SET).
 pub(crate) fn seek_to(file: &mut SbFile, pos: u64) -> Result<()> {
-    let error = file.skip(pos as i64, 0); // 0 = SEEK_SET
-    if error != robin_data_io::sbfile::SBFILE_NO_ERROR {
-        bail!("seek to {pos}: error {error}");
-    }
-    Ok(())
+    let offset = i64::try_from(pos).with_context(|| format!("seek position {pos} exceeds i64"))?;
+    file.skip(offset, 0)
+        .with_context(|| format!("seek to {pos}")) // 0 = SEEK_SET
 }
 
 /// Distributes jxl-rs section decoding across the rayon pool. jxl-rs

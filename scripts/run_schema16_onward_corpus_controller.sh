@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # After the authenticated seed-2/3/4 campaign has produced three complete
 # non-exact corpus proofs, capture, normalize and validate fresh schema-16
 # corpora serially from seed base 5,000,000 onward. Semantic failures retain a
@@ -39,39 +42,9 @@ expected_final_script_sha=229146eebcf0e3b09bf2987d2af17917e3addaa813697a905893ce
 expected_sweep_script_sha=e7a1c769a18b76a69c3473f68caa38a6b741c002e826bff97c106e7fdf746cfb
 expected_helper_script_sha=79c0d5c9d770812be5ae541ca12d017f21dbb2b9c30e480bde56cfb90a8d27a7
 
-fail() {
-    printf 'error: %s\n' "$*" >&2
-    exit 2
-}
 
-sha256_file() {
-    local value
-    value=$(sha256sum -- "$1") || return 1
-    printf '%s\n' "${value%% *}"
-}
 
-normalize_bounded_uint() {
-    local LC_ALL=C value=$1 limit=$2
-    [[ "$value" =~ ^[0-9]+$ ]] || return 1
-    while [[ ${#value} -gt 1 && "$value" == 0* ]]; do
-        value=${value#0}
-    done
-    if (( ${#value} > ${#limit} )) \
-        || { (( ${#value} == ${#limit} )) && [[ "$value" > "$limit" ]]; }
-    then
-        return 1
-    fi
-    printf '%s\n' "$value"
-}
 
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 
 read_one_value() {
     local file=$1 key=$2

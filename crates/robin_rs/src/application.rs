@@ -257,21 +257,15 @@ fn effective_sim_config(
     config
 }
 
-impl<'de> Deserialize<'de> for ApplicationContext {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "application authority requires explicit composition; decode ApplicationContextDiagnostic instead",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    ApplicationContext,
+    "application authority requires explicit composition; decode ApplicationContextDiagnostic instead"
+);
 
-impl<'de> Deserialize<'de> for ReadyApplicationContext {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "ready application authority cannot be deserialized; decode ApplicationContextDiagnostic instead",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    ReadyApplicationContext,
+    "ready application authority cannot be deserialized; decode ApplicationContextDiagnostic instead"
+);
 
 impl TryFrom<ApplicationContext> for ReadyApplicationContext {
     type Error = String;
@@ -761,10 +755,7 @@ impl ApplicationContext {
     pub fn set_language(&self, selection: LanguageSelection) -> Result<LanguageChange, String> {
         let services = self.required_services()?;
         let cache = &services.asset_cache;
-        let mut localization = services
-            .localization
-            .lock()
-            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        let mut localization = lock_service(&services.localization, "localization")?;
         let change = localization
             .set_selection(selection, services.shipping.as_deref())
             .map_err(|error| error.to_string())?;
@@ -779,11 +770,7 @@ impl ApplicationContext {
         &self,
         read: impl FnOnce(&LocalizationService) -> R,
     ) -> Result<R, String> {
-        let localization = self
-            .required_services()?
-            .localization
-            .lock()
-            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        let localization = lock_service(&self.required_services()?.localization, "localization")?;
         Ok(read(&localization))
     }
 
@@ -816,12 +803,10 @@ impl ApplicationContext {
         &self,
         read: impl FnOnce(&PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let profiles = self
-            .required_services()?
-            .profiles
-            .player_profiles
-            .lock()
-            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+        let profiles = lock_service(
+            &self.required_services()?.profiles.player_profiles,
+            "player-profile",
+        )?;
         Ok(read(&profiles))
     }
 
@@ -871,12 +856,10 @@ impl ApplicationContext {
         policy: ProfilePersistence,
         update: impl FnOnce(&mut PlayerProfileManager) -> Result<R, String>,
     ) -> Result<ProfilePublication<R>, String> {
-        let mut profiles = self
-            .required_services()?
-            .profiles
-            .player_profiles
-            .lock()
-            .map_err(|_| "ApplicationContext player-profile lock poisoned".to_string())?;
+        let mut profiles = lock_service(
+            &self.required_services()?.profiles.player_profiles,
+            "player-profile",
+        )?;
         // No callback gets persistence authority. Both validation and I/O are
         // owned here, with no opportunity to persist an unvalidated snapshot.
         let mut state = self
@@ -976,12 +959,10 @@ impl ApplicationContext {
         &self,
         read: impl FnOnce(&KeyConfigStore) -> R,
     ) -> Result<R, String> {
-        let keys = self
-            .required_services()?
-            .profiles
-            .key_configs
-            .lock()
-            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+        let keys = lock_service(
+            &self.required_services()?.profiles.key_configs,
+            "key-config",
+        )?;
         Ok(read(&keys))
     }
 
@@ -991,12 +972,10 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut KeyConfigStore) -> R,
     ) -> Result<R, String> {
-        let mut keys = self
-            .required_services()?
-            .profiles
-            .key_configs
-            .lock()
-            .map_err(|_| "ApplicationContext key-config lock poisoned".to_string())?;
+        let mut keys = lock_service(
+            &self.required_services()?.profiles.key_configs,
+            "key-config",
+        )?;
         Ok(update(&mut keys))
     }
 
@@ -1004,12 +983,10 @@ impl ApplicationContext {
         &self,
         read: impl FnOnce(&SpellforgeTrustStore) -> R,
     ) -> Result<R, String> {
-        let trust = self
-            .required_services()?
-            .profiles
-            .spellforge_trust
-            .lock()
-            .map_err(|_| "ApplicationContext Spellforge-trust lock poisoned".to_string())?;
+        let trust = lock_service(
+            &self.required_services()?.profiles.spellforge_trust,
+            "Spellforge-trust",
+        )?;
         Ok(read(&trust))
     }
 
@@ -1017,12 +994,10 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut SpellforgeTrustStore) -> R,
     ) -> Result<R, String> {
-        let mut trust = self
-            .required_services()?
-            .profiles
-            .spellforge_trust
-            .lock()
-            .map_err(|_| "ApplicationContext Spellforge-trust lock poisoned".to_string())?;
+        let mut trust = lock_service(
+            &self.required_services()?.profiles.spellforge_trust,
+            "Spellforge-trust",
+        )?;
         Ok(update(&mut trust))
     }
 
@@ -1086,11 +1061,10 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut DistributedModCache) -> Result<R, String>,
     ) -> Result<R, String> {
-        let mut cache = self
-            .required_services()?
-            .distributed_mod_cache
-            .lock()
-            .map_err(|_| "ApplicationContext distributed-mod cache lock poisoned".to_string())?;
+        let mut cache = lock_service(
+            &self.required_services()?.distributed_mod_cache,
+            "distributed-mod cache",
+        )?;
         match cache.as_mut() {
             Ok(cache) => update(cache),
             Err(error) => Err(format!("distributed-mod cache is unavailable: {error}")),
@@ -1290,3 +1264,11 @@ impl std::ops::Deref for ApplicationContext {
 #[cfg(test)]
 #[path = "application/tests.rs"]
 mod application_context_tests;
+
+fn lock_service<'a, T>(
+    lock: &'a std::sync::Mutex<T>,
+    label: &str,
+) -> Result<std::sync::MutexGuard<'a, T>, String> {
+    lock.lock()
+        .map_err(|_| format!("ApplicationContext {label} lock poisoned"))
+}

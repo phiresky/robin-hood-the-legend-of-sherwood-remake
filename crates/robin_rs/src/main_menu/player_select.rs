@@ -8,6 +8,7 @@
 
 use super::difficulty_to_string;
 use crate::gfx_types::Keycode;
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
@@ -119,12 +120,9 @@ pub(crate) async fn show_select_player(
     let mut selected: Option<usize> = profiles_snapshot(application_context).1;
     let mut status = String::new();
 
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
 
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (id, label, x, y) in &btn_positions {
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
             *id, label, true, *x, *y, btn_w, btn_h,
@@ -161,11 +159,11 @@ pub(crate) async fn show_select_player(
         // profile before menus, saves, or sessions can continue.
         let can_delete = can_delete_profile(profiles.len());
 
-        set_button_enabled(&mut frame, ID_SELECT, can_select);
-        set_button_enabled(&mut frame, ID_NEW, can_new);
-        set_button_enabled(&mut frame, ID_RENAME, can_rename);
-        set_button_enabled(&mut frame, ID_DELETE, can_delete);
-        set_button_enabled(&mut frame, ID_DIFFICULTY, has_profile);
+        frame.update_widget(ID_SELECT, None, can_select);
+        frame.update_widget(ID_NEW, None, can_new);
+        frame.update_widget(ID_RENAME, None, can_rename);
+        frame.update_widget(ID_DELETE, None, can_delete);
+        frame.update_widget(ID_DIFFICULTY, None, has_profile);
 
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
@@ -513,15 +511,6 @@ fn can_delete_profile(profile_count: usize) -> bool {
     profile_count > 1
 }
 
-fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: bool) {
-    let Some(widget) = frame.widget_mut(id) else {
-        panic!("Select Player: missing button widget {id}");
-    };
-    if widget.base().enabled != enabled {
-        widget.set_enable(enabled);
-    }
-}
-
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
     let profile_id = application_context
         .update_and_retain_player_profiles(|mgr| {
@@ -788,8 +777,8 @@ async fn run_name_prompt(
     let (diff_btn_w, diff_btn_h) = resources.radio_dimensions();
     let diff_positions = new_player_difficulty_positions(win_x, win_y, diff_btn_w);
 
-    let (ok_w, ok_h) = resources.ok_button_dimensions();
-    let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+    let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
+    let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
     let ok_cancel_gap = if is_new_player { 20 } else { 18 };
     let confirm_total_w = ok_w + cancel_w + ok_cancel_gap;
     let confirm_row_x = win_x + (win_w - confirm_total_w) / 2;
@@ -811,8 +800,7 @@ async fn run_name_prompt(
     input_widget.enter_edit_mode();
     let mut caret_started_at_ms = crate::window::process_uptime_ms();
     let mut difficulty = initial_difficulty.unwrap_or(DifficultyLevel::Medium);
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
     let empty_keyboard = UiKeyboard::default();
 
     crate::window::start_text_input();
@@ -821,9 +809,7 @@ async fn run_name_prompt(
         // is reflected on the radio buttons via their enabled-but-pressed
         // style (the "selected" sub-picture).  The OK and Cancel buttons
         // sit below.
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
 
         // OK / Cancel buttons.
         // OK is not gated on non-empty input; it is always clickable,
@@ -1468,10 +1454,9 @@ async fn show_difficulty_prompt(
     let mut custom_rules = initial.rules();
     let mut difficulty = initial;
     let mut focused_rule = 0usize;
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
-    let (ok_w, ok_h) = resources.ok_button_dimensions();
-    let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
+    let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
+    let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
     let ok_x = PANEL.x + PANEL.w / 2 - ok_w - 8;
     let cancel_x = PANEL.x + PANEL.w / 2 + 8;
     let button_y = PANEL.y + PANEL.h - ok_h.max(cancel_h) - 10;
@@ -1648,7 +1633,7 @@ async fn show_difficulty_prompt(
             cursor.draw(renderer, transform, &input_state);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

@@ -258,7 +258,7 @@ fn script_send_message_callbacks_run_in_launch_order_in_same_frame() {
 #[test]
 fn registered_send_message_callback_precedes_later_immediate_sibling() {
     let (mut engine, _, _) = engine_with_receiver();
-    let receiver = engine.add_entity(scripted_soldier("OrderingReceiver"));
+    let receiver = engine.add_test_entity(scripted_soldier("OrderingReceiver"));
     let handle = bind_script_actor(&mut engine, receiver, "OrderingReceiver");
     engine
         .get_entity_mut(receiver)
@@ -296,7 +296,7 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
 #[test]
 fn target_activation_callback_precedes_later_engine_sibling() {
     let (mut engine, reader, _) = engine_with_receiver();
-    let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
+    let target = engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::Target;
@@ -351,7 +351,7 @@ fn target_activation_callback_precedes_later_engine_sibling() {
 #[test]
 fn send_message_callback_precedes_later_move_translation() {
     let (mut engine, _, _) = engine_with_receiver();
-    let mover = engine.add_entity(scripted_soldier("MoveOrdering"));
+    let mover = engine.add_test_entity(scripted_soldier("MoveOrdering"));
     let mover_handle = bind_script_actor(&mut engine, mover, "MoveOrdering");
     engine
         .get_entity_mut(mover)
@@ -466,7 +466,7 @@ fn ownerless_message_runs_wait_successor_before_older_immediate_sibling() {
 #[test]
 fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
     let (mut engine, _, _) = engine_with_receiver();
-    let actor = engine.add_entity(scripted_soldier("OrderingReceiver"));
+    let actor = engine.add_test_entity(scripted_soldier("OrderingReceiver"));
     let handle = bind_script_actor(&mut engine, actor, "OrderingReceiver");
     engine
         .get_entity_mut(actor)
@@ -502,7 +502,7 @@ fn recorded_actor_message_closes_ready_before_parent_vm_resumes() {
 #[test]
 fn missing_send_message_receiver_vm_terminates_and_runs_successor() {
     let (mut engine, _, _) = engine_with_receiver();
-    let receiver = engine.add_entity(scripted_soldier(""));
+    let receiver = engine.add_test_entity(scripted_soldier(""));
     engine
         .get_entity_mut(receiver)
         .expect("receiver")

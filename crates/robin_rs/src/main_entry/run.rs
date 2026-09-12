@@ -13,19 +13,12 @@ use robin_engine::profiles::MissionLocation;
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
 use super::cli::{MissionLaunch, requested_replay_data};
 
-type ReplayLaunch = (
-    Campaign,
-    usize,
-    MissionLocation,
-    MissionLaunch,
-    u64,
-    robin_engine::engine::SimConfig,
-);
+use crate::game_session::PreparedReplayLaunch;
 
 /// In-process ownership handoff, never serialized or reconstructed from JS.
 struct PreparedInitialReplay {
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
-    launch: ReplayLaunch,
+    launch: PreparedReplayLaunch,
     #[cfg(target_arch = "wasm32")]
     downloads: Option<crate::shipping_mission::EarlyMissionDownloads>,
 }
@@ -115,11 +108,11 @@ pub fn start_browser_replay_preparation(
                     }
                     let shipping = context.shipping_arc()?;
                     let archive = launch
-                        .3
+                        .launch
                         .resolved_mission_assets
                         .as_ref()
                         .is_some_and(|resolved| resolved.is_archive());
-                    let mission = launch.0.missions[launch.1]
+                    let mission = launch.campaign.missions[launch.mission_idx]
                         .profile(&prepared_profiles)
                         .mission_filename
                         .clone();
@@ -128,7 +121,7 @@ pub fn start_browser_replay_preparation(
                             crate::shipping_mission::start_early_downloads(
                                 datadir,
                                 &mission,
-                                &launch.0,
+                                &launch.campaign,
                                 &prepared_profiles,
                             )
                             .map_err(|error| format!("early replay downloads: {error:#}"))?,
@@ -233,6 +226,52 @@ fn finish_application(
     }
 }
 
+/// Resolve the launch route before starting any transport or speculative work.
+/// The returned request owns snapshots, never profile/key lock guards.
+fn prepare_run_args(
+    context: crate::host::ReadyApplicationContext,
+    args: &MissionLaunch,
+) -> Result<MissionLaunch, String> {
+    let context = context.with_options(args.global_options.options().clone());
+    let mut args = args.clone();
+    super::cli::resolve_join_ticket(&mut args)?;
+    args.global_options = context.into();
+    Ok(args)
+}
+
+fn projection_export_requested(args: &MissionLaunch) -> bool {
+    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+    {
+        args.simulation_content_export.is_some()
+    }
+    #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
+    {
+        let _ = args;
+        false
+    }
+}
+
+/// Called after transport startup, in both graphical and headless entry paths.
+fn warm_run_assets(
+    args: &MissionLaunch,
+    profiles: &std::sync::Arc<engine_profiles::ProfileManager>,
+) -> Result<(), String> {
+    let context = &args.global_options;
+    let shipping = context.shipping_arc()?;
+    if !projection_export_requested(args)
+        && !shipping
+            .as_ref()
+            .is_some_and(|datadir| !datadir.missions.is_empty())
+    {
+        context.asset_cache()?.start_background_warmup(
+            shipping,
+            profiles.clone(),
+            context.preparation_files()?.clone(),
+        );
+    }
+    Ok(())
+}
+
 async fn run_rust_game_active(
     window: &mut GameWindow,
     mut campaign: Campaign,
@@ -244,12 +283,8 @@ async fn run_rust_game_active(
     // Combine parsed launcher options with the services loaded by `rust_init`.
     // Every lock-backed value used below is copied into an owned snapshot
     // before the first `.await`; futures never retain a profile/key guard.
-    let application_context: ApplicationContext = application_context
-        .with_options(args.global_options.options().clone())
-        .into();
-    let mut run_args = args.clone();
-    super::cli::resolve_join_ticket(&mut run_args)?;
-    run_args.global_options = application_context.clone();
+    let run_args = prepare_run_args(application_context, args)?;
+    let application_context = run_args.global_options.clone();
     let args = &run_args;
 
     // Respect both launch forms before admitting speculative menu audio.
@@ -286,22 +321,7 @@ async fn run_rust_game_active(
     // Warm this application's asset cache (sprite bank, sound banks,
     // exclamations) on a background thread while the menu runs, so the
     // first mission load doesn't pay for application-lifetime parsing.
-    let shipping_for_warmup = application_context.shipping_arc()?;
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    let projection_export = args.simulation_content_export.is_some();
-    #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
-    let projection_export = false;
-    if !projection_export
-        && !shipping_for_warmup
-            .as_ref()
-            .is_some_and(|datadir| !datadir.missions.is_empty())
-    {
-        application_context.asset_cache()?.start_background_warmup(
-            shipping_for_warmup,
-            profiles.clone(),
-            application_context.preparation_files()?.clone(),
-        );
-    }
+    warm_run_assets(args, &profiles)?;
 
     // The headless code in `game_session` short-circuits the per-frame render
     // block. Window and GPU initialization still happen before this point.
@@ -331,51 +351,32 @@ async fn run_rust_game_active(
         // are canceled if setup fails or this replay is superseded.
         #[cfg(target_arch = "wasm32")]
         let mut _early_downloads = None;
-        let (replay_campaign, idx, location, replay_args, replay_rng_seed, replay_sim_config) =
-            if let Some(prepared) = prepared_replay {
-                profiles = prepared.profiles;
-                #[cfg(target_arch = "wasm32")]
-                {
-                    _early_downloads = prepared.downloads;
-                }
-                prepared.launch
-            } else {
-                wait_for_replay_command(window, &args.global_options).await?;
-                let pending = args
-                    .global_options
-                    .replay_launches()
-                    .take_pending()
-                    .ok_or_else(|| {
-                        "--wait-for-command: replay disappeared before mission start".to_string()
-                    })?;
-                crate::game_session::prepare_replay_launch(
-                    &application_context,
-                    std::sync::Arc::make_mut(&mut profiles),
-                    args,
-                    pending.data,
-                    pending.paused,
-                )
-                .await?
-            };
-        let Some(mut callbacks) =
-            RustCallbacks::new_for_window(application_context.clone(), window).await?
-        else {
-            return Ok(0);
+        let prepared = if let Some(prepared) = prepared_replay {
+            profiles = prepared.profiles;
+            #[cfg(target_arch = "wasm32")]
+            {
+                _early_downloads = prepared.downloads;
+            }
+            prepared.launch
+        } else {
+            wait_for_replay_command(window, &args.global_options).await?;
+            let pending = args
+                .global_options
+                .replay_launches()
+                .take_pending()
+                .ok_or_else(|| {
+                    "--wait-for-command: replay disappeared before mission start".to_string()
+                })?;
+            crate::game_session::prepare_replay_launch(
+                &application_context,
+                std::sync::Arc::make_mut(&mut profiles),
+                args,
+                pending.data,
+                pending.paused,
+            )
+            .await?
         };
-        let outcome = Box::pin(run_mission(
-            window,
-            &mut callbacks,
-            replay_campaign,
-            std::sync::Arc::make_mut(&mut profiles),
-            idx,
-            location,
-            replay_args,
-            replay_rng_seed,
-            replay_sim_config,
-        ))
-        .await;
-        outcome.result?;
-        return Ok(0);
+        return run_prepared_replay(window, profiles, application_context, prepared).await;
     }
 
     // Replay metadata is authoritative for mission selection and frame-0
@@ -383,34 +384,15 @@ async fn run_rust_game_active(
     // auto-detection.
     let replay_data = requested_replay_data(args)?;
     if let Some(data) = replay_data {
-        let (replay_campaign, idx, location, replay_args, rng_seed, sim_config) =
-            crate::game_session::prepare_replay_launch(
-                &application_context,
-                std::sync::Arc::make_mut(&mut profiles),
-                args,
-                data,
-                false,
-            )
-            .await?;
-        let Some(mut callbacks) =
-            RustCallbacks::new_for_window(application_context.clone(), window).await?
-        else {
-            return Ok(0);
-        };
-        let outcome = Box::pin(run_mission(
-            window,
-            &mut callbacks,
-            replay_campaign,
+        let prepared = crate::game_session::prepare_replay_launch(
+            &application_context,
             std::sync::Arc::make_mut(&mut profiles),
-            idx,
-            location,
-            replay_args,
-            rng_seed,
-            sim_config,
-        ))
-        .await;
-        outcome.result?;
-        return Ok(0);
+            args,
+            data,
+            false,
+        )
+        .await?;
+        return run_prepared_replay(window, profiles, application_context, prepared).await;
     }
 
     // Direct custom missions cross the same exact-byte admission boundary as
@@ -532,6 +514,43 @@ async fn run_rust_game_active(
         );
     }
 
+    run_main_menu(window, campaign, profiles, application_context, args).await
+}
+
+/// Both early/RPC and CLI replays cross this same post-admission boundary.
+/// Callback construction stays after canonical asset/profile preparation.
+async fn run_prepared_replay(
+    window: &mut GameWindow,
+    mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    context: ApplicationContext,
+    prepared: PreparedReplayLaunch,
+) -> Result<i32, String> {
+    let Some(mut callbacks) = RustCallbacks::new_for_window(context, window).await? else {
+        return Ok(0);
+    };
+    let outcome = Box::pin(run_mission(
+        window,
+        &mut callbacks,
+        prepared.campaign,
+        std::sync::Arc::make_mut(&mut profiles),
+        prepared.mission_idx,
+        prepared.location,
+        prepared.launch,
+        prepared.rng_seed,
+        prepared.sim_config,
+    ))
+    .await;
+    outcome.result?;
+    Ok(0)
+}
+
+async fn run_main_menu(
+    window: &mut GameWindow,
+    mut campaign: Campaign,
+    mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    application_context: ApplicationContext,
+    args: &MissionLaunch,
+) -> Result<i32, String> {
     // ── Full game: outer main menu loop ──
     let mut reopen_main_options = false;
     #[cfg(target_arch = "wasm32")]
@@ -960,33 +979,14 @@ async fn run_rust_game_headless_active(
     application_context: crate::host::ReadyApplicationContext,
     args: &MissionLaunch,
 ) -> Result<i32, String> {
-    let application_context: ApplicationContext = application_context
-        .with_options(args.global_options.options().clone())
-        .into();
-    let mut run_args = args.clone();
-    super::cli::resolve_join_ticket(&mut run_args)?;
-    run_args.global_options = application_context.clone();
+    let run_args = prepare_run_args(application_context, args)?;
+    let application_context = run_args.global_options.clone();
     let args = &run_args;
 
     #[cfg(not(target_arch = "wasm32"))]
     application_context.start_http_transport(args.http_server)?;
 
-    let shipping_for_warmup = application_context.shipping_arc()?;
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    let projection_export = args.simulation_content_export.is_some();
-    #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
-    let projection_export = false;
-    if !projection_export
-        && !shipping_for_warmup
-            .as_ref()
-            .is_some_and(|datadir| !datadir.missions.is_empty())
-    {
-        application_context.asset_cache()?.start_background_warmup(
-            shipping_for_warmup,
-            profiles.clone(),
-            application_context.preparation_files()?.clone(),
-        );
-    }
+    warm_run_assets(args, &profiles)?;
 
     tracing::info!("--headless: running without winit, wgpu, renderer, or audio backend");
 
@@ -1028,9 +1028,14 @@ async fn run_rust_game_headless_active(
             replay_paused,
         )
         .await?;
-        campaign = prepared.0;
-        prepared_args = Some(prepared.3);
-        Some((prepared.1, prepared.2, prepared.4, prepared.5))
+        campaign = prepared.campaign;
+        prepared_args = Some(prepared.launch);
+        Some((
+            prepared.mission_idx,
+            prepared.location,
+            prepared.rng_seed,
+            prepared.sim_config,
+        ))
     } else if let Some((idx, location)) = force_mission_launch(
         &mut campaign,
         &mut profiles,
@@ -1073,7 +1078,7 @@ async fn run_rust_game_headless_active(
     };
 
     #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    if projection_export {
+    if projection_export_requested(args) {
         crate::game_session::export_official_mission_headless(
             campaign,
             &profiles,
@@ -1212,6 +1217,76 @@ async fn wait_for_replay_command(
 
 #[cfg(test)]
 mod early_replay_tests {
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    struct StartupCalls(Vec<String>);
+
+    impl<'ast> syn::visit::Visit<'ast> for StartupCalls {
+        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(path) = call.func.as_ref() {
+                self.0
+                    .push(path.path.segments.last().unwrap().ident.to_string());
+            }
+            syn::visit::visit_expr_call(self, call);
+        }
+
+        fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+            self.0.push(call.method.to_string());
+            syn::visit::visit_expr_method_call(self, call);
+        }
+    }
+
+    #[test]
+    fn both_entry_paths_resolve_then_start_transport_then_warm_assets_once() {
+        use syn::visit::Visit;
+        let source = syn::parse_file(include_str!("run.rs")).unwrap();
+        for entry in ["run_rust_game_active", "run_rust_game_headless_active"] {
+            let function = source
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    syn::Item::Fn(function) if function.sig.ident == entry => Some(function),
+                    _ => None,
+                })
+                .unwrap();
+            let mut calls = StartupCalls::default();
+            calls.visit_block(&function.block);
+            let phases: Vec<_> = calls
+                .0
+                .iter()
+                .filter(|name| {
+                    matches!(
+                        name.as_str(),
+                        "prepare_run_args" | "start_http_transport" | "warm_run_assets"
+                    )
+                })
+                .map(String::as_str)
+                .collect();
+            assert_eq!(
+                phases,
+                [
+                    "prepare_run_args",
+                    "start_http_transport",
+                    "warm_run_assets"
+                ],
+                "{entry}"
+            );
+            let warmed = calls
+                .0
+                .iter()
+                .position(|name| name == "warm_run_assets")
+                .unwrap();
+            let replay = calls
+                .0
+                .iter()
+                .position(|name| name == "prepare_replay_launch")
+                .unwrap();
+            assert!(
+                warmed < replay,
+                "{entry}: replay preparation must follow startup"
+            );
+        }
+    }
+
     #[test]
     fn shutdown_failure_does_not_hide_the_original_application_failure() {
         assert_eq!(super::finish_application(Ok(7), Ok(())), Ok(7));

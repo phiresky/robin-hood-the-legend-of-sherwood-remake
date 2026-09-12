@@ -382,7 +382,7 @@ fn dead_actor_executes_its_selected_ordinary_animation() {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(weak_soldier_at_action_done(0));
+    let actor = engine.add_test_entity(weak_soldier_at_action_done(0));
     {
         let entity = engine.get_entity_mut(actor).expect("dead actor exists");
         entity.element_data_mut().kind = ElementKind::ActorSoldier;
@@ -671,7 +671,7 @@ fn weak_sword_first_arrival_at_action_done_preserves_done() {
         std::sync::Arc::new(vec![script]),
         std::sync::Arc::new(conversion),
     );
-    let actor = engine.add_entity(entity);
+    let actor = engine.add_test_entity(entity);
     let mut selected = SequenceElement::new(1, Command::Wait, Some(actor));
     selected.orders.push_back(Order::test_new(action, 0.0, 0.0));
     let sequence = engine.orders.sequence_manager.launch_element(selected);
@@ -789,7 +789,7 @@ fn combat_injury_event_waits_for_terminated() {
 #[test]
 fn global_actor_freeze_also_stops_nonactor_animation() {
     let mut engine = EngineInner::new();
-    let fx = engine.add_entity(animated_fx(None));
+    let fx = engine.add_test_entity(animated_fx(None));
     let assets = crate::engine::types::LevelAssets::new();
 
     engine.set_actors_frozen(true);
@@ -825,7 +825,7 @@ fn global_actor_freeze_also_stops_nonactor_animation() {
 fn patch_fx_without_mission_vm_uses_default_progression_without_finalization() {
     let mut engine = EngineInner::new();
     assert!(engine.scripts.mission.is_none());
-    let fx = engine.add_entity(animated_fx(Some(
+    let fx = engine.add_test_entity(animated_fx(Some(
         crate::patch::PatchIndex::new(0).expect("zero is a valid patch index"),
     )));
 
@@ -1495,7 +1495,7 @@ fn striking_down_execute_fixture() -> (
         std::sync::Arc::new(conversion),
     );
 
-    let owner = engine.add_entity(pc);
+    let owner = engine.add_test_entity(pc);
     let mut soldier = weak_soldier_at_action_done(0);
     soldier.element_data_mut().kind = ElementKind::ActorSoldier;
     soldier
@@ -1503,7 +1503,7 @@ fn striking_down_execute_fixture() -> (
         .publish_order_posture(Posture::Lying);
     soldier.human_data_mut().expect("human data").unconscious = true;
     soldier.npc_data_mut().expect("NPC data").life_points = 100;
-    let victim = engine.add_entity(soldier);
+    let victim = engine.add_test_entity(soldier);
 
     let mut selected =
         SequenceElement::new_interaction(1, Command::SwordstrikeDown, Some(owner), Some(victim));

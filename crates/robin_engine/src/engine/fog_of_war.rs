@@ -1734,8 +1734,8 @@ mod tests {
         // Keep the target inside the configured 1.2x fog range while
         // leaving enough separation for an authored wall between them.
         engine.ai.standard_view_polygon_radius = 180;
-        let pc = engine.add_entity(pc_at(800.0, 100.0));
-        let enemy = engine.add_entity(soldier_at(1_000.0, 100.0, Camp::Lacklandists));
+        let pc = engine.add_test_entity(pc_at(800.0, 100.0));
+        let enemy = engine.add_test_entity(soldier_at(1_000.0, 100.0, Camp::Lacklandists));
         engine.refresh_fog_of_war(&LevelAssets::default(), true);
         (engine, pc, enemy)
     }
@@ -1979,7 +1979,7 @@ mod tests {
         engine.control.sim_config.fog_of_war = true;
         engine.set_level_size(1_000.0, 1_000.0);
         engine.ai.standard_view_polygon_radius = 100;
-        engine.add_entity(pc_at(492.0, 492.0));
+        engine.add_test_entity(pc_at(492.0, 492.0));
         engine.refresh_fog_of_war(&LevelAssets::default(), true);
 
         for point in [
@@ -2008,7 +2008,7 @@ mod tests {
         engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Legendary;
         engine.set_level_size(1_200.0, 1_200.0);
         engine.ai.standard_view_polygon_radius = 400;
-        engine.add_entity(pc_at(600.0, 600.0));
+        engine.add_test_entity(pc_at(600.0, 600.0));
         engine.refresh_fog_of_war(&LevelAssets::default(), true);
 
         assert_eq!(
@@ -2023,7 +2023,7 @@ mod tests {
         let mut engine = EngineInner::new();
         engine.control.sim_config.fog_of_war = true;
         engine.set_level_size(1_000.0, 1_000.0);
-        let pc = engine.add_entity(pc_at(500.0, 500.0));
+        let pc = engine.add_test_entity(pc_at(500.0, 500.0));
         let entity = engine.get_entity_mut(pc).expect("ladder PC fixture");
         entity
             .element_data_mut()
@@ -2059,7 +2059,7 @@ mod tests {
     #[test]
     fn camp_classification_requires_a_live_playable_pc_anchor() {
         let mut engine = EngineInner::new();
-        let soldier_id = engine.add_entity(soldier_at(50.0, 50.0, Camp::Royalists));
+        let soldier_id = engine.add_test_entity(soldier_at(50.0, 50.0, Camp::Royalists));
         let soldier = engine.get_entity(soldier_id).expect("soldier fixture");
         let camps = engine.player_camps();
         assert!(camps.is_empty());
@@ -2070,7 +2070,7 @@ mod tests {
     #[test]
     fn invalid_and_neutral_camps_are_not_misclassified() {
         let mut engine = EngineInner::new();
-        engine.add_entity(pc_at(10.0, 10.0));
+        engine.add_test_entity(pc_at(10.0, 10.0));
         engine.mission_domain.diplomacy.set_enabled(true);
         engine
             .mission_domain
@@ -2081,8 +2081,8 @@ mod tests {
                 crate::diplomacy::Relationship::Neutral,
             )
             .expect("valid neutral relationship");
-        let neutral_id = engine.add_entity(soldier_at(20.0, 20.0, Camp::Custom(2)));
-        let invalid_id = engine.add_entity(soldier_at(30.0, 30.0, Camp::Error));
+        let neutral_id = engine.add_test_entity(soldier_at(20.0, 20.0, Camp::Custom(2)));
+        let invalid_id = engine.add_test_entity(soldier_at(30.0, 30.0, Camp::Error));
         let camps = engine.player_camps();
 
         for id in [neutral_id, invalid_id] {
@@ -2098,7 +2098,7 @@ mod tests {
         engine.control.sim_config.fog_of_war = true;
         engine.set_level_size(1_400.0, 400.0);
         engine.ai.standard_view_polygon_radius = 100;
-        engine.add_entity(pc_at(100.0, 100.0));
+        engine.add_test_entity(pc_at(100.0, 100.0));
         engine.mission_domain.diplomacy.set_enabled(true);
         engine
             .mission_domain
@@ -2109,8 +2109,8 @@ mod tests {
                 crate::diplomacy::Relationship::Allied,
             )
             .expect("valid allied relationship");
-        engine.add_entity(soldier_at(900.0, 100.0, Camp::Custom(2)));
-        let enemy = engine.add_entity(soldier_at(1_000.0, 100.0, Camp::Lacklandists));
+        engine.add_test_entity(soldier_at(900.0, 100.0, Camp::Custom(2)));
+        let enemy = engine.add_test_entity(soldier_at(1_000.0, 100.0, Camp::Lacklandists));
         engine.refresh_fog_of_war(&LevelAssets::default(), true);
         assert!(!engine.fog_entity_visible(enemy));
         assert_eq!(
@@ -2264,7 +2264,7 @@ mod tests {
         engine.control.sim_config.fog_of_war = true;
         engine.set_level_size(600.0, 600.0);
         engine.ai.standard_view_polygon_radius = 250;
-        engine.add_entity(pc_at(100.0, 300.0));
+        engine.add_test_entity(pc_at(100.0, 300.0));
 
         // A north-facing wall: its front artwork projects from ground Y 210
         // upward to map Y 110, directly over the ground shadow behind it.
@@ -2345,7 +2345,7 @@ mod tests {
         engine.control.sim_config.fog_of_war = true;
         engine.set_level_size(600.0, 600.0);
         engine.ai.standard_view_polygon_radius = 250;
-        engine.add_entity(pc_at(100.0, 300.0));
+        engine.add_test_entity(pc_at(100.0, 300.0));
 
         // The camera sees an overhead slab at this pixel, while Robin can
         // see the ground underneath and beyond it through the open arch.
@@ -2631,7 +2631,7 @@ mod tests {
     #[test]
     fn listen_temporarily_reveals_a_nonhuman_object_without_a_last_known_marker() {
         let (mut engine, _, _) = pc_vision_fixture();
-        let object = engine.add_entity(bonus_at(1_300.0, 100.0));
+        let object = engine.add_test_entity(bonus_at(1_300.0, 100.0));
         engine.refresh_fog_of_war(&LevelAssets::default(), false);
         assert!(!engine.fog_entity_visible(object));
 

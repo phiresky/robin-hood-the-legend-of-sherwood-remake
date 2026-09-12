@@ -6,7 +6,7 @@ fn nested_sequence_actions_finish_before_parent_tail() {
     let assets = LevelAssets::new();
     let mut ordering = scripted_soldier("OrderingReceiver");
     ordering.element_data_mut().blipped = true;
-    let ordering_id = engine.add_entity(ordering);
+    let ordering_id = engine.add_test_entity(ordering);
     let ordering_handle = ScriptHandleCodec::actor_handle(ordering_id);
     engine
         .scripts
@@ -51,14 +51,14 @@ fn nested_sequence_actions_finish_before_parent_tail() {
 fn detached_parent_tail_is_restored_when_child_dispatch_fails() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let failure_id = engine.add_entity(scripted_soldier("FailureReceiver"));
+    let failure_id = engine.add_test_entity(scripted_soldier("FailureReceiver"));
     engine
         .get_entity_mut(failure_id)
         .unwrap()
         .element_data_mut()
         .blipped = true;
     let failure_handle = bind_script_actor(&mut engine, failure_id, "FailureReceiver");
-    let missing_id = engine.add_entity(scripted_soldier(""));
+    let missing_id = engine.add_test_entity(scripted_soldier(""));
     let missing_handle = ScriptHandleCodec::actor_handle(missing_id);
     let error = engine
         .call_script_vm(
@@ -129,9 +129,9 @@ fn open_scroll_terminates_before_nested_child_failure_and_restores_tail() {
     let mut scroll = crate::element::ElementScroll::default();
     scroll.element.kind = ElementKind::ObjectScroll;
     scroll.element.active = true;
-    let scroll_id = engine.add_entity(Entity::Scroll(scroll));
+    let scroll_id = engine.add_test_entity(Entity::Scroll(scroll));
     let scroll_handle = ScriptHandleCodec::actor_handle(scroll_id);
-    let reader_id = engine.add_entity(scripted_soldier(""));
+    let reader_id = engine.add_test_entity(scripted_soldier(""));
     engine
         .get_entity_mut(reader_id)
         .expect("reader")
@@ -219,7 +219,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
     let mut scroll = crate::element::ElementScroll::default();
     scroll.element.kind = ElementKind::ObjectScroll;
     scroll.element.active = true;
-    let scroll_id = engine.add_entity(Entity::Scroll(scroll));
+    let scroll_id = engine.add_test_entity(Entity::Scroll(scroll));
     let scroll_handle = ScriptHandleCodec::actor_handle(scroll_id);
     engine
         .scripts
@@ -277,7 +277,7 @@ fn local_open_scroll_vm_failure_marks_it_impossible_without_starting_successor()
 fn scroll_send_message_preserves_this_scroll_through_child_and_resume() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
-    let observer_id = engine.add_entity(scripted_soldier("ScrollObserver"));
+    let observer_id = engine.add_test_entity(scripted_soldier("ScrollObserver"));
     let observer_handle = ScriptHandleCodec::actor_handle(observer_id);
     let scroll_handle = 0x1A2B_3C4D;
     let script = engine.scripts.mission.as_mut().expect("script installed");

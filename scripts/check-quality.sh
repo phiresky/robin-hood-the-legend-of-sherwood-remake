@@ -14,12 +14,9 @@ fi
 case "$1" in
     format)
         cargo fmt --all -- --check
-        # The shared fixture helper is included by test macros rather than mod.
-        git ls-files -z -- 'test-support/original_data.rs' \
-            | xargs -0 -r rustfmt --edition 2024 --check --config skip_children=true
         ;;
     core)
-        cargo test --locked -p robin_util -p robin_state_hash_derive -p robin_spellforge -p robin_lua
+        cargo test --locked -p robin_util -p robin_state_hash_derive -p robin_spellforge -p robin_lua -p robin_test_support
         ;;
     scripting-llvm)
         # LLVM verifies unwind/destructor semantics, not just panic detection.
@@ -90,6 +87,7 @@ case "$1" in
         # Curated fixture-free tests: never discover arbitrary scripts that may
         # capture real game sessions or operate a deployed service.
         python3 scripts/test_quality_suites.py
+        python3 scripts/test_workspace_hygiene.py
         python3 scripts/release/test_author_leaderboard_release.py
         npm --prefix scripts/release run verify
         test -f scripts/test_portable_linker.py
@@ -152,30 +150,30 @@ case "$1" in
         ;;
     fixtures-demo)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the Leicester demo root containing Data/}"
-        cargo test --locked -p robin_engine --lib profiles::tests::load_demo_profile_json -- --ignored --exact
-        cargo test --locked -p robin_engine --lib profiles::tests::demo_profile_serde_round_trip -- --ignored --exact
-        cargo test --locked -p robin_rs --lib font::tests::test_parse_real_tfn -- --ignored --exact
-        cargo test --locked -p robin_assets --lib frame_holder::tests::test_initialize_sprite_bank_from_game_data -- --ignored --exact
-        cargo test --locked -p robin_assets --lib frame_holder::tests::test_sprite_bank_packed_data_present -- --ignored --exact
-        cargo test --locked -p robin_assets --lib frame_holder::tests::test_validate_all_sprite_bank_streams -- --ignored --exact
-        cargo test --locked -p robin_assets --features engine-adapters --lib picture::tests::original_demo_dialogue_portraits -- --ignored --exact
-        cargo test --locked -p robin_assets demo_script -- --ignored
-        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_start_sxt_is_a_sixteen_picture -- --ignored --exact
-        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_root_has_exact_typed_edition -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::load_demo_profile_json -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::demo_profile_serde_round_trip -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_rs --lib font::tests::test_parse_real_tfn -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets --lib frame_holder::tests::test_initialize_sprite_bank_from_game_data -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets --lib frame_holder::tests::test_sprite_bank_packed_data_present -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets --lib frame_holder::tests::test_validate_all_sprite_bank_streams -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets --features engine-adapters --lib picture::tests::original_demo_dialogue_portraits -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets demo_script -- --ignored
+        python3 scripts/run_fixture_test.py --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_start_sxt_is_a_sixteen_picture -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_root_has_exact_typed_edition -- --ignored --exact
         ;;
     fixtures-fullgame)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the full-game root containing Data/}"
-        cargo test --locked -p robin_engine --lib profiles::tests::load_fullgame_profile_json -- --ignored --exact
-        cargo test --locked -p robin_assets fullgame_scripts -- --ignored
-        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_fullgame_root_has_exact_typed_edition -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib profiles::tests::load_fullgame_profile_json -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_assets fullgame_scripts -- --ignored
+        python3 scripts/run_fixture_test.py --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_fullgame_root_has_exact_typed_edition -- --ignored --exact
         ;;
     fixtures-legacy-linux)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the Linux i386 v48 root containing the required profile.cpf and profile saves}"
-        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::golden_lincoln_restart_engine_boundary -- --ignored --exact
-        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::parses_current_linux_continue_engine_boundary -- --ignored --exact
-        cargo test --locked -p robin_engine --lib legacy_save::engine::tests::rejects_sound_source_count_before_allocation -- --ignored --exact
-        cargo test --locked -p robin_engine --lib legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries -- --ignored --exact
-        cargo test --locked -p robin_engine --lib legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib legacy_save::engine::tests::golden_lincoln_restart_engine_boundary -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib legacy_save::engine::tests::parses_current_linux_continue_engine_boundary -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib legacy_save::engine::tests::rejects_sound_source_count_before_allocation -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries -- --ignored --exact
+        python3 scripts/run_fixture_test.py --locked -p robin_engine --lib legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries -- --ignored --exact
         ;;
     *) printf 'unknown quality suite: %s\n' "$1" >&2; exit 2 ;;
 esac

@@ -45,6 +45,7 @@ pub const NON_MAP_AREA: ScreenSize = ScreenSize { x: 14.0, y: 24.0 };
     bitcode::Decode,
 )]
 #[repr(u16)]
+#[derive(num_enum::TryFromPrimitive)]
 pub enum CustomDot {
     /// Element is invisible on the minimap.
     Invisible = 0,
@@ -87,29 +88,7 @@ impl CustomDot {
     /// its `CustomizeMinimapDisplay` switch accidentally omitted the VIP
     /// family.
     pub fn try_from_u16(v: u16) -> Option<Self> {
-        Some(match v {
-            0 => Self::Invisible,
-            1 => Self::NotCustomized,
-            100 => Self::Pc,
-            101 => Self::PcLying,
-            102 => Self::PcDead,
-            111 => Self::PcMulti,
-            200 => Self::Villain,
-            201 => Self::VillainLying,
-            202 => Self::VillainDead,
-            222 => Self::VillainMulti,
-            300 => Self::Civilian,
-            301 => Self::CivilianLying,
-            302 => Self::CivilianDead,
-            333 => Self::CivilianMulti,
-            400 => Self::Vip,
-            401 => Self::VipLying,
-            402 => Self::VipDead,
-            444 => Self::VipMulti,
-            500 => Self::Item,
-            666 => Self::Animal,
-            _ => return None,
-        })
+        Self::try_from(v).ok()
     }
 
     pub fn from_u16(v: u16) -> Self {

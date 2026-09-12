@@ -30,11 +30,8 @@ use original::{read_cursor, read_picture_collection, read_string_table};
 
 use crate::binary_reader::Reader;
 use crate::picture::Picture;
-use robin_data_io::sbfile::{SbFile, SbFileSystem};
+use robin_data_io::sbfile::{SbFile, SbFileError, SbFileSystem};
 use robin_engine::coordinates::CursorHotspot;
-
-#[cfg(test)]
-include!("resource_wire_contract.rs");
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -70,11 +67,11 @@ impl std::error::Error for ResourceAttachmentError {
 
 fn acquire_resource_bytes(
     path: &str,
-    read: impl FnOnce() -> std::result::Result<robin_util::asset_fs::AssetBytes, i32>,
+    read: impl FnOnce() -> std::result::Result<robin_util::asset_fs::AssetBytes, SbFileError>,
 ) -> std::result::Result<Option<robin_util::asset_fs::AssetBytes>, ResourceAttachmentError> {
     match read() {
         Ok(bytes) => Ok(Some(bytes)),
-        Err(robin_data_io::sbfile::SBFILE_ERROR_FILE_NOT_FOUND) => Ok(None),
+        Err(SbFileError::NotFound) => Ok(None),
         Err(error) => Err(ResourceAttachmentError::Unavailable(anyhow!(
             "read resource file '{path}': error {error}"
         ))),
@@ -1411,8 +1408,7 @@ mod tests {
 
     #[test]
     fn archive_acquisition_classifies_the_single_read_without_reprobing() {
-        use robin_data_io::sbfile::{SBFILE_ERROR_FILE_NOT_FOUND, SBFILE_ERROR_READ};
-        for status in [SBFILE_ERROR_FILE_NOT_FOUND, SBFILE_ERROR_READ] {
+        for status in [SbFileError::NotFound, SbFileError::Read] {
             let calls = std::cell::Cell::new(0);
             let result = acquire_resource_bytes("fixture.res", || {
                 calls.set(calls.get() + 1);
@@ -1420,10 +1416,10 @@ mod tests {
             });
             assert_eq!(calls.get(), 1);
             match (status, result) {
-                (SBFILE_ERROR_FILE_NOT_FOUND, Ok(None)) => {}
-                (SBFILE_ERROR_READ, Err(ResourceAttachmentError::Unavailable(error))) => {
+                (SbFileError::NotFound, Ok(None)) => {}
+                (SbFileError::Read, Err(ResourceAttachmentError::Unavailable(error))) => {
                     assert!(error.to_string().contains("fixture.res"));
-                    assert!(error.to_string().contains("error -5"));
+                    assert!(error.to_string().contains(&SbFileError::Read.to_string()));
                 }
                 (_, result) => panic!("wrong acquisition classification: {result:?}"),
             }
@@ -2409,6 +2405,9 @@ mod tests {
 #[cfg(test)]
 #[path = "resource_opacity_tests.rs"]
 mod opacity_tests;
+
+#[cfg(test)]
+include!("resource_wire_contract.rs");
 
 #[cfg(test)]
 mod cache_lookup_tests {

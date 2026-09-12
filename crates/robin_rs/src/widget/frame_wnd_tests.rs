@@ -1,21 +1,8 @@
 use super::*;
-use crate::ui::{MouseButtons, UiKeyboard, UiMsg, resource_widget_id::NO_RESOURCE};
+use crate::ui::{MouseButtons, UiMsg, resource_widget_id::NO_RESOURCE};
 use crate::widget::{WidgetButton, WidgetRadioButton, WidgetRenderer};
 
-fn make_keyboard() -> &'static UiKeyboard {
-    Box::leak(Box::new(UiKeyboard::default()))
-}
-
-fn make_input(x: f32, y: f32, buttons: MouseButtons) -> WidgetInput<'static> {
-    WidgetInput {
-        mouse_position: engine_coordinates::ScreenPoint::new(x, y),
-        mouse_z: 0,
-        mouse_button: buttons,
-        keyboard: make_keyboard(),
-        text_input: "",
-        capture: None,
-    }
-}
+use crate::widget::test_support::mouse_input as make_input;
 
 fn make_button_widget(id: WidgetId, x: f32, y: f32, w: f32, h: f32) -> Widget {
     let mut btn = WidgetButton::new(id);

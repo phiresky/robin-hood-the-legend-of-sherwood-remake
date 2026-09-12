@@ -7,6 +7,7 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use crate::ingame_menu::resources::SealButton;
 use crate::scroll_view::ScrollView;
 use robin_engine::coordinates as engine_coordinates;
 #[cfg(test)]
@@ -542,13 +543,11 @@ impl DebriefingPageState {
         // The original debriefing uses the round `RHID_OK` seal
         // (centred) plus dedicated `RHID_RESTART` / `RHID_LOAD` seal
         // sprites at fixed x = 50 / 100, all label-less.
-        let (ok_w, ok_h) = resources.ok_button_dimensions();
-        let (restart_w, restart_h) = resources.restart_button_dimensions();
-        let (load_w, load_h) = resources.load_button_dimensions();
+        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
+        let (restart_w, restart_h) = resources.seal_button_dimensions(SealButton::Restart);
+        let (load_w, load_h) = resources.seal_button_dimensions(SealButton::Load);
 
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         let btn_y = virt_y + OK_BTN_Y;
         let restart_x = virt_x + 50;
         let load_x = virt_x + 100;
@@ -612,8 +611,7 @@ impl DebriefingPageState {
             font.height() as i32,
             resources,
         );
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             title,
             body,

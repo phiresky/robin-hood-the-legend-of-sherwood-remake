@@ -19,7 +19,7 @@ SCRIPT_KEYS = {
     "expected_final_sha": "scripts/run_schema16_final_validation.sh",
     "expected_sweep_sha": "scripts/run_parity_release_sweep.sh",
 }
-DEPENDENCIES = ("parity_campaign.py", "parity_result.py")
+DEPENDENCIES = ("parity_campaign.py", "parity_result.py", "lib/parity_common.sh")
 
 
 def load(path: Path) -> dict:

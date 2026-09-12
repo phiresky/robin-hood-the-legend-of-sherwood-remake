@@ -6,7 +6,7 @@ use robin_engine::engine::{
     SoundBoundary, SoundBoundaryPolicy,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
-use robin_rs::sim_timeline::{
+use robin_engine::sim_timeline::{
     CheckpointPolicy, CommandJournal, RestoreError, RestorePolicy, RetentionPolicy, TimelineHistory,
 };
 

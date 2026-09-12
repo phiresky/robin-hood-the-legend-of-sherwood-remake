@@ -101,19 +101,18 @@ fn crowded_fight_purge_side(
 }
 
 fn opponent_order_debug_matches(frame: u32, owner: EntityId) -> bool {
-    if std::env::var_os("PARITY_DEBUG_OPPONENT_ORDER").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for opponent-order diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_OPPONENT_ORDER_FRAME").is_none_or(|value| value == frame)
-        && parse_filter("PARITY_DEBUG_OPPONENT_ORDER_OWNER")
-            .is_none_or(|value| value == owner.index())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_OPPONENT_ORDER",
+            [
+                "PARITY_DEBUG_OPPONENT_ORDER_FRAME",
+                "PARITY_DEBUG_OPPONENT_ORDER_OWNER",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(owner.index())])
 }
 
 /// associated jump line — the paired jump line on the far

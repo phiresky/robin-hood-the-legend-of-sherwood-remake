@@ -1,5 +1,6 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
-use robin_highscores::config::ViewerContentRequirementConfig;
 use robin_highscores::verifier::{
     DirectVerifierLauncherConfig, ProcessError, VerifierProcessConfig, build_verification_request,
 };
@@ -10,14 +11,12 @@ use robin_highscores::{
     storage_admission::{ensure_worker_final_campaign_capacity, ensure_worker_lease_capacity},
 };
 use robin_run_protocol::{
-    CanonicalCampaignStatePinV1, CanonicalDocument as _, Digest32,
-    MAX_VERIFIER_JOB_CONFIG_BYTES_V1, OfficialContentEditionV1, RunScopeKindV1, Validate as _,
+    CanonicalDocument as _, Digest32, MAX_VERIFIER_JOB_CONFIG_BYTES_V1, Validate as _,
     VerificationInfrastructureFailureCodeV1, VerificationLimitsV1, VerificationRejectionCodeV1,
     VerificationStatusV1, VerifierAdmissionFailureCodeV1, VerifierJobConfigCatalogV1,
-    VerifierJobConfigV1, VerifierJobRouteV1, VerifierWorkerOutputV1, canonical_json_bytes,
+    VerifierJobConfigV1, VerifierJobRouteV1, VerifierWorkerOutputV1,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -155,22 +154,6 @@ where
     }
 }
 
-#[cfg(unix)]
-async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result?,
-        signal = terminate.recv() => anyhow::ensure!(signal.is_some(), "termination signal stream closed"),
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-async fn wait_for_shutdown_signal() -> anyhow::Result<()> {
-    tokio::signal::ctrl_c().await?;
-    Ok(())
-}
-
 async fn initialize_worker_storage(
     database: &Database,
     server: &ServerConfig,
@@ -282,111 +265,16 @@ impl WorkerConfig {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn read_regular_file_no_symlinks(path: &Path, maximum: u64) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
+use robin_highscores::secure_fs::read_bounded_no_symlinks as read_regular_file_no_symlinks;
 
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file() && metadata.len() <= maximum,
-        "pinned worker input must be a regular file no larger than {maximum} bytes"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(maximum + 1).read_to_end(&mut bytes)?;
-    anyhow::ensure!(bytes.len() as u64 <= maximum, "pinned worker input grew");
-    Ok(bytes)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn read_regular_file_no_symlinks(_path: &Path, _maximum: u64) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("the production verifier worker requires Linux openat2 confinement")
-}
-
-#[cfg(target_os = "linux")]
 fn read_worker_config(path: &Path) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
-
-    const MAX_WORKER_CONFIG_BYTES: u64 = 1024 * 1024;
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.is_file() && metadata.len() <= MAX_WORKER_CONFIG_BYTES,
-        "worker config must be a regular file no larger than {MAX_WORKER_CONFIG_BYTES} bytes"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(MAX_WORKER_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= MAX_WORKER_CONFIG_BYTES,
-        "worker config grew beyond its safety limit"
-    );
-    Ok(bytes)
+    read_regular_file_no_symlinks(path, 1024 * 1024)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn read_worker_config(_path: &Path) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("the production verifier worker requires Linux openat2 confinement")
-}
-
-trait StartupStatusNotifier {
-    fn status(&self, status: &str) -> anyhow::Result<()>;
-}
-
-trait ServiceNotifier: StartupStatusNotifier {
-    fn ready(&self) -> anyhow::Result<()>;
-}
-
-struct SystemdNotifier;
-
-#[cfg(target_os = "linux")]
-impl StartupStatusNotifier for SystemdNotifier {
-    fn status(&self, status: &str) -> anyhow::Result<()> {
-        sd_notify::notify(&[sd_notify::NotifyState::Status(status)])
-            .map_err(|error| anyhow::anyhow!("could not update systemd startup status: {error}"))
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-impl StartupStatusNotifier for SystemdNotifier {
-    fn status(&self, _status: &str) -> anyhow::Result<()> {
-        anyhow::bail!("the production verifier worker requires Linux systemd readiness")
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl ServiceNotifier for SystemdNotifier {
-    fn ready(&self) -> anyhow::Result<()> {
-        sd_notify::notify(&[
-            sd_notify::NotifyState::Status("Ready; processing verification queue"),
-            sd_notify::NotifyState::Ready,
-        ])
-        .map_err(|error| anyhow::anyhow!("could not notify systemd of worker readiness: {error}"))
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-impl ServiceNotifier for SystemdNotifier {
-    fn ready(&self) -> anyhow::Result<()> {
-        anyhow::bail!("the production verifier worker requires Linux systemd readiness")
-    }
-}
+use robin_highscores::runtime_authority::validate_catalog_covers_server;
+use robin_highscores::service::{
+    ServiceNotifier, StartupStatusNotifier, SystemdNotifier, wait_for_shutdown_signal,
+};
 
 struct WorkerRuntime {
     worker: WorkerConfig,
@@ -416,7 +304,7 @@ async fn main() {
 
 async fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let notifier = SystemdNotifier;
+    let notifier = SystemdNotifier::Worker;
     let runtime = initialize_worker(&arguments.config, &notifier).await?;
     if let Err(error) = notifier.ready() {
         return match runtime.database.close_fenced().await {
@@ -594,6 +482,13 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                             lease_ttl,
                         )
                         .await
+                        .map_err(|error| {
+                            tracing::warn!(
+                                error_code = error.safe_log_code(),
+                                "skipping campaign maintenance: could not acquire write lease"
+                            );
+                            error
+                        })
                         .ok();
                     if let Some(maintenance_lease) = maintenance_lease {
                         run_with_write_lease_heartbeat(
@@ -814,181 +709,6 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
             "worker failed and closing its fenced database pool also failed: {close:#}"
         ))),
     }
-}
-
-fn validate_catalog_covers_server(
-    catalog: &VerifierJobConfigCatalogV1,
-    server: &ServerConfig,
-) -> anyhow::Result<()> {
-    for entry in &catalog.entries {
-        let route = &entry.route;
-        let build = server
-            .manifests
-            .builds
-            .get(&route.build_manifest_sha256)
-            .ok_or_else(|| anyhow::anyhow!("job catalog references an unavailable build"))?;
-        let content = server
-            .manifests
-            .content_manifests
-            .get(&route.content_manifest_sha256)
-            .ok_or_else(|| anyhow::anyhow!("job catalog references unavailable content"))?;
-        let rules = server
-            .manifests
-            .rules_configs
-            .get(&route.rules_config_sha256)
-            .ok_or_else(|| anyhow::anyhow!("job catalog references unavailable rules"))?;
-        let ruleset = server
-            .manifests
-            .rulesets
-            .get(&route.ruleset_manifest_sha256)
-            .ok_or_else(|| anyhow::anyhow!("job catalog references an unavailable ruleset"))?;
-        anyhow::ensure!(
-            build.public_document() == &entry.build_manifest
-                && content == &entry.content_manifest
-                && rules == &entry.rules_config
-                && ruleset.manifest == entry.ruleset_manifest,
-            "job catalog embeds a document substituted from the server manifest registry"
-        );
-        match (
-            route.campaign_content_manifest_sha256,
-            &entry.campaign_content_manifest,
-        ) {
-            (None, None) => {}
-            (Some(digest), Some(document))
-                if server.manifests.campaign_content_manifests.get(&digest) == Some(document) => {}
-            _ => anyhow::bail!("job catalog campaign authority is unavailable or substituted"),
-        }
-        match (
-            route.competition_manifest_sha256,
-            &entry.competition_manifest,
-        ) {
-            (None, None) => {}
-            (Some(digest), Some(document))
-                if server.manifests.competitions.get(&digest) == Some(document) => {}
-            _ => anyhow::bail!("job catalog competition authority is unavailable or substituted"),
-        }
-    }
-
-    let mut expected = BTreeMap::<Vec<u8>, CanonicalCampaignStatePinV1>::new();
-    for profile in &server.admission_profiles {
-        let content_digest = Digest32::from_bytes(WorkerConfig::exact_digest(
-            &profile.content_manifest_id,
-            "admission profile content_manifest_id",
-        )?);
-        let content = server
-            .manifests
-            .content_manifests
-            .get(&content_digest)
-            .ok_or_else(|| anyhow::anyhow!("admission profile content is unavailable"))?;
-        anyhow::ensure!(
-            (!profile.viewer_available && profile.viewer_content_requirement.is_none())
-                || matches!(
-                    (content.edition, profile.viewer_content_requirement),
-                    (
-                        OfficialContentEditionV1::Demo,
-                        Some(ViewerContentRequirementConfig::BundledDemo),
-                    ) | (
-                        OfficialContentEditionV1::Full,
-                        Some(ViewerContentRequirementConfig::UserLocalRetail),
-                    )
-                ),
-            "admission profile {} does not use its exact Demo/Full viewer entitlement lane",
-            profile.id
-        );
-        let build_manifest_sha256 = Digest32::from_bytes(WorkerConfig::exact_digest(
-            &profile.build_manifest_id,
-            "admission profile build_manifest_id",
-        )?);
-        let rules_config_sha256 = Digest32::from_bytes(WorkerConfig::exact_digest(
-            &profile.config_id,
-            "admission profile config_id",
-        )?);
-        let ruleset_manifest_sha256 = Digest32::from_bytes(WorkerConfig::exact_digest(
-            &profile.ruleset_id,
-            "admission profile ruleset_id",
-        )?);
-        let competition_digests = std::iter::once(None).chain(
-            server
-                .competitions
-                .iter()
-                .filter(|competition| competition.admission_profile_id == profile.id)
-                .map(|competition| {
-                    WorkerConfig::exact_digest(
-                        &competition.manifest_sha256,
-                        "competition manifest_sha256",
-                    )
-                    .map(Digest32::from_bytes)
-                    .map(Some)
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?,
-        );
-        let competition_digests = competition_digests.collect::<Vec<_>>();
-        let mut scopes = profile
-            .allowed_scopes
-            .iter()
-            .map(|scope| match scope.as_str() {
-                "individual_level" => Ok(RunScopeKindV1::IndividualLevel),
-                "campaign_genesis" | "campaign_continuation" => Ok(RunScopeKindV1::Campaign),
-                _ => anyhow::bail!("invalid admission profile scope"),
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        scopes.sort_by_key(|scope| match scope {
-            RunScopeKindV1::IndividualLevel => 0,
-            RunScopeKindV1::Campaign => 1,
-        });
-        scopes.dedup();
-        for scope_kind in scopes {
-            let campaign_content_manifest_sha256 = match scope_kind {
-                RunScopeKindV1::IndividualLevel => None,
-                RunScopeKindV1::Campaign => Some(Digest32::from_bytes(WorkerConfig::exact_digest(
-                    profile
-                        .campaign_content_manifest_id
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("campaign profile has no catalog"))?,
-                    "admission profile campaign_content_manifest_id",
-                )?)),
-            };
-            for competition_manifest_sha256 in &competition_digests {
-                let route = VerifierJobRouteV1 {
-                    schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
-                    scope_kind,
-                    content_edition: content.edition,
-                    content_subject: content.subject.clone(),
-                    build_manifest_sha256,
-                    content_manifest_sha256: content_digest,
-                    campaign_content_manifest_sha256,
-                    rules_config_sha256,
-                    ruleset_manifest_sha256,
-                    competition_manifest_sha256: *competition_manifest_sha256,
-                };
-                route.validate()?;
-                let route_bytes = canonical_json_bytes(&route)?;
-                if let Some(previous) =
-                    expected.insert(route_bytes, profile.canonical_campaign_state.clone())
-                {
-                    anyhow::ensure!(
-                        previous == profile.canonical_campaign_state,
-                        "admission profiles select different campaign-state pins for one exact verifier route"
-                    );
-                }
-            }
-        }
-    }
-    let actual = catalog
-        .entries
-        .iter()
-        .map(|entry| {
-            Ok((
-                canonical_json_bytes(&entry.route)?,
-                entry.canonical_campaign_state.clone(),
-            ))
-        })
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-    anyhow::ensure!(
-        actual == expected,
-        "pinned verifier job catalog does not exactly equal the admitted route and campaign-state matrix"
-    );
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1817,7 +1537,7 @@ mod tests {
     #[tokio::test]
     async fn systemd_notifier_process_child() {
         let mode = std::env::var("ROBIN_HIGHSCORES_NOTIFY_TEST_MODE").unwrap();
-        let notifier = SystemdNotifier;
+        let notifier = SystemdNotifier::Worker;
         let startup_notifier = &notifier;
         let processing_notifier = &notifier;
         run_worker_lifecycle(

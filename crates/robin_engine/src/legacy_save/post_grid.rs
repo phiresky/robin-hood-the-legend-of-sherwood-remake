@@ -6,6 +6,8 @@
 //! Treating bytes as self-describing here would silently shift every later
 //! save section when the wrong mission data is supplied.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::{hex16, read_point2, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -16,25 +18,6 @@ use super::payload_base::{
     LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2, read_element_ref,
 };
 use super::payload_vm::{LegacyVmMemberDecoder, LegacyVmMemberSection};
-
-const fn hex16(hex: &str) -> [u8; 16] {
-    let bytes = hex.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_digit(bytes[index * 2]) << 4) | hex_digit(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_digit(digit: u8) -> u8 {
-    match digit {
-        b'0'..=b'9' => digit - b'0',
-        b'a'..=b'f' => digit - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 const FINGERPRINT_GRID: [u8; 16] = hex16("109f51840f1e3a0b2ef324915c42722f");
 const FINGERPRINT_PATCH: [u8; 16] = hex16("607a13790e707c89e2654c43fa3862db");
@@ -53,7 +36,7 @@ pub struct LegacyGridLimits {
 impl Default for LegacyGridLimits {
     fn default() -> Self {
         Self {
-            occupants_per_container: 65_535,
+            occupants_per_container: DEFAULT_BULK_LIMIT,
             static_repulsive_points: 1_000_000,
         }
     }
@@ -508,38 +491,10 @@ fn read_repulsive_point(reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyRep
     })
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: &'static str,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
     struct NoScripts;
 
@@ -559,13 +514,7 @@ mod tests {
         }
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn empty_topology() -> LegacyGridTopology {
         LegacyGridTopology {

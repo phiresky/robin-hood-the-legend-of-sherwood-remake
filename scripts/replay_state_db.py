@@ -17,11 +17,11 @@ from pathlib import Path, PurePosixPath
 # The ledger also supports importlib loading by standalone operational tools,
 # whose import path need not contain this CLI's directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from parity_result import read_result, exact_eof
+from parity_result import read_result, exact_eof, LEGACY_EOF_MARKER as EOF_MARKER
+from replay_evidence import sha256_file
 
 
 SCHEMA_VERSION = 8
-EOF_MARKER = "parity trace matched every recorded frame"
 DIVERGENCE_RE = re.compile(r"first parity divergence after frame (\d+)")
 HALTED_RE = re.compile(r"parity replay halted at frame (\d+)")
 THROUGH_RE = re.compile(r"(?:through|after) frame[ =](\d+)")
@@ -31,14 +31,6 @@ from replay_schema import SCHEMA
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def replay_save_group(logical_path: str) -> str:

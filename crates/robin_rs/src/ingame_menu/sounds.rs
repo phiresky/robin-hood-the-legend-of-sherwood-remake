@@ -147,9 +147,7 @@ pub async fn show_sounds(
     align_on_first_widget(&mut res_layout, 2);
 
     // Build FrameWnd with radios, OK/Cancel, and five volume sliders.
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
 
     for (i, mb) in mode_layout.iter().enumerate() {
         // Honour the per-button `enabled` flag so a 3D-incapable
@@ -219,8 +217,7 @@ pub async fn show_sounds(
 
     let mut done = false;
     let mut accepted = false;
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
     // Per-widget noise-tracking state. Kept alive across frames so
     // repeat events in the same widget state stay silent; resets on
     // state change.

@@ -426,7 +426,7 @@ impl PcMacroState {
     }
 
     pub fn has_macro(&self, idx: usize) -> bool {
-        self.slots.get(idx).map(|s| !s.is_empty()).unwrap_or(false)
+        self.slots.get(idx).is_some_and(|s| !s.is_empty())
     }
 
     /// Slots in recorded order.  Useful for "render every non-empty slot's

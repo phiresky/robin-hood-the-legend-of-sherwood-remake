@@ -192,9 +192,7 @@ fn build_standalone_frame(
     let visible_count = visible.len();
     let field_w = OPTION_COLUMN_WIDTH_LIMIT;
     let field_h = btn_h;
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
 
     for (visible_index, option_index) in visible.enumerate() {
         let (x, y, field_w, field_h) =
@@ -315,7 +313,7 @@ pub async fn show_gameplay(
             }
             return false;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 
@@ -356,8 +354,7 @@ impl GameplayScreenState {
             sherwood_trading_editable,
         );
 
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
 
         Self {
             localized: LocalizedGameplayText::from_application_context(application_context),

@@ -65,6 +65,15 @@ impl Default for FrameWnd {
 }
 
 impl FrameWnd {
+    /// Empty frame ready to receive modal input.
+    pub fn interactive() -> Self {
+        Self {
+            enabled: true,
+            input_enabled: true,
+            ..Self::default()
+        }
+    }
+
     /// Create a new frame window.
     pub fn new(title: &str, bbox: ScreenBBox, flags: u32) -> Self {
         Self {
@@ -72,6 +81,19 @@ impl FrameWnd {
             bbox,
             flags,
             ..Default::default()
+        }
+    }
+
+    /// Update a required widget without resetting an unchanged enabled state.
+    pub fn update_widget(&mut self, id: WidgetId, label: Option<&str>, enabled: bool) {
+        let widget = self
+            .widget_mut(id)
+            .unwrap_or_else(|| panic!("FrameWnd: missing widget {id}"));
+        if let Some(label) = label {
+            widget.base_mut().set_text(label);
+        }
+        if widget.base().enabled != enabled {
+            widget.set_enable(enabled);
         }
     }
 

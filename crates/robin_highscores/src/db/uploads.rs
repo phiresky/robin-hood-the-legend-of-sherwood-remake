@@ -2,6 +2,165 @@
 //! No independent pool, repository transaction, or fence is created here.
 use super::*;
 
+fn check_reserved_intent(
+    existing: &SqliteRow,
+    intent: &SubmissionUploadIntent,
+    envelope_sha256: &[u8; 32],
+) -> Result<(), DbError> {
+    if existing.try_get::<String, _>("envelope_json")? != intent.envelope_json
+        || existing
+            .try_get::<Vec<u8>, _>("envelope_sha256")?
+            .as_slice()
+            != envelope_sha256
+        || existing
+            .try_get::<Vec<u8>, _>("controller_public_key")?
+            .as_slice()
+            != intent.controller_public_key
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_sha256")?
+            .as_slice()
+            != intent.session_genesis_sha256
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
+            .as_slice()
+            != intent.session_genesis_host_public_key
+        || existing
+            .try_get::<Vec<u8>, _>("replay_session_id")?
+            .as_slice()
+            != intent.replay_session_id
+        || existing
+            .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
+            .as_slice()
+            != intent.session_genesis_host_nonce
+    {
+        return Err(DbError::SubmissionConflict);
+    }
+    Ok(())
+}
+
+fn check_reserved_submission(
+    reservation: &SqliteRow,
+    submission: &NewSubmission,
+) -> Result<(), DbError> {
+    let envelope_sha256 = Digest32::digest_bytes(submission.envelope_json.as_bytes());
+    if reservation.try_get::<String, _>("submission_id")? != submission.id
+        || reservation.try_get::<String, _>("envelope_json")? != submission.envelope_json
+        || reservation
+            .try_get::<Vec<u8>, _>("envelope_sha256")?
+            .as_slice()
+            != envelope_sha256.as_bytes()
+        || reservation
+            .try_get::<Vec<u8>, _>("controller_public_key")?
+            .as_slice()
+            != submission.controller_public_key
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
+            .as_slice()
+            != submission.session_genesis_host_public_key
+        || reservation
+            .try_get::<Vec<u8>, _>("replay_session_id")?
+            .as_slice()
+            != submission.replay_session_id
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
+            .as_slice()
+            != submission.session_genesis_host_nonce
+        || reservation
+            .try_get::<Vec<u8>, _>("session_genesis_sha256")?
+            .as_slice()
+            != submission.session_genesis_sha256
+    {
+        return Err(DbError::SubmissionConflict);
+    }
+    Ok(())
+}
+async fn register_uploaded_artifacts(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    submission: &NewSubmission,
+    now: i64,
+) -> Result<(i64, i64), DbError> {
+    let replay_bytes = i64::try_from(submission.replay_bytes).map_err(|_| {
+        DbError::ResultInvariant("replay length does not fit SQLite INTEGER".to_owned())
+    })?;
+    let starting_campaign_bytes =
+        i64::try_from(submission.starting_campaign_bytes).map_err(|_| {
+            DbError::ResultInvariant(
+                "starting campaign length does not fit SQLite INTEGER".to_owned(),
+            )
+        })?;
+    sqlx::query(
+        "INSERT INTO replay_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
+         ON CONFLICT(sha256) DO UPDATE SET \
+             purged_at_ms = NULL, purge_state = 'live', purge_token = NULL, \
+             purge_claimed_at_ms = NULL \
+         WHERE replay_objects.purge_state = 'purged'",
+    )
+    .bind(submission.replay_sha256.as_slice())
+    .bind(replay_bytes)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    let replay_object =
+        sqlx::query("SELECT byte_length, purge_state FROM replay_objects WHERE sha256 = ?")
+            .bind(submission.replay_sha256.as_slice())
+            .fetch_one(&mut **tx)
+            .await?;
+    let stored_replay_bytes: i64 = replay_object.try_get("byte_length")?;
+    if stored_replay_bytes != replay_bytes {
+        return Err(DbError::ResultInvariant(
+            "content-addressed replay length conflicts with existing object".to_owned(),
+        ));
+    }
+    if replay_object.try_get::<String, _>("purge_state")? != "live" {
+        return Err(DbError::QueueFull);
+    }
+
+    sqlx::query(
+        "INSERT INTO campaign_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
+         ON CONFLICT(sha256) DO UPDATE SET purge_state = 'live', purge_token = NULL, \
+             purge_claimed_at_ms = NULL, purged_at_ms = NULL \
+         WHERE campaign_objects.byte_length = excluded.byte_length \
+           AND campaign_objects.purge_state = 'purged'",
+    )
+    .bind(submission.starting_campaign_sha256.as_slice())
+    .bind(starting_campaign_bytes)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    let starting_object =
+        sqlx::query("SELECT byte_length, purge_state FROM campaign_objects WHERE sha256 = ?")
+            .bind(submission.starting_campaign_sha256.as_slice())
+            .fetch_one(&mut **tx)
+            .await?;
+    if starting_object.try_get::<i64, _>("byte_length")? != starting_campaign_bytes
+        || starting_object.try_get::<String, _>("purge_state")? != "live"
+    {
+        return Err(DbError::ResultInvariant(
+            "uploaded starting campaign identity is not live and exact".to_owned(),
+        ));
+    }
+
+    Ok((replay_bytes, starting_campaign_bytes))
+}
+async fn ensure_participant_identities(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    participants: &[crate::model::ParticipantClaim],
+) -> Result<(), DbError> {
+    for participant in participants {
+        let exists: i64 =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
+                .bind(participant.public_key.as_slice())
+                .fetch_one(&mut **tx)
+                .await?;
+        if exists == 0 {
+            return Err(DbError::ResultInvariant(format!(
+                "participant seat {} has no registered identity",
+                participant.seat
+            )));
+        }
+    }
+    Ok(())
+}
 impl Database {
     /// Atomically consume a signed submission challenge and acquire the only
     /// lease which may ingest its artifact bytes. Exact retries either resume
@@ -89,34 +248,7 @@ impl Database {
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(existing) = existing {
-            if existing.try_get::<String, _>("envelope_json")? != intent.envelope_json
-                || existing
-                    .try_get::<Vec<u8>, _>("envelope_sha256")?
-                    .as_slice()
-                    != envelope_sha256
-                || existing
-                    .try_get::<Vec<u8>, _>("controller_public_key")?
-                    .as_slice()
-                    != intent.controller_public_key
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_sha256")?
-                    .as_slice()
-                    != intent.session_genesis_sha256
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
-                    .as_slice()
-                    != intent.session_genesis_host_public_key
-                || existing
-                    .try_get::<Vec<u8>, _>("replay_session_id")?
-                    .as_slice()
-                    != intent.replay_session_id
-                || existing
-                    .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
-                    .as_slice()
-                    != intent.session_genesis_host_nonce
-            {
-                return Err(DbError::SubmissionConflict);
-            }
+            check_reserved_intent(&existing, intent, &envelope_sha256)?;
             let submission_id: String = existing.try_get("submission_id")?;
             let state: String = existing.try_get("state")?;
             if state == "committed" {
@@ -229,19 +361,7 @@ impl Database {
         if occupied >= i64::from(self.max_pending_submissions) {
             return Err(DbError::QueueFull);
         }
-        for participant in &intent.participants {
-            let exists: i64 =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
-                    .bind(participant.public_key.as_slice())
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if exists == 0 {
-                return Err(DbError::ResultInvariant(format!(
-                    "participant seat {} has no registered identity",
-                    participant.seat
-                )));
-            }
-        }
+        ensure_participant_identities(&mut tx, &intent.participants).await?;
         let genesis_used: i64 = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM used_replay_session_geneses \
              WHERE (host_public_key = ? AND replay_session_id = ? AND host_nonce = ?) \
@@ -405,36 +525,7 @@ impl Database {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(DbError::InvalidChallenge)?;
-        let envelope_sha256 = Digest32::digest_bytes(submission.envelope_json.as_bytes());
-        if reservation.try_get::<String, _>("submission_id")? != submission.id
-            || reservation.try_get::<String, _>("envelope_json")? != submission.envelope_json
-            || reservation
-                .try_get::<Vec<u8>, _>("envelope_sha256")?
-                .as_slice()
-                != envelope_sha256.as_bytes()
-            || reservation
-                .try_get::<Vec<u8>, _>("controller_public_key")?
-                .as_slice()
-                != submission.controller_public_key
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_host_public_key")?
-                .as_slice()
-                != submission.session_genesis_host_public_key
-            || reservation
-                .try_get::<Vec<u8>, _>("replay_session_id")?
-                .as_slice()
-                != submission.replay_session_id
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_host_nonce")?
-                .as_slice()
-                != submission.session_genesis_host_nonce
-            || reservation
-                .try_get::<Vec<u8>, _>("session_genesis_sha256")?
-                .as_slice()
-                != submission.session_genesis_sha256
-        {
-            return Err(DbError::SubmissionConflict);
-        }
+        check_reserved_submission(&reservation, submission)?;
         let reservation_state: String = reservation.try_get("state")?;
         if reservation_state == "committed" {
             let lifecycle = self
@@ -498,80 +589,10 @@ impl Database {
             return Err(DbError::QueueFull);
         }
 
-        for participant in &submission.participants {
-            let exists: i64 =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
-                    .bind(participant.public_key.as_slice())
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if exists == 0 {
-                return Err(DbError::ResultInvariant(format!(
-                    "participant seat {} has no registered identity",
-                    participant.seat
-                )));
-            }
-        }
+        ensure_participant_identities(&mut tx, &submission.participants).await?;
 
-        let replay_bytes = i64::try_from(submission.replay_bytes).map_err(|_| {
-            DbError::ResultInvariant("replay length does not fit SQLite INTEGER".to_owned())
-        })?;
-        let starting_campaign_bytes =
-            i64::try_from(submission.starting_campaign_bytes).map_err(|_| {
-                DbError::ResultInvariant(
-                    "starting campaign length does not fit SQLite INTEGER".to_owned(),
-                )
-            })?;
-        sqlx::query(
-            "INSERT INTO replay_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
-             ON CONFLICT(sha256) DO UPDATE SET \
-                 purged_at_ms = NULL, purge_state = 'live', purge_token = NULL, \
-                 purge_claimed_at_ms = NULL \
-             WHERE replay_objects.purge_state = 'purged'",
-        )
-        .bind(submission.replay_sha256.as_slice())
-        .bind(replay_bytes)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let replay_object =
-            sqlx::query("SELECT byte_length, purge_state FROM replay_objects WHERE sha256 = ?")
-                .bind(submission.replay_sha256.as_slice())
-                .fetch_one(&mut *tx)
-                .await?;
-        let stored_replay_bytes: i64 = replay_object.try_get("byte_length")?;
-        if stored_replay_bytes != replay_bytes {
-            return Err(DbError::ResultInvariant(
-                "content-addressed replay length conflicts with existing object".to_owned(),
-            ));
-        }
-        if replay_object.try_get::<String, _>("purge_state")? != "live" {
-            return Err(DbError::QueueFull);
-        }
-
-        sqlx::query(
-            "INSERT INTO campaign_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
-             ON CONFLICT(sha256) DO UPDATE SET purge_state = 'live', purge_token = NULL, \
-                 purge_claimed_at_ms = NULL, purged_at_ms = NULL \
-             WHERE campaign_objects.byte_length = excluded.byte_length \
-               AND campaign_objects.purge_state = 'purged'",
-        )
-        .bind(submission.starting_campaign_sha256.as_slice())
-        .bind(starting_campaign_bytes)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let starting_object =
-            sqlx::query("SELECT byte_length, purge_state FROM campaign_objects WHERE sha256 = ?")
-                .bind(submission.starting_campaign_sha256.as_slice())
-                .fetch_one(&mut *tx)
-                .await?;
-        if starting_object.try_get::<i64, _>("byte_length")? != starting_campaign_bytes
-            || starting_object.try_get::<String, _>("purge_state")? != "live"
-        {
-            return Err(DbError::ResultInvariant(
-                "uploaded starting campaign identity is not live and exact".to_owned(),
-            ));
-        }
+        let (replay_bytes, starting_campaign_bytes) =
+            register_uploaded_artifacts(&mut tx, submission, now).await?;
 
         let inserted_submission = sqlx::query(
             "INSERT INTO submissions (\
@@ -815,5 +836,113 @@ impl Database {
             return Err(DbError::SubmissionConflict);
         }
         Ok(Some(lifecycle_from_row(row)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Connection as _;
+
+    #[tokio::test]
+    async fn reserved_intent_requires_every_immutable_identity_field() {
+        let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let intent = SubmissionUploadIntent {
+            proposed_submission_id: "proposed".into(),
+            upload_challenge_id: "challenge".into(),
+            offer_json: "offer".into(),
+            envelope_json: "envelope".into(),
+            controller_public_key: [1; 32],
+            session_genesis_sha256: [2; 32],
+            session_genesis_host_public_key: [3; 32],
+            replay_session_id: [4; 32],
+            session_genesis_host_nonce: [5; 32],
+            participants: Vec::new(),
+        };
+        let digest = Digest32::digest_bytes(intent.envelope_json.as_bytes()).into_bytes();
+        let row = sqlx::query(
+            "SELECT ? AS envelope_json, ? AS envelope_sha256, ? AS controller_public_key, \
+                    ? AS session_genesis_sha256, ? AS session_genesis_host_public_key, \
+                    ? AS replay_session_id, ? AS session_genesis_host_nonce",
+        )
+        .bind(&intent.envelope_json)
+        .bind(digest.as_slice())
+        .bind(intent.controller_public_key.as_slice())
+        .bind(intent.session_genesis_sha256.as_slice())
+        .bind(intent.session_genesis_host_public_key.as_slice())
+        .bind(intent.replay_session_id.as_slice())
+        .bind(intent.session_genesis_host_nonce.as_slice())
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        check_reserved_intent(&row, &intent, &digest).unwrap();
+        for field in 0..7 {
+            let mut changed = intent.clone();
+            let mut changed_digest = digest;
+            match field {
+                0 => changed.envelope_json.push('x'),
+                1 => changed_digest[0] ^= 1,
+                2 => changed.controller_public_key[0] ^= 1,
+                3 => changed.session_genesis_sha256[0] ^= 1,
+                4 => changed.session_genesis_host_public_key[0] ^= 1,
+                5 => changed.replay_session_id[0] ^= 1,
+                6 => changed.session_genesis_host_nonce[0] ^= 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    check_reserved_intent(&row, &changed, &changed_digest),
+                    Err(DbError::SubmissionConflict)
+                ),
+                "field {field}"
+            );
+        }
+        let missing_column = sqlx::query("SELECT 'envelope' AS envelope_json")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert!(matches!(
+            check_reserved_intent(&missing_column, &intent, &digest),
+            Err(DbError::Sql(sqlx::Error::ColumnNotFound(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn participant_identity_checks_observe_the_callers_transaction() {
+        let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE identities (public_key BLOB PRIMARY KEY)")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        let participants = [crate::model::ParticipantClaim {
+            seat: 3,
+            participant_instance_id: [1; 32],
+            public_key: [2; 32],
+            public_disclosure: "named_profile".into(),
+        }];
+        let mut tx = connection.begin().await.unwrap();
+        assert!(matches!(
+            ensure_participant_identities(&mut tx, &participants).await,
+            Err(DbError::ResultInvariant(message))
+                if message == "participant seat 3 has no registered identity"
+        ));
+        sqlx::query("INSERT INTO identities (public_key) VALUES (?)")
+            .bind(participants[0].public_key.as_slice())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        ensure_participant_identities(&mut tx, &participants)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

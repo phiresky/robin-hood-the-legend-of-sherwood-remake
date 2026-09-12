@@ -6,7 +6,7 @@ use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
 #[cfg(test)]
 use robin_engine::replay::ReplayRecorder;
 use robin_engine::replay::{ReplayHeader, ReplayPlayer, ReplaySaveMarker};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -519,13 +519,10 @@ impl Serialize for ReplayLifecycle {
     }
 }
 
-impl<'de> Deserialize<'de> for ReplayLifecycle {
-    fn deserialize<D: Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "replay lifecycle is live mission authority, not saved game state",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    ReplayLifecycle,
+    "replay lifecycle is live mission authority, not saved game state"
+);
 
 #[cfg(test)]
 mod tests {

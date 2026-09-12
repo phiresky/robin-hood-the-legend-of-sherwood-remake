@@ -82,8 +82,7 @@ impl TradingModalState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input = ModalInputState::new();
-        input.seed_mouse_from_window(window, transform);
+        let mut input = ModalInputState::from_window(window, transform);
         Self::build(resources, sectors, ransom, input)
     }
 
@@ -123,9 +122,7 @@ impl TradingModalState {
         let total = button_w * 3 + gap * 2;
         let start_x = (MENU_W - total) / 2;
         let button_y = 402;
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         frame.add_widget_absolute(widget_bridge::make_button(
             ID_SELL_ONE,
             &resources.menu_text.get(MT_BTN_SELL_ONE),

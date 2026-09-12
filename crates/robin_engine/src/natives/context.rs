@@ -386,14 +386,20 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
         self.diplomacy.as_deref().map_or_else(
-            || crate::diplomacy::DiplomacyState::default().is_player_aligned(camp),
+            || {
+                tracing::warn!(target: "script", ?camp, "allegiance query has no attached diplomacy; using default campaign relationships");
+                crate::diplomacy::DiplomacyState::default().is_player_aligned(camp)
+            },
             |diplomacy| diplomacy.is_player_aligned(camp),
         )
     }
 
     pub(crate) fn is_hostile_to_player(&self, camp: crate::element::Camp) -> bool {
         self.diplomacy.as_deref().map_or_else(
-            || crate::diplomacy::DiplomacyState::default().is_hostile_to_player(camp),
+            || {
+                tracing::warn!(target: "script", ?camp, "hostility query has no attached diplomacy; using default campaign relationships");
+                crate::diplomacy::DiplomacyState::default().is_hostile_to_player(camp)
+            },
             |diplomacy| diplomacy.is_hostile_to_player(camp),
         )
     }
@@ -441,34 +447,14 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         bindings: &'ctx AttachedScriptBindings,
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
     ) -> Self {
-        Self {
-            simulation: capabilities.simulation_context(),
+        Self::with_call_frame(
             script_effects,
-            entities: capabilities.entities(),
-            pc_registry: capabilities.pc_registry_option(),
-            ai_global: capabilities.ai_global(),
-            fast_grid: capabilities.fast_grid(),
             script_state,
-            script_globals: capabilities.script_globals(),
             script_domains,
-            bindings: bindings.view(),
-            campaign: capabilities.campaign(),
-            mission_stat: capabilities.mission_stat(),
-            diplomacy: capabilities.diplomacy(),
-            sequence_manager: capabilities.sequence_manager_option(),
-            selected_pcs: capabilities.selected_pcs_option(),
-            selected_action: capabilities.selected_action_option(),
-            short_briefings: capabilities.short_briefings_option(),
-            standard_view_radius: capabilities.standard_view_radius_option(),
-            view_radius_cache: capabilities.view_radius_cache_option(),
-            sight_obstacles: capabilities.sight_obstacles_option(),
-            sound_sources: capabilities.sound_sources_option(),
-            weather: capabilities.weather_option(),
-            frame_counter: capabilities.frame_counter_option(),
-            call_frame: ScriptCallFrame::default(),
-            script_vm_diagnostic: None,
-            pending_yield: None,
-        }
+            bindings,
+            capabilities,
+            ScriptCallFrame::default(),
+        )
     }
 
     pub fn with_call_frame(
@@ -479,34 +465,10 @@ impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
         capabilities: &'ctx NativeSessionCapabilities<'owners>,
         call_frame: ScriptCallFrame,
     ) -> Self {
-        Self {
-            simulation: capabilities.simulation_context(),
-            script_effects,
-            entities: capabilities.entities(),
-            pc_registry: capabilities.pc_registry_option(),
-            ai_global: capabilities.ai_global(),
-            fast_grid: capabilities.fast_grid(),
-            script_state,
-            script_globals: capabilities.script_globals(),
-            script_domains,
-            bindings: bindings.view(),
-            campaign: capabilities.campaign(),
-            mission_stat: capabilities.mission_stat(),
-            diplomacy: capabilities.diplomacy(),
-            sequence_manager: capabilities.sequence_manager_option(),
-            selected_pcs: capabilities.selected_pcs_option(),
-            selected_action: capabilities.selected_action_option(),
-            short_briefings: capabilities.short_briefings_option(),
-            standard_view_radius: capabilities.standard_view_radius_option(),
-            view_radius_cache: capabilities.view_radius_cache_option(),
-            sight_obstacles: capabilities.sight_obstacles_option(),
-            sound_sources: capabilities.sound_sources_option(),
-            weather: capabilities.weather_option(),
-            frame_counter: capabilities.frame_counter_option(),
-            call_frame,
-            script_vm_diagnostic: None,
-            pending_yield: None,
-        }
+        let mut context = Self::new(script_effects, script_state, script_domains, capabilities);
+        context.bindings = bindings.view();
+        context.call_frame = call_frame;
+        context
     }
 
     pub fn bindings(&self) -> ScriptBindings<'_> {

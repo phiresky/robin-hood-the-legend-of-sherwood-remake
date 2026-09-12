@@ -246,21 +246,16 @@ impl EngineInner {
                 civ_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
             prime_mission_start_sprite(
                 &mut sprite,
@@ -444,21 +439,16 @@ impl EngineInner {
             // `sprite.center` (loaded from the sprite info via
             // `load_frame_info` above) is the authoritative original-game sprite
             // anchor used by rendering and gameplay hotspot lookups.
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 initial_position,
                 raw.layer,
                 Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
             prime_mission_start_sprite(
                 &mut sprite,
@@ -892,6 +882,8 @@ impl EngineInner {
                 soldier_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
@@ -899,15 +891,8 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::from_u32(raw.material),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
             prime_mission_start_sprite(
                 &mut sprite,
@@ -1075,6 +1060,8 @@ impl EngineInner {
             } else {
                 crate::element::RenderingProperties::Blocky
             };
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 // First set the map position to the raw sprite position
                 // so the plane projection can derive a baseline 3D
@@ -1086,15 +1073,8 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
 
             // When the authored Z is non-negative, override the
@@ -1289,6 +1269,8 @@ impl EngineInner {
                     crate::sim_rng::RngSite::LevelBonusInitialFrame,
                 );
             }
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
@@ -1296,15 +1278,8 @@ impl EngineInner {
                 // Apply initial facing from level data (0-15 sector).
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
             // Original-game bonus loading computes the placed 3D
             // position, then copies both current coordinates into the old
@@ -1414,21 +1389,16 @@ impl EngineInner {
             } else {
                 raw.presence.get(difficulty_idx).copied().unwrap_or(false)
             };
+            let (placement_obstacle, placement_plane) =
+                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
             sprite.apply_placement(
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
                 raw.layer,
                 Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
                 (raw.direction & 15) as i16,
                 crate::element::GameMaterial::default(),
-                crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                    raw.obstacle_index,
-                ),
-                crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        raw.obstacle_index,
-                    ),
-                    assets.environment.static_sight_obstacles.as_slice(),
-                ),
+                placement_obstacle,
+                placement_plane,
             );
             // Original-game scroll loading performs the same
             // current-to-old settlement immediately after recomputing position.
@@ -1511,4 +1481,22 @@ mod tests {
         assert!(ai.is_vip);
         assert!(ai.soldier_profile_vip);
     }
+}
+
+/// Resolve the serialized obstacle once, pairing its identity with the plane
+/// used for placement. Actor material and position policy stay at each caller.
+pub(super) fn resolve_placement_obstacle(
+    assets: &LevelAssets,
+    serialized_obstacle: u16,
+) -> (
+    Option<crate::position_interface::ObstacleHandle>,
+    Option<crate::position_interface::PlaneZCoeffs>,
+) {
+    let obstacle =
+        crate::position_interface::ObstacleHandle::from_serialized_pointer(serialized_obstacle);
+    let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
+        obstacle,
+        assets.environment.static_sight_obstacles.as_slice(),
+    );
+    (obstacle, plane)
 }

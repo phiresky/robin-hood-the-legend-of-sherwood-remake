@@ -6,10 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-const fn enabled_by_default() -> bool {
-    true
-}
-
 #[derive(
     Debug,
     Clone,
@@ -26,7 +22,7 @@ pub struct MultiplayerConfig {
     /// Advertise a signed browser invitation for newly hosted games. Native
     /// iroh may still choose a relay as a transport when this is disabled;
     /// this preference controls publication, not packet routing.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub publish_browser_join_links: bool,
 }
 

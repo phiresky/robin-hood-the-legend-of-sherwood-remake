@@ -5,21 +5,26 @@
 //! canonical documents which those components exchange.  In particular, it
 //! never treats a client claim as a verified game result.
 
-mod authentication;
+#[cfg(feature = "authentication")]
+pub mod authentication;
 pub mod bitcode_value;
-mod canonical;
-mod digest;
-mod envelope;
-mod manifest;
-mod moderation;
-mod offer_binding;
-mod query;
-mod rejection_code;
+pub mod canonical;
+pub mod digest;
+pub mod envelope;
+pub mod manifest;
+pub mod moderation;
+pub mod offer_binding;
+pub mod query;
+pub mod rejection_code;
 pub mod strict_json;
-mod validation;
-mod verification_result;
-mod verifier_job;
+pub mod validation;
+pub mod verification_result;
+pub mod verifier_job;
 
+#[cfg(test)]
+mod test_fixtures;
+
+#[cfg(feature = "authentication")]
 pub use authentication::{SignatureVerificationError, verify_ed25519_strict};
 pub use offer_binding::validate_offer_binding;
 
@@ -92,28 +97,27 @@ pub use manifest::{
     OfficialProjectionAuthorityManifestV2, OfficialProjectionCampaignPolicyV1,
     OfficialProjectionDifficultyV1, OfficialProjectionExecutionPolicyV1,
     OfficialProjectionExportReportV2, OfficialProjectionExporterBuildIdentityV2,
-    OfficialProjectionExporterIdentityV1, OfficialProjectionExporterIdentityV2,
-    OfficialProjectionExporterPlatformV2, OfficialProjectionHostStatePolicyV1,
-    OfficialProjectionLocalePolicyV1, OfficialProjectionOverlayPolicyV1,
-    OfficialProjectionSourceFormatV1, OfficialProjectionSubjectReceiptV1,
-    OfficialSimulationProjectionReceiptV1, OfficialSimulationProjectionReceiptV2,
-    OfficialSourceClosureKindV2, OfficialSourceFileV1, OfficialSourceTreeManifestV1,
-    OfficialSourceTreeManifestV2, OfficialViewerBuildReportV2,
-    OfficialViewerOriginArtifactInventoryV2, PaginationTieBreakV1, ParticipantEligibilityV1,
-    PublishedRulesetV1, RANKED_REPLAY_VERIFIER_MEDIA_TYPE_V2, RANKED_SIMULATION_POLICY_VERSION_V1,
-    RankedSimulationDifficultyV1, RankedSimulationPolicyV1, RankedSimulationPresetV1,
-    ResourceLocaleRootV1, RulesConfigConstraintV1, RulesConfigIdentityV1, RulesetBoardScopeV1,
-    RulesetManifestV1, RulesetOperationalStatusV1, RulesetSeedPolicyV1, RunCompositionPolicyV1,
-    RustToolchainAuthorityV1, SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1, ScoreAlgorithmV1,
-    ScoreOverflowPolicyV1, SimulationContentComponentDocumentV1, SimulationContentComponentKindV1,
-    SimulationContentComponentV1, SimulationSpeechTimingSourceV1, TerminalResultPolicyV1,
-    TickDurationV1, VerifierBuildIdentityV2, VersionedBuildManifest, ViewerArtifactRoleV1,
-    VisibleTiePolicyV1, WABT_WASM_STRIP_VERSION_V1, WASM_BINDGEN_CLI_AUTHORITY_SHA256_V1,
-    WASM_BINDGEN_CLI_VERSION_V1, build_artifact_object_path_v1, demo_content_object_path_v1,
-    official_achievement_policies_v1, official_content_manifest_name_v1,
-    official_content_subjects_v1, official_full_campaign_completion_policy_v1,
-    simulation_component_filename_v1, simulation_content_component_relative_path_v1,
-    validate_official_content_subjects_v1, validate_official_projection_receipt_matrix_v2,
+    OfficialProjectionExporterIdentityV2, OfficialProjectionExporterPlatformV2,
+    OfficialProjectionHostStatePolicyV1, OfficialProjectionLocalePolicyV1,
+    OfficialProjectionOverlayPolicyV1, OfficialProjectionSourceFormatV1,
+    OfficialProjectionSubjectReceiptV1, OfficialSimulationProjectionReceiptV2,
+    OfficialSourceClosureKindV2, OfficialSourceFileV1, OfficialSourceTreeManifestV2,
+    OfficialViewerBuildReportV2, OfficialViewerOriginArtifactInventoryV2, PaginationTieBreakV1,
+    ParticipantEligibilityV1, PublishedRulesetV1, RANKED_REPLAY_VERIFIER_MEDIA_TYPE_V2,
+    RANKED_SIMULATION_POLICY_VERSION_V1, RankedSimulationDifficultyV1, RankedSimulationPolicyV1,
+    RankedSimulationPresetV1, ResourceLocaleRootV1, RulesConfigConstraintV1, RulesConfigIdentityV1,
+    RulesetBoardScopeV1, RulesetManifestV1, RulesetOperationalStatusV1, RulesetSeedPolicyV1,
+    RunCompositionPolicyV1, RustToolchainAuthorityV1, SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1,
+    ScoreAlgorithmV1, ScoreOverflowPolicyV1, SimulationContentComponentDocumentV1,
+    SimulationContentComponentKindV1, SimulationContentComponentV1, SimulationSpeechTimingSourceV1,
+    TerminalResultPolicyV1, TickDurationV1, VerifierBuildIdentityV2, VersionedBuildManifest,
+    ViewerArtifactRoleV1, VisibleTiePolicyV1, WABT_WASM_STRIP_VERSION_V1,
+    WASM_BINDGEN_CLI_AUTHORITY_SHA256_V1, WASM_BINDGEN_CLI_VERSION_V1,
+    build_artifact_object_path_v1, demo_content_object_path_v1, official_achievement_policies_v1,
+    official_content_manifest_name_v1, official_content_subjects_v1,
+    official_full_campaign_completion_policy_v1, simulation_component_filename_v1,
+    simulation_content_component_relative_path_v1, validate_official_content_subjects_v1,
+    validate_official_projection_receipt_matrix_v2,
 };
 pub use moderation::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,

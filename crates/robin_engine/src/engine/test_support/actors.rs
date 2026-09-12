@@ -5,6 +5,24 @@
 
 use crate::element::Entity;
 
+/// Return stable semantic roles while varying their publication order.
+pub(crate) fn add_pair_in_creation_order(
+    engine: &mut crate::engine::EngineInner,
+    first: Entity,
+    second: Entity,
+    first_is_earlier: bool,
+) -> (crate::element::EntityId, crate::element::EntityId) {
+    if first_is_earlier {
+        let first_id = engine.add_test_entity(first);
+        let second_id = engine.add_test_entity(second);
+        (first_id, second_id)
+    } else {
+        let second_id = engine.add_test_entity(second);
+        let first_id = engine.add_test_entity(first);
+        (first_id, second_id)
+    }
+}
+
 /// Build a minimal soldier entity for posture / command tests.
 pub(crate) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
     // A directly constructed test soldier stands in for a loaded enemy

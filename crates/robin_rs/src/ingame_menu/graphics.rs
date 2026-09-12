@@ -90,9 +90,7 @@ pub async fn show_graphics(
     let effect_y = OPTION_START_Y;
     let parameter_y = PRESET_LIST_Y;
     let mut page = 0;
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     let mut add = |id, label: &str, x, y, width, height| {
         let label = super::gameplay::fit_button_label(resources, label, true, width);
         frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
@@ -178,8 +176,7 @@ pub async fn show_graphics(
     let mut accepted = false;
     let mut parameter_page_effect = false;
     let mut parameter_status = String::new();
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
 
     while !done {
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);

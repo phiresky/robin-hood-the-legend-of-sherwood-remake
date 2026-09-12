@@ -2,15 +2,30 @@
 use super::*;
 
 pub fn main() {
+    std::process::exit(trace_exit_code(run_command()));
+}
+
+fn trace_exit_code(result: TraceStorageResult<i32>) -> i32 {
+    match result {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("parity trace error: {error}");
+            1
+        }
+    }
+}
+
+fn run_command() -> TraceStorageResult<i32> {
     let options = parse_options();
     if options.inspect_capabilities {
         // Inspection reads an existing native artifact; never convert or
         // quarantine a source recording as a side effect of inspection.
-        let native = requested_native_trace_path(&options.trace_path);
-        validate_standalone_native_trace(&native);
-        let header = read_binary_trace_header(&native).trace;
+        let native = requested_native_trace_path(&options.trace_path)?;
+        validate_standalone_native_trace(&native)?;
+        let header = read_binary_trace_header(&native)?.trace;
         validate_trace_header(&header);
-        let footer = read_binary_trace_footer(&native).expect("read native trace extent");
+        let footer =
+            read_binary_trace_footer(&native).storage_context("read native trace extent")?;
         let capabilities = crate::result::TraceCapabilities::new(
             header.schema,
             footer.version,
@@ -20,23 +35,23 @@ pub fn main() {
             "{}",
             serde_json::to_string_pretty(&capabilities).expect("serialize trace capabilities")
         );
-        return;
+        return Ok(0);
     }
     if options.reblock {
-        reblock_native_trace(&options.trace_path, options.reblock_policy);
-        return;
+        reblock_native_trace(&options.trace_path, options.reblock_policy)?;
+        return Ok(0);
     }
     if options.validate_native {
-        validate_native_trace(&options.trace_path);
-        return;
+        validate_native_trace(&options.trace_path)?;
+        return Ok(0);
     }
     if options.convert {
-        convert_recording_to_native(&options.trace_path);
-        return;
+        convert_recording_to_native(&options.trace_path)?;
+        return Ok(0);
     }
     if options.bench_encodings {
-        bench_trace_encodings(&options.trace_path);
-        return;
+        bench_trace_encodings(&options.trace_path)?;
+        return Ok(0);
     }
 
     #[cfg(not(feature = "client"))]
@@ -54,7 +69,7 @@ pub fn main() {
             "--http-server requires rebuilding original_parity_replay with --features client"
         );
         tracing_subscriber::fmt::init();
-        std::process::exit(run_replay(options, None));
+        run_replay(options, None)
     }
 
     #[cfg(feature = "client")]
@@ -66,11 +81,11 @@ pub fn main() {
                 768,
                 options.visual,
                 move |mut window| async move {
-                    capture_full_frame_zero_screenshot(options, &mut window).await
+                    trace_exit_code(capture_full_frame_zero_screenshot(options, &mut window).await)
                 },
             )
-            .unwrap_or_else(|error| panic!("start frame-zero parity capture: {error}"));
-            std::process::exit(exit);
+            .map_err(|error| format!("start frame-zero parity capture: {error}"))?;
+            return Ok(exit);
         }
         tracing_subscriber::fmt::init();
         if options.visual {
@@ -80,12 +95,12 @@ pub fn main() {
                 1024,
                 768,
                 visible,
-                move |window| async move { run_replay(options, Some(window)) },
+                move |window| async move { trace_exit_code(run_replay(options, Some(window))) },
             )
-            .unwrap_or_else(|error| panic!("start visual parity replay: {error}"));
-            std::process::exit(exit);
+            .map_err(|error| format!("start visual parity replay: {error}"))?;
+            return Ok(exit);
         }
-        std::process::exit(run_replay(options, None));
+        run_replay(options, None)
     }
 }
 
@@ -93,10 +108,10 @@ pub fn main() {
 async fn capture_full_frame_zero_screenshot(
     options: Options,
     window: &mut robin_rs::window::GameWindow,
-) -> i32 {
-    let invocation_dir =
-        std::env::current_dir().expect("resolve invocation directory for frame-zero screenshot");
-    let trace_path = canonicalize_trace_identity(&options.trace_path);
+) -> TraceStorageResult<i32> {
+    let invocation_dir = std::env::current_dir()
+        .storage_context("resolve invocation directory for frame-zero screenshot")?;
+    let trace_path = canonicalize_trace_identity(&options.trace_path)?;
     let output_dir = options
         .frame_zero_screenshot_dir
         .expect("frame-zero capture lost its output directory");
@@ -107,8 +122,8 @@ async fn capture_full_frame_zero_screenshot(
     };
     let output_path = frame_zero_screenshot_path(&output_dir, &trace_path);
 
-    let native_path = ensure_native_binary_trace(&trace_path);
-    let header = read_binary_trace_header(&native_path).trace;
+    let native_path = ensure_native_binary_trace(&trace_path)?;
+    let header = read_binary_trace_header(&native_path)?.trace;
     validate_trace_header(&header);
     let initial_save = decode_and_validate_initial_save(&header);
 
@@ -134,27 +149,29 @@ async fn capture_full_frame_zero_screenshot(
     game_args.preserve_forced_mission_campaign = true;
     game_args.fast_forward = true;
 
-    match robin_rs::main_entry::run_rust_game(
-        window,
-        campaign,
-        profiles,
-        application_context,
-        &game_args,
+    Ok(
+        match robin_rs::main_entry::run_rust_game(
+            window,
+            campaign,
+            profiles,
+            application_context,
+            &game_args,
+        )
+        .await
+        {
+            Ok(_) => {
+                eprintln!(
+                    "full frame-zero parity screenshot written to {}",
+                    output_path.display()
+                );
+                0
+            }
+            Err(error) => {
+                eprintln!("frame-zero parity screenshot failed: {error}");
+                1
+            }
+        },
     )
-    .await
-    {
-        Ok(_) => {
-            eprintln!(
-                "full frame-zero parity screenshot written to {}",
-                output_path.display()
-            );
-            0
-        }
-        Err(error) => {
-            eprintln!("frame-zero parity screenshot failed: {error}");
-            1
-        }
-    }
 }
 
 #[cfg(feature = "client")]
@@ -163,12 +180,15 @@ pub(super) type ClientWindow = robin_rs::window::GameWindow;
 #[cfg(not(feature = "client"))]
 pub(super) type ClientWindow = ();
 
-pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
+pub(super) fn run_replay(
+    options: Options,
+    visual_window: Option<ClientWindow>,
+) -> TraceStorageResult<i32> {
     #[cfg(not(feature = "client"))]
     let timing = {
-        crate::prepare_core_audio_timing(&options.core_datadir).unwrap_or_else(|error| {
-            panic!("prepare replay core input (use --core-datadir for installed runners): {error}")
-        })
+        crate::prepare_core_audio_timing(&options.core_datadir).map_err(|error| {
+            format!("prepare replay core input (use --core-datadir for installed runners): {error}")
+        })?
     };
     let replay_started = Instant::now();
     let scan_all = options.scan_all;
@@ -178,14 +198,17 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     let http_server = options.http_server;
     #[cfg(feature = "client")]
     let mut manual_pause = options.start_paused;
-    let trace_path = canonicalize_trace_identity(&trace_path);
-    let native_path = ensure_native_binary_trace(&trace_path);
-    let mut dump = options.dump.map(|options| {
-        let file = File::create(&options.path)
-            .unwrap_or_else(|e| panic!("create diagnostic dump {}: {e}", options.path.display()));
-        (options, BufWriter::new(file))
-    });
-    let cached_header = read_binary_trace_header(&native_path);
+    let trace_path = canonicalize_trace_identity(&trace_path)?;
+    let native_path = ensure_native_binary_trace(&trace_path)?;
+    let mut dump = options
+        .dump
+        .map(|options| -> TraceStorageResult<_> {
+            let file = File::create(&options.path)
+                .map_err(|e| format!("create diagnostic dump {}: {e}", options.path.display()))?;
+            Ok((options, BufWriter::new(file)))
+        })
+        .transpose()?;
+    let cached_header = read_binary_trace_header(&native_path)?;
     // Normally grow the replay RNG one frame at a time so loading the trace
     // does not decode every large frame twice. Zero-prefix loaded saves need
     // future draws during deterministic reconstruction. The environment
@@ -197,21 +220,21 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         std::env::var_os("PARITY_PRELOAD_RNG").is_some(),
     );
     let initial_rng_draws = if preload_complete_rng_stream {
-        read_all_rng_draws(&native_path)
+        read_all_rng_draws(&native_path)?
     } else {
         simulation_rng_draws(&cached_header.rng_prefix.draws)
     };
     let header = cached_header.trace;
     validate_trace_header(&header);
-    let footer = read_binary_trace_footer(&native_path)
-        .unwrap_or_else(|error| panic!("read result trace extent: {error}"));
+    let footer =
+        read_binary_trace_footer(&native_path).storage_context("read result trace extent")?;
     let executable = crate::result::executable_path();
     let mut result = crate::result::ReplayResult {
-        result_version: 1,
+        result_version: crate::result::RESULT_VERSION,
         trace_path: trace_path.to_string_lossy().into_owned(),
-        native_trace_sha256: trace_content_sha256(&native_path),
+        native_trace_sha256: trace_content_sha256(&native_path)?,
         executable_path: executable.to_string_lossy().into_owned(),
-        executable_sha256: trace_content_sha256(&executable),
+        executable_sha256: trace_content_sha256(&executable)?,
         expected_frames: footer.frame_count,
         processed_frames: 0,
         expected_final_frame: footer.final_frame,
@@ -234,12 +257,12 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     let initial_save = decode_and_validate_initial_save(&header);
 
     if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
-        std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
+        std::env::set_current_dir(&dir).storage_context("chdir to ROBINHOOD_DATA_DIR")?;
     }
     register_language_data_paths_for_tool();
 
-    let mut records = BinaryTraceReader::open(&native_path);
-    let stream_header = records.read_header();
+    let mut records = BinaryTraceReader::open(&native_path)?;
+    let stream_header = records.read_header()?;
     assert_eq!(stream_header.trace.schema, header.schema);
     assert_eq!(stream_header.trace.session_index, header.session_index);
     assert_eq!(stream_header.trace.initial_frame, header.initial_frame);
@@ -343,7 +366,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         prefix_end,
         &mut engine,
         &assets,
-    );
+    )?;
     if restored_dormant_macros != 0 {
         eprintln!(
             "restored {restored_dormant_macros} dormant waypoint-macro cursors from the authoritative preceding interactive-session terminal snapshot"
@@ -488,7 +511,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     let mut line_index = 0_usize;
     let mut trace_timeline = TraceTimeline::new(header.initial_frame);
     let terminator = loop {
-        let mut frame = match records.read_record() {
+        let mut frame = match records.read_record()? {
             BinaryTraceRecord::Frame(frame) => frame,
             end @ BinaryTraceRecord::End { .. } => break end,
         };
@@ -513,7 +536,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         }
         trace_timeline
             .observe(frame.frame_before, frame.frame_after)
-            .unwrap_or_else(|error| panic!("invalid parity frame timeline: {error}"));
+            .storage_context("invalid parity frame timeline")?;
         line_index += 1;
         #[cfg(feature = "client")]
         let mut http_frame_commands = robin_engine::player_command::FrameCommands::new();
@@ -902,12 +925,16 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         // matching the Original recorder's frame envelope.
         robin_engine::sight_obstacle::begin_parity_visibility_capture();
         let actual_movement_steps =
-            robin_engine::movement_diagnostics::take_parity_movement_capture();
-        let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture();
+            robin_engine::movement_diagnostics::take_parity_movement_capture()
+                .expect("frame movement capture started before simulation");
+        let actual_flight_steps = robin_engine::movement_diagnostics::take_parity_flight_capture()
+            .expect("frame movement capture started before simulation");
         let actual_move_box_extractions =
-            robin_engine::movement_diagnostics::take_parity_move_box_extractions();
+            robin_engine::movement_diagnostics::take_parity_move_box_extractions()
+                .expect("frame movement capture started before simulation");
         let late_movement_retranslations =
-            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations();
+            robin_engine::movement_diagnostics::take_parity_late_movement_retranslations()
+                .expect("frame movement capture started before simulation");
         let actual_path_events = robin_engine::pathfinder::take_parity_path_capture();
         // Restart immediately: the post-frame comparison and one-shot
         // PostInitialize below precede the next recorded frame boundary.
@@ -955,7 +982,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                 "visual parity replay closed by user at frame {}",
                 engine.frame_counter()
             );
-            return 0;
+            return Ok(0);
         }
         let actual_rng_end = engine
             .original_rng_replay_cursor()
@@ -1325,7 +1352,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             result.outcome = "divergence".into();
             result.first_divergences = structured_divergences(&first_by_field);
             result.publish();
-            return 1;
+            return Ok(1);
         }
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
@@ -1369,20 +1396,21 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         } => {
             records
                 .validate_terminator(frame_count, final_frame)
-                .unwrap_or_else(|error| {
-                    panic!(
+                .map_err(|error| {
+                    format!(
                         "native parity trace {} has an invalid terminal record: {error}",
                         native_path.display()
                     )
-                });
-            assert_eq!(
-                frame_count,
-                u64::try_from(line_index).expect("parity frame count exceeds u64"),
+                })?;
+            storage_ensure!(
+                frame_count
+                    == u64::try_from(line_index)
+                        .storage_context("parity frame count exceeds u64")?,
                 "parity terminator frame_count disagrees with the frame stream"
             );
             trace_timeline
                 .validate_terminator(frame_count, final_frame)
-                .unwrap_or_else(|error| panic!("invalid parity terminator timeline: {error}"));
+                .storage_context("invalid parity terminator timeline")?;
             assert_eq!(
                 u64::from(engine.frame_counter()),
                 final_frame,
@@ -1393,9 +1421,9 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             rng_suffix: None,
             final_frame: None,
             frame_count: None,
-        } => panic!("parity trace ended without a clean rng_suffix terminator"),
+        } => return Err("parity trace ended without a clean rng_suffix terminator".to_owned()),
         BinaryTraceRecord::End { .. } => {
-            panic!("native parity trace contains a partially populated terminator")
+            return Err("native parity trace contains a partially populated terminator".to_owned());
         }
         BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }
@@ -1421,8 +1449,8 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     }
     .into();
     result.publish();
-    if divergent_frames == 0 {
-        println!("parity trace matched every recorded frame");
+    Ok(if divergent_frames == 0 {
+        println!("{}", crate::result::LEGACY_EOF_MARKER);
         #[cfg(feature = "client")]
         if let Some(visual) = &mut visual {
             eprintln!("visual parity replay finished; close the window to exit");
@@ -1435,5 +1463,5 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
             println!("  first {field} divergence after frame {frame}: {example}");
         }
         1
-    }
+    })
 }

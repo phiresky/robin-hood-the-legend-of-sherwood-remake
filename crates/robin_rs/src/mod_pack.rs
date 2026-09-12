@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use robin_engine::sbfile::{SBFILE_NO_ERROR, SbFileSystem, detect_zip_layout_for_mission};
+use robin_engine::sbfile::{SbFileError, SbFileSystem, detect_zip_layout_for_mission};
 
 /// Top-level metadata for one custom mission mod.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +103,7 @@ pub struct DiscoveredMod {
 }
 
 /// Mount a mod root with the same logical paths for directories and ZIPs.
-pub fn mount_mod_overlay(files: &SbFileSystem, path: &Path) -> i32 {
+pub fn mount_mod_overlay(files: &SbFileSystem, path: &Path) -> Result<(), SbFileError> {
     if path.is_dir() {
         files.add_overlay_path(&path.to_string_lossy())
     } else {
@@ -111,7 +111,7 @@ pub fn mount_mod_overlay(files: &SbFileSystem, path: &Path) -> i32 {
             Ok(path) => files.add_overlay_zip(&path.to_string_lossy()),
             Err(error) => {
                 tracing::warn!("Cannot open mod archive {}: {error}", path.display());
-                robin_engine::sbfile::SBFILE_ERROR_NO_FILE
+                Err(SbFileError::NoFile)
             }
         }
     }
@@ -149,8 +149,7 @@ pub fn scan_mods_dir(mods_root: &Path) -> Vec<DiscoveredMod> {
             continue;
         }
         let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        let status = mount_mod_overlay(&files, &path);
-        if status != SBFILE_NO_ERROR {
+        if let Err(status) = mount_mod_overlay(&files, &path) {
             tracing::warn!("scan_mods_dir: cannot mount {}: {status}", path.display());
             continue;
         }
@@ -740,8 +739,7 @@ pub struct MountGuard {
 impl Drop for MountGuard {
     fn drop(&mut self) {
         for path in self.overlays.drain(..).rev() {
-            let rc = self.files.remove_overlay(&path);
-            if rc != SBFILE_NO_ERROR {
+            if let Err(rc) = self.files.remove_overlay(&path) {
                 tracing::warn!("MountGuard: remove_overlay({path}) returned {rc}");
             }
         }
@@ -754,10 +752,10 @@ pub enum MountError {
     MissingZip(PathBuf),
     #[error("Spellforge lib zip not found under {0}")]
     MissingLib(PathBuf),
-    #[error("SbFile::add_overlay_zip({0}) returned error code {1}")]
-    OverlayAdd(PathBuf, i32),
-    #[error("SbFile::add_overlay_zip_bytes({0}) returned error code {1}")]
-    MemoryOverlayAdd(String, i32),
+    #[error("SbFile::add_overlay_zip({0}) failed: {1}")]
+    OverlayAdd(PathBuf, SbFileError),
+    #[error("SbFile::add_overlay_zip_bytes({0}) failed: {1}")]
+    MemoryOverlayAdd(String, SbFileError),
 }
 
 /// Mount exact validated archives directly from memory.
@@ -781,7 +779,7 @@ pub fn mount_distributed_archives(
         let rc = guard
             .files
             .add_overlay_zip_bytes_for_mission(&id, shared, None);
-        if rc != SBFILE_NO_ERROR {
+        if let Err(rc) = rc {
             return Err(MountError::MemoryOverlayAdd(id, rc));
         }
         guard.overlays.push(id);
@@ -790,7 +788,7 @@ pub fn mount_distributed_archives(
     let rc = guard
         .files
         .add_overlay_zip_bytes_for_mission(&id, mission_archive, Some(rhm_entry));
-    if rc != SBFILE_NO_ERROR {
+    if let Err(rc) = rc {
         return Err(MountError::MemoryOverlayAdd(id, rc));
     }
     guard.overlays.push(id);
@@ -844,7 +842,7 @@ fn mount_for_launch_inner(
             .ok_or_else(|| MountError::MissingLib(mods_root.join("lib")))?;
         let p = lib_zip.to_string_lossy().into_owned();
         let rc = guard.files.add_overlay_zip(&p);
-        if rc != SBFILE_NO_ERROR {
+        if let Err(rc) = rc {
             return Err(MountError::OverlayAdd(lib_zip, rc));
         }
         guard.overlays.push(p);
@@ -858,7 +856,7 @@ fn mount_for_launch_inner(
         Some(entry) => guard.files.add_overlay_zip_for_mission(&p, entry),
         None => guard.files.add_overlay_zip(&p),
     };
-    if rc != SBFILE_NO_ERROR {
+    if let Err(rc) = rc {
         return Err(MountError::OverlayAdd(version_zip.to_path_buf(), rc));
     }
     guard.overlays.push(p);
@@ -953,10 +951,7 @@ mod tests {
         for discovered in mods {
             let files =
                 SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
-            assert_eq!(
-                mount_mod_overlay(&files, &discovered.mod_dir),
-                SBFILE_NO_ERROR
-            );
+            assert_eq!(mount_mod_overlay(&files, &discovered.mod_dir), Ok(()));
             let entries = enumerate_missions(&[discovered], &files);
             assert_eq!(entries.len(), 1);
             assert!(entries[0].hackable);
@@ -1081,7 +1076,7 @@ mod tests {
 
         assert_eq!(
             files.add_overlay_path(mods[0].mod_dir.to_str().unwrap()),
-            SBFILE_NO_ERROR
+            Ok(())
         );
         let available = enumerate_missions(&mods, &files);
         assert_eq!(available.len(), 10);

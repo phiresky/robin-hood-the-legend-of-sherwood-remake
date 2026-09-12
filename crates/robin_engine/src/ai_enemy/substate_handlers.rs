@@ -92,24 +92,66 @@ impl EnemyAi {
             AiState::Sleeping => {
                 self.think_expected_sleeping_event(stimulus, global, ctx, tick, grid)
             }
-            AiState::Default => {
-                self.think_expected_default_event(sim, stimulus, global, ctx, tick, grid)
-            }
-            AiState::Wondering => {
-                self.think_expected_wondering_event(sim, stimulus, global, ctx, tick, grid)
-            }
-            AiState::Seeking => {
-                self.think_expected_seeking_event(sim, stimulus, global, ctx, tick, grid)
-            }
-            AiState::Attacking => {
-                self.think_expected_attacking_event(sim, stimulus, global, ctx, tick, grid)
-            }
-            AiState::Menacing => {
-                self.think_expected_menacing_event(sim, stimulus, global, ctx, tick, grid)
-            }
-            AiState::Fleeing => {
-                self.think_expected_fleeing_event(sim, stimulus, global, ctx, tick, grid)
-            }
+            AiState::Default => self.think_expected_default_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
+            AiState::Wondering => self.think_expected_wondering_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
+            AiState::Seeking => self.think_expected_seeking_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
+            AiState::Attacking => self.think_expected_attacking_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
+            AiState::Menacing => self.think_expected_menacing_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
+            AiState::Fleeing => self.think_expected_fleeing_event(
+                stimulus,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
         }
     }
 
@@ -139,21 +181,23 @@ impl EnemyAi {
                 self.base.has_patrol_path = self.base.patrol_path.is_some();
             }
             self.base.set_emoticon(EmoticonType::QuestionMark);
-            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
-            self.base.launch_timer(30, ctx.frame);
+            self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooking1, 30, ctx);
         }
         false
     }
 
     fn think_expected_default_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::DefaultGotoPost => {
@@ -228,7 +272,7 @@ impl EnemyAi {
 
             Substate::DefaultLookingOfficerForAdvice => {
                 if stimulus_type == StimulusType::EventTimer {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
 
@@ -242,7 +286,7 @@ impl EnemyAi {
                         // Target still partially visible — keep looking
                         self.base.launch_timer(10, ctx.frame);
                     } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -258,8 +302,12 @@ impl EnemyAi {
                     if self.base.patrol_direction != ctx.direction {
                         self.base.face_direction(self.base.patrol_direction, ctx);
                     }
-                    self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
-                    self.base.launch_timer(200, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Default,
+                        Substate::DefaultPatrolEnrouteWaiting,
+                        200,
+                        ctx,
+                    );
                 }
             }
 
@@ -274,7 +322,7 @@ impl EnemyAi {
                         }
                         _ => {
                             // Chief is in combat or otherwise unavailable
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                            self.return_to_duty_default(sim, ctx, tick);
                         }
                     }
                 }
@@ -287,11 +335,15 @@ impl EnemyAi {
                         // facing the patrol chief, which includes the chief's
                         // truncated elevation in the projection.
                         self.base.face_entity(patrol_chief.index(), ctx);
-                        self.set_state(AiState::Default, Substate::DefaultPatrolEnrouteWaiting);
-                        self.base.launch_timer(200, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Default,
+                            Substate::DefaultPatrolEnrouteWaiting,
+                            200,
+                            ctx,
+                        );
                     } else {
                         // Lost patrol chief — retry
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -299,7 +351,7 @@ impl EnemyAi {
             // ============ PATROL CHIEF RETURN ============
             Substate::DefaultPatrolChiefReturnToPatrol => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
 
@@ -345,8 +397,12 @@ impl EnemyAi {
             // Done sweeping eyes, back to baseline looking for Charly.
             Substate::DefaultLookingSidewardsForCharly => {
                 if stimulus_type == StimulusType::EventDone {
-                    self.set_state(AiState::Default, Substate::DefaultLookingForCharly);
-                    self.base.launch_timer(10, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Default,
+                        Substate::DefaultLookingForCharly,
+                        10,
+                        ctx,
+                    );
                 }
             }
 
@@ -358,7 +414,7 @@ impl EnemyAi {
                         self.set_state(AiState::Default, Substate::DefaultInMacro);
                         self.base.execute_next_macro_command(sim, ctx);
                     } else {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -375,7 +431,7 @@ impl EnemyAi {
                         .map(|v| v.ai_state != AiState::Default || !v.is_able_to_fight)
                         .unwrap_or(true);
                     if sync_gone {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     } else {
                         self.base.launch_timer(20, ctx.frame);
                     }
@@ -402,13 +458,16 @@ impl EnemyAi {
 
     fn think_expected_wondering_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid: _grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::WonderingWatching => self.wondering_watching(sim, stimulus_type, ctx, tick),
@@ -563,7 +622,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -733,8 +792,12 @@ impl EnemyAi {
         // event advances the same completion boundary.
         if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
             self.base.interesting_object = Some(AiEntityHandle::new(coin));
-            self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
-            self.base.launch_timer(1, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Wondering,
+                Substate::WonderingMoneyReactiontime,
+                1,
+                ctx,
+            );
         } else {
             self.set_state(AiState::Wondering, Substate::WonderingWatchingForMoreMoney);
             self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
@@ -751,7 +814,7 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventTimer => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             // When the sideways-look sequence finishes, scan for
             // nearby KO'd money-fight victims and either approach
@@ -784,7 +847,7 @@ impl EnemyAi {
                         ctx,
                     );
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -862,8 +925,12 @@ impl EnemyAi {
                 if let Some(lost_pos) = self.is_beer_still_available(ctx) {
                     self.base.face_position_3d_with_ctx(lost_pos, ctx);
                     self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    self.set_state(AiState::Wondering, Substate::WonderingAleAway);
-                    self.base.launch_timer(30, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Wondering,
+                        Substate::WonderingAleAway,
+                        30,
+                        ctx,
+                    );
                 } else {
                     self.base.launch_timer(20, ctx.frame);
                 }
@@ -872,8 +939,12 @@ impl EnemyAi {
                 if let Some(lost_pos) = self.is_beer_still_available(ctx) {
                     self.base.face_position_3d_with_ctx(lost_pos, ctx);
                     self.base.set_emoticon(EmoticonType::Thunderstorm);
-                    self.set_state(AiState::Wondering, Substate::WonderingAleAway);
-                    self.base.launch_timer(30, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Wondering,
+                        Substate::WonderingAleAway,
+                        30,
+                        ctx,
+                    );
                 } else {
                     self.set_state(AiState::Wondering, Substate::WonderingDrinkingAle);
                     // Launch a DrinkAle interaction to trigger
@@ -911,7 +982,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -956,7 +1027,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -994,7 +1065,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -1015,7 +1086,7 @@ impl EnemyAi {
             let shall_react = self.soldier_profile_apple > 0;
             let chased = shall_react && self.chase_childs(ctx);
             if !chased {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -1095,8 +1166,12 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.set_state(AiState::Wondering, Substate::WonderingAppleChasingChild);
-            self.base.launch_timer(1, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Wondering,
+                Substate::WonderingAppleChasingChild,
+                1,
+                ctx,
+            );
         }
         false
     }
@@ -1111,7 +1186,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -1316,7 +1391,7 @@ impl EnemyAi {
                     // Return the actor to duty, as in the shipped game.
                     // Log the bad state without making debug and
                     // production simulation behavior diverge.
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                     return false;
                 };
                 let friend_view =
@@ -1430,8 +1505,12 @@ impl EnemyAi {
                 self.base.launch_timer(30, ctx.frame);
             } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
                 self.base.friend_in_trouble = Some(AiEntityHandle::new(next));
-                self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
-                self.base.launch_timer(10, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Wondering,
+                    Substate::WonderingBrawlReactiontime,
+                    10,
+                    ctx,
+                );
             } else {
                 // stop_brawling_and_collect_money().
                 self.stop_brawling_and_collect_money(ctx, tick);
@@ -1679,7 +1758,7 @@ impl EnemyAi {
                 // Quick recheck
                 self.base.launch_timer(1, ctx.frame);
             } else {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -1789,7 +1868,7 @@ impl EnemyAi {
                     );
                     self.base.launch_timer(10, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::CallYourTalk3 => {
@@ -1821,7 +1900,7 @@ impl EnemyAi {
             if still_waiting {
                 self.base.launch_timer(10, ctx.frame);
             } else {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -1841,7 +1920,7 @@ impl EnemyAi {
             StimulusType::EventTimer => {
                 // forget_all_nearby_coins(); return_to_duty(sim, );
                 self.forget_all_nearby_coins(ctx);
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             StimulusType::EventMyTalk1
             | StimulusType::EventMyTalk2
@@ -1886,7 +1965,7 @@ impl EnemyAi {
             //   whistle > 1 && company_number != 100
             let shall_follow = self.soldier_profile_whistle > 1 && self.company_number != 100;
             if !shall_follow {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
                 return false;
             }
 
@@ -1988,13 +2067,16 @@ impl EnemyAi {
 
     fn think_expected_seeking_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::SeekingSeekpoint => {
@@ -2053,15 +2135,38 @@ impl EnemyAi {
                 self.seeking_body_reactiontime(stimulus_type, ctx, tick, grid)
             }
 
-            Substate::SeekingBody => self.seeking_body(sim, stimulus_type, global, ctx, tick, grid),
+            Substate::SeekingBody => self.seeking_body(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::SeekingBodyLookingDeadBody => {
-                self.seeking_body_looking_dead_body(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::SeekingBodyLookingDeadBody => self.seeking_body_looking_dead_body(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
-            Substate::SeekingBodyAwakeningSleeperr => {
-                self.seeking_body_awakening_sleeperr(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::SeekingBodyAwakeningSleeperr => self.seeking_body_awakening_sleeperr(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::SeekingArrowReactiontime => {
                 self.seeking_arrow_reactiontime(stimulus_type, ctx)
@@ -2070,7 +2175,16 @@ impl EnemyAi {
             Substate::SeekingArrow => self.seeking_arrow(sim, stimulus_type, global, ctx, tick),
 
             Substate::SeekingArrowJustWatching | Substate::SeekingArrowJustWatchingSidewards => {
-                self.seeking_arrow_just_watching(sim, stimulus_type, global, ctx, tick, grid)
+                self.seeking_arrow_just_watching(
+                    stimulus_type,
+                    global,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
+                )
             }
 
             Substate::SeekingCombatAlertReactiontime => {
@@ -2097,12 +2211,14 @@ impl EnemyAi {
 
             Substate::SeekingGetAlertingReportFromCivilianLook => self
                 .seeking_get_alerting_report_from_civilian_look(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::SeekingOfficerCallSoldier => self.seeking_officer_call_soldier(stimulus_type),
@@ -2117,13 +2233,15 @@ impl EnemyAi {
 
             Substate::SeekingOfficerWaitForInstructedSoldier => self
                 .seeking_officer_wait_for_instructed_soldier(
-                    sim,
                     stimulus,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::SeekingOfficerGetReportFromSoldier => {
@@ -2149,9 +2267,16 @@ impl EnemyAi {
                 self.seeking_soldier_give_report_to_officer(sim, stimulus_type, ctx, tick)
             }
 
-            Substate::SeekingOfficerCallGroup => {
-                self.seeking_officer_call_group(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::SeekingOfficerCallGroup => self.seeking_officer_call_group(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::SeekingOfficerWaitForGroup => {
                 self.seeking_officer_wait_for_group(sim, stimulus_type, ctx, tick)
@@ -2218,12 +2343,14 @@ impl EnemyAi {
 
             Substate::SeekingOfficerGetAlertingReportFromSoldier => self
                 .seeking_officer_get_alerting_report_from_soldier(
-                    sim,
                     stimulus_type,
                     global,
-                    ctx,
-                    tick,
-                    grid,
+                    crate::ai_enemy::ThinkEnv {
+                        sim: sim,
+                        ctx: ctx,
+                        tick: tick,
+                        grid: grid,
+                    },
                 ),
 
             Substate::SeekingKnightWatchingTowerGuard => {
@@ -2232,9 +2359,15 @@ impl EnemyAi {
 
             Substate::SeekingNet => self.seeking_net(sim, stimulus_type, global, ctx, tick),
 
-            Substate::SeekingTakingNet => {
-                self.seeking_taking_net(sim, stimulus_type, ctx, tick, grid)
-            }
+            Substate::SeekingTakingNet => self.seeking_taking_net(
+                stimulus_type,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::SeekingOfficerLookingForSoldiers1
             | Substate::SeekingOfficerLookingForSoldiers2
@@ -2253,9 +2386,16 @@ impl EnemyAi {
 
             Substate::SeekingCharly => self.seeking_charly(sim, stimulus_type, ctx, tick),
 
-            Substate::SeekingCharlyWatching => {
-                self.seeking_charly_watching(sim, stimulus_type, global, ctx, tick, grid)
-            }
+            Substate::SeekingCharlyWatching => self.seeking_charly_watching(
+                stimulus_type,
+                global,
+                crate::ai_enemy::ThinkEnv {
+                    sim: sim,
+                    ctx: ctx,
+                    tick: tick,
+                    grid: grid,
+                },
+            ),
 
             Substate::SeekingDetectedCharly => {
                 self.seeking_detected_charly(sim, stimulus_type, ctx, tick)
@@ -2745,8 +2885,12 @@ impl EnemyAi {
                 None
             };
             if officer.is_some() {
-                self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
-                self.base.launch_timer(100, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Default,
+                    Substate::DefaultLookingOfficerForAdvice,
+                    100,
+                    ctx,
+                );
             } else {
                 let goto_flags = if self.investigating_distraction {
                     GotoFlags::RUN
@@ -2835,7 +2979,7 @@ impl EnemyAi {
             // deliberately leaves it unchanged.
             match self.get_rank() {
                 ProfileRank::Soldier => {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
                 ProfileRank::Officer => {
                     self.officer_look_for_soldier(ReportType::Noise, ctx, tick);
@@ -2942,13 +3086,16 @@ impl EnemyAi {
 
     fn seeking_body(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             // The timer only watches for a body that has recovered
             // while we are travelling. Body examination itself is
@@ -2958,7 +3105,7 @@ impl EnemyAi {
                 panic!("SeekingBody timer target {body_handle} has no typed live entity view")
             });
             if !view.is_dead && !view.is_unconscious && self.is_detecting(body_handle, ctx) {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             } else {
                 self.base.launch_timer(10, ctx.frame);
             }
@@ -3082,7 +3229,7 @@ impl EnemyAi {
                 // abandons the examination immediately even when the
                 // timer's preceding detection check could not see
                 // the now-conscious actor.
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -3090,13 +3237,16 @@ impl EnemyAi {
 
     fn seeking_body_looking_dead_body(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer {
             if ctx.self_is_rider {
                 self.seek_area(
@@ -3136,13 +3286,16 @@ impl EnemyAi {
 
     fn seeking_body_awakening_sleeperr(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // After waking a sleeper (or attempting to) the timer
         // fires; if any other bodies are still pending,
         // `examine_other_bodies` drives off to them;
@@ -3154,7 +3307,7 @@ impl EnemyAi {
                 let pos = self.base.my_reconnaissance_report.seek_position;
                 self.dead_body_alert(sim, pos, SeekFlags::empty(), global, grid, ctx, tick);
             } else {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -3224,13 +3377,16 @@ impl EnemyAi {
 
     fn seeking_arrow_just_watching(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         match stimulus_type {
             StimulusType::EventTimer => {
                 self.base
@@ -3251,7 +3407,7 @@ impl EnemyAi {
                     tick,
                     AlertSoldiersFailureContinuation::ReturnToDuty,
                 ) {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -3319,8 +3475,7 @@ impl EnemyAi {
                 self.base.has_patrol_path = self.base.patrol_path.is_some();
             }
             self.base.set_emoticon(EmoticonType::QuestionMark);
-            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
-            self.base.launch_timer(30, ctx.frame);
+            self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooking1, 30, ctx);
         }
         false
     }
@@ -3358,7 +3513,7 @@ impl EnemyAi {
                     self.base.face_entity(self.base.antagonist, ctx);
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::CallReport => {
@@ -3444,7 +3599,7 @@ impl EnemyAi {
         // Non-alerting civilian report — wait out the
         // talk time and return to duty.
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -3471,13 +3626,16 @@ impl EnemyAi {
 
     fn seeking_get_alerting_report_from_civilian_look(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // Act on the civilian's report based on rank.
         if stimulus_type == StimulusType::EventTimer {
             let seek_pos = self.base.seek_position;
@@ -3503,7 +3661,7 @@ impl EnemyAi {
                         tick,
                         AlertSoldiersFailureContinuation::ReturnToDuty,
                     ) {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
                 ProfileRank::Soldier => {
@@ -3651,7 +3809,7 @@ impl EnemyAi {
                         self.base.launch_timer(20, ctx.frame);
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -3717,7 +3875,7 @@ impl EnemyAi {
                 if ant_substate == Some(Substate::SeekingSoldierGetInstructedByOfficer) {
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -3727,14 +3885,17 @@ impl EnemyAi {
 
     fn seeking_officer_wait_for_instructed_soldier(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // Officer waits for soldier to return from search
         match stimulus_type {
             StimulusType::CallYourTalk1 => {
@@ -3757,7 +3918,7 @@ impl EnemyAi {
                         self.missed_soldier_timer = 0;
                         self.base.launch_timer(30, ctx.frame);
                     } else if visible {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     } else {
                         self.missed_soldier_timer += 1;
                         if self.missed_soldier_timer > 100 {
@@ -3847,7 +4008,7 @@ impl EnemyAi {
                     .say_with_flags(Remark::OfficerEndsConversation, SpeechFlags::MYTALK_1);
             }
             StimulusType::EventTimer | StimulusType::EventMyTalk1 => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             _ => {}
         }
@@ -3912,7 +4073,7 @@ impl EnemyAi {
                 if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::EventReachPoint => {
@@ -3940,7 +4101,7 @@ impl EnemyAi {
                     self.base
                         .say_with_flags(Remark::AwaitsOrders, SpeechFlags::MYTALK_1);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -4070,7 +4231,7 @@ impl EnemyAi {
                 if ant_substate == Some(Substate::SeekingOfficerInstructSoldier) {
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -4111,7 +4272,7 @@ impl EnemyAi {
                         let dy = ctx.position.y - self.officers_position.y;
                         let sq_dist = dx * dx + dy * dy;
                         if sq_dist < ctx.sq_standard_view_radius {
-                            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                            self.return_to_duty_default(sim, ctx, tick);
                         } else {
                             // Not near enough to know officer left
                             self.base.launch_timer(20, ctx.frame);
@@ -4139,7 +4300,7 @@ impl EnemyAi {
                         );
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -4177,7 +4338,7 @@ impl EnemyAi {
             }
             StimulusType::EventTimer => {
                 self.seek_flags = SeekFlags::empty();
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             _ => {}
         }
@@ -4188,13 +4349,16 @@ impl EnemyAi {
 
     fn seeking_officer_call_group(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventTimer
             && !self.alert_soldiers(
                 self.base.seek_position,
@@ -4206,7 +4370,7 @@ impl EnemyAi {
                 AlertSoldiersFailureContinuation::ReturnToDuty,
             )
         {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -4247,10 +4411,14 @@ impl EnemyAi {
 
             if !wait_longer {
                 if !self.alerted_us.is_empty() {
-                    self.set_state(AiState::Seeking, Substate::SeekingOfficerInstructGroup);
-                    self.base.launch_timer(10, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Seeking,
+                        Substate::SeekingOfficerInstructGroup,
+                        10,
+                        ctx,
+                    );
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
         }
@@ -4370,7 +4538,7 @@ impl EnemyAi {
             self.pending_group_instruction_clear_location_after_accept =
                 charly_waypoints.is_empty();
             if self.pending_group_instruction_candidates.is_empty() {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             } else {
                 // The original game updates each soldier synchronously. A refusal deletes
                 // that member and retries the same list index, so only the
@@ -4463,7 +4631,7 @@ impl EnemyAi {
                             return false;
                         }
                     }
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 } else {
                     self.base.launch_timer(30, ctx.frame);
                 }
@@ -4501,8 +4669,12 @@ impl EnemyAi {
                 self.base.face_direction(self.gather_direction, ctx);
             }
             StimulusType::EventDone => {
-                self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForGroup);
-                self.base.launch_timer(1, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Seeking,
+                    Substate::SeekingOfficerWaitForGroup,
+                    1,
+                    ctx,
+                );
             }
             _ => {}
         }
@@ -4545,8 +4717,7 @@ impl EnemyAi {
                     ctx,
                 );
             }
-            self.set_state(AiState::Seeking, Substate::SeekingGroupGoToOfficer);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Seeking, Substate::SeekingGroupGoToOfficer, 20, ctx);
         }
         false
     }
@@ -4576,7 +4747,7 @@ impl EnemyAi {
                         self.base.launch_timer(20, ctx.frame);
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -4622,7 +4793,7 @@ impl EnemyAi {
                         );
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -4771,7 +4942,7 @@ impl EnemyAi {
                 } else {
                     // Officer busy — look for another
                     if !self.alert_officer(sim, self.base.seek_position, 0, ctx, tick) {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -4832,7 +5003,7 @@ impl EnemyAi {
                         self.base.launch_timer(20, ctx.frame);
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -4892,7 +5063,7 @@ impl EnemyAi {
                         );
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -5019,7 +5190,7 @@ impl EnemyAi {
         // End of alerting report
         if stimulus_type == StimulusType::EventTimer {
             self.seek_flags = SeekFlags::empty();
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -5056,7 +5227,7 @@ impl EnemyAi {
                         self.base.launch_timer(20, ctx.frame);
                     }
                     _ => {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     }
                 }
             }
@@ -5085,13 +5256,16 @@ impl EnemyAi {
 
     fn seeking_officer_get_alerting_report_from_soldier(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         // Officer processes alerting report
         match stimulus_type {
             StimulusType::CallYourTalk1 => {
@@ -5125,7 +5299,7 @@ impl EnemyAi {
                     AlertSoldiersFailureContinuation::ReturnToDuty,
                 ) =>
             {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             _ => {}
         }
@@ -5183,7 +5357,7 @@ impl EnemyAi {
                     .stuck_under_net;
                 if !body_stuck && self.is_detecting(self.base.detected_body, ctx) {
                     // Resurrected.
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 } else {
                     self.base.launch_timer(10, ctx.frame);
                 }
@@ -5260,7 +5434,7 @@ impl EnemyAi {
                         }
                     }
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -5273,12 +5447,15 @@ impl EnemyAi {
 
     fn seeking_taking_net(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             // 3-way branch on detected body state:
             //   stuck-under-net → net-victim rescue (still
@@ -5301,7 +5478,7 @@ impl EnemyAi {
                 // SeekingBody for the examine path.
                 self.run_to_examine_body(body.get(), ctx, tick, grid);
             } else {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
         }
         false
@@ -5370,7 +5547,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -5394,7 +5571,7 @@ impl EnemyAi {
                 // else transition to CharlyWatching +
                 // Look left and right.
                 if self.base.checkpoint_charly.is_none() {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 } else {
                     self.set_state(AiState::Seeking, Substate::SeekingCharlyWatching);
                     self.base.outbox.actor.look_sidewards = Some(LookDirection::LeftRight);
@@ -5419,13 +5596,16 @@ impl EnemyAi {
 
     fn seeking_charly_watching(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus_type: StimulusType,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         if stimulus_type == StimulusType::EventDone {
             self.missed_charly_alert(sim, global, ctx, tick, grid);
         }
@@ -5471,7 +5651,7 @@ impl EnemyAi {
                 _ => {
                     // Soldier, Knight, or officer with no alerted
                     // soldiers all fall through to returning to duty.
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
         }
@@ -5491,7 +5671,7 @@ impl EnemyAi {
             StimulusType::EventMyTalk1 => {
                 let charly = self.base.friend_in_trouble;
                 let Some(charly) = charly else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                     return false;
                 };
                 let antagonist = self.required_antagonist("sending Charly to another officer");
@@ -5529,7 +5709,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -5597,7 +5777,7 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             _ => {}
         }
@@ -5630,7 +5810,7 @@ impl EnemyAi {
                     );
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::EventReachPoint => {
@@ -5698,7 +5878,7 @@ impl EnemyAi {
                             });
                     }
                 StimulusType::CallYourTalk2 => {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
                 _ => {}
             }
@@ -5734,7 +5914,7 @@ impl EnemyAi {
                     self.base.set_emoticon(EmoticonType::None);
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::CallCoordinate => {
@@ -5843,7 +6023,7 @@ impl EnemyAi {
                         to_whole_patrol: false,
                     });
             }
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -5869,7 +6049,7 @@ impl EnemyAi {
                 if officer_waiting {
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             StimulusType::EventReachPoint => {
@@ -5886,7 +6066,7 @@ impl EnemyAi {
                     );
                     self.base.launch_timer(10, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             _ => {}
@@ -6014,13 +6194,16 @@ impl EnemyAi {
 
     fn think_expected_menacing_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         _global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        _grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid: _grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::MenacingPcInComa if stimulus_type == StimulusType::EventTimer => {
@@ -6049,7 +6232,7 @@ impl EnemyAi {
                 if keep_watching {
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
 
@@ -6061,13 +6244,16 @@ impl EnemyAi {
 
     fn think_expected_fleeing_event(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
-        ctx: &AiContext,
-        tick: &AiPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> bool {
+        let crate::ai_enemy::ThinkEnv {
+            sim,
+            ctx,
+            tick,
+            grid,
+        } = env;
         let stimulus_type = stimulus.stimulus_type;
         match self.base.current_substate {
             Substate::FleeingPanic | Substate::FleeingRunToHide | Substate::FleeingRunToDoor => {
@@ -6098,7 +6284,7 @@ impl EnemyAi {
                     // containing EnemyAi, so complete that response here.
                     //
                     // original-game behavior
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                     return true;
                 }
                 return self

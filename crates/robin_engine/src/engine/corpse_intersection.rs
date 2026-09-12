@@ -471,7 +471,7 @@ mod tests {
             last_is_lying_for_corpse_intersection: Some(true),
             ..Default::default()
         };
-        let corpse = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let corpse = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: corpse_element,
             actor: ActorData::default(),
             human: corpse_human,
@@ -492,7 +492,7 @@ mod tests {
             last_is_lying_for_corpse_intersection: Some(true),
             ..Default::default()
         };
-        let pc = engine.add_entity(Entity::Pc(ActorPc {
+        let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element: pc_element,
             actor: ActorData::default(),
             human: pc_human,
@@ -545,13 +545,13 @@ mod tests {
     #[test]
     fn two_intersecting_lying_humans_get_small_radius() {
         let mut engine = EngineInner::new();
-        let a = engine.add_entity(Entity::Civilian(civilian_at(
+        let a = engine.add_test_entity(Entity::Civilian(civilian_at(
             100.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let b = engine.add_entity(Entity::Civilian(civilian_at(
+        let b = engine.add_test_entity(Entity::Civilian(civilian_at(
             110.0,
             100.0,
             Posture::Lying,
@@ -581,13 +581,13 @@ mod tests {
     #[test]
     fn distant_lying_humans_stay_large_radius() {
         let mut engine = EngineInner::new();
-        let a = engine.add_entity(Entity::Civilian(civilian_at(
+        let a = engine.add_test_entity(Entity::Civilian(civilian_at(
             100.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let b = engine.add_entity(Entity::Civilian(civilian_at(
+        let b = engine.add_test_entity(Entity::Civilian(civilian_at(
             1000.0,
             100.0,
             Posture::Lying,
@@ -618,13 +618,13 @@ mod tests {
     #[test]
     fn standing_human_is_skipped() {
         let mut engine = EngineInner::new();
-        let a = engine.add_entity(Entity::Civilian(civilian_at(
+        let a = engine.add_test_entity(Entity::Civilian(civilian_at(
             100.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let b = engine.add_entity(Entity::Civilian(civilian_at(
+        let b = engine.add_test_entity(Entity::Civilian(civilian_at(
             110.0,
             100.0,
             Posture::Upright,
@@ -654,13 +654,13 @@ mod tests {
     #[test]
     fn different_sector_is_skipped() {
         let mut engine = EngineInner::new();
-        let a = engine.add_entity(Entity::Civilian(civilian_at(
+        let a = engine.add_test_entity(Entity::Civilian(civilian_at(
             100.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let b = engine.add_entity(Entity::Civilian(civilian_at(
+        let b = engine.add_test_entity(Entity::Civilian(civilian_at(
             110.0,
             100.0,
             Posture::Lying,
@@ -693,19 +693,19 @@ mod tests {
     #[test]
     fn removing_corpse_rechecks_neighbours() {
         let mut engine = EngineInner::new();
-        let a = engine.add_entity(Entity::Civilian(civilian_at(
+        let a = engine.add_test_entity(Entity::Civilian(civilian_at(
             100.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let b = engine.add_entity(Entity::Civilian(civilian_at(
+        let b = engine.add_test_entity(Entity::Civilian(civilian_at(
             110.0,
             100.0,
             Posture::Lying,
             1,
         )));
-        let c = engine.add_entity(Entity::Civilian(civilian_at(
+        let c = engine.add_test_entity(Entity::Civilian(civilian_at(
             120.0,
             100.0,
             Posture::Lying,
@@ -756,9 +756,9 @@ mod tests {
         removed.human.small_repulsive_radius = true;
         let mut later = civilian_at(1602.0326, 1623.9482, Posture::Tied, 1);
         later.human.small_repulsive_radius = false;
-        let a = engine.add_entity(Entity::Civilian(a));
-        let removed = engine.add_entity(Entity::Civilian(removed));
-        let later = engine.add_entity(Entity::Civilian(later));
+        let a = engine.add_test_entity(Entity::Civilian(a));
+        let removed = engine.add_test_entity(Entity::Civilian(removed));
+        let later = engine.add_test_entity(Entity::Civilian(later));
 
         engine
             .get_entity_mut(removed)
@@ -802,7 +802,7 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut civ = civilian_at(100.0, 100.0, Posture::Lying, 1);
         civ.human.small_repulsive_radius = true;
-        let a = engine.add_entity(Entity::Civilian(civ));
+        let a = engine.add_test_entity(Entity::Civilian(civ));
 
         engine.process_corpse_intersection_updates();
 
@@ -832,8 +832,8 @@ mod tests {
         first.human.last_is_lying_for_corpse_intersection = Some(false);
         let mut second = civilian_at(110.0, 100.0, Posture::Upright, 1);
         second.human.last_is_lying_for_corpse_intersection = Some(false);
-        let first = engine.add_entity(Entity::Civilian(first));
-        let second = engine.add_entity(Entity::Civilian(second));
+        let first = engine.add_test_entity(Entity::Civilian(first));
+        let second = engine.add_test_entity(Entity::Civilian(second));
 
         engine
             .get_entity_mut(first)
@@ -871,7 +871,7 @@ mod tests {
         let mut standing = civilian_at(100.0, 100.0, Posture::Lying, 1);
         standing.human.last_is_lying_for_corpse_intersection = Some(true);
         standing.actor.is_ignored_for_anti_collision = true;
-        let standing = engine.add_entity(Entity::Civilian(standing));
+        let standing = engine.add_test_entity(Entity::Civilian(standing));
 
         engine
             .get_entity_mut(standing)

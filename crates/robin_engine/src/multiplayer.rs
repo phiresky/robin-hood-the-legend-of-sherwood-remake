@@ -18,8 +18,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use unicode_security::GeneralSecurityProfile;
-use unicode_security::general_security_profile::IdentifierType;
 
 /// Cross-thread snapshot of the local game loop's current sim frame.
 ///
@@ -203,20 +201,7 @@ pub fn validate_safe_display_text(
     Ok(())
 }
 
-pub fn is_unsafe_display_character(character: char) -> bool {
-    character.is_control()
-        || (character.is_whitespace() && character != ' ')
-        || character.identifier_type() == Some(IdentifierType::Default_Ignorable)
-        || character == '\u{2800}'
-        || matches!(
-            character,
-            '\u{061c}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-        )
-}
+pub use robin_util::display_text::is_unsafe_display_character;
 
 /// Preserve a diagnostic's actual text while making every invisible/control
 /// character explicit and enforcing a UTF-8 byte ceiling. This is for

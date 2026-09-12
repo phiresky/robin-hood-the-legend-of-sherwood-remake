@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::binary_reader::Reader;
 use crate::resource_manager::ResourceId;
-use robin_data_io::sbfile::{SBFILE_ERROR_FILE_NOT_FOUND, SbFile, SbFileSystem};
+use robin_data_io::sbfile::{SbFile, SbFileError, SbFileSystem};
 
 // ═══════════════════════════════════════════════════════════════════
 //  Public types
@@ -167,7 +167,7 @@ pub fn resolve(
         Ok(file) => decode(&file.into_shared_bytes())
             .map(Some)
             .with_context(|| format!("decode descriptor '{path}'")),
-        Err(SBFILE_ERROR_FILE_NOT_FOUND) => Ok(None),
+        Err(SbFileError::NotFound) => Ok(None),
         Err(error) => Err(anyhow!("open descriptor '{path}': error {error}")),
     }
 }

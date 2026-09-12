@@ -238,11 +238,7 @@ impl Validate for BuildToolAuthorityDocumentV1 {
 impl Validate for BuildToolAuthorityV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::text("build.tool.version", &self.version, 128)?;
-        if self.authority_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "build.tool.authority_sha256",
-            });
-        }
+        crate::validation::nonzero("build.tool.authority_sha256", &self.authority_sha256)?;
         Ok(())
     }
 }
@@ -930,11 +926,10 @@ impl Validate for OfficialProjectionAuthorityManifestV2 {
             2,
             self.schema_version,
         )?;
-        if self.public_build_manifest_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "projection_authority.public_build_manifest_sha256",
-            });
-        }
+        crate::validation::nonzero(
+            "projection_authority.public_build_manifest_sha256",
+            &self.public_build_manifest_sha256,
+        )?;
         validate_shared_build_facts_v2(
             &self.source_commit,
             self.cargo_lock_sha256,
@@ -1057,11 +1052,7 @@ impl VersionedBuildManifest {
 impl Validate for BuildManifestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("BuildManifestV1", self.schema_version)?;
-        if self.cargo_lock_sha256.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "build.cargo_lock_sha256",
-            });
-        }
+        crate::validation::nonzero("build.cargo_lock_sha256", &self.cargo_lock_sha256)?;
         if !matches!(self.source_commit.len(), 40 | 64)
             || !self
                 .source_commit

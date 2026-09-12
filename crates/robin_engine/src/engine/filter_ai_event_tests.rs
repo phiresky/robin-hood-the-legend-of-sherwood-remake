@@ -22,59 +22,16 @@
 
 use crate::coordinates::WorldPoint3D;
 use crate::element::{
-    ActorCivilian, ActorData, ActorPc, ActorSoldier, AiBrain, CivilianData, ElementBonus,
-    ElementData, ElementKind, Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, PcData,
-    Posture, SoldierData,
+    ActorCivilian, ActorData, AiBrain, CivilianData, ElementBonus, ElementData, ElementKind,
+    Entity, EntityId, HumanData, NpcData, ObjectData, ObjectType, Posture,
 };
 use crate::engine::EngineInner;
+use crate::engine::test_support::asm::*;
 use crate::engine::types::{LevelAssets, MissionScript};
 use crate::scb::{ClassEntry, Function, ScbFile};
 use crate::vm::{Opcode, Quad};
 
 // ───────── Quad encoders ─────────
-
-fn q_begin_function(volatile: u16, temp: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&volatile.to_le_bytes());
-    ops[2..4].copy_from_slice(&temp.to_le_bytes());
-    Quad {
-        operation: Opcode::BeginFunction as u8,
-        operands: ops,
-    }
-}
-
-fn q_end_function() -> Quad {
-    Quad {
-        operation: Opcode::EndFunction as u8,
-        operands: [0u8; 8],
-    }
-}
-
-fn q_return() -> Quad {
-    Quad {
-        operation: Opcode::Return as u8,
-        operands: [0u8; 8],
-    }
-}
-
-fn q_return_val(sym: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    Quad {
-        operation: Opcode::ReturnVal as u8,
-        operands: ops,
-    }
-}
-
-fn q_aff1_get_param(dst: u16, param_offset: i32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[4..8].copy_from_slice(&param_offset.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff1GetParam as u8,
-        operands: ops,
-    }
-}
 
 const TMP0: u16 = 0xC000;
 
@@ -202,14 +159,7 @@ fn build_scb() -> ScbFile {
         quads: reject_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -233,52 +183,35 @@ fn test_campaign() -> crate::campaign::Campaign {
 }
 
 fn make_pc(robin: bool) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorPc;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(WorldPoint3D::default());
-    Entity::Pc(ActorPc {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        pc: PcData {
-            life_points: 50,
-            robin,
-            profile_index: crate::profiles::CharacterProfileIdx(0),
-            campaign_description_index: Some(0),
-            ..PcData::default()
-        },
-    })
+    let mut entity = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
+    entity.position_iface_mut().clear_pathfinder_index();
+    entity.element_data_mut().active = true;
+    entity
+        .element_data_mut()
+        .set_position(WorldPoint3D::default());
+    let pc = entity.pc_data_mut().expect("PC fixture");
+    pc.life_points = 50;
+    pc.robin = robin;
+    pc.profile_index = crate::profiles::CharacterProfileIdx(0);
+    pc.campaign_description_index = Some(0);
+    entity
 }
 
 fn make_scripted_soldier(script_class: &str) -> Entity {
-    Entity::Soldier(ActorSoldier {
-        element: {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.kind = ElementKind::ActorSoldier;
-            initial_element.active = true;
-            initial_element
-        },
-        actor: ActorData {
-            script_class: script_class.into(),
-            ..ActorData::default()
-        },
-        human: HumanData::default(),
-        npc: NpcData {
-            life_points: 50,
-            ai: crate::element::AiActorData {
-                ai_brain: AiBrain::Enemy(Box::default()),
-                ..Default::default()
-            },
-        },
-        soldier: SoldierData {
-            cached_camp: crate::element::Camp::Lacklandists,
-            ..SoldierData::default()
-        },
-    })
+    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
+        crate::element::Camp::Lacklandists,
+    );
+    entity.position_iface_mut().clear_pathfinder_index();
+    entity.element_data_mut().active = true;
+    entity
+        .actor_data_mut()
+        .expect("script actor fixture")
+        .script_class = script_class.into();
+    entity
+        .npc_data_mut()
+        .expect("script soldier fixture")
+        .life_points = 50;
+    entity
 }
 
 /// Returns the engine plus the actor script handles for: robin PC, a
@@ -290,9 +223,9 @@ fn build_engine() -> (EngineInner, i32, i32, i32) {
     engine.scripts.mission = Some(script);
     engine.attach_script_bindings(&LevelAssets::new());
 
-    let robin_id = engine.add_entity(make_pc(true));
-    let sensitive_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
-    let noov_id = engine.add_entity(make_scripted_soldier("NoOverride"));
+    let robin_id = engine.add_test_entity(make_pc(true));
+    let sensitive_id = engine.add_test_entity(make_scripted_soldier("SourceSensitive"));
+    let noov_id = engine.add_test_entity(make_scripted_soldier("NoOverride"));
 
     let robin_handle = crate::natives::ScriptHandleCodec::actor_handle(robin_id);
     let sensitive_handle = crate::natives::ScriptHandleCodec::actor_handle(sensitive_id);
@@ -471,8 +404,8 @@ fn remove_all_subordinates_force_returns_script_locked_civilian_to_duty() {
     let sim = crate::sim_rng::test_context();
     let mut assets = LevelAssets::new();
     let (mut engine, _, _, _) = build_engine();
-    let member = engine.add_entity(make_scripted_civilian(""));
-    let member_at_post = engine.add_entity(make_scripted_soldier(""));
+    let member = engine.add_test_entity(make_scripted_civilian(""));
+    let member_at_post = engine.add_test_entity(make_scripted_soldier(""));
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
     let chief = engine
         .world
@@ -586,9 +519,9 @@ fn remove_all_subordinates_vm_yield_clears_before_following_add_as_subordinate()
     let sim = crate::sim_rng::test_context();
     let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
-    let old_chief = engine.add_entity(make_scripted_soldier(""));
-    let new_chief = engine.add_entity(make_scripted_soldier(""));
-    let old_member = engine.add_entity(make_scripted_soldier(""));
+    let old_chief = engine.add_test_entity(make_scripted_soldier(""));
+    let new_chief = engine.add_test_entity(make_scripted_soldier(""));
+    let old_member = engine.add_test_entity(make_scripted_soldier(""));
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     engine
@@ -687,7 +620,7 @@ fn filter_allows_when_actor_not_bound_to_any_script() {
     let script = MissionScript::from_scb(build_scb()).expect("mission script builds");
     engine.scripts.mission = Some(script);
 
-    let unbound_id = engine.add_entity(make_scripted_soldier("SourceSensitive"));
+    let unbound_id = engine.add_test_entity(make_scripted_soldier("SourceSensitive"));
     let unbound_handle = crate::natives::ScriptHandleCodec::actor_handle(unbound_id);
 
     let stim = crate::ai::Stimulus::new(crate::ai::StimulusType::EventView);
@@ -820,12 +753,12 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         Some(MissionScript::from_scb(build_scb()).expect("closure-review mission script builds"));
 
     // Keep the officer and candidates off null human handle zero.
-    engine.add_entity(make_pc(true));
-    let officer_id = engine.add_entity(make_scripted_soldier(""));
+    engine.add_test_entity(make_pc(true));
+    let officer_id = engine.add_test_entity(make_scripted_soldier(""));
     let mut candidates = Vec::new();
     for index in 0..24 {
         let class = if index < 3 { "RejectAll" } else { "" };
-        candidates.push(engine.add_entity(make_scripted_soldier(class)));
+        candidates.push(engine.add_test_entity(make_scripted_soldier(class)));
     }
 
     for (index, id) in std::iter::once(officer_id)
@@ -946,75 +879,6 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
 // `prototype.FilterAIEvent(source, event)` from inside a running
 // script — implemented via a yield-and-resume pipeline
 // (`StopReason::Yield` and the sole `EngineInner` callback driver).
-
-fn q_aff0_iconstant(dst: u16, constant: i32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[4..8].copy_from_slice(&constant.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff0IConstant as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_param(sym: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeParam as u8,
-        operands: ops,
-    }
-}
-
-fn q_native_call(index: u32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..4].copy_from_slice(&index.to_le_bytes());
-    Quad {
-        operation: Opcode::NativeCall as u8,
-        operands: ops,
-    }
-}
-
-fn q_aff1_native_get_return(dst: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff1NativeGetReturn as u8,
-        operands: ops,
-    }
-}
-
-fn q_iadd(dst: u16, a: u16, b: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[2..4].copy_from_slice(&a.to_le_bytes());
-    ops[4..6].copy_from_slice(&b.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff2IAdd as u8,
-        operands: ops,
-    }
-}
-
-fn q_ieq(dst: u16, a: u16, b: u16) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&dst.to_le_bytes());
-    ops[2..4].copy_from_slice(&a.to_le_bytes());
-    ops[4..6].copy_from_slice(&b.to_le_bytes());
-    Quad {
-        operation: Opcode::Aff2IEq as u8,
-        operands: ops,
-    }
-}
-
-fn q_if_not_zero_goto(sym: u16, addr: u32) -> Quad {
-    let mut ops = [0u8; 8];
-    ops[0..2].copy_from_slice(&sym.to_le_bytes());
-    ops[4..8].copy_from_slice(&addr.to_le_bytes());
-    Quad {
-        operation: Opcode::IfNotZeroGoto as u8,
-        operands: ops,
-    }
-}
 
 const TMP1: u16 = 0xC004;
 const TMP2: u16 = 0xC008;
@@ -1160,14 +1024,7 @@ fn build_nested_scb_with_inner_native(inner_native: Option<crate::natives::Nativ
         quads: inner_quads,
     };
 
-    let startup = ClassEntry {
-        source_file: "test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: vec![],
-        functions: vec![],
-        quads: vec![],
-    };
+    let startup = crate::engine::test_support::asm::empty_startup_class("test.scs".into());
 
     ScbFile {
         version: crate::scb::SCB_VERSION,
@@ -1991,12 +1848,12 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
         let mut engine = EngineInner::new();
         let (unlocker, observer) = if unlocker_is_earlier {
             (
-                engine.add_entity(make_pc(true)),
-                engine.add_entity(make_pc(false)),
+                engine.add_test_entity(make_pc(true)),
+                engine.add_test_entity(make_pc(false)),
             )
         } else {
-            let observer = engine.add_entity(make_pc(false));
-            let unlocker = engine.add_entity(make_pc(true));
+            let observer = engine.add_test_entity(make_pc(false));
+            let unlocker = engine.add_test_entity(make_pc(true));
             (unlocker, observer)
         };
         let assets = LevelAssets::new();
@@ -2127,8 +1984,8 @@ fn action_change_ordering_engine(
     } else {
         ("ActionObserver", "PostureMutator")
     };
-    let first = engine.add_entity(make_scripted_soldier(first_class));
-    let second = engine.add_entity(make_scripted_soldier(second_class));
+    let first = engine.add_test_entity(make_scripted_soldier(first_class));
+    let second = engine.add_test_entity(make_scripted_soldier(second_class));
     let (mutator, observer) = if mutator_before_observer {
         (first, second)
     } else {
@@ -2181,7 +2038,7 @@ fn observed_action_args(engine: &EngineInner, actor: EntityId) -> (i32, i32) {
 fn action_change_unbound_nonempty_script_class_does_not_consume_transition() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
-    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let actor = engine.add_test_entity(make_scripted_soldier("ActionObserver"));
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine.scripts.mission = Some(
         MissionScript::from_scb(build_action_change_scb(handle, handle))
@@ -2263,7 +2120,7 @@ fn action_change_later_callback_mutation_waits_for_visited_actor_next_pass() {
 fn action_change_self_mutation_stores_live_post_callback_animation() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
-    let actor = engine.add_entity(make_scripted_soldier("SelfPostureMutator"));
+    let actor = engine.add_test_entity(make_scripted_soldier("SelfPostureMutator"));
     let handle = crate::natives::ScriptHandleCodec::actor_handle(actor);
     engine.scripts.mission = Some(
         MissionScript::from_scb(build_action_change_scb(handle, handle))
@@ -2313,7 +2170,7 @@ fn ai_sequence_launch_drains_immediate_engine_elements_inside_owner_tail() {
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let owner = engine.add_entity(make_scripted_soldier(""));
+    let owner = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
 
     // A real AI alert sequence can place an engine-immediate element after
@@ -2374,8 +2231,8 @@ fn animation_execution_gates_do_not_skip_action_change() {
     ] {
         let mut engine = EngineInner::new();
         engine.mission_domain.campaign = test_campaign();
-        let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
-        let stale = engine.add_entity(make_scripted_soldier(""));
+        let actor = engine.add_test_entity(make_scripted_soldier("ActionObserver"));
+        let stale = engine.add_test_entity(make_scripted_soldier(""));
         engine.remove_entity(stale);
         let assets = LevelAssets::new();
         bind_action_observer(&mut engine, &assets, actor);
@@ -2518,8 +2375,8 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
 
     for movement_order in [OrderType::WalkingUpright, OrderType::WalkingWithSword] {
         let mut engine = EngineInner::new();
-        let actor = engine.add_entity(make_scripted_soldier(""));
-        let stale = engine.add_entity(make_scripted_soldier(""));
+        let actor = engine.add_test_entity(make_scripted_soldier(""));
+        let stale = engine.add_test_entity(make_scripted_soldier(""));
         engine.remove_entity(stale);
         {
             let entity = engine
@@ -2610,8 +2467,8 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
 fn per_actor_wait_initialization_does_not_publish_later_wait_to_earlier_callback() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
-    let first = engine.add_entity(make_scripted_soldier("WaitProbe"));
-    let later = engine.add_entity(make_scripted_soldier(""));
+    let first = engine.add_test_entity(make_scripted_soldier("WaitProbe"));
+    let later = engine.add_test_entity(make_scripted_soldier(""));
     let first_handle = crate::natives::ScriptHandleCodec::actor_handle(first);
     let later_handle = crate::natives::ScriptHandleCodec::actor_handle(later);
     let body = vec![
@@ -2681,7 +2538,7 @@ fn combat_injury_think_finishes_before_same_slot_action_change() {
     use super::tick::{ActorAnimationBoundaryPhase as Phase, capture_actor_animation_boundary};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     engine
         .world
         .entities
@@ -2861,9 +2718,9 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
     use super::tick::{ActorOwnerEnvelopePhase as Phase, capture_actor_owner_envelope};
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_pc(true));
-    let removed = engine.add_entity(make_pc(false));
-    let later = engine.add_entity(make_pc(false));
+    let first = engine.add_test_entity(make_pc(true));
+    let removed = engine.add_test_entity(make_pc(false));
+    let later = engine.add_test_entity(make_pc(false));
     engine.remove_entity(removed);
     let assets = LevelAssets::new();
     let sim = crate::sim_rng::test_context();
@@ -2877,7 +2734,7 @@ fn live_actor_walk_visits_callback_spawned_later_slot_and_skips_holes() {
             |engine, owner| {
                 visited.push(owner);
                 if owner == first {
-                    let id = engine.add_entity(make_pc(false));
+                    let id = engine.add_test_entity(make_pc(false));
                     assert!(
                         id.index() > later.index(),
                         "runtime entities are append-only"
@@ -2910,8 +2767,8 @@ fn earlier_owner_callback_installs_invalid_later_pc_init_order_rejected_same_fra
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_pc(true));
-    let later = engine.add_entity(make_pc(false));
+    let first = engine.add_test_entity(make_pc(true));
+    let later = engine.add_test_entity(make_pc(false));
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, first, &[OrderType::WaitingUprightBored]);
     bind_test_actor_animations(&mut engine, later, &[OrderType::Taking]);
@@ -2968,7 +2825,7 @@ fn terminating_animation_promotes_next_order_before_same_actor_action_change() {
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
-    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let actor = engine.add_test_entity(make_scripted_soldier("ActionObserver"));
     let assets = LevelAssets::new();
     bind_action_observer(&mut engine, &assets, actor);
     bind_test_actor_animations(
@@ -3055,7 +2912,7 @@ fn wait_timer_zero_completes_after_execute_and_before_action_change() {
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = test_campaign();
-    let actor = engine.add_entity(make_scripted_soldier("ActionObserver"));
+    let actor = engine.add_test_entity(make_scripted_soldier("ActionObserver"));
     let assets = LevelAssets::new();
     bind_action_observer(&mut engine, &assets, actor);
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
@@ -3128,7 +2985,7 @@ fn sequence_manager_instruction_rewrites_terminated_motion_to_in_progress() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     engine
         .get_entity_mut(actor)
@@ -3176,7 +3033,7 @@ fn accepted_empty_generic_latches_motion_before_immediate_completion() {
     use crate::sequence::{SequenceElement, SequenceState};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     engine
         .get_entity_mut(actor)
@@ -3232,7 +3089,7 @@ fn turning_selects_sprite_row_after_the_direction_step() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_civilian(""));
+    let actor = engine.add_test_entity(make_scripted_civilian(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
 
@@ -3290,7 +3147,7 @@ fn turning_ignores_stale_sprite_done_while_body_still_rotates() {
     use crate::sprite::MotionState;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_civilian(""));
+    let actor = engine.add_test_entity(make_scripted_civilian(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::Turning]);
 
@@ -3377,7 +3234,7 @@ fn wait_timer_nonzero_preserves_original_extra_zero_frame() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 1);
@@ -3434,7 +3291,7 @@ fn execution_frozen_actor_with_installed_wait_timer_skips_execute_but_completes(
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingUprightBored]);
     let timer_sequence = install_test_wait_timer(&mut engine, &assets, actor, 0);
@@ -3474,7 +3331,7 @@ fn wait_timer_termination_replaces_forwarded_completion_exactly_once() {
     use crate::sequence::{Field, FieldValue};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(
         &mut engine,
@@ -3554,7 +3411,7 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
     use crate::sequence::{Field, FieldValue};
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     let assets = LevelAssets::new();
     bind_test_actor_animations(
         &mut engine,
@@ -3659,8 +3516,8 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
 
     for installer_before_target in [true, false] {
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(make_scripted_soldier(""));
-        let second = engine.add_entity(make_scripted_soldier(""));
+        let first = engine.add_test_entity(make_scripted_soldier(""));
+        let second = engine.add_test_entity(make_scripted_soldier(""));
         let (installer, target) = if installer_before_target {
             (first, second)
         } else {
@@ -3737,8 +3594,8 @@ fn waiting_sword_pair(
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_scripted_soldier(""));
-    let second = engine.add_entity(make_scripted_soldier(""));
+    let first = engine.add_test_entity(make_scripted_soldier(""));
+    let second = engine.add_test_entity(make_scripted_soldier(""));
     let (attacker, defender) = if attacker_before_defender {
         (first, second)
     } else {
@@ -3812,8 +3669,8 @@ fn waiting_sword_execute_faces_world_xy_not_projected_map_xy() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
-    let opponent = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
+    let opponent = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, actor, &[OrderType::WaitingSword]);
     install_test_action(
         &mut engine,
@@ -3960,8 +3817,8 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     use crate::sequence::SequenceElement;
 
     let mut engine = EngineInner::new();
-    let soldier = engine.add_entity(make_scripted_soldier(""));
-    let bottle = engine.add_entity(Entity::Bonus(ElementBonus {
+    let soldier = engine.add_test_entity(make_scripted_soldier(""));
+    let bottle = engine.add_test_entity(Entity::Bonus(ElementBonus {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectOther;
@@ -4030,8 +3887,8 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let weak = engine.add_entity(make_pc(true));
-    let opponent = engine.add_entity(make_pc(false));
+    let weak = engine.add_test_entity(make_pc(true));
+    let opponent = engine.add_test_entity(make_pc(false));
     bind_test_actor_animations(&mut engine, weak, &[OrderType::BeingWeakSword]);
     install_test_action(
         &mut engine,
@@ -4092,8 +3949,8 @@ fn frozen_all_stunned_sword_initialisation_preserves_smalltalk_initiative() {
     use crate::titbit::{ElementHandle, TitbitKind};
 
     let mut engine = EngineInner::new();
-    let stunned = engine.add_entity(make_pc(true));
-    let opponent = engine.add_entity(make_pc(false));
+    let stunned = engine.add_test_entity(make_pc(true));
+    let opponent = engine.add_test_entity(make_pc(false));
     bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
     install_test_action(
         &mut engine,
@@ -4150,9 +4007,9 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
 
     let mut engine = EngineInner::new();
     // AI HumanHandle zero is the legacy null sentinel.
-    let _sentinel_slot = engine.add_entity(make_pc(false));
-    let stunned = engine.add_entity(make_pc(true));
-    let opponent = engine.add_entity(make_scripted_soldier(""));
+    let _sentinel_slot = engine.add_test_entity(make_pc(false));
+    let stunned = engine.add_test_entity(make_pc(true));
+    let opponent = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, stunned, &[OrderType::BeingStunnedSword]);
     install_test_action(
         &mut engine,
@@ -4218,7 +4075,7 @@ fn civilian_random_speech_closes_its_owner_boundary_before_the_lock_gate() {
     use crate::profiles::CivilianType;
 
     let mut engine = EngineInner::new();
-    let beggar = engine.add_entity(make_scripted_civilian(""));
+    let beggar = engine.add_test_entity(make_scripted_civilian(""));
     if let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() {
         civilian.civilian.cached_civilian_type = CivilianType::Beggar;
         civilian.npc.register_number = 0;
@@ -4485,8 +4342,8 @@ fn earlier_opponent_prune_synchronously_quits_both_combatants() {
         let mut engine = EngineInner::new();
         crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
         crate::engine::test_support::ensure_ordinary_sector(&mut engine, 2, 0);
-        let first = engine.add_entity(make_scripted_soldier(""));
-        let second = engine.add_entity(make_scripted_soldier(""));
+        let first = engine.add_test_entity(make_scripted_soldier(""));
+        let second = engine.add_test_entity(make_scripted_soldier(""));
         let (pruner, mutated) = if pruner_before_mutated {
             (first, second)
         } else {
@@ -4606,9 +4463,9 @@ fn skipped_and_non_waiting_sword_slots_do_not_touch_combat_refs_or_rng() {
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let skipped = engine.add_entity(make_scripted_soldier(""));
-    let ordinary = engine.add_entity(make_scripted_soldier(""));
-    let stale = engine.add_entity(make_scripted_soldier(""));
+    let skipped = engine.add_test_entity(make_scripted_soldier(""));
+    let ordinary = engine.add_test_entity(make_scripted_soldier(""));
+    let stale = engine.add_test_entity(make_scripted_soldier(""));
     engine.remove_entity(stale);
     for actor in [skipped, ordinary] {
         engine
@@ -4660,8 +4517,8 @@ fn waking_up_creation_order_engine(
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
-    let first = engine.add_entity(make_scripted_soldier(""));
-    let second = engine.add_entity(make_scripted_soldier(""));
+    let first = engine.add_test_entity(make_scripted_soldier(""));
+    let second = engine.add_test_entity(make_scripted_soldier(""));
     let (rescuer, target) = if rescuer_before_target {
         (first, second)
     } else {
@@ -4860,7 +4717,7 @@ fn actor_animation_missing_required_antagonist_fails_with_slot_context() {
 #[test]
 fn npc_searching_animation_allows_missing_antagonist() {
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
     bind_test_actor_animations(&mut engine, actor, &[crate::order::OrderType::Searching]);
     let order_id = engine.orders.allocate_order_id();
     install_test_order_queue(
@@ -4894,8 +4751,8 @@ fn npc_searching_animation_allows_missing_antagonist() {
 #[should_panic(expected = "required Searching antagonist")]
 fn npc_searching_animation_rejects_present_stale_antagonist() {
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(""));
-    let stale = engine.add_entity(make_scripted_soldier(""));
+    let actor = engine.add_test_entity(make_scripted_soldier(""));
+    let stale = engine.add_test_entity(make_scripted_soldier(""));
     engine.remove_entity(stale);
     bind_test_actor_animations(&mut engine, actor, &[crate::order::OrderType::Searching]);
     let order_id = engine.orders.allocate_order_id();
@@ -5352,7 +5209,7 @@ fn setup_ai_state_native_probe(
     public_state: i32,
 ) -> (EngineInner, LevelAssets, EntityId) {
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier(class_name));
+    let actor = engine.add_test_entity(make_scripted_soldier(class_name));
     let mut assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![ai_state_native_probe_class(
@@ -5428,7 +5285,7 @@ fn install_unrelated_multi_exit_building_actor(
     use crate::sector::{SectorNumber, SectorType};
     use std::collections::VecDeque;
 
-    let door_actor = engine.add_entity(make_pc(true));
+    let door_actor = engine.add_test_entity(make_pc(true));
     let Entity::Pc(pc) = engine
         .world
         .entities
@@ -5687,11 +5544,11 @@ fn destination_forecast_retains_direct_passage_after_the_live_door_clears() {
 #[test]
 fn script_native_state_effects_stabilize_before_adjacent_instruction() {
     let mut engine = EngineInner::new();
-    let script_driven = engine.add_entity(make_scripted_soldier("ScriptDrivenProbe"));
-    let seeking = engine.add_entity(make_scripted_soldier("SeekingProbe"));
-    let seeking_filter_zero = engine.add_entity(make_scripted_soldier("SeekingFilterZero"));
-    let seeking_at_point = engine.add_entity(make_scripted_soldier("SeekingAtPoint"));
-    let default = engine.add_entity(make_scripted_soldier("DefaultProbe"));
+    let script_driven = engine.add_test_entity(make_scripted_soldier("ScriptDrivenProbe"));
+    let seeking = engine.add_test_entity(make_scripted_soldier("SeekingProbe"));
+    let seeking_filter_zero = engine.add_test_entity(make_scripted_soldier("SeekingFilterZero"));
+    let seeking_at_point = engine.add_test_entity(make_scripted_soldier("SeekingAtPoint"));
+    let default = engine.add_test_entity(make_scripted_soldier("DefaultProbe"));
     let mut assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![
@@ -6107,10 +5964,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .element_data_mut()
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
-    let mut positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    for (id, entity) in engine.world.entities.occupied() {
-        positions[id] = Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-    }
+    let positions = engine.boundary_positions_snapshot();
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.
@@ -6149,7 +6003,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
 
     let (mut engine, assets, owner) = setup_ai_state_native_probe("DetectionRngProbe", 3);
     let entering_primary = install_unrelated_multi_exit_building_actor(&mut engine, owner);
-    let entering_officer = engine.add_entity(make_scripted_soldier(""));
+    let entering_officer = engine.add_test_entity(make_scripted_soldier(""));
     let owner_camp = engine
         .get_entity(owner)
         .expect("detection RNG owner exists")
@@ -6216,7 +6070,7 @@ fn malformed_soldier_with_friendly_brain_fails_set_ai_state_contextually() {
 #[test]
 fn fleeing_panic_classification_occurs_after_no_event_callback_mutation() {
     let mut engine = EngineInner::new();
-    let actor = engine.add_entity(make_scripted_soldier("PostFilterPanicProbe"));
+    let actor = engine.add_test_entity(make_scripted_soldier("PostFilterPanicProbe"));
     let mut assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![post_filter_panic_class("PostFilterPanicProbe")]),
@@ -6360,7 +6214,7 @@ fn set_ai_state_ignores_start_think_freeze_script_lock_and_ai_lock_results() {
 #[test]
 fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero() {
     let mut engine = EngineInner::new();
-    let enemy = engine.add_entity(make_scripted_soldier("StateMutator"));
+    let enemy = engine.add_test_entity(make_scripted_soldier("StateMutator"));
     let mut assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![state_change_filter_class("StateMutator", true, None)]),
@@ -6452,8 +6306,8 @@ fn enemy_state_change_callback_is_owner_local_observes_outgoing_and_ignores_zero
 #[test]
 fn enemy_state_change_sources_and_same_substate_gate_match_original() {
     let mut engine = EngineInner::new();
-    let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));
-    let target = engine.add_entity(make_pc(true));
+    let enemy = engine.add_test_entity(make_scripted_soldier("StateRecorder"));
+    let target = engine.add_test_entity(make_pc(true));
     let target_raw = target.index();
     let target_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
     let assets = install_state_change_script(
@@ -6526,8 +6380,8 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
 #[test]
 fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state() {
     let mut engine = EngineInner::new();
-    let friendly = engine.add_entity(make_scripted_civilian("FriendlyRecorder"));
-    let target = engine.add_entity(make_pc(true));
+    let friendly = engine.add_test_entity(make_scripted_civilian("FriendlyRecorder"));
+    let target = engine.add_test_entity(make_pc(true));
     let target_handle = crate::natives::ScriptHandleCodec::actor_handle(target);
     let assets = install_state_change_script(
         &mut engine,
@@ -6581,7 +6435,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
 #[test]
 fn owner_state_change_fifo_preserves_every_transition() {
     let mut engine = EngineInner::new();
-    let friendly = engine.add_entity(make_scripted_civilian("FriendlyRecorder"));
+    let friendly = engine.add_test_entity(make_scripted_civilian("FriendlyRecorder"));
     let assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![state_change_filter_class(
@@ -6635,7 +6489,7 @@ fn owner_state_change_fifo_preserves_every_transition() {
 #[test]
 fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
     let mut engine = EngineInner::new();
-    let civilian = engine.add_entity(make_scripted_civilian("InitStateRecorder"));
+    let civilian = engine.add_test_entity(make_scripted_civilian("InitStateRecorder"));
     engine
         .world
         .entities
@@ -6684,8 +6538,8 @@ fn initialization_binds_scripts_before_draining_init_one_ai_state_callbacks() {
 #[test]
 fn initialization_caches_the_aspect_adjusted_initial_view_direction() {
     let mut engine = EngineInner::new();
-    let diagonal = engine.add_entity(make_scripted_civilian(""));
-    let cardinal = engine.add_entity(make_scripted_civilian(""));
+    let diagonal = engine.add_test_entity(make_scripted_civilian(""));
+    let cardinal = engine.add_test_entity(make_scripted_civilian(""));
     engine
         .get_entity_mut(diagonal)
         .expect("diagonal civilian")
@@ -6723,7 +6577,7 @@ fn initialization_caches_the_aspect_adjusted_initial_view_direction() {
 #[test]
 fn direct_ai_drain_consumes_civilian_blink_enemy_request() {
     let mut engine = EngineInner::new();
-    let civilian = engine.add_entity(make_scripted_civilian(""));
+    let civilian = engine.add_test_entity(make_scripted_civilian(""));
     engine
         .world
         .entities
@@ -6758,8 +6612,8 @@ fn direct_ai_drain_consumes_civilian_blink_enemy_request() {
 
 fn run_cross_owner_state_change_order(mutator_first: bool) -> i32 {
     let mut engine = EngineInner::new();
-    let mutator = engine.add_entity(make_scripted_soldier("CrossMutator"));
-    let observer = engine.add_entity(make_scripted_soldier("CrossObserver"));
+    let mutator = engine.add_test_entity(make_scripted_soldier("CrossMutator"));
+    let observer = engine.add_test_entity(make_scripted_soldier("CrossObserver"));
     let observer_handle = crate::natives::ScriptHandleCodec::actor_handle(observer);
     let assets = install_state_change_script(
         &mut engine,
@@ -6808,7 +6662,7 @@ fn owner_local_callbacks_expose_only_prior_creation_slots() {
 #[test]
 fn ai_human_handle_resolution_preserves_soldier_kind() {
     let mut engine = EngineInner::new();
-    let target = engine.add_entity(make_scripted_soldier("SoldierTarget"));
+    let target = engine.add_test_entity(make_scripted_soldier("SoldierTarget"));
 
     assert_eq!(
         engine.expect_human_id_for_ai_handle(target.index(), "test target"),
@@ -6820,8 +6674,8 @@ fn ai_human_handle_resolution_preserves_soldier_kind() {
 #[test]
 fn ai_focus_accepts_live_object_element() {
     let mut engine = EngineInner::new();
-    let observer = engine.add_entity(make_scripted_soldier(""));
-    let ale = engine.add_entity(Entity::Bonus(ElementBonus {
+    let observer = engine.add_test_entity(make_scripted_soldier(""));
+    let ale = engine.add_test_entity(Entity::Bonus(ElementBonus {
         element: {
             let mut initial_element = ElementData::default();
             initial_element.kind = ElementKind::ObjectBonus;
@@ -6862,7 +6716,7 @@ fn ai_focus_accepts_live_object_element() {
 #[test]
 fn direct_parade_and_special_strike_drain_boundary_does_not_leak() {
     let mut engine = EngineInner::new();
-    let enemy = engine.add_entity(make_scripted_soldier("StateRecorder"));
+    let enemy = engine.add_test_entity(make_scripted_soldier("StateRecorder"));
     let assets = install_state_change_script(
         &mut engine,
         state_change_scb(vec![state_change_filter_class(
@@ -6954,13 +6808,13 @@ fn unavailable_state_change_callbacks_are_consumed() {
     let sim = crate::sim_rng::test_context();
 
     let mut no_mission = EngineInner::new();
-    let actor = no_mission.add_entity(make_scripted_soldier("StateRecorder"));
+    let actor = no_mission.add_test_entity(make_scripted_soldier("StateRecorder"));
     queue_seeking(&mut no_mission, actor);
     no_mission.drain_ai_state_change_notifications_for(&sim, &assets, actor);
     assert_consumed(&no_mission, actor);
 
     let mut unbound = EngineInner::new();
-    let actor = unbound.add_entity(make_scripted_soldier("StateRecorder"));
+    let actor = unbound.add_test_entity(make_scripted_soldier("StateRecorder"));
     let assets = install_state_change_script(
         &mut unbound,
         state_change_scb(vec![state_change_filter_class(
@@ -6974,7 +6828,7 @@ fn unavailable_state_change_callbacks_are_consumed() {
     assert_consumed(&unbound, actor);
 
     let mut no_override = EngineInner::new();
-    let actor = no_override.add_entity(make_scripted_soldier("NoOverride"));
+    let actor = no_override.add_test_entity(make_scripted_soldier("NoOverride"));
     let assets = install_state_change_script(&mut no_override, build_scb());
     bind_state_change_actor(&mut no_override, actor, "NoOverride");
     queue_seeking(&mut no_override, actor);
@@ -6982,7 +6836,7 @@ fn unavailable_state_change_callbacks_are_consumed() {
     assert_consumed(&no_override, actor);
 
     let mut unscripted = EngineInner::new();
-    let actor = unscripted.add_entity(make_scripted_soldier(""));
+    let actor = unscripted.add_test_entity(make_scripted_soldier(""));
     let assets = install_state_change_script(
         &mut unscripted,
         state_change_scb(vec![state_change_filter_class(
@@ -7002,7 +6856,7 @@ fn unavailable_state_change_callbacks_are_consumed() {
     );
 
     let mut unscripted_tail = EngineInner::new();
-    let actor = unscripted_tail.add_entity(make_scripted_soldier(""));
+    let actor = unscripted_tail.add_test_entity(make_scripted_soldier(""));
     queue_seeking(&mut unscripted_tail, actor);
     {
         let ai = unscripted_tail
@@ -7031,7 +6885,7 @@ fn unavailable_state_change_callbacks_are_consumed() {
     );
 
     let mut disabled = EngineInner::new();
-    let actor = disabled.add_entity(make_scripted_soldier("StateRecorder"));
+    let actor = disabled.add_test_entity(make_scripted_soldier("StateRecorder"));
     let assets = install_state_change_script(
         &mut disabled,
         state_change_scb(vec![state_change_filter_class(
@@ -7069,11 +6923,11 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
             "EnemyWakeOrder"
         };
         let owner = if friendly {
-            engine.add_entity(make_scripted_civilian(class_name))
+            engine.add_test_entity(make_scripted_civilian(class_name))
         } else {
-            engine.add_entity(make_scripted_soldier(class_name))
+            engine.add_test_entity(make_scripted_soldier(class_name))
         };
-        let observer = engine.add_entity(make_scripted_civilian(""));
+        let observer = engine.add_test_entity(make_scripted_civilian(""));
         let mut assets = install_state_change_script(
             &mut engine,
             state_change_scb(vec![ai_state_native_probe_class(class_name, 1, 1)]),

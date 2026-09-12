@@ -203,6 +203,7 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
 /// The numeric layout is preserved so savegame compatibility is possible
 /// if needed.
 #[derive(
+    Default,
     Debug,
     Clone,
     Copy,
@@ -220,6 +221,7 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
 #[allow(non_camel_case_types)] // preserve original naming for clarity
 pub enum Substate {
     // -- Sleeping substates --
+    #[default]
     StartSleepingSubstates = 0,
 
     SleepingForever,
@@ -1516,39 +1518,27 @@ pub enum CrossNpcAction {
     /// (reciprocal cleanup).
     SetLeftCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         neighbour: Option<AiEntityHandle>,
     },
     /// Set the target NPC's right combat neighbour link (one-way).
     SetRightCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         neighbour: Option<AiEntityHandle>,
     },
     /// One-way counterpart of the original game's rear-archer assignment, used while
     /// applying the reciprocal half of shield-bearer-ahead updates.
     SetArcherBehindMe {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         archer: Option<AiEntityHandle>,
     },
     /// One-way counterpart of the original game's forward shield-bearer assignment, used while
     /// applying the reciprocal half of archer-behind updates.
     SetShieldBearerBeforeMe {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         shield_bearer: Option<AiEntityHandle>,
     },
     /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
@@ -1561,29 +1551,17 @@ pub enum CrossNpcAction {
     /// `target`'s current state being unmodified.
     UpdateLeftCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         old_left: Option<AiEntityHandle>,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         new_left: Option<AiEntityHandle>,
     },
     /// Mirror of [`Self::UpdateLeftCombatNeighbour`] for the right side.
     UpdateRightCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         old_right: Option<AiEntityHandle>,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         new_right: Option<AiEntityHandle>,
     },
     /// Propagate primary target to a phalanx member during
@@ -2208,6 +2186,7 @@ pub enum TargetType {
 
 /// Report type for reconnaissance reports.
 #[derive(
+    Default,
     Debug,
     Clone,
     Copy,
@@ -2224,6 +2203,7 @@ pub enum TargetType {
 )]
 #[repr(u32)]
 pub enum ReportType {
+    #[default]
     Nothing = 0,
     Noise,
     Body,
@@ -2306,54 +2286,12 @@ pub struct DoorCombatInfo {
     pub direction: u16,
     /// The original game's pre-door combat dispatch explicitly permits no adversary.
     /// Slot zero is a live human, so only `None` represents that null pointer.
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     pub adversary: Option<AiEntityHandle>,
 }
 
 #[cfg(test)]
-mod nullable_stimulus_reference_tests {
-    use super::*;
-
-    #[test]
-    fn current_door_adversary_rejects_legacy_bare_zero() {
-        let mut value = serde_json::to_value(DoorCombatInfo {
-            delay: 1,
-            goal: Position::default(),
-            direction: 2,
-            adversary: None,
-        })
-        .unwrap();
-        value["adversary"] = serde_json::json!(0);
-        assert!(serde_json::from_value::<DoorCombatInfo>(value).is_err());
-    }
-
-    #[test]
-    fn door_adversary_slot_zero_round_trips_as_live() {
-        let info = DoorCombatInfo {
-            delay: 1,
-            goal: Position::default(),
-            direction: 2,
-            adversary: Some(AiEntityHandle::new(0)),
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        assert!(json.contains(r#""adversary":{"entity":0}"#));
-        let restored: DoorCombatInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.adversary, Some(AiEntityHandle::new(0)));
-    }
-
-    #[test]
-    fn stimulus_owner_slot_zero_round_trips_as_live() {
-        let mut stimulus = Stimulus::new(StimulusType::NoEvent);
-        stimulus.owner = Some(AiEntityHandle::new(0));
-        let json = serde_json::to_string(&stimulus).unwrap();
-        assert!(json.contains(r#""owner":{"entity":0}"#));
-        let restored: Stimulus = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
-    }
-}
+mod nullable_stimulus_reference_tests;
 
 /// The payload of a [`Stimulus`].
 #[derive(
@@ -2623,6 +2561,7 @@ pub struct ForbiddenRemark {
 // ---------------------------------------------------------------------------
 
 #[derive(
+    Default,
     Debug,
     Clone,
     Serialize,
@@ -2635,24 +2574,9 @@ pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
-}
-
-impl Default for ReconnaissanceReport {
-    fn default() -> Self {
-        Self {
-            seek_position: Position::default(),
-            report_type: ReportType::Nothing,
-            seen_bodies: Vec::new(),
-            charly: None,
-            charly_seen: false,
-        }
-    }
 }
 
 impl ReconnaissanceReport {
@@ -2810,47 +2734,7 @@ impl SeekPoint {
 }
 
 #[cfg(test)]
-mod seek_point_tests {
-    use super::{Position, SeekPoint, SeekPointDirection};
-
-    fn direction(x: f32, y: f32, value: u16) -> SeekPointDirection {
-        SeekPointDirection {
-            position: Position {
-                x,
-                y,
-                ..Position::default()
-            },
-            direction: value,
-        }
-    }
-
-    #[test]
-    fn add_if_near_handles_duplicate_without_growing_unique_directions() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(point.add_if_near(&direction(110.0, 190.0, 7)));
-        assert_eq!(point.directions, vec![7]);
-    }
-
-    #[test]
-    fn add_if_near_appends_distinct_direction() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(point.add_if_near(&direction(110.0, 190.0, 12)));
-        assert_eq!(point.directions, vec![7, 12]);
-    }
-
-    #[test]
-    fn add_if_near_rejects_direction_outside_tolerance() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(!point.add_if_near(&direction(111.0, 200.0, 12)));
-        assert_eq!(point.directions, vec![7]);
-    }
-}
+mod seek_point_tests;
 
 /// A seek-point direction from the level file (position + facing).
 #[derive(
@@ -3137,27 +3021,7 @@ impl DoorSeekInfo {
 }
 
 #[cfg(test)]
-mod door_seek_schema_tests {
-    use super::*;
-
-    #[test]
-    fn current_door_seek_schema_requires_exact_sector_provenance_field() {
-        let info = DoorSeekInfo {
-            door_index: crate::gate::DoorIndex::new(1).unwrap(),
-            door_type: crate::gate::DoorType::Default,
-            point_out: MapPoint::new(1.0, 2.0),
-            position_in: Position::default(),
-            sector_out: 3,
-            sector_out_index: crate::fast_find_grid::SectorIndex::new(4),
-            sector_in: 5,
-            layer_out: 6,
-            npc_villain_authorized_direct: true,
-        };
-        let mut value = serde_json::to_value(info).unwrap();
-        value.as_object_mut().unwrap().remove("sector_out_index");
-        assert!(serde_json::from_value::<DoorSeekInfo>(value).is_err());
-    }
-}
+mod door_seek_schema_tests;
 
 /// Build the static authorization cached by [`DoorSeekInfo`].
 ///

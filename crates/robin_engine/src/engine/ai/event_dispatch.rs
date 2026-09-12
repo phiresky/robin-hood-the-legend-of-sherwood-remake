@@ -107,20 +107,6 @@ impl EngineInner {
     /// `process_pending_ai_orders` routes to `actor.order_queue`.
     /// These become `Turn` sequence elements that complete in one
     /// frame and fire `EventDone`.  We replicate that here: set the
-    /// entity's direction toward the target position, then dispatch
-    /// `EventDone` so the AI state machine continues.
-    /// Drain animation-type orders (Pointing, RaisingShield, LoweringShield,
-    /// Menacing, etc.) from NPC order queues and start them as `active_ai_anim`.
-    /// Like `process_turn_orders` but for multi-frame animations that
-    /// need EventDone when the sprite animation completes.
-    pub(in crate::engine) fn process_animation_orders(&mut self) {
-        // Legacy entry point — left as a no-op now that the animation
-        // driver reads the front order directly via
-        // `current_order_for_actor`.  Animations booked onto sequence
-        // elements are picked up automatically; there is no longer a
-        // separate drain-and-rebook step.
-    }
-
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
     #[cfg(test)]
@@ -904,17 +890,13 @@ impl EngineInner {
             }
         }
 
-        let npc = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_actor_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "recovery owner {} lost AI actor data before RestoreDetectableObjects",
-                    npc_id.index()
-                )
-            });
+        let npc = self.world.entities.expect_ai_actor_data_mut(
+            npc_id,
+            format_args!(
+                "recovery owner {} lost AI actor data before RestoreDetectableObjects",
+                npc_id.index()
+            ),
+        );
         let objects = npc
             .detectable_lists
             .get_mut(DetectableType::Object as usize)

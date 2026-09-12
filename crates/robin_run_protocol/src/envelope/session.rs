@@ -285,8 +285,12 @@ pub struct ReplaySessionGenesisClaimV1 {
 
 impl ReplaySessionGenesisClaimV1 {
     pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1, self)
+        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
     }
+}
+
+impl crate::canonical::DomainSignedClaim for ReplaySessionGenesisClaimV1 {
+    const DOMAIN: &'static [u8] = REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1;
 }
 
 impl Validate for ReplaySessionGenesisClaimV1 {
@@ -408,11 +412,7 @@ impl ReplaySessionGenesisV1 {
 impl Validate for ReplaySessionGenesisV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.host_signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "session_genesis.host_signature",
-            });
-        }
+        crate::validation::nonzero("session_genesis.host_signature", &self.host_signature)?;
         Ok(())
     }
 }
@@ -448,8 +448,12 @@ pub struct NamedSeatJoinClaimV1 {
 
 impl NamedSeatJoinClaimV1 {
     pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1, self)
+        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
     }
+}
+
+impl crate::canonical::DomainSignedClaim for NamedSeatJoinClaimV1 {
+    const DOMAIN: &'static [u8] = NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1;
 }
 
 impl Validate for NamedSeatJoinClaimV1 {
@@ -498,11 +502,7 @@ impl NamedSeatJoinAttestationV1 {
 impl Validate for NamedSeatJoinAttestationV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.claim.validate()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "named_seat_join.signature",
-            });
-        }
+        crate::validation::nonzero("named_seat_join.signature", &self.signature)?;
         Ok(())
     }
 }

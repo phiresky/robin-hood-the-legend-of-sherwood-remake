@@ -353,9 +353,7 @@ pub(crate) async fn show_main_menu(
         .collect();
     let positions = align_bottom_right(&labels, btn_w, btn_h);
 
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (i, mb) in positions.iter().enumerate() {
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
             i as u32, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,

@@ -7,23 +7,23 @@ use super::*;
 /// reproducing Original's unchecked negative indexing or exhausting memory.
 fn initialize_script_global(globals: &mut Vec<i32>, id: i32, value: i32) {
     let Ok(index) = usize::try_from(id) else {
-        tracing::warn!("Script Error: InitGlobal has negative ID {id}");
+        tracing::warn!(target: "script","Script error: InitGlobal has negative ID {id}");
         return;
     };
     if index >= globals.len() {
         let Some(length) = index.checked_add(16) else {
-            tracing::warn!("Script Error: InitGlobal growth overflows for ID {id}");
+            tracing::warn!(target: "script","Script error: InitGlobal growth overflows for ID {id}");
             return;
         };
         if length > crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT {
-            tracing::warn!(
-                "Script Error: InitGlobal ID {id} requires {length} slots, exceeding allocation policy {}",
+            tracing::warn!(target: "script",
+                "Script error: InitGlobal ID {id} requires {length} slots, exceeding allocation policy {}",
                 crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT
             );
             return;
         }
         if let Err(error) = globals.try_reserve_exact(length - globals.len()) {
-            tracing::warn!("Script Error: InitGlobal ID {id} allocation failed: {error}");
+            tracing::warn!(target: "script","Script error: InitGlobal ID {id} allocation failed: {error}");
             return;
         }
         globals.resize(length, 0);
@@ -62,7 +62,7 @@ impl NativeContext<'_, '_> {
                 {
                     *slot = value;
                 } else {
-                    tracing::warn!("Script Error: Non-valid ID for script global {id}");
+                    tracing::warn!(target: "script","Script error: Non-valid ID for script global {id}");
                 }
                 0
             }
@@ -75,7 +75,7 @@ impl NativeContext<'_, '_> {
                 {
                     Some(v) => *v,
                     None => {
-                        tracing::warn!("Script Error: Non-valid ID for script global {id}");
+                        tracing::warn!(target: "script","Script error: Non-valid ID for script global {id}");
                         -1
                     }
                 }
@@ -132,7 +132,7 @@ impl NativeContext<'_, '_> {
                 // return 0 *without mutating state*; otherwise
                 // allocate, set sequence_level = 1, return 1.
                 if self.script_state.sequence_recorder.is_some() {
-                    tracing::error!(
+                    tracing::warn!(target: "script",
                         "Script error in Start: cannot start a new record sequence while another is still being recorded"
                     );
                     0
@@ -152,12 +152,12 @@ impl NativeContext<'_, '_> {
                             1
                         }
                         None => {
-                            tracing::error!("Script Error: Trying to launch an empty sequence");
+                            tracing::warn!(target: "script","Script error: Trying to launch an empty sequence");
                             1
                         }
                     }
                 } else {
-                    tracing::error!(
+                    tracing::warn!(target: "script",
                         "Script error in Thanx: End a sequence recording without ever started it"
                     );
                     0
@@ -172,7 +172,7 @@ impl NativeContext<'_, '_> {
                     let level = rec.advance_level();
                     level as i32
                 } else {
-                    tracing::error!(
+                    tracing::warn!(target: "script",
                         "Script error in Then: called outside of a Start/Thanx sequence"
                     );
                     0
@@ -219,11 +219,11 @@ impl NativeContext<'_, '_> {
                 // gating on incapacitation.)
                 let actor = stack.pop_i32();
                 let Some(e) = self.get_entity(actor) else {
-                    tracing::warn!("Script Error: IsActorHS with invalid actor handle {actor}");
+                    tracing::warn!(target: "script","Script error: IsActorHS with invalid actor handle {actor}");
                     return 0;
                 };
                 if !e.is_actor() {
-                    tracing::warn!("Script Error: IsActorHS with non-actor handle {actor}");
+                    tracing::warn!(target: "script","Script error: IsActorHS with non-actor handle {actor}");
                     return 0;
                 }
                 let posture = e.element_data().posture();
@@ -242,14 +242,9 @@ impl NativeContext<'_, '_> {
             StopActor => {
                 let actor = stack.pop_i32();
                 if self.get_entity(actor).is_some_and(|e| e.is_actor()) {
-                    self.pending_yield = Some(crate::interp::NativeYield {
-                        operation: crate::interp::NativeOperation::EngineAction(
-                            crate::interp::SynchronousScriptRequest::StopActor {
-                                actor,
-                                native_return: 0,
-                            },
-                        ),
-                        resume: crate::interp::ResumePolicy::Fixed(0),
+                    self.yield_engine_action(crate::interp::SynchronousScriptRequest::StopActor {
+                        actor,
+                        native_return: 0,
                     });
                 } else {
                     tracing::warn!("StopActor: invalid or non-actor handle {actor}");
@@ -358,13 +353,13 @@ impl NativeContext<'_, '_> {
                 let loc_b = stack.pop_i32();
                 let loc_a = stack.pop_i32();
                 if !self.is_script_point(loc_a) {
-                    tracing::error!(
-                        "Script Error: 1st argument of GetDistance is no point (handle {loc_a})"
+                    tracing::warn!(target: "script",
+                        "Script error: 1st argument of GetDistance is no point (handle {loc_a})"
                     );
                     0
                 } else if !self.is_script_point(loc_b) {
-                    tracing::error!(
-                        "Script Error: 2nd argument of GetDistance is no point (handle {loc_b})"
+                    tracing::warn!(target: "script",
+                        "Script error: 2nd argument of GetDistance is no point (handle {loc_b})"
                     );
                     0
                 } else {
@@ -527,7 +522,7 @@ impl NativeContext<'_, '_> {
                 let action_code = stack.pop_i32();
                 let Ok(script_action) = crate::profiles::ScriptAction::try_from(action_code as u32)
                 else {
-                    tracing::warn!("Script Error: HasAnyPCAction with bad action ID {action_code}");
+                    tracing::warn!(target: "script","Script error: HasAnyPCAction with bad action ID {action_code}");
                     return 0;
                 };
                 let action = script_action.to_action();
@@ -587,7 +582,7 @@ impl NativeContext<'_, '_> {
                 .as_ref()
                 .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
                 .unwrap_or_else(|| {
-                    tracing::warn!("Script Error: GetRansomMoney called outside campaign mode");
+                    tracing::warn!(target: "script","Script error: GetRansomMoney called outside campaign mode");
                     -1
                 }),
             SetRansomMoney => {
@@ -600,7 +595,7 @@ impl NativeContext<'_, '_> {
                         frame_counter,
                     );
                 } else {
-                    tracing::warn!("Script Error: SetRansomMoney called outside campaign mode");
+                    tracing::warn!(target: "script","Script error: SetRansomMoney called outside campaign mode");
                 }
                 0
             }
@@ -694,7 +689,7 @@ impl NativeContext<'_, '_> {
                 } else if let Some(owner) = self.mobile_owner_id(idx - script_count as i32) {
                     Self::actor_handle_from_index(owner.index() as usize)
                 } else {
-                    tracing::debug!("Script Error: invalid actor ID {idx} (normal={script_count})");
+                    tracing::warn!(target: "script","Script error: invalid actor ID {idx} (normal={script_count})");
                     0
                 }
             }
@@ -731,14 +726,14 @@ impl NativeContext<'_, '_> {
                     if self.sound_source_alive(idx as usize) {
                         Self::sound_source_handle_from_index(idx as usize)
                     } else {
-                        tracing::error!(
-                            "Script Error: trying to get a sound source that has already been destroyed ({idx})"
+                        tracing::warn!(target: "script",
+                            "Script error: trying to get a sound source that has already been destroyed ({idx})"
                         );
                         0
                     }
                 } else {
-                    tracing::error!(
-                        "Script Error: invalid sound source ID {idx} (max={})",
+                    tracing::warn!(target: "script",
+                        "Script error: invalid sound source ID {idx} (max={})",
                         self.sound_source_count()
                     );
                     0
@@ -803,8 +798,8 @@ impl NativeContext<'_, '_> {
                     return -1;
                 }
                 if idx >= self.sound_source_count() || !self.sound_source_alive(idx) {
-                    tracing::error!(
-                        "ScriptError: unknown sound source in GetSoundSourceIndex (handle {handle})"
+                    tracing::warn!(target: "script",
+                        "Script error: unknown sound source in GetSoundSourceIndex (handle {handle})"
                     );
                     return -1;
                 }

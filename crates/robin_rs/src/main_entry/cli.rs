@@ -163,7 +163,11 @@ pub struct CliArgs {
     /// TCP port for the local script-RPC HTTP server.
     /// Default 17640 (loopback only). Set to 0 to disable.
     /// See `crate::http_server` for the wire format.
-    #[arg(long, default_value_t = crate::http_server::DEFAULT_PORT)]
+    #[cfg_attr(any(feature = "script-rpc", target_arch = "wasm32"), arg(long, default_value_t = crate::http_server::DEFAULT_PORT))]
+    #[cfg_attr(
+        all(not(feature = "script-rpc"), not(target_arch = "wasm32")),
+        arg(skip = 0)
+    )]
     pub http_server: u16,
 
     /// Run the frame loop with no 25 fps pacing sleep — ticks and
@@ -387,6 +391,38 @@ impl From<CliArgs> for MissionLaunch {
     }
 }
 
+impl MissionLaunch {
+    /// Start a canonical replay request without first cloning the previous
+    /// recording or retaining its admitted custom-asset leases. Capture and
+    /// process policy intentionally survive, just as they do across startup.
+    pub(crate) fn for_replay(&self, data: engine_replay::ReplayData, paused: bool) -> Self {
+        let mut config = self.config.clone();
+        config.replay = None;
+        config.custom_mission = None;
+        config.start_paused |= paused;
+        Self {
+            config,
+            global_options: self.global_options.clone(),
+            replay_data: Some(data),
+            mission_restart: false,
+            resolved_mission_assets: None,
+            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+            simulation_content_export: self.simulation_content_export.clone(),
+            browser_join_redeemed: self.browser_join_redeemed,
+            mp_continue_session: self.mp_continue_session,
+            pending_lua_mission: None,
+            pending_distributed_mod: None,
+            mission_start_map_output: self.mission_start_map_output.clone(),
+            mission_start_map_frame: self.mission_start_map_frame,
+            mission_start_reveal_all: self.mission_start_reveal_all,
+            mission_start_fog_of_war: self.mission_start_fog_of_war,
+            mission_start_viewport_capture: self.mission_start_viewport_capture,
+            mission_start_legacy_save: self.mission_start_legacy_save.clone(),
+            preserve_forced_mission_campaign: self.preserve_forced_mission_campaign,
+        }
+    }
+}
+
 impl std::ops::Deref for MissionLaunch {
     type Target = CliArgs;
     fn deref(&self) -> &CliArgs {
@@ -434,7 +470,11 @@ impl Default for CliArgs {
             proto: None,
             custom_mission: None,
             custom_mission_entry: None,
-            http_server: crate::http_server::DEFAULT_PORT,
+            http_server: if cfg!(any(feature = "script-rpc", target_arch = "wasm32")) {
+                crate::http_server::DEFAULT_PORT
+            } else {
+                0
+            },
             fast_forward: false,
             headless: false,
             start_paused: false,
@@ -1000,12 +1040,11 @@ mod tests {
         assert!(error.contains("prerequisite mission profile id 99"));
     }
 
-    #[test]
-    fn decoded_replay_payload_wins_over_the_original_spec() {
+    fn replay_launch_fixture() -> robin_engine::replay::ReplayData {
         use robin_engine::replay::{ReplayFile, ReplayHeader};
         use std::collections::BTreeMap;
 
-        let data = ReplayFile {
+        ReplayFile {
             header: ReplayHeader {
                 mission_id: "MissionA".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
@@ -1026,7 +1065,57 @@ mod tests {
             load_backs: BTreeMap::new(),
         }
         .try_into()
-        .expect("valid replay fixture");
+        .expect("valid replay fixture")
+    }
+
+    #[test]
+    fn replay_request_replaces_assets_without_changing_capture_or_pause_policy() {
+        let mut previous = super::MissionLaunch {
+            mission_restart: true,
+            mission_start_legacy_save: Some(vec![1, 2, 3]),
+            mission_start_map_frame: 42,
+            mp_continue_session: true,
+            replay_data: Some(replay_launch_fixture()),
+            pending_distributed_mod: Some(std::sync::Arc::from([4u8, 5, 6])),
+            pending_lua_mission: Some(super::PendingLuaMission {
+                rhm_basename: "old".into(),
+                requires_spellforge: false,
+                spellforge_package: None,
+            }),
+            ..Default::default()
+        };
+        previous.replay = Some("old recording".into());
+        previous.custom_mission = Some("old archive".into());
+        previous.start_paused = true;
+        let next = previous.for_replay(replay_launch_fixture(), false);
+        assert!(!next.mission_restart);
+        assert!(next.replay.is_none());
+        assert!(next.custom_mission.is_none());
+        assert!(next.pending_distributed_mod.is_none());
+        assert!(next.pending_lua_mission.is_none());
+        assert!(next.resolved_mission_assets.is_none());
+        assert_eq!(next.replay_data.as_ref().unwrap().header().rng_seed, 0x55aa);
+        assert!(next.start_paused);
+        assert!(next.mp_continue_session);
+        assert_eq!(next.mission_start_map_frame, 42);
+        assert_eq!(next.mission_start_legacy_save, Some(vec![1, 2, 3]));
+        assert!(previous.pending_distributed_mod.is_some());
+        previous.start_paused = false;
+        assert!(
+            previous
+                .for_replay(replay_launch_fixture(), true)
+                .start_paused
+        );
+        assert!(
+            !previous
+                .for_replay(replay_launch_fixture(), false)
+                .start_paused
+        );
+    }
+
+    #[test]
+    fn decoded_replay_payload_wins_over_the_original_spec() {
+        let data = replay_launch_fixture();
         let args = super::MissionLaunch {
             config: super::CliArgs {
                 replay: Some("this-path-must-never-be-read".into()),

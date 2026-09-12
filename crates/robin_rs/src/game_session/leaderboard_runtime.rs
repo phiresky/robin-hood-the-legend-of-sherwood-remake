@@ -430,9 +430,6 @@ fn poll_metadata_once(
                 *metadata = MetadataLoad::Ready(loaded.clone());
                 Ok(Some(loaded))
             }
-            Some(Ok(other)) => Err(format!(
-                "leaderboard metadata request returned the wrong event: {other:?}"
-            )),
             Some(Err(error)) => Err(error.to_string()),
         },
         MetadataLoad::Ready(metadata) => Ok(Some(metadata.clone())),

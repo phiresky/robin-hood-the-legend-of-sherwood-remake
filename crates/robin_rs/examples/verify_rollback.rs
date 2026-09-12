@@ -9,14 +9,16 @@
 //! so it can run non-interactively from CI.
 //!
 //! Usage:
-//!   ROBINHOOD_DATA_DIR=datadirs/demo_leicester_ecoste \
-//!     cargo run --example verify_rollback
+//!   cargo build -p robin_rs --example verify_rollback
+//!   target/debug/examples/verify_rollback --data-dir datadirs/demo_leicester_ecoste
+//! `ROBINHOOD_DATA_DIR` remains the fallback when `--data-dir` is omitted.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+use clap::Parser;
 use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::replay::state_hash;
 use robin_rs::Host;
@@ -25,11 +27,25 @@ const WARMUP_FRAMES: u32 = 30;
 const TOTAL_FRAMES: u32 = 100;
 const WINDOW: usize = 25;
 
+#[derive(Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    /// Original installation root containing Data/ and optional locale overlays.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    if let Ok(dir) = std::env::var("ROBINHOOD_DATA_DIR") {
-        std::env::set_current_dir(&dir).expect("chdir to ROBINHOOD_DATA_DIR");
+    let args = Args::parse();
+    if let Some(dir) = args
+        .data_dir
+        .or_else(|| std::env::var_os("ROBINHOOD_DATA_DIR").map(PathBuf::from))
+    {
+        // TODO: replace this tool's process-wide bootstrap once all downstream
+        // Original profile, sprite-bank and mission loaders accept an explicit filesystem.
+        std::env::set_current_dir(&dir)
+            .with_context(|| format!("open Original data root {}", dir.display()))?;
     }
     robin_rs::main_entry::register_language_data_paths_for_tool();
 

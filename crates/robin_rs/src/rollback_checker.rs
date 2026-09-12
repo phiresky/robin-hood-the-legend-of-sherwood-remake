@@ -22,8 +22,8 @@ use std::sync::{
 use std::thread::JoinHandle;
 use web_time::Instant;
 
-use crate::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_frames_to_frame};
 use robin_engine::engine::{Engine, LevelAssets};
+use robin_engine::sim_timeline::{CommandJournal, SimSnapshot as Snapshot, replay_frames_to_frame};
 
 /// Number of frames to rewind and replay each check.  5 ticks = 0.2s
 /// at the game's fixed 25 fps simulation rate.
@@ -104,9 +104,10 @@ impl RollbackChecker {
         let Some(start_frame) = end_frame_exclusive.checked_sub(ROLLBACK_WINDOW as u32) else {
             return;
         };
-        let Some(start) =
-            history.restore_recent(start_frame, crate::sim_timeline::RestorePolicy::Exact)
-        else {
+        let Some(start) = history.restore_recent(
+            start_frame,
+            robin_engine::sim_timeline::RestorePolicy::Exact,
+        ) else {
             tracing::warn!(
                 start_frame,
                 end_frame_exclusive,

@@ -205,12 +205,7 @@ impl ExpectedPublicationTopologyV3 {
 }
 
 pub(super) fn valid_publication_relative_path_v3(path: &str) -> bool {
-    !path.is_empty()
-        && !path.starts_with('/')
-        && !path.ends_with('/')
-        && path.split('/').all(|component| {
-            !component.is_empty() && !matches!(component, "." | "..") && !component.contains('\\')
-        })
+    crate::fs_util::valid_relative_path(path)
 }
 
 #[cfg(test)]

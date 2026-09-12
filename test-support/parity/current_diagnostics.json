@@ -1,0 +1,499 @@
+{
+  "route_construction_events": [
+    {
+      "kind": "move",
+      "actor": {
+        "kind": "soldier",
+        "index": 7
+      },
+      "source": {
+        "x": {
+          "bits": 0
+        },
+        "y": {
+          "bits": 0
+        }
+      },
+      "source_sector": 1,
+      "source_level": 2,
+      "goal": {
+        "x": {
+          "bits": 0
+        },
+        "y": {
+          "bits": 0
+        }
+      },
+      "goal_sector": 3,
+      "goal_level": 2,
+      "gates": [
+        {
+          "gate_id": 9,
+          "direct": true,
+          "sector_out": 1,
+          "level_out": 2,
+          "sector_in": 3,
+          "level_in": 2,
+          "kind": "door",
+          "score": {
+            "bits": 1065353216,
+            "value": 1
+          }
+        }
+      ],
+      "ordinal": 4,
+      "phase": "constructed",
+      "result": "success"
+    }
+  ],
+  "popup_events": [
+    {
+      "ordinal": 0,
+      "stage": "nested_refresh_entry",
+      "universal_frame_counter": 44,
+      "source_surface": 7,
+      "colorize_background": true,
+      "remove_mouse": false
+    }
+  ],
+  "ai_forecast_events": [
+    {
+      "ordinal": 0,
+      "phase": "resolved",
+      "target": {
+        "kind": "soldier",
+        "index": 7
+      },
+      "input": {
+        "position": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "sector": 1,
+        "level": 2,
+        "passing_door": false
+      },
+      "moving_upwards": false,
+      "resolution": "current_position",
+      "resolved": {
+        "position": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "sector": 1,
+        "level": 2,
+        "direction": 3
+      }
+    }
+  ],
+  "alert_formation_events": [
+    {
+      "ordinal": 0,
+      "stage": "candidate",
+      "invocation": 9,
+      "scan_index": 2,
+      "candidate": {
+        "kind": "soldier",
+        "index": 8
+      },
+      "active": true,
+      "script_locked": false,
+      "eligibility": {
+        "rank": true,
+        "able_to_help": true,
+        "allowed_to_leave_post": true,
+        "can_call": false,
+        "max_radius": null,
+        "squared_radius": null,
+        "capacity": null,
+        "think": null
+      },
+      "rejection_stage": "can_call"
+    }
+  ],
+  "goto_authorization_events": [
+    {
+      "ordinal": 0,
+      "actor": {
+        "kind": "soldier",
+        "index": 7
+      },
+      "source": {
+        "point": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "layer": 2
+      },
+      "move_box": {
+        "top_left": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "bottom_right": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        }
+      },
+      "destination": {
+        "point": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "sector": 3,
+        "layer": 2
+      },
+      "requested_flags": 1,
+      "effective_flags": 3,
+      "phase": "straight",
+      "outcome": "blocked",
+      "straight_authorized": false,
+      "path_authorized": null
+    },
+    {
+      "ordinal": 1,
+      "actor": {
+        "kind": "soldier",
+        "index": 7
+      },
+      "source": null,
+      "move_box": null,
+      "destination": {
+        "point": {
+          "x": {
+            "bits": 0
+          },
+          "y": {
+            "bits": 0
+          }
+        },
+        "sector": null,
+        "layer": 2
+      },
+      "requested_flags": 1,
+      "effective_flags": 1,
+      "phase": "already_there",
+      "outcome": "accepted",
+      "straight_authorized": null,
+      "path_authorized": null
+    }
+  ],
+  "target_lifecycle_events": [
+    {
+      "ordinal": 0,
+      "frame_ordinal": 6,
+      "phase": "engine_send_message_callback_entry",
+      "sequence_id": 701,
+      "sequence_element_id": 902,
+      "command_level": 2,
+      "state": 0,
+      "command": 15,
+      "command_name": "send_message",
+      "owner": null,
+      "context": null,
+      "antagonist": null,
+      "antagonist_observed": null,
+      "payload": {
+        "kind": "send_message",
+        "message": 10,
+        "argument": -1,
+        "argument_raw": 4294967295,
+        "extended_argument": 0,
+        "extended_argument_raw": 0
+      },
+      "payload_observed": true,
+      "script_enabled": true,
+      "class_instantiated": null
+    }
+  ],
+  "strike_proposal_events": [
+    {
+      "invocation": 0,
+      "ordinal": 0,
+      "frame_ordinal": 0,
+      "phase": "entry",
+      "actor": {
+        "kind": "pc",
+        "index": 342
+      },
+      "actor_creation_order": 373,
+      "threat": {
+        "kind": "soldier",
+        "index": 140
+      },
+      "threat_creation_order": 171,
+      "principal_opponent": null,
+      "principal_opponent_creation_order": null,
+      "command": 0,
+      "command_name": "null",
+      "also_parade": true,
+      "only_parade": false,
+      "candidate_strike": null,
+      "skill_eligible": null,
+      "alcohol_eligible": null,
+      "time_eligible": null,
+      "time_limit": null,
+      "raw_damage": null,
+      "victim_count": null,
+      "accepted_as_best": null
+    },
+    {
+      "invocation": 0,
+      "ordinal": 1,
+      "frame_ordinal": 1,
+      "phase": "result",
+      "actor": {
+        "kind": "pc",
+        "index": 342
+      },
+      "actor_creation_order": 373,
+      "threat": {
+        "kind": "soldier",
+        "index": 140
+      },
+      "threat_creation_order": 171,
+      "principal_opponent": {
+        "kind": "soldier",
+        "index": 137
+      },
+      "principal_opponent_creation_order": 168,
+      "command": 42,
+      "command_name": "parry_sword",
+      "also_parade": true,
+      "only_parade": true,
+      "candidate_strike": null,
+      "skill_eligible": null,
+      "alcohol_eligible": null,
+      "time_eligible": null,
+      "time_limit": 8,
+      "raw_damage": null,
+      "victim_count": null,
+      "accepted_as_best": null
+    },
+    {
+      "invocation": 1,
+      "ordinal": 2,
+      "frame_ordinal": 2,
+      "phase": "entry",
+      "actor": {
+        "kind": "soldier",
+        "index": 12
+      },
+      "actor_creation_order": 44
+    },
+    {
+      "invocation": 1,
+      "ordinal": 3,
+      "frame_ordinal": 3,
+      "phase": "candidate",
+      "actor": {
+        "kind": "soldier",
+        "index": 12
+      },
+      "actor_creation_order": 44,
+      "threat": null,
+      "threat_creation_order": null,
+      "principal_opponent": {
+        "kind": "soldier",
+        "index": 13
+      },
+      "principal_opponent_creation_order": 45,
+      "command": 30,
+      "command_name": "swordstrike_thrust_a",
+      "also_parade": false,
+      "only_parade": false,
+      "candidate_strike": 0,
+      "skill_eligible": true,
+      "alcohol_eligible": true,
+      "time_eligible": true,
+      "time_limit": 1000,
+      "raw_damage": 35,
+      "victim_count": 1,
+      "accepted_as_best": true
+    },
+    {
+      "invocation": 1,
+      "ordinal": 4,
+      "frame_ordinal": 4,
+      "phase": "result",
+      "actor": {
+        "kind": "soldier",
+        "index": 12
+      },
+      "actor_creation_order": 44,
+      "command": 30,
+      "command_name": "swordstrike_thrust_a",
+      "selected_strike": 0,
+      "reason": "strike"
+    }
+  ],
+  "sequence_lifecycle_events": [
+    {
+      "ordinal": 0,
+      "frame_ordinal": 5,
+      "event": "sequence_registered",
+      "phase": "manager_fifo",
+      "element_id": 900,
+      "sequence_id": 700,
+      "owner": {
+        "kind": "pc",
+        "index": 342
+      },
+      "owner_creation_order": 373,
+      "command": 42,
+      "command_name": "parry_sword",
+      "command_level": 1,
+      "state": null,
+      "priority": null,
+      "queue_size_before": 0,
+      "queue_size_after": 1,
+      "actor": null,
+      "actor_creation_order": null,
+      "selected_sequence_id": null,
+      "selected_command": null,
+      "current_order_id": null,
+      "current_order_action": null,
+      "decision": null,
+      "accepted": null
+    },
+    {
+      "ordinal": 1,
+      "frame_ordinal": 7,
+      "event": "lazy_wait_created",
+      "phase": "actor_hourglass_lazy_wait",
+      "element_id": 901,
+      "sequence_id": null,
+      "owner": {
+        "kind": "pc",
+        "index": 342
+      },
+      "owner_creation_order": 373,
+      "command": 1,
+      "command_name": "wait",
+      "command_level": 1,
+      "state": 0,
+      "priority": 1,
+      "queue_size_before": null,
+      "queue_size_after": null,
+      "actor": {
+        "kind": "pc",
+        "index": 342
+      },
+      "actor_creation_order": 373,
+      "selected_sequence_id": null,
+      "selected_command": null,
+      "current_order_id": null,
+      "current_order_action": null,
+      "decision": null,
+      "accepted": null
+    },
+    {
+      "ordinal": 2,
+      "frame_ordinal": 8,
+      "event": "manager_fifo_pop",
+      "phase": "sequence_manager_hourglass",
+      "element_id": 900,
+      "sequence_id": 700,
+      "owner": {
+        "kind": "pc",
+        "index": 342
+      },
+      "owner_creation_order": 373,
+      "command": 42,
+      "command_name": "parry_sword",
+      "command_level": 1,
+      "state": 0,
+      "priority": 6,
+      "queue_size_before": 1,
+      "queue_size_after": 0,
+      "actor": null,
+      "actor_creation_order": null,
+      "selected_sequence_id": null,
+      "selected_command": null,
+      "current_order_id": null,
+      "current_order_action": null,
+      "decision": null,
+      "accepted": null
+    },
+    {
+      "ordinal": 3,
+      "frame_ordinal": 9,
+      "event": "actor_instruct_result",
+      "phase": "installed",
+      "element_id": 900,
+      "sequence_id": 700,
+      "owner": {
+        "kind": "pc",
+        "index": 342
+      },
+      "owner_creation_order": 373,
+      "command": 42,
+      "command_name": "parry_sword",
+      "command_level": 1,
+      "state": 2,
+      "priority": 6,
+      "queue_size_before": null,
+      "queue_size_after": null,
+      "actor": {
+        "kind": "pc",
+        "index": 342
+      },
+      "actor_creation_order": 373,
+      "selected_sequence_id": 900,
+      "selected_command": 42,
+      "current_order_id": 99,
+      "current_order_action": 76,
+      "decision": 3,
+      "accepted": true
+    },
+    {
+      "ordinal": 4,
+      "frame_ordinal": 10,
+      "event": "sequence_registered",
+      "phase": "manager_fifo",
+      "element_id": 902,
+      "sequence_id": 701,
+      "owner": null,
+      "owner_creation_order": null,
+      "command": 63,
+      "command_name": "send_message",
+      "command_level": 2,
+      "state": 0,
+      "priority": 0,
+      "queue_size_before": 0,
+      "queue_size_after": 1,
+      "actor": null,
+      "actor_creation_order": null,
+      "selected_sequence_id": null,
+      "selected_command": null,
+      "current_order_id": null,
+      "current_order_action": null,
+      "decision": null,
+      "accepted": null
+    }
+  ]
+}

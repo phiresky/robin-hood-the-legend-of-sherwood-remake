@@ -13,55 +13,32 @@ use crate::vm::{self, Instruction};
 // ───────────────────────── Errors ─────────────────────────
 
 /// Errors from script manager operations.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ScriptError {
     /// Malformed bytecode; preparation never substitutes an instruction.
+    #[error("invalid opcode {opcode:#04x} in class {class} at instruction {address}")]
     InvalidInstruction {
         class: String,
         address: usize,
         opcode: u8,
     },
     /// A decoded native call names no registered engine operation.
+    #[error("unknown native {index} in class {class} at instruction {address}")]
     UnknownNative {
         class: String,
         address: usize,
         index: u32,
     },
     /// No class with this name exists in the loaded script.
+    #[error("class not found: {0}")]
     ClassNotFound(String),
     /// No function with this name exists in the bound class.
+    #[error("function not found: {0}")]
     FunctionNotFound(String),
     /// The VM stopped abnormally during execution.
+    #[error("VM stopped abnormally: {0:?}")]
     Vm(StopReason),
 }
-
-impl fmt::Display for ScriptError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ScriptError::InvalidInstruction {
-                class,
-                address,
-                opcode,
-            } => write!(
-                f,
-                "invalid opcode {opcode:#04x} in class {class} at instruction {address}"
-            ),
-            ScriptError::UnknownNative {
-                class,
-                address,
-                index,
-            } => write!(
-                f,
-                "unknown native {index} in class {class} at instruction {address}"
-            ),
-            ScriptError::ClassNotFound(name) => write!(f, "class not found: {name}"),
-            ScriptError::FunctionNotFound(name) => write!(f, "function not found: {name}"),
-            ScriptError::Vm(stop) => write!(f, "VM stopped abnormally: {stop:?}"),
-        }
-    }
-}
-
-impl std::error::Error for ScriptError {}
 
 // ───────────────────────── ScriptProgram ─────────────────────────
 
@@ -159,7 +136,8 @@ impl ScriptProgram {
 /// Holds an `Arc<ScriptProgram>` (shared, immutable code) plus the
 /// mutable script state that varies at runtime: the shared static area
 /// that all VM instances in a level read/write. Cloning is cheap — the
-/// bytecode is an `Arc` bump, only the static area deep-copies.
+/// bytecode and static memory are `Arc` bumps. Static memory forks only when
+/// a callback writes bytes still observed by another instance or snapshot.
 ///
 /// Serialization carries only mutable VM state. Immutable bytecode is a
 /// level asset and is reattached after decode through [`attach_program`].
@@ -169,7 +147,7 @@ pub struct ScriptManager {
     pub program: std::sync::Arc<ScriptProgram>,
     /// Shared static area. The VM's 0x0000..0x3FFF symbol range reads/writes
     /// here — a single byte array shared by all VM instances in a level.
-    pub static_area: Vec<u8>,
+    pub static_area: std::sync::Arc<Vec<u8>>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -184,14 +162,14 @@ impl ScriptManagerSnapshot {
             static_area,
         } = value;
         Self {
-            static_area: static_area.clone(),
+            static_area: static_area.as_ref().clone(),
         }
     }
 
     pub(crate) fn into_runtime(self) -> ScriptManager {
         ScriptManager {
             program: std::sync::Arc::new(ScriptProgram::default()),
-            static_area: self.static_area,
+            static_area: self.static_area.into(),
         }
     }
 }
@@ -200,16 +178,11 @@ impl crate::bitcode_adapters::NativeBitcode for ScriptManager {
     type Wire = ScriptManagerSnapshot;
 
     fn to_wire(&self) -> Self::Wire {
-        ScriptManagerSnapshot {
-            static_area: self.static_area.clone(),
-        }
+        ScriptManagerSnapshot::capture(self)
     }
 
     fn from_wire(snapshot: Self::Wire) -> Self {
-        Self {
-            program: std::sync::Arc::new(ScriptProgram::default()),
-            static_area: snapshot.static_area,
-        }
+        snapshot.into_runtime()
     }
 }
 
@@ -251,7 +224,7 @@ impl ScriptManager {
     pub fn from_program(program: std::sync::Arc<ScriptProgram>) -> Self {
         Self {
             program,
-            static_area: vec![0u8; 4096],
+            static_area: std::sync::Arc::new(vec![0u8; 4096]),
         }
     }
 
@@ -314,8 +287,7 @@ impl ScriptManager {
         let class = &self.program.scb.classes[class_idx];
         let heap_size = class.size_of_member_variables.max(0) as usize;
 
-        let mut vm = Vm::new();
-        vm.heap = vec![0u8; heap_size];
+        let vm = Vm::with_heap_size(heap_size);
 
         ScriptInstance { class_idx, vm }
     }
@@ -327,7 +299,7 @@ impl ScriptManager {
     /// the last manager referencing it is dropped.
     pub fn destroy(&mut self) {
         self.program = std::sync::Arc::new(ScriptProgram::default());
-        self.static_area.fill(0);
+        std::sync::Arc::make_mut(&mut self.static_area).fill(0);
     }
 }
 
@@ -464,8 +436,7 @@ impl ScriptInstance {
         fn_name: &str,
         host: &mut dyn HostFunctions,
     ) -> StopReason {
-        self.vm.static_area.resize(manager.static_area.len(), 0);
-        self.vm.static_area.copy_from_slice(&manager.static_area);
+        self.vm.static_area = manager.static_area.clone();
 
         let class_name = &manager.program.scb.classes[self.class_idx].class_name;
         let program_len = manager.program.programs[self.class_idx].len();
@@ -479,8 +450,7 @@ impl ScriptInstance {
         let elapsed = start.elapsed();
         tracing::trace!("resume_run {class_name}::{fn_name} done: {stop:?} ({elapsed:?})");
 
-        let copy_len = manager.static_area.len().min(self.vm.static_area.len());
-        manager.static_area[..copy_len].copy_from_slice(&self.vm.static_area[..copy_len]);
+        manager.static_area = self.vm.static_area.clone();
         stop
     }
 

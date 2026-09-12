@@ -5,7 +5,8 @@ set -euo pipefail
 # locks are host-local, so hosts own disjoint save shards. Remote publications
 # are first copied into an incoming directory, checked, and atomically moved.
 
-workspace=${SCHEMA16_DISTRIBUTED_WORKSPACE:-/home/phire/robinhood}
+script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+workspace=${SCHEMA16_DISTRIBUTED_WORKSPACE:-$script_workspace}
 ssh_config=${SCHEMA16_DISTRIBUTED_SSH_CONFIG:-$workspace/tmp/ssh_config}
 remote_host=${SCHEMA16_DISTRIBUTED_REMOTE_HOST:-robin-worker}
 remote_root=${SCHEMA16_DISTRIBUTED_REMOTE_ROOT:-/srv/robinhood}

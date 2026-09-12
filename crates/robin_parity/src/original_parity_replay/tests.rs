@@ -1009,129 +1009,19 @@ fn write_synthetic_native_trace(path: &Path, source_fingerprint: &str, checksum:
         &mut encoder,
         &minimal_test_native_header(source_fingerprint),
         "synthetic native header",
-    );
+    )
+    .unwrap();
     write_binary_record(
         &mut encoder,
         std::slice::from_ref(&complete_test_end(0, 0)),
         "synthetic native block",
-    );
+    )
+    .unwrap();
     let mut writer = encoder.finish().unwrap();
     write_binary_trace_footer(
         &mut writer,
         BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
-fn write_synthetic_version_67_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV67 = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(&mut encoder, &header, "synthetic version-67 native header");
-    let end = BinaryTraceRecordV67::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic version-67 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_LEGACY_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
-fn write_synthetic_version_66_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV66 = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(&mut encoder, &header, "synthetic version-66 native header");
-    let end = BinaryTraceRecordV66::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic version-66 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_V66_VERSION,
-            frame_count: 0,
-            final_frame: 0,
-        },
-    )
-    .unwrap();
-    writer.flush().unwrap();
-    writer.get_ref().sync_all().unwrap();
-}
-
-fn write_synthetic_late_version_67_native_trace(path: &Path, source_fingerprint: &str) {
-    let file = File::create(path).unwrap();
-    let mut encoder = zstd::stream::write::Encoder::new(BufWriter::new(file), 1).unwrap();
-    encoder.window_log(20).unwrap();
-    let header: BinaryTraceHeaderV67Late = minimal_test_native_header(source_fingerprint).into();
-    write_binary_record(
-        &mut encoder,
-        &header,
-        "synthetic late version-67 native header",
-    );
-    let end = BinaryTraceRecordV67Late::End {
-        rng_suffix: Some(TraceRngBatch {
-            first_index: 0,
-            values: Vec::new(),
-            callsite_offsets: Vec::new(),
-            main_thread: Vec::new(),
-            domains: Vec::new(),
-        }),
-        final_frame: Some(0),
-        frame_count: Some(0),
-    };
-    write_binary_record(
-        &mut encoder,
-        std::slice::from_ref(&end),
-        "synthetic late version-67 native block",
-    );
-    let mut writer = encoder.finish().unwrap();
-    write_binary_trace_footer(
-        &mut writer,
-        BinaryTraceFooter {
-            version: TRACE_NATIVE_LEGACY_VERSION,
             frame_count: 0,
             final_frame: 0,
         },
@@ -1160,7 +1050,8 @@ fn write_test_native_records_with_compression(
                 &mut encoder,
                 std::slice::from_ref(record),
                 "test native trace block",
-            );
+            )
+            .unwrap();
         }
         let mut writer = encoder.finish().unwrap();
         if let Some(footer) = footer {
@@ -1185,10 +1076,10 @@ fn write_test_native_stream_with_policy(
             TRACE_NATIVE_ZSTD_LEVEL,
         )
         .unwrap();
-        configure_cache_compression(&mut encoder, None, policy.window_log);
-        write_binary_record(&mut encoder, header, "test native trace header");
+        configure_cache_compression(&mut encoder, None, policy.window_log).unwrap();
+        write_binary_record(&mut encoder, header, "test native trace header").unwrap();
         for block in records.chunks(policy.block_records) {
-            write_binary_record(&mut encoder, block, "test native trace block");
+            write_binary_record(&mut encoder, block, "test native trace block").unwrap();
         }
         let mut writer = encoder.finish().unwrap();
         write_binary_trace_footer(&mut writer, footer).unwrap();
@@ -1213,159 +1104,18 @@ fn complete_test_end(frame_count: u64, final_frame: u64) -> BinaryTraceRecord {
 }
 
 #[test]
-fn version_67_header_uses_legacy_vec_layout() {
-    let legacy: BinaryTraceHeaderV67 = minimal_test_native_header("legacy-v67").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test version-67 header");
-
-    let decoded = read_binary_trace_header_record(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_LEGACY_VERSION,
-    )
-    .expect("decode version-67 header through its original bitcode layout");
-
-    assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
-    assert_eq!(decoded.source_fingerprint, "legacy-v67");
-    assert!(decoded.trace.initial_npc_transients.is_none());
-}
-
-#[test]
-fn late_version_67_header_preserves_optional_transient_layout() {
-    let legacy: BinaryTraceHeaderV67Late = minimal_test_native_header("late-legacy-v67").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test late version-67 header");
-
-    let (decoded, late_layout) = read_binary_trace_header_record_with_layout(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_LEGACY_VERSION,
-    )
-    .expect("decode late version-67 header through its historical bitcode layout");
-
-    assert!(late_layout);
-    assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
-    assert_eq!(decoded.source_fingerprint, "late-legacy-v67");
-    assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
-}
-
-#[test]
-fn version_66_header_uses_frozen_legacy_layout() {
-    let legacy: BinaryTraceHeaderV66 = minimal_test_native_header("legacy-v66").into();
-    let mut encoded_record = Vec::new();
-    write_binary_record(&mut encoded_record, &legacy, "test version-66 header");
-
-    let decoded = read_binary_trace_header_record(
-        &mut std::io::Cursor::new(encoded_record),
-        TRACE_NATIVE_V66_VERSION,
-    )
-    .expect("decode version-66 header through its original bitcode layout");
-
-    assert_eq!(decoded.version, TRACE_NATIVE_V66_VERSION);
-    assert_eq!(decoded.source_fingerprint, "legacy-v66");
-    assert_eq!(decoded.trace.initial_npc_transients, Some(Vec::new()));
-}
-
-#[test]
-fn reblock_migrates_version_67_to_current_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy.parity.bitcode.zst");
-    write_synthetic_version_67_native_trace(&native, "legacy-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    let footer = read_binary_trace_footer(&native).unwrap();
-    let header = read_binary_trace_header(&native);
-    assert_eq!(footer.version, TRACE_NATIVE_VERSION);
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-}
-
-#[test]
-fn reblock_migrates_late_version_67_to_current_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("late-legacy.parity.bitcode.zst");
-    write_synthetic_late_version_67_native_trace(&native, "late-legacy-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    let footer = read_binary_trace_footer(&native).unwrap();
-    let header = read_binary_trace_header(&native);
-    assert_eq!(footer.version, TRACE_NATIVE_VERSION);
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-}
-
-#[test]
-fn reblock_resumes_version_67_recovery_binding() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy-recovery.parity.bitcode.zst");
-    write_synthetic_version_67_native_trace(&native, "legacy-recovery");
-    let source = native_reblock_source_path(&native);
-    let binding_path = native_reblock_binding_path(&native);
-    let (source_bytes, source_content_sha256, source_device, source_inode) =
-        native_reblock_file_identity(&native);
-    let (frame_count, final_frame, source_semantic_sha256) =
-        native_reblock_semantic_identity_with_version_policy(&native, false);
-    let binding = NativeReblockBinding {
-        version: TRACE_NATIVE_LEGACY_VERSION,
-        canonical_path: native_reblock_canonical_path(&native),
-        source_content_sha256,
-        source_bytes,
-        source_semantic_sha256: format!("stale-{source_semantic_sha256}"),
-        frame_count,
-        final_frame,
-        #[cfg(unix)]
-        source_device,
-        #[cfg(unix)]
-        source_inode,
-    };
-    write_native_reblock_binding(&binding_path, &binding);
-    std::fs::hard_link(&native, &source).unwrap();
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    assert_eq!(
-        read_binary_trace_footer(&native).unwrap().version,
-        TRACE_NATIVE_VERSION
-    );
-    assert!(!source.exists());
-    assert!(!binding_path.exists());
-}
-
-#[test]
-fn reblock_migrates_version_66_to_small_current_blocks_without_semantic_drift() {
-    let directory = tempfile::tempdir().unwrap();
-    let native = directory.path().join("legacy-v66.parity.bitcode.zst");
-    write_synthetic_version_66_native_trace(&native, "legacy-v66-reblock");
-    let before = native_reblock_semantic_identity(&native);
-
-    reblock_native_trace(&native, NativeStoragePolicy::default());
-
-    assert_eq!(native_reblock_semantic_identity(&native), before);
-    assert_eq!(
-        read_binary_trace_footer(&native).unwrap().version,
-        TRACE_NATIVE_VERSION
-    );
-    assert_eq!(
-        read_binary_trace_header(&native).version,
-        TRACE_NATIVE_VERSION
-    );
-}
-
-#[test]
 fn reblock_refreshes_stale_semantic_digest_for_exact_bound_source() {
     let directory = tempfile::tempdir().unwrap();
     let native = directory.path().join("stale-binding.parity.bitcode.zst");
     write_synthetic_native_trace(&native, "stale-binding", false);
     let source = native_reblock_source_path(&native);
     let binding_path = native_reblock_binding_path(&native);
-    let mut binding = create_native_reblock_binding(&native);
+    let mut binding = create_native_reblock_binding(&native).unwrap();
     binding.source_semantic_sha256 = "pre-projection-change-digest".to_owned();
-    write_native_reblock_binding(&binding_path, &binding);
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
     std::fs::hard_link(&native, &source).unwrap();
 
-    reblock_native_trace(&native, NativeStoragePolicy::default());
+    reblock_native_trace(&native, NativeStoragePolicy::default()).unwrap();
 
     assert_eq!(
         read_binary_trace_footer(&native).unwrap().version,
@@ -1376,9 +1126,33 @@ fn reblock_refreshes_stale_semantic_digest_for_exact_bound_source() {
 }
 
 #[test]
+fn retired_native_versions_are_rejected_before_reading_record_bytes() {
+    for version in [0, 66, 67, 69] {
+        let footer = BinaryTraceFooter {
+            version,
+            frame_count: 0,
+            final_frame: 0,
+        };
+        assert!(
+            validate_binary_trace_footer(&footer)
+                .unwrap_err()
+                .contains("migrate")
+        );
+        assert!(
+            read_binary_trace_header_record(&mut std::io::empty(), version)
+                .unwrap_err()
+                .contains("migrate")
+        );
+        assert!(
+            read_binary_trace_block_record(&mut std::io::empty(), version)
+                .unwrap_err()
+                .contains("migrate")
+        );
+    }
+}
+
+#[test]
 fn native_small_block_policy_round_trips_records_and_footer() {
-    assert_eq!(TRACE_NATIVE_V66_VERSION, 66);
-    assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
     assert_eq!(TRACE_NATIVE_VERSION, 68);
     assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
     const { assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING) };
@@ -1408,9 +1182,9 @@ fn native_small_block_policy_round_trips_records_and_footer() {
         final_frame: 10,
     };
     let native = write_test_native_records(&[complete_test_end(0, 10)], Some(footer));
-    let mut reader = BinaryTraceReader::open(native.path());
+    let mut reader = BinaryTraceReader::open(native.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     reader.validate_terminator(0, 10).unwrap();
@@ -1462,18 +1236,27 @@ fn current_reader_preserves_small_block_semantics_digest_and_terminator() {
 
     // This is the ordinary version-68 reader: block cardinality is not
     // represented in the header or footer and has never been fixed at 1,000.
-    let mut reader = BinaryTraceReader::open(native.path());
-    assert_eq!(reader.read_header().version, TRACE_NATIVE_VERSION);
-    assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+    let mut reader = BinaryTraceReader::open(native.path()).unwrap();
+    assert_eq!(reader.read_header().unwrap().version, TRACE_NATIVE_VERSION);
+    assert!(matches!(
+        reader.read_record().unwrap(),
+        BinaryTraceRecord::Frame(_)
+    ));
     assert_eq!(reader.pending.len(), 31);
     for _ in 1..32 {
-        assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+        assert!(matches!(
+            reader.read_record().unwrap(),
+            BinaryTraceRecord::Frame(_)
+        ));
     }
     assert!(reader.pending.is_empty());
-    assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+    assert!(matches!(
+        reader.read_record().unwrap(),
+        BinaryTraceRecord::Frame(_)
+    ));
     assert_eq!(reader.pending.len(), 31);
 
-    let (decoded_frames, actual_digest) = digest_and_validate_native_trace(native.path());
+    let (decoded_frames, actual_digest) = digest_and_validate_native_trace(native.path()).unwrap();
     assert_eq!(decoded_frames, 65);
     assert_eq!(actual_digest, expected_digest);
     assert_eq!(read_binary_trace_footer(native.path()).unwrap(), footer);
@@ -1561,8 +1344,8 @@ fn stale_bound_reblock_source_fails_closed() {
     let source = native_reblock_source_path(&native);
     let binding_path = native_reblock_binding_path(&native);
     write_synthetic_native_trace(&native, "canonical", false);
-    let binding = create_native_reblock_binding(&native);
-    write_native_reblock_binding(&binding_path, &binding);
+    let binding = create_native_reblock_binding(&native).unwrap();
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
     write_synthetic_native_trace(&source, "foreign", false);
     let canonical_before = std::fs::read(&native).unwrap();
     let source_before = std::fs::read(&source).unwrap();
@@ -1581,13 +1364,13 @@ fn authenticated_reblock_source_survives_missing_canonical() {
     let source = native_reblock_source_path(&native);
     let binding_path = native_reblock_binding_path(&native);
     write_synthetic_native_trace(&native, "canonical", false);
-    let binding = create_native_reblock_binding(&native);
-    write_native_reblock_binding(&binding_path, &binding);
+    let binding = create_native_reblock_binding(&native).unwrap();
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
     std::fs::hard_link(&native, &source).unwrap();
     std::fs::remove_file(&native).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::Ready(_)
     ));
     assert!(!native.exists());
@@ -1614,8 +1397,8 @@ fn binding_only_without_canonical_or_source_fails_closed() {
     let source = native_reblock_source_path(&native);
     let binding_path = native_reblock_binding_path(&native);
     write_synthetic_native_trace(&native, "canonical", false);
-    let binding = create_native_reblock_binding(&native);
-    write_native_reblock_binding(&binding_path, &binding);
+    let binding = create_native_reblock_binding(&native).unwrap();
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
     std::fs::remove_file(&native).unwrap();
 
     assert!(
@@ -1636,11 +1419,11 @@ fn binding_only_same_inode_canonical_recreates_recovery_link() {
     let source = native_reblock_source_path(&native);
     let binding_path = native_reblock_binding_path(&native);
     write_synthetic_native_trace(&native, "canonical", false);
-    let binding = create_native_reblock_binding(&native);
-    write_native_reblock_binding(&binding_path, &binding);
+    let binding = create_native_reblock_binding(&native).unwrap();
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::Ready(_)
     ));
     #[cfg(unix)]
@@ -1658,19 +1441,19 @@ fn semantic_equal_postpublish_state_only_cleans_binding() {
     let binding_path = native_reblock_binding_path(&native);
     let replacement = directory.path().join("replacement.parity.bitcode.zst");
     write_synthetic_native_trace(&native, "canonical", false);
-    let binding = create_native_reblock_binding(&native);
-    write_native_reblock_binding(&binding_path, &binding);
+    let binding = create_native_reblock_binding(&native).unwrap();
+    write_native_reblock_binding(&binding_path, &binding).unwrap();
     std::fs::hard_link(&native, &source).unwrap();
     write_synthetic_native_trace(&replacement, "canonical", true);
     assert_ne!(
-        trace_content_sha256(&native),
-        trace_content_sha256(&replacement)
+        trace_content_sha256(&native).unwrap(),
+        trace_content_sha256(&replacement).unwrap()
     );
     std::fs::rename(&replacement, &native).unwrap();
     std::fs::remove_file(&source).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::AlreadyCommitted
     ));
     assert!(native.exists());
@@ -1685,15 +1468,15 @@ fn reblock_orphan_cleanup_is_trace_scoped_and_preserves_symlinks() {
     let other_native = directory.path().join("other.parity.bitcode.zst");
     let output_orphan = directory.path().join(format!(
         "{}dead",
-        native_reblock_temporary_prefix(&native, false)
+        native_reblock_temporary_prefix(&native, false).unwrap()
     ));
     let binding_orphan = directory.path().join(format!(
         "{}dead",
-        native_reblock_temporary_prefix(&native, true)
+        native_reblock_temporary_prefix(&native, true).unwrap()
     ));
     let other_orphan = directory.path().join(format!(
         "{}live",
-        native_reblock_temporary_prefix(&other_native, false)
+        native_reblock_temporary_prefix(&other_native, false).unwrap()
     ));
     let unrelated = directory.path().join(".parity-reblock-v67-unrelated");
     std::fs::write(&output_orphan, b"partial output").unwrap();
@@ -1704,13 +1487,13 @@ fn reblock_orphan_cleanup_is_trace_scoped_and_preserves_symlinks() {
     let symlink = {
         let symlink = directory.path().join(format!(
             "{}symlink",
-            native_reblock_temporary_prefix(&native, false)
+            native_reblock_temporary_prefix(&native, false).unwrap()
         ));
         std::os::unix::fs::symlink(&unrelated, &symlink).unwrap();
         symlink
     };
 
-    cleanup_native_reblock_orphans(&native);
+    cleanup_native_reblock_orphans(&native).unwrap();
 
     assert!(!output_orphan.exists());
     assert!(!binding_orphan.exists());
@@ -1738,8 +1521,8 @@ fn reblock_temporary_owner_hash_distinguishes_non_utf8_paths() {
         .path()
         .join(std::ffi::OsString::from_vec(b"trace-\xff".to_vec()));
     assert_ne!(
-        native_reblock_temporary_prefix(&first, false),
-        native_reblock_temporary_prefix(&second, false)
+        native_reblock_temporary_prefix(&first, false).unwrap(),
+        native_reblock_temporary_prefix(&second, false).unwrap()
     );
 }
 
@@ -1748,14 +1531,14 @@ fn native_maintenance_commands_accept_logical_and_native_paths() {
     let directory = tempfile::tempdir().unwrap();
     let logical = directory.path().join("replay-001-session-0001.jsonl.zst");
     let native = native_binary_trace_path(&logical);
-    assert_eq!(requested_native_trace_path(&logical), native);
-    assert_eq!(requested_native_trace_path(&native), native);
+    assert_eq!(requested_native_trace_path(&logical).unwrap(), native);
+    assert_eq!(requested_native_trace_path(&native).unwrap(), native);
 
     std::fs::write(&logical, b"coexisting source with a different fingerprint").unwrap();
     write_synthetic_native_trace(&native, "native-parity-v67:legacy", true);
-    let before = trace_content_sha256(&native);
-    assert_eq!(ensure_native_binary_trace(&native), native);
-    assert_eq!(trace_content_sha256(&native), before);
+    let before = trace_content_sha256(&native).unwrap();
+    assert_eq!(ensure_native_binary_trace(&native).unwrap(), native);
+    assert_eq!(trace_content_sha256(&native).unwrap(), before);
 }
 
 #[test]
@@ -1771,9 +1554,9 @@ fn native_reader_accepts_current_version_with_level_nineteen_ldm() {
         19,
         true,
     );
-    let mut reader = BinaryTraceReader::open(native.path());
+    let mut reader = BinaryTraceReader::open(native.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     reader.validate_terminator(0, 10).unwrap();
@@ -1794,7 +1577,7 @@ fn conversion_cleanup_resolves_relative_and_absolute_paths() {
 
     for trace in [&resolved_relative, &absolute] {
         std::fs::write(trace, b"recording").unwrap();
-        let fingerprint = trace_source_fingerprint(trace);
+        let fingerprint = trace_source_fingerprint(trace).unwrap();
         let quarantine = conversion_quarantine_path(trace);
         let obsolete = PathBuf::from(format!(
             "{}.parity-cache-v63.test",
@@ -1815,7 +1598,8 @@ fn conversion_cleanup_resolves_relative_and_absolute_paths() {
                     source_path: quarantine.clone(),
                     ..verified
                 },
-            ),
+            )
+            .unwrap(),
             1
         );
         assert!(!trace.exists());
@@ -1831,7 +1615,7 @@ fn replaced_recording_is_not_eligible_for_verified_deletion() {
     let verified = VerifiedNativeReadback {
         decoded_frames: 0,
         source_path: recording.clone(),
-        source_fingerprint: trace_source_fingerprint(&recording),
+        source_fingerprint: trace_source_fingerprint(&recording).unwrap(),
     };
     // Preserve the byte length so this specifically proves the content
     // digest catches a replacement that the old line-count gate missed.
@@ -1905,8 +1689,13 @@ fn conversion_rejects_symlinked_logical_inputs() {
     let link = directory.path().join("recording.jsonl.zst");
     std::fs::write(&target, b"recording").unwrap();
     symlink(&target, &link).unwrap();
-    assert!(conversion_path_is_symlink(&link));
-    assert!(!conversion_path_is_symlink(&target));
+    assert!(conversion_path_is_symlink(&link).unwrap());
+    assert!(!conversion_path_is_symlink(&target).unwrap());
+    assert!(
+        reject_conversion_symlink(&link)
+            .unwrap_err()
+            .contains("symbolic links")
+    );
     assert_eq!(std::fs::read(&target).unwrap(), b"recording");
 }
 
@@ -2456,9 +2245,9 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
         final_frame: 12,
     };
     let early = write_test_native_records(&[complete_test_end(1, 11)], Some(footer));
-    let mut reader = BinaryTraceReader::open(early.path());
+    let mut reader = BinaryTraceReader::open(early.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2477,9 +2266,9 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
         &[complete_test_end(0, 10), complete_test_end(0, 10)],
         Some(footer),
     );
-    let mut reader = BinaryTraceReader::open(trailing.path());
+    let mut reader = BinaryTraceReader::open(trailing.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2508,14 +2297,15 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
             &mut encoder,
             [complete_test_end(0, 10), complete_test_end(0, 10)].as_slice(),
             "test native trace block",
-        );
+        )
+        .unwrap();
         let mut writer = encoder.finish().unwrap();
         write_binary_trace_footer(&mut writer, footer).unwrap();
         writer.flush().unwrap();
     }
-    let mut reader = BinaryTraceReader::open(file.path());
+    let mut reader = BinaryTraceReader::open(file.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2544,6 +2334,152 @@ fn fixed_native_footer_rejects_missing_and_malformed_data() {
             .unwrap_err()
             .contains("footer magic")
     );
+}
+
+#[test]
+fn native_storage_missing_inputs_return_contextual_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.parity.bitcode.zst");
+    for error in [
+        BinaryTraceReader::open(&missing)
+            .err()
+            .expect("missing native input"),
+        trace_content_sha256(&missing).unwrap_err(),
+        open_jsonl_trace(&missing)
+            .err()
+            .expect("missing JSONL input"),
+    ] {
+        assert!(error.contains("missing.parity.bitcode.zst"), "{error}");
+    }
+    assert!(reject_conversion_symlink(&missing).is_ok());
+}
+
+#[test]
+fn native_record_write_failures_return_the_record_context() {
+    let mut no_capacity = std::io::Cursor::new([0_u8; 0]);
+    let error = write_binary_record(&mut no_capacity, &42_u32, "test header").unwrap_err();
+    assert!(error.contains("write test header length"), "{error}");
+
+    let mut prefix_only = std::io::Cursor::new([0_u8; 8]);
+    let error = write_binary_record(&mut prefix_only, &42_u32, "test payload").unwrap_err();
+    assert!(error.contains("write test payload:"), "{error}");
+}
+
+#[test]
+fn native_empty_blocks_return_errors_instead_of_inventing_end_records() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(file.as_file_mut(), 1).unwrap();
+        write_binary_record(
+            &mut encoder,
+            &[] as &[BinaryTraceRecord],
+            "empty test block",
+        )
+        .unwrap();
+        let writer = encoder.finish().unwrap();
+        write_binary_trace_footer(
+            writer,
+            BinaryTraceFooter {
+                version: TRACE_NATIVE_VERSION,
+                frame_count: 0,
+                final_frame: 0,
+            },
+        )
+        .unwrap();
+    }
+    let mut reader = BinaryTraceReader::open(file.path()).unwrap();
+    assert!(
+        reader
+            .read_record()
+            .unwrap_err()
+            .contains("empty record block")
+    );
+}
+
+#[test]
+fn conversion_conflicts_return_errors_and_preserve_both_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let quarantine = conversion_quarantine_path(&source);
+    std::fs::write(&source, b"new producer").unwrap();
+    std::fs::write(&quarantine, b"verified recovery source").unwrap();
+    let error = convert_recording_to_native(&source).unwrap_err();
+    assert!(error.contains("conflict"), "{error}");
+    assert_eq!(std::fs::read(&source).unwrap(), b"new producer");
+    assert_eq!(
+        std::fs::read(&quarantine).unwrap(),
+        b"verified recovery source"
+    );
+    assert!(!native_binary_trace_path(&source).exists());
+}
+
+#[test]
+fn failed_native_audits_preserve_recordings_without_publishing() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let header = minimal_test_native_header("test");
+    let suffix = TraceRngOnly {
+        record_type: "rng_suffix".to_owned(),
+        draws: header.rng_prefix.draws.clone(),
+        final_frame: 0,
+        frame_count: 0,
+    };
+    let mut lossy_suffix = serde_json::to_value(&suffix).unwrap();
+    lossy_suffix["unrepresented_authoritative_field"] = serde_json::json!(42);
+    let recording = format!(
+        "{}\n{}\n{}\n",
+        serde_json::to_string(&header.trace).unwrap(),
+        serde_json::to_string(&header.rng_prefix).unwrap(),
+        lossy_suffix
+    );
+    std::fs::write(&source, recording.as_bytes()).unwrap();
+    let error = convert_recording_to_native(&source).unwrap_err();
+    assert!(error.contains("round-trip audit"), "{error}");
+    assert!(error.contains("line 3"), "{error}");
+    assert_eq!(std::fs::read(&source).unwrap(), recording.as_bytes());
+    assert!(!native_binary_trace_path(&source).exists());
+    assert!(!conversion_quarantine_path(&source).exists());
+}
+
+#[test]
+fn audit_workers_join_malformed_input_errors_without_panicking() {
+    let error = std::thread::scope(|scope| {
+        let (sender, workers) = spawn_roundtrip_audit_workers(scope);
+        sender.send((7, "not JSON".to_owned())).unwrap();
+        drop(sender);
+        join_roundtrip_audit_workers(workers)
+    })
+    .unwrap_err();
+    assert!(error.contains("parse trace frame on line 7"), "{error}");
+}
+
+#[test]
+fn roundtrip_mismatches_return_the_field_and_line() {
+    let error = verify_trace_line_roundtrip(
+        &serde_json::json!({"authoritative": 2}),
+        r#"{"authoritative":1}"#,
+        11,
+    )
+    .unwrap_err();
+    assert!(error.contains("line 11"), "{error}");
+    assert!(error.contains("$.authoritative"), "{error}");
+}
+
+#[test]
+fn conversion_commit_io_errors_preserve_recovery_artifacts() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let quarantine = conversion_quarantine_path(&source);
+    // A directory cannot be unlinked as a source recording; this produces a
+    // deterministic I/O error even when the test runs with elevated access.
+    std::fs::create_dir(&quarantine).unwrap();
+    let error = commit_verified_conversion_files(&source, &quarantine, || {}).unwrap_err();
+    assert!(
+        error.contains("delete quarantined converted recording"),
+        "{error}"
+    );
+    assert!(quarantine.is_dir());
+    assert!(!source.exists());
 }
 
 #[test]
@@ -2693,8 +2629,15 @@ fn trace_content_hash_distinguishes_equal_length_sources() {
         std::fs::metadata(&first).unwrap().len(),
         std::fs::metadata(&second).unwrap().len()
     );
-    assert_ne!(trace_content_sha256(&first), trace_content_sha256(&second));
-    assert!(trace_source_fingerprint(&first).contains(":sha256="));
+    assert_ne!(
+        trace_content_sha256(&first).unwrap(),
+        trace_content_sha256(&second).unwrap()
+    );
+    assert!(
+        trace_source_fingerprint(&first)
+            .unwrap()
+            .contains(":sha256=")
+    );
 }
 
 fn valid_initial_save_with_profile(source_profile: TraceSaveSourceProfile) -> TraceInitialSave {
@@ -2737,6 +2680,7 @@ fn jsonl_trace_reader_accepts_plain_and_zstd_content() {
     for path in [plain_path, compressed_path] {
         let mut decoded = String::new();
         open_jsonl_trace(&path)
+            .unwrap()
             .read_to_string(&mut decoded)
             .unwrap();
         assert_eq!(decoded.as_bytes(), jsonl);
@@ -2765,6 +2709,7 @@ fn jsonl_trace_reader_accepts_zstd_frames_with_large_declared_windows() {
 
     let mut decoded = String::new();
     open_jsonl_trace(&compressed_path)
+        .unwrap()
         .read_to_string(&mut decoded)
         .unwrap();
     assert_eq!(decoded.as_bytes(), jsonl);
@@ -3203,7 +3148,7 @@ fn current_schema_movement_action_is_only_present_when_initialized() {
 }
 
 #[test]
-fn current_diagnostics_are_cached_and_required() {
+fn current_actor_sequence_diagnostics_are_typed() {
     validate_trace_schema(TRACE_SCHEMA_VERSION);
 
     let actor: TraceActor = serde_json::from_value(serde_json::json!({
@@ -3251,367 +3196,23 @@ fn current_diagnostics_are_cached_and_required() {
     let sequence = actor.sequence_element.as_ref().unwrap();
     assert!(sequence.current_order.is_some());
     assert!(sequence.movement_payload.is_some());
+}
 
-    let mut frame_json = minimal_frame_json();
-    frame_json["route_construction_events"] = serde_json::json!([{
-        "kind": "move",
-        "actor": { "kind": "soldier", "index": 7 },
-        "source": { "x": { "bits": 0 }, "y": { "bits": 0 } },
-        "source_sector": 1,
-        "source_level": 2,
-        "goal": { "x": { "bits": 0 }, "y": { "bits": 0 } },
-        "goal_sector": 3,
-        "goal_level": 2,
-        "gates": [{
-            "gate_id": 9,
-            "direct": true,
-            "sector_out": 1,
-            "level_out": 2,
-            "sector_in": 3,
-            "level_in": 2,
-            "kind": "door",
-            "score": { "bits": 1065353216, "value": 1.0 }
-        }],
-        "ordinal": 4,
-        "phase": "constructed",
-        "result": "success"
-    }]);
-    frame_json["popup_events"] = serde_json::json!([{
-        "ordinal": 0,
-        "stage": "nested_refresh_entry",
-        "universal_frame_counter": 44,
-        "source_surface": 7,
-        "colorize_background": true,
-        "remove_mouse": false
-    }]);
-    frame_json["ai_forecast_events"] = serde_json::json!([{
-        "ordinal": 0,
-        "phase": "resolved",
-        "target": {"kind": "soldier", "index": 7},
-        "input": {
-            "position": {"x": {"bits": 0}, "y": {"bits": 0}},
-            "sector": 1,
-            "level": 2,
-            "passing_door": false
-        },
-        "moving_upwards": false,
-        "resolution": "current_position",
-        "resolved": {
-            "position": {"x": {"bits": 0}, "y": {"bits": 0}},
-            "sector": 1,
-            "level": 2,
-            "direction": 3
-        }
-    }]);
-    frame_json["alert_formation_events"] = serde_json::json!([{
-        "ordinal": 0,
-        "stage": "candidate",
-        "invocation": 9,
-        "scan_index": 2,
-        "candidate": {"kind": "soldier", "index": 8},
-        "active": true,
-        "script_locked": false,
-        "eligibility": {
-            "rank": true,
-            "able_to_help": true,
-            "allowed_to_leave_post": true,
-            "can_call": false,
-            "max_radius": null,
-            "squared_radius": null,
-            "capacity": null,
-            "think": null
-        },
-        "rejection_stage": "can_call"
-    }]);
-    frame_json["goto_authorization_events"] = serde_json::json!([
-        {
-            "ordinal": 0,
-            "actor": {"kind": "soldier", "index": 7},
-            "source": {"point": {"x": {"bits": 0}, "y": {"bits": 0}}, "layer": 2},
-            "move_box": {
-                "top_left": {"x": {"bits": 0}, "y": {"bits": 0}},
-                "bottom_right": {"x": {"bits": 0}, "y": {"bits": 0}}
-            },
-            "destination": {
-                "point": {"x": {"bits": 0}, "y": {"bits": 0}},
-                "sector": 3,
-                "layer": 2
-            },
-            "requested_flags": 1,
-            "effective_flags": 3,
-            "phase": "straight",
-            "outcome": "blocked",
-            "straight_authorized": false,
-            "path_authorized": null
-        },
-        {
-            "ordinal": 1,
-            "actor": {"kind": "soldier", "index": 7},
-            "source": null,
-            "move_box": null,
-            "destination": {
-                "point": {"x": {"bits": 0}, "y": {"bits": 0}},
-                "sector": null,
-                "layer": 2
-            },
-            "requested_flags": 1,
-            "effective_flags": 1,
-            "phase": "already_there",
-            "outcome": "accepted",
-            "straight_authorized": null,
-            "path_authorized": null
-        }
-    ]);
-    frame_json["target_lifecycle_events"] = serde_json::json!([{
-        "ordinal": 0,
-        "frame_ordinal": 6,
-        "phase": "engine_send_message_callback_entry",
-        "sequence_id": 701,
-        "sequence_element_id": 902,
-        "command_level": 2,
-        "state": 0,
-        "command": 15,
-        "command_name": "send_message",
-        "owner": null,
-        "context": null,
-        "antagonist": null,
-        "antagonist_observed": null,
-        "payload": {
-            "kind": "send_message",
-            "message": 10,
-            "argument": -1,
-            "argument_raw": 4294967295u64,
-            "extended_argument": 0,
-            "extended_argument_raw": 0
-        },
-        "payload_observed": true,
-        "script_enabled": true,
-        "class_instantiated": null
-    }]);
-    frame_json["strike_proposal_events"] = serde_json::json!([
-        {
-            "invocation": 0,
-            "ordinal": 0,
-            "frame_ordinal": 0,
-            "phase": "entry",
-            "actor": {"kind": "pc", "index": 342},
-            "actor_creation_order": 373,
-            "threat": {"kind": "soldier", "index": 140},
-            "threat_creation_order": 171,
-            "principal_opponent": null,
-            "principal_opponent_creation_order": null,
-            "command": 0,
-            "command_name": "null",
-            "also_parade": true,
-            "only_parade": false,
-            "candidate_strike": null,
-            "skill_eligible": null,
-            "alcohol_eligible": null,
-            "time_eligible": null,
-            "time_limit": null,
-            "raw_damage": null,
-            "victim_count": null,
-            "accepted_as_best": null
-        },
-        {
-            "invocation": 0,
-            "ordinal": 1,
-            "frame_ordinal": 1,
-            "phase": "result",
-            "actor": {"kind": "pc", "index": 342},
-            "actor_creation_order": 373,
-            "threat": {"kind": "soldier", "index": 140},
-            "threat_creation_order": 171,
-            "principal_opponent": {"kind": "soldier", "index": 137},
-            "principal_opponent_creation_order": 168,
-            "command": 42,
-            "command_name": "parry_sword",
-            "also_parade": true,
-            "only_parade": true,
-            "candidate_strike": null,
-            "skill_eligible": null,
-            "alcohol_eligible": null,
-            "time_eligible": null,
-            "time_limit": 8,
-            "raw_damage": null,
-            "victim_count": null,
-            "accepted_as_best": null
-        },
-        {
-            "invocation": 1,
-            "ordinal": 2,
-            "frame_ordinal": 2,
-            "phase": "entry",
-            "actor": {"kind": "soldier", "index": 12},
-            "actor_creation_order": 44
-        },
-        {
-            "invocation": 1,
-            "ordinal": 3,
-            "frame_ordinal": 3,
-            "phase": "candidate",
-            "actor": {"kind": "soldier", "index": 12},
-            "actor_creation_order": 44,
-            "threat": null,
-            "threat_creation_order": null,
-            "principal_opponent": {"kind": "soldier", "index": 13},
-            "principal_opponent_creation_order": 45,
-            "command": 30,
-            "command_name": "swordstrike_thrust_a",
-            "also_parade": false,
-            "only_parade": false,
-            "candidate_strike": 0,
-            "skill_eligible": true,
-            "alcohol_eligible": true,
-            "time_eligible": true,
-            "time_limit": 1000,
-            "raw_damage": 35,
-            "victim_count": 1,
-            "accepted_as_best": true
-        },
-        {
-            "invocation": 1,
-            "ordinal": 4,
-            "frame_ordinal": 4,
-            "phase": "result",
-            "actor": {"kind": "soldier", "index": 12},
-            "actor_creation_order": 44,
-            "command": 30,
-            "command_name": "swordstrike_thrust_a",
-            "selected_strike": 0,
-            "reason": "strike"
-        }
-    ]);
-    frame_json["sequence_lifecycle_events"] = serde_json::json!([
-        {
-            "ordinal": 0,
-            "frame_ordinal": 5,
-            "event": "sequence_registered",
-            "phase": "manager_fifo",
-            "element_id": 900,
-            "sequence_id": 700,
-            "owner": {"kind": "pc", "index": 342},
-            "owner_creation_order": 373,
-            "command": 42,
-            "command_name": "parry_sword",
-            "command_level": 1,
-            "state": null,
-            "priority": null,
-            "queue_size_before": 0,
-            "queue_size_after": 1,
-            "actor": null,
-            "actor_creation_order": null,
-            "selected_sequence_id": null,
-            "selected_command": null,
-            "current_order_id": null,
-            "current_order_action": null,
-            "decision": null,
-            "accepted": null
-        },
-        {
-            "ordinal": 1,
-            "frame_ordinal": 7,
-            "event": "lazy_wait_created",
-            "phase": "actor_hourglass_lazy_wait",
-            "element_id": 901,
-            "sequence_id": null,
-            "owner": {"kind": "pc", "index": 342},
-            "owner_creation_order": 373,
-            "command": 1,
-            "command_name": "wait",
-            "command_level": 1,
-            "state": 0,
-            "priority": 1,
-            "queue_size_before": null,
-            "queue_size_after": null,
-            "actor": {"kind": "pc", "index": 342},
-            "actor_creation_order": 373,
-            "selected_sequence_id": null,
-            "selected_command": null,
-            "current_order_id": null,
-            "current_order_action": null,
-            "decision": null,
-            "accepted": null
-        },
-        {
-            "ordinal": 2,
-            "frame_ordinal": 8,
-            "event": "manager_fifo_pop",
-            "phase": "sequence_manager_hourglass",
-            "element_id": 900,
-            "sequence_id": 700,
-            "owner": {"kind": "pc", "index": 342},
-            "owner_creation_order": 373,
-            "command": 42,
-            "command_name": "parry_sword",
-            "command_level": 1,
-            "state": 0,
-            "priority": 6,
-            "queue_size_before": 1,
-            "queue_size_after": 0,
-            "actor": null,
-            "actor_creation_order": null,
-            "selected_sequence_id": null,
-            "selected_command": null,
-            "current_order_id": null,
-            "current_order_action": null,
-            "decision": null,
-            "accepted": null
-        },
-        {
-            "ordinal": 3,
-            "frame_ordinal": 9,
-            "event": "actor_instruct_result",
-            "phase": "installed",
-            "element_id": 900,
-            "sequence_id": 700,
-            "owner": {"kind": "pc", "index": 342},
-            "owner_creation_order": 373,
-            "command": 42,
-            "command_name": "parry_sword",
-            "command_level": 1,
-            "state": 2,
-            "priority": 6,
-            "queue_size_before": null,
-            "queue_size_after": null,
-            "actor": {"kind": "pc", "index": 342},
-            "actor_creation_order": 373,
-            "selected_sequence_id": 900,
-            "selected_command": 42,
-            "current_order_id": 99,
-            "current_order_action": 76,
-            "decision": 3,
-            "accepted": true
-        },
-        {
-            "ordinal": 4,
-            "frame_ordinal": 10,
-            "event": "sequence_registered",
-            "phase": "manager_fifo",
-            "element_id": 902,
-            "sequence_id": 701,
-            "owner": null,
-            "owner_creation_order": null,
-            "command": 63,
-            "command_name": "send_message",
-            "command_level": 2,
-            "state": 0,
-            "priority": 0,
-            "queue_size_before": 0,
-            "queue_size_after": 1,
-            "actor": null,
-            "actor_creation_order": null,
-            "selected_sequence_id": null,
-            "selected_command": null,
-            "current_order_id": null,
-            "current_order_action": null,
-            "decision": null,
-            "accepted": null
-        }
-    ]);
+fn diagnostic_frame_fixture() -> TraceFrame {
+    let mut frame = minimal_frame_json();
+    let diagnostics: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/parity/current_diagnostics.json"
+        )))
+        .expect("parse diagnostic fixture");
+    frame.as_object_mut().unwrap().extend(diagnostics);
+    serde_json::from_value(frame).expect("parse current-schema diagnostic streams")
+}
 
-    let frame: TraceFrame =
-        serde_json::from_value(frame_json).expect("parse current-schema diagnostic streams");
+#[test]
+fn current_diagnostic_streams_preserve_typed_fields() {
+    let frame = diagnostic_frame_fixture();
     validate_trace_frame(TRACE_SCHEMA_VERSION, &frame);
     assert_eq!(frame.popup_events.len(), 1);
     assert_eq!(frame.popup_events[0].ordinal, Some(0));
@@ -3677,6 +3278,11 @@ fn current_diagnostics_are_cached_and_required() {
             .draft_diagnostics
             .contains_key("score")
     );
+}
+
+#[test]
+fn current_diagnostic_streams_survive_native_cache() {
+    let frame = diagnostic_frame_fixture();
     let encoded = bitcode::encode(&frame);
     let cached: TraceFrame = bitcode::decode(&encoded)
         .expect("decode current-schema frame from native cache representation");
@@ -3694,7 +3300,10 @@ fn current_diagnostics_are_cached_and_required() {
             .draft_diagnostics
             .contains_key("result")
     );
+}
 
+#[test]
+fn current_diagnostics_reject_unrecorded_and_missing_fields() {
     let mut authoritative_state_json = minimal_frame_json();
     authoritative_state_json["campaign"] = serde_json::json!({});
     assert!(serde_json::from_value::<TraceFrame>(authoritative_state_json).is_err());
@@ -4045,7 +3654,7 @@ fn cache_round_trip_audit_normalizes_floats_and_nulls_and_reports_drops() {
     // A real minimal frame passes the audit end to end.
     let line = minimal_frame_json().to_string();
     let frame: TraceFrame = serde_json::from_str(&line).unwrap();
-    verify_trace_line_roundtrip(&frame, &line, 3);
+    verify_trace_line_roundtrip(&frame, &line, 3).unwrap();
 
     // The two declared normalizations erase identically on both sides:
     // redundant float renderings and null object entries — while null
@@ -5015,7 +4624,7 @@ fn native_bitcode_trace_handles_heterogeneous_command_variants() {
     ];
     let mut encoded = Vec::new();
     for command in &commands {
-        write_binary_record(&mut encoded, command, "test command");
+        write_binary_record(&mut encoded, command, "test command").unwrap();
     }
 
     let mut reader = std::io::Cursor::new(encoded);

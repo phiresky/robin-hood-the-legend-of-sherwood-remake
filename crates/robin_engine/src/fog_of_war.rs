@@ -270,6 +270,8 @@ pub struct LastKnownMarker {
     Clone,
     Default,
     PartialEq,
+    Serialize,
+    Deserialize,
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
@@ -284,52 +286,19 @@ pub struct FogOfWarState {
     generation: u32,
     #[bitcode(skip)]
     #[state_hash(skip)]
+    #[serde(skip)]
     pub(crate) scan_cache: FogScanCache,
 }
 
-impl serde::Serialize for FogOfWarState {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedFogOfWarState::capture(self).serialize(serializer)
-    }
-}
-impl<'de> serde::Deserialize<'de> for FogOfWarState {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Ok(PersistedFogOfWarState::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-/// Explicit save-owned projection; process-local state is reconstructed here,
-/// independently of raw rollback cloning and the native wire codec.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub(crate) struct PersistedFogOfWarState {
-    level_size: MapSize,
-
-    explored: FogRegion,
-
-    visible: FogRegion,
-
-    explored_projection: FogRegion,
-
-    visible_projection: FogRegion,
-
-    intelligence: Vec<EntityIntelligence>,
-
-    generation: u32,
-}
+#[serde(transparent)]
+pub(crate) struct PersistedFogOfWarState(FogOfWarState);
 
 impl PersistedFogOfWarState {
     pub(crate) fn capture(value: &FogOfWarState) -> Self {
-        let FogOfWarState {
-            level_size: _,
-            explored: _,
-            visible: _,
-            explored_projection: _,
-            visible_projection: _,
-            intelligence: _,
-            generation: _,
-            scan_cache: _,
-        } = value;
-        Self {
+        // Do not clone the potentially large process-local scan cache only
+        // to discard it. The wire schema itself is derived on the owner.
+        Self(FogOfWarState {
             level_size: value.level_size,
             explored: value.explored.clone(),
             visible: value.visible.clone(),
@@ -337,20 +306,12 @@ impl PersistedFogOfWarState {
             visible_projection: value.visible_projection.clone(),
             intelligence: value.intelligence.clone(),
             generation: value.generation,
-        }
+            scan_cache: FogScanCache::default(),
+        })
     }
 
     pub(crate) fn into_runtime(self) -> FogOfWarState {
-        FogOfWarState {
-            level_size: self.level_size,
-            explored: self.explored,
-            visible: self.visible,
-            explored_projection: self.explored_projection,
-            visible_projection: self.visible_projection,
-            intelligence: self.intelligence,
-            generation: self.generation,
-            scan_cache: FogScanCache::default(),
-        }
+        self.0
     }
 }
 

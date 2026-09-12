@@ -33,6 +33,7 @@ use std::time::Duration;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 mod acceptance;
+mod aggregate;
 mod maintenance;
 mod public_queries;
 mod uploads;
@@ -156,8 +157,7 @@ impl MaintenanceWriteClass {
 #[derive(Debug, Clone, Serialize)]
 pub struct IssuedChallenge {
     pub id: String,
-    #[serde(with = "hex_array")]
-    pub nonce: [u8; 32],
+    pub nonce: robin_run_protocol::ChallengeNonce32,
     pub expires_at_ms: u64,
 }
 
@@ -888,43 +888,7 @@ impl Database {
             ensure_schema_current(&pool).await?;
         }
         verify_pinned_database_leaf(&database_parent, &leaf, &database_file).await?;
-        let mut sidecars = Vec::new();
-        for suffix in ["-wal", "-shm"] {
-            let sidecar_name = format!("{leaf}{suffix}");
-            let sidecar_parent = Arc::clone(&database_parent);
-            match tokio::task::spawn_blocking(move || {
-                crate::secure_fs::open_regular_file(
-                    &sidecar_parent,
-                    std::path::Path::new(&sidecar_name),
-                )
-            })
-            .await
-            .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
-            {
-                Ok(file) => {
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt as _;
-                        if file
-                            .metadata()
-                            .map_err(sqlx::Error::Io)?
-                            .permissions()
-                            .mode()
-                            & 0o777
-                            != crate::secure_fs::SHARED_MUTABLE_FILE_MODE
-                        {
-                            file.set_permissions(std::fs::Permissions::from_mode(
-                                crate::secure_fs::SHARED_MUTABLE_FILE_MODE,
-                            ))
-                            .map_err(sqlx::Error::Io)?;
-                        }
-                    }
-                    sidecars.push(file);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(DbError::Sql(sqlx::Error::Io(error))),
-            }
-        }
+        let sidecars = pin_database_sidecars(&database_parent, &leaf).await?;
         wait_for_pool_idle(&pool).await.map_err(|error| {
             DbError::Corrupt(format!(
                 "database pool did not quiesce after connect: {error:#}"
@@ -1263,7 +1227,7 @@ impl Database {
         tx.commit().await?;
         Ok(IssuedChallenge {
             id,
-            nonce,
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(nonce),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         })
@@ -1461,7 +1425,7 @@ impl Database {
         }
         let issued = IssuedChallenge {
             id: uuid::Uuid::now_v7().to_string(),
-            nonce: rand::random(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(rand::random()),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         };
@@ -1531,7 +1495,7 @@ impl Database {
               public_metadata_json) VALUES (?, ?, 'submission', ?, ?, ?, ?, ?, ?)",
         )
         .bind(&issued.id)
-        .bind(issued.nonce.as_slice())
+        .bind(issued.nonce.as_bytes().as_slice())
         .bind(public_key.as_slice())
         .bind(generation)
         .bind(now)
@@ -1577,7 +1541,7 @@ impl Database {
             .ok_or_else(|| DbError::Corrupt("challenge expiry overflow".to_owned()))?;
         let issued = IssuedChallenge {
             id: uuid::Uuid::now_v7().to_string(),
-            nonce: rand::random(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes(rand::random()),
             expires_at_ms: u64::try_from(expires)
                 .map_err(|_| DbError::Corrupt("negative challenge expiry".to_owned()))?,
         };
@@ -1604,7 +1568,7 @@ impl Database {
              VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&issued.id)
-        .bind(issued.nonce.as_slice())
+        .bind(issued.nonce.as_bytes().as_slice())
         .bind(controller_public_key.as_slice())
         .bind(submission_id)
         .bind(now)
@@ -1899,44 +1863,36 @@ impl Database {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let quota_public_key: [u8; 32] = match target_kind {
             "run" => {
-                let mission_ruleset =
-                    active_ruleset_predicate("run.ruleset_id", active_ruleset_ids);
-                let aggregate_ruleset =
-                    active_ruleset_predicate("aggregate.ruleset_id", active_ruleset_ids);
-                let statement = format!(
-                    "SELECT participant.public_key FROM verified_runs run \
-                     JOIN submissions submission ON submission.id = run.submission_id \
-                     JOIN submission_participants participant \
-                       ON participant.submission_id = submission.id AND participant.seat = 0 \
-                     WHERE run.id = ? AND submission.tombstoned_at_ms IS NULL \
-                       AND {mission_ruleset} \
-                       AND (run.campaign_session_kind IS NULL \
-                            OR run.campaign_session_kind = 'field_mission') \
-                     UNION ALL \
-                     SELECT participant.public_key FROM full_campaign_runs aggregate \
-                     JOIN full_campaign_sessions session \
-                       ON session.full_campaign_run_id = aggregate.id AND session.ordinal = 0 \
-                     JOIN verified_runs run ON run.id = session.run_id \
-                     JOIN submissions submission ON submission.id = run.submission_id \
-                     JOIN submission_participants participant \
-                       ON participant.submission_id = submission.id AND participant.seat = 0 \
-                     WHERE aggregate.id = ? AND aggregate.tombstoned_at_ms IS NULL \
-                       AND {aggregate_ruleset} \
-                       AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions linked_session \
-                           JOIN verified_runs linked_run ON linked_run.id = linked_session.run_id \
-                           JOIN submissions linked_submission \
-                             ON linked_submission.id = linked_run.submission_id \
-                           WHERE linked_session.full_campaign_run_id = aggregate.id \
-                             AND linked_submission.tombstoned_at_ms IS NOT NULL) \
-                     LIMIT 1"
+                let mut query = QueryBuilder::<Sqlite>::new("");
+                query.push("SELECT participant.public_key FROM verified_runs run JOIN submissions submission ON \
+                    submission.id = run.submission_id JOIN submission_participants participant ON \
+                    participant.submission_id = submission.id AND participant.seat = 0 WHERE run.id = ");
+                query.push_bind(target_id);
+                query.push(" AND submission.tombstoned_at_ms IS NULL AND ");
+                push_ruleset_filter(
+                    &mut query,
+                    "run.ruleset_id",
+                    active_ruleset_ids.iter().copied(),
                 );
-                // SQL contains only fixed column names and hex-encoded ruleset digests; values are bound.
+                query.push(" AND (run.campaign_session_kind IS NULL OR run.campaign_session_kind = 'field_mission') UNION \
+                    ALL SELECT participant.public_key FROM full_campaign_runs aggregate JOIN full_campaign_sessions \
+                    session ON session.full_campaign_run_id = aggregate.id AND session.ordinal = 0 JOIN \
+                    verified_runs run ON run.id = session.run_id JOIN submissions submission ON submission.id = \
+                    run.submission_id JOIN submission_participants participant ON participant.submission_id = \
+                    submission.id AND participant.seat = 0 WHERE aggregate.id = ");
+                query.push_bind(target_id);
+                query.push(" AND aggregate.tombstoned_at_ms IS NULL AND ");
+                push_ruleset_filter(
+                    &mut query,
+                    "aggregate.ruleset_id",
+                    active_ruleset_ids.iter().copied(),
+                );
+                query.push(" AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions linked_session JOIN verified_runs \
+                    linked_run ON linked_run.id = linked_session.run_id JOIN submissions linked_submission ON \
+                    linked_submission.id = linked_run.submission_id WHERE linked_session.full_campaign_run_id = \
+                    aggregate.id AND linked_submission.tombstoned_at_ms IS NOT NULL) LIMIT 1");
                 let key: Option<Vec<u8>> =
-                    sqlx::query_scalar(sqlx::AssertSqlSafe(statement.as_str()))
-                        .bind(target_id)
-                        .bind(target_id)
-                        .fetch_optional(&mut *tx)
-                        .await?;
+                    query.build_query_scalar().fetch_optional(&mut *tx).await?;
                 fixed_32(key.ok_or(DbError::NotFound)?)?
             }
             "player" => {
@@ -2270,12 +2226,16 @@ impl Database {
                     })?,
             )
             .map_err(|_| DbError::Corrupt("campaign session ordinal out of range".to_owned()))?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("player count out of range".to_owned()))?,
-            participant_instance_count: u16::try_from(
-                row.try_get::<i64, _>("participant_instance_count")?,
-            )
-            .map_err(|_| DbError::Corrupt("participant instance count out of range".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "player count out of range",
+            )?,
+            participant_instance_count: checked_count(
+                &row,
+                "participant_instance_count",
+                "participant instance count out of range",
+            )?,
             chain_owner_public_key,
             participants,
         })
@@ -2614,8 +2574,11 @@ impl Database {
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
                 .transpose()?,
-            max_concurrent_players: u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("campaign player count exceeds u16".to_owned()))?,
+            max_concurrent_players: checked_count(
+                &row,
+                "max_concurrent_players",
+                "campaign player count exceeds u16",
+            )?,
             completed_full_campaign_run_id: row.try_get("full_campaign_run_id")?,
             verification_request,
             verification_result,
@@ -2636,682 +2599,6 @@ impl Database {
         .await?
         .ok_or(DbError::NotFound)?;
         lifecycle_from_row(row)
-    }
-
-    async fn create_full_campaign_aggregate(
-        &self,
-        tx: &mut sqlx::Transaction<'_, Sqlite>,
-        terminal_run_id: &str,
-        campaign_complete_evidence_sha256: [u8; 32],
-        verified_at_ms: i64,
-        published_ruleset: &PublishedRulesetV1,
-        campaign_content_manifest: &CampaignContentManifestV1,
-    ) -> Result<String, DbError> {
-        let mut reversed = Vec::new();
-        let mut current = terminal_run_id.to_owned();
-        for _ in 0..4_096 {
-            let row = sqlx::query(
-                "SELECT r.id, r.submission_id, r.mission_id, r.verification_request_sha256, r.result_sha256, \
-                        r.starting_campaign_sha256, r.starting_campaign_bytes, \
-                        r.final_campaign_sha256, r.final_campaign_bytes, \
-                        r.starting_campaign_score, r.final_campaign_score, \
-                        r.active_simulation_ticks, r.ransom_collected, r.campaign_session_kind, \
-                        r.campaign_session_ordinal, r.campaign_hq_sequence, \
-                        r.campaign_complete_evidence_sha256, r.verification_result_json, \
-                        r.public_verification_request_sha256, r.public_verification_request_json, \
-                        r.public_verification_result_sha256, r.public_verification_result_json, \
-                        r.public_projection_binding_json, \
-                        r.build_manifest_id, r.content_manifest_id, r.campaign_content_manifest_id, \
-                        r.config_id, r.ruleset_id, r.canonical_campaign_state_json, \
-                        r.max_concurrent_players, r.participant_instance_count, \
-                        r.named_participant_instance_count, r.anonymous_participant_instance_count, \
-                        s.predecessor_run_id, s.campaign_chain_id, s.competition_manifest_id, \
-                        s.starting_state_json, s.public_metadata_json, s.envelope_json, \
-                        s.replay_sha256, s.replay_bytes, \
-                        s.verification_request_json \
-                 FROM verified_runs r JOIN submissions s ON s.id = r.submission_id \
-                 WHERE r.id = ? AND r.scope_kind = 'campaign' AND s.status = 'accepted' \
-                   AND s.tombstoned_at_ms IS NULL",
-            )
-            .bind(&current)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| {
-                DbError::ResultInvariant(
-                    "campaign aggregate chain contains a missing or unpublished run".to_owned(),
-                )
-            })?;
-            let predecessor: Option<String> = row.try_get("predecessor_run_id")?;
-            reversed.push(row);
-            let Some(predecessor) = predecessor else {
-                break;
-            };
-            current = predecessor;
-        }
-        if reversed.is_empty()
-            || reversed.len() == 4_096
-                && reversed.last().is_some_and(|row| {
-                    row.try_get::<Option<String>, _>("predecessor_run_id")
-                        .ok()
-                        .flatten()
-                        .is_some()
-                })
-        {
-            return Err(DbError::ResultInvariant(
-                "campaign aggregate chain is empty or exceeds 4096 sessions".to_owned(),
-            ));
-        }
-        reversed.reverse();
-
-        let first = reversed.first().expect("nonempty campaign chain checked");
-        let terminal = reversed.last().expect("nonempty campaign chain checked");
-        let chain_id: String = terminal
-            .try_get::<Option<String>, _>("campaign_chain_id")?
-            .ok_or_else(|| DbError::ResultInvariant("campaign run has no chain ID".to_owned()))?;
-        let campaign_content_manifest_id =
-            fixed_32(terminal.try_get("campaign_content_manifest_id")?)?;
-        let config_id = fixed_32(terminal.try_get("config_id")?)?;
-        let ruleset_id = fixed_32(terminal.try_get("ruleset_id")?)?;
-        let competition_manifest_id = terminal
-            .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
-            .map(fixed_32)
-            .transpose()?;
-        let profile: AdmissionProfile = serde_json::from_str(
-            terminal
-                .try_get::<String, _>("public_metadata_json")?
-                .as_str(),
-        )
-        .map_err(|error| DbError::Corrupt(format!("campaign admission profile: {error}")))?;
-        if !profile
-            .allowed_scopes
-            .iter()
-            .any(|scope| scope == "campaign_continuation")
-            || published_ruleset
-                .manifest
-                .board_scopes
-                .binary_search(&robin_run_protocol::RulesetBoardScopeV1::FullCampaign)
-                .is_err()
-        {
-            return Err(DbError::ResultInvariant(
-                "ruleset does not publish full-campaign boards".to_owned(),
-            ));
-        }
-        let expected_genesis = profile.canonical_campaign_state.artifact.sha256;
-        let canonical_campaign_state_json =
-            serde_json::to_string(&profile.canonical_campaign_state).map_err(|error| {
-                DbError::Corrupt(format!("canonical campaign-state pin JSON: {error}"))
-            })?;
-        let starting_state: InitialStateExpectationV1 =
-            serde_json::from_str(first.try_get::<String, _>("starting_state_json")?.as_str())
-                .map_err(|error| DbError::Corrupt(format!("campaign starting state: {error}")))?;
-        let starting_state_requirement = starting_state.campaign_state_requirement();
-        let InitialStateExpectationV1::CampaignGenesis {
-            campaign_sha256, ..
-        } = starting_state
-        else {
-            return Err(DbError::ResultInvariant(
-                "full campaign does not start at canonical genesis".to_owned(),
-            ));
-        };
-        if (published_ruleset
-            .manifest
-            .canonical_start_policy
-            .requires_exact_operator_artifact()
-            && campaign_sha256 != expected_genesis)
-            || starting_state_requirement != profile.canonical_campaign_state.requirement
-            || profile
-                .canonical_campaign_state
-                .requirement
-                .rules_config_sha256
-                != Digest32::from_bytes(config_id)
-        {
-            return Err(DbError::ResultInvariant(
-                "full campaign genesis differs from its rules-config-bound operator pin".to_owned(),
-            ));
-        }
-
-        let mut sessions = Vec::with_capacity(reversed.len());
-        let mut session_public_proofs = Vec::with_capacity(reversed.len());
-        let mut previous_final = None;
-        let mut previous_score = None;
-        let mut aggregate_ticks = 0_u64;
-        let mut aggregate_ransom = 0_u64;
-        let mut aggregate_participant_instances = 0_u32;
-        let mut aggregate_named_instances = 0_u32;
-        let mut aggregate_anonymous_instances = 0_u32;
-        let mut aggregate_max_concurrent = 0_u16;
-        let mut authenticated_participant_keys = BTreeSet::new();
-        let mut public_named_keys = BTreeSet::new();
-        let mut campaign_controller_public_key = None;
-        for (session_index, row) in reversed.iter().enumerate() {
-            let row_chain: Option<String> = row.try_get("campaign_chain_id")?;
-            let row_content = fixed_32(row.try_get("content_manifest_id")?)?;
-            let row_campaign_content = fixed_32(row.try_get("campaign_content_manifest_id")?)?;
-            let row_config = fixed_32(row.try_get("config_id")?)?;
-            let row_ruleset = fixed_32(row.try_get("ruleset_id")?)?;
-            let row_competition = row
-                .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
-                .map(fixed_32)
-                .transpose()?;
-            let row_players = u16::try_from(row.try_get::<i64, _>("max_concurrent_players")?)
-                .map_err(|_| DbError::Corrupt("campaign player count exceeds u16".to_owned()))?;
-            let row_instances = u16::try_from(row.try_get::<i64, _>("participant_instance_count")?)
-                .map_err(|_| {
-                    DbError::Corrupt("campaign participant count exceeds u16".to_owned())
-                })?;
-            if row_chain.as_deref() != Some(chain_id.as_str())
-                || row_campaign_content != campaign_content_manifest_id
-                || row_config != config_id
-                || row_ruleset != ruleset_id
-                || row_competition != competition_manifest_id
-                || row
-                    .try_get::<String, _>("canonical_campaign_state_json")?
-                    .as_str()
-                    != canonical_campaign_state_json.as_str()
-            {
-                return Err(DbError::ResultInvariant(
-                    "campaign chain changes immutable board identity".to_owned(),
-                ));
-            }
-            let stored_result: VerificationResultV1 = serde_json::from_str(
-                row.try_get::<String, _>("verification_result_json")?
-                    .as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign verification result: {error}")))?;
-            stored_result.validate().map_err(|error| {
-                DbError::Corrupt(format!("campaign verification result: {error}"))
-            })?;
-            let stored_result_sha256 = stored_result
-                .canonical_digest()
-                .map_err(|error| DbError::Corrupt(format!("campaign result digest: {error}")))?;
-            if stored_result_sha256.as_bytes()
-                != &fixed_32(row.try_get::<Vec<u8>, _>("result_sha256")?)?
-            {
-                return Err(DbError::Corrupt(
-                    "campaign result JSON does not match its stored digest".to_owned(),
-                ));
-            }
-            let VerificationStatusV1::Verified(verified) = &stored_result.status else {
-                return Err(DbError::Corrupt(
-                    "accepted campaign row does not contain a verified result".to_owned(),
-                ));
-            };
-            let signed: robin_run_protocol::SignedSubmissionV1 = serde_json::from_str(
-                row.try_get::<String, _>("envelope_json")?.as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign submission envelope: {error}")))?;
-            signed.validate().map_err(|error| {
-                DbError::Corrupt(format!("campaign submission envelope: {error}"))
-            })?;
-            if session_index == 0 {
-                let offer = &signed.submission.offer;
-                if offer.starting_state != starting_state {
-                    return Err(DbError::Corrupt(
-                        "campaign genesis offer differs from its indexed starting state".to_owned(),
-                    ));
-                }
-                let ranked = &offer.session_genesis.claim.ranked_session;
-                validate_aggregate_genesis_scope_subject(
-                    ranked.content_edition,
-                    &ranked.content_subject,
-                    &offer.starting_state,
-                )?;
-            }
-            let stored_request: VerificationRequestV1 = serde_json::from_str(
-                row.try_get::<Option<String>, _>("verification_request_json")?
-                    .ok_or_else(|| {
-                        DbError::Corrupt(
-                            "accepted campaign row has no recorded verification request".to_owned(),
-                        )
-                    })?
-                    .as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign verification request: {error}")))?;
-            let stored_request_sha256 = stored_request
-                .canonical_digest()
-                .map_err(|error| DbError::Corrupt(format!("campaign request digest: {error}")))?;
-            if stored_request.submission != signed
-                || stored_request_sha256.as_bytes()
-                    != &fixed_32(row.try_get::<Vec<u8>, _>("verification_request_sha256")?)?
-            {
-                return Err(DbError::Corrupt(
-                    "campaign verification request does not match indexed storage".to_owned(),
-                ));
-            }
-            stored_result
-                .validate_campaign_complete_evidence(
-                    &stored_request,
-                    &published_ruleset.manifest,
-                    Some(campaign_content_manifest),
-                )
-                .map_err(|error| {
-                    DbError::Corrupt(format!("campaign completion evidence: {error}"))
-                })?;
-            let stored_public_proof = stored_public_verification_proof(row)?;
-            let recomputed_public_proof =
-                PublicVerificationProofV1::from_private(&stored_request, &stored_result).map_err(
-                    |error| DbError::Corrupt(format!("campaign public proof projection: {error}")),
-                )?;
-            if stored_public_proof != recomputed_public_proof {
-                return Err(DbError::Corrupt(
-                    "stored campaign public proof differs from its immutable private documents"
-                        .to_owned(),
-                ));
-            }
-            session_public_proofs.push(stored_public_proof);
-            let mut row_authenticated_keys = verified
-                .authenticated_participant_claims
-                .iter()
-                .map(|claim| claim.public_key)
-                .collect::<Vec<_>>();
-            row_authenticated_keys.sort_unstable();
-            for key in &row_authenticated_keys {
-                authenticated_participant_keys.insert(*key);
-            }
-            for claim in &verified.authenticated_participant_claims {
-                if claim.public_disclosure == ParticipantPublicDisclosureV1::NamedProfile {
-                    public_named_keys.insert(claim.public_key);
-                }
-            }
-            aggregate_participant_instances = aggregate_participant_instances
-                .checked_add(u32::from(row_instances))
-                .ok_or_else(|| {
-                    DbError::ResultInvariant(
-                        "campaign participant instance count overflow".to_owned(),
-                    )
-                })?;
-            aggregate_named_instances = aggregate_named_instances
-                .checked_add(u32::from(verified.named_participant_instance_count))
-                .ok_or_else(|| {
-                    DbError::ResultInvariant("campaign named participant count overflow".to_owned())
-                })?;
-            aggregate_anonymous_instances = aggregate_anonymous_instances
-                .checked_add(u32::from(verified.anonymous_participant_instance_count))
-                .ok_or_else(|| {
-                    DbError::ResultInvariant(
-                        "campaign anonymous participant count overflow".to_owned(),
-                    )
-                })?;
-            aggregate_max_concurrent = aggregate_max_concurrent.max(row_players);
-            let starting_campaign = ArtifactRefV1 {
-                sha256: robin_run_protocol::Digest32::from_bytes(fixed_32(
-                    row.try_get("starting_campaign_sha256")?,
-                )?),
-                byte_length: nonnegative_u64(
-                    row.try_get("starting_campaign_bytes")?,
-                    "starting_campaign_bytes",
-                )?,
-                media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-            };
-            let final_campaign = ArtifactRefV1 {
-                sha256: robin_run_protocol::Digest32::from_bytes(fixed_32(
-                    row.try_get("final_campaign_sha256")?,
-                )?),
-                byte_length: nonnegative_u64(
-                    row.try_get("final_campaign_bytes")?,
-                    "final_campaign_bytes",
-                )?,
-                media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-            };
-            let start_score = i32::try_from(row.try_get::<i64, _>("starting_campaign_score")?)
-                .map_err(|_| DbError::Corrupt("campaign start score exceeds i32".to_owned()))?;
-            let final_score = i32::try_from(row.try_get::<i64, _>("final_campaign_score")?)
-                .map_err(|_| DbError::Corrupt("campaign final score exceeds i32".to_owned()))?;
-            if previous_final
-                .as_ref()
-                .is_some_and(|artifact| artifact != &starting_campaign)
-                || previous_score.is_some_and(|score| score != start_score)
-            {
-                return Err(DbError::ResultInvariant(
-                    "campaign chain state or score continuity is broken".to_owned(),
-                ));
-            }
-            previous_final = Some(final_campaign.clone());
-            previous_score = Some(final_score);
-            let active_ticks = nonnegative_u64(
-                row.try_get("active_simulation_ticks")?,
-                "active_simulation_ticks",
-            )?;
-            let ransom = nonnegative_u64(row.try_get("ransom_collected")?, "ransom_collected")?;
-            aggregate_ticks = aggregate_ticks.checked_add(active_ticks).ok_or_else(|| {
-                DbError::ResultInvariant("campaign active tick sum overflow".to_owned())
-            })?;
-            aggregate_ransom = aggregate_ransom.checked_add(ransom).ok_or_else(|| {
-                DbError::ResultInvariant("campaign ransom sum overflow".to_owned())
-            })?;
-            let kind = verified.campaign_session_kind.clone().ok_or_else(|| {
-                DbError::Corrupt("campaign result is missing its session kind".to_owned())
-            })?;
-            let ordinal = verified.campaign_session_ordinal.ok_or_else(|| {
-                DbError::Corrupt("campaign result is missing its session ordinal".to_owned())
-            })?;
-            let content_subject = signed
-                .submission
-                .offer
-                .session_genesis
-                .claim
-                .ranked_session
-                .content_subject
-                .clone();
-            if campaign_content_manifest.content_for(&content_subject)
-                != Some(robin_run_protocol::Digest32::from_bytes(row_content))
-            {
-                return Err(DbError::ResultInvariant(
-                    "campaign session content does not resolve through the exact catalog"
-                        .to_owned(),
-                ));
-            }
-            if ordinal == 0
-                && campaign_controller_public_key
-                    .replace(
-                        signed
-                            .submission
-                            .offer
-                            .session_genesis
-                            .claim
-                            .host_public_key,
-                    )
-                    .is_some()
-            {
-                return Err(DbError::ResultInvariant(
-                    "campaign chain contains multiple ordinal-zero controllers".to_owned(),
-                ));
-            }
-            let build_manifest_sha256 = stored_result.build_manifest_sha256;
-            if verified.starting_campaign != starting_campaign
-                || verified.final_campaign != final_campaign
-                || verified.starting_campaign_score != start_score
-                || verified.final_campaign_score != final_score
-                || verified.active_simulation_ticks != active_ticks
-                || verified.ransom_collected != ransom
-                || verified.max_concurrent_players != row_players
-                || verified.participant_instance_count != row_instances
-                || stored_result
-                    .competition_manifest_sha256
-                    .map(|value| value.into_bytes())
-                    != row_competition
-                || signed.submission.artifacts != stored_result.artifacts
-                || row.try_get::<Vec<u8>, _>("replay_sha256")?.as_slice()
-                    != stored_result.artifacts.replay.artifact.sha256.as_bytes()
-                || row.try_get::<i64, _>("replay_bytes")?
-                    != i64::try_from(stored_result.artifacts.replay.artifact.byte_length).map_err(
-                        |_| DbError::Corrupt("replay byte length exceeds i64".to_owned()),
-                    )?
-            {
-                return Err(DbError::Corrupt(
-                    "campaign typed result differs from indexed storage".to_owned(),
-                ));
-            }
-            sessions.push(VerifiedCampaignSessionV1 {
-                ordinal,
-                run_id: OpaqueId::new(row.try_get::<String, _>("id")?)
-                    .map_err(|error| DbError::Corrupt(error.to_string()))?,
-                kind,
-                content_subject,
-                campaign_aggregation_consent: verified.campaign_aggregation_consent,
-                replay: stored_result.artifacts.replay.clone(),
-                build_manifest_sha256,
-                content_manifest_sha256: stored_result.content_manifest_sha256,
-                rules_config_sha256: stored_result.rules_config_sha256,
-                ruleset_manifest_sha256: stored_result.ruleset_manifest_sha256,
-                competition_manifest_sha256: stored_result.competition_manifest_sha256,
-                verification_request_sha256: robin_run_protocol::Digest32::from_bytes(fixed_32(
-                    row.try_get("verification_request_sha256")?,
-                )?),
-                verification_result_sha256: robin_run_protocol::Digest32::from_bytes(fixed_32(
-                    row.try_get("result_sha256")?,
-                )?),
-                starting_campaign,
-                final_campaign,
-                starting_campaign_score: start_score,
-                final_campaign_score: final_score,
-                max_concurrent_players: row_players,
-                participant_instance_count: row_instances,
-                named_participant_instance_count: verified.named_participant_instance_count,
-                anonymous_participant_instance_count: verified.anonymous_participant_instance_count,
-                authenticated_participant_keys: row_authenticated_keys,
-                active_simulation_ticks: active_ticks,
-                ransom_collected: ransom,
-                campaign_complete_evidence_sha256: verified
-                    .campaign_complete_evidence
-                    .as_ref()
-                    .map(|evidence| evidence.canonical_digest())
-                    .transpose()
-                    .map_err(|error| {
-                        DbError::Corrupt(format!("campaign completion evidence digest: {error}"))
-                    })?,
-            });
-        }
-        let authenticated_participant_keys = authenticated_participant_keys
-            .into_iter()
-            .collect::<Vec<_>>();
-        let public_named_keys = public_named_keys.into_iter().collect::<Vec<_>>();
-        let campaign_controller_public_key = campaign_controller_public_key.ok_or_else(|| {
-            DbError::ResultInvariant("campaign chain has no ordinal-zero controller".to_owned())
-        })?;
-
-        let full_campaign_run_id = uuid::Uuid::now_v7().to_string();
-        let request = PrivateCampaignAggregateRequestV1 {
-            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
-            chain_id: OpaqueId::new(chain_id.clone())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            full_campaign_run_id: OpaqueId::new(full_campaign_run_id.clone())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            terminal_run_id: OpaqueId::new(terminal_run_id.to_owned())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            campaign_complete_evidence_sha256: robin_run_protocol::Digest32::from_bytes(
-                campaign_complete_evidence_sha256,
-            ),
-            sessions: sessions
-                .iter()
-                .map(|session| PrivateCampaignAggregateSessionRequestV1 {
-                    ordinal: session.ordinal,
-                    run_id: session.run_id.clone(),
-                    verification_request_sha256: session.verification_request_sha256,
-                    verification_result_sha256: session.verification_result_sha256,
-                })
-                .collect(),
-        };
-        let aggregate_request_sha256 = request.canonical_digest()?;
-        let aggregate_request_json = canonical_json_string(&request)?;
-        let canonical_genesis_campaign = sessions
-            .first()
-            .expect("nonempty sessions")
-            .starting_campaign
-            .clone();
-        let final_campaign = sessions
-            .last()
-            .expect("nonempty sessions")
-            .final_campaign
-            .clone();
-        let starting_campaign_score = sessions
-            .first()
-            .expect("nonempty sessions")
-            .starting_campaign_score;
-        let final_campaign_score = sessions
-            .last()
-            .expect("nonempty sessions")
-            .final_campaign_score;
-        let aggregate = VerifiedCampaignAggregateV1 {
-            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
-            aggregate_request_sha256,
-            chain_id: OpaqueId::new(chain_id.clone())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            full_campaign_run_id: OpaqueId::new(full_campaign_run_id.clone())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            campaign_complete_terminal_run_id: OpaqueId::new(terminal_run_id.to_owned())
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            campaign_complete_evidence_sha256: robin_run_protocol::Digest32::from_bytes(
-                campaign_complete_evidence_sha256,
-            ),
-            sessions,
-            max_concurrent_players: aggregate_max_concurrent,
-            participant_instance_count: aggregate_participant_instances,
-            named_participant_instance_count: aggregate_named_instances,
-            anonymous_participant_instance_count: aggregate_anonymous_instances,
-            authenticated_participant_keys,
-            campaign_controller_public_key,
-            campaign_content_manifest_sha256: robin_run_protocol::Digest32::from_bytes(
-                campaign_content_manifest_id,
-            ),
-            rules_config_sha256: robin_run_protocol::Digest32::from_bytes(config_id),
-            ruleset_manifest_sha256: robin_run_protocol::Digest32::from_bytes(ruleset_id),
-            competition_manifest_sha256: competition_manifest_id
-                .map(robin_run_protocol::Digest32::from_bytes),
-            canonical_genesis_campaign: canonical_genesis_campaign.clone(),
-            final_campaign: final_campaign.clone(),
-            starting_campaign_score,
-            final_campaign_score,
-            active_simulation_ticks: aggregate_ticks,
-            ransom_collected: aggregate_ransom,
-        };
-        aggregate
-            .validate_against_ruleset(published_ruleset, campaign_content_manifest)
-            .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
-        let aggregate_sha256 = aggregate
-            .canonical_digest()
-            .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
-        let aggregate_json = canonical_json_string(&aggregate)?;
-        let public_aggregate_proof =
-            PublicCampaignAggregateProofV1::from_private(&aggregate, &session_public_proofs)
-                .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
-        let public_aggregate_request_sha256 = public_aggregate_proof
-            .public_request
-            .canonical_digest()
-            .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
-        if public_aggregate_request_sha256 != public_aggregate_proof.public_request_sha256 {
-            return Err(DbError::ResultInvariant(
-                "public aggregate request projection has an inconsistent digest".to_owned(),
-            ));
-        }
-        let public_aggregate_result_sha256 = public_aggregate_proof
-            .canonical_digest()
-            .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
-        let public_aggregate_request_json =
-            canonical_json_string(&public_aggregate_proof.public_request)?;
-        let public_aggregate_result_json = canonical_json_string(&public_aggregate_proof)?;
-        let public_projection_binding_json = projection_binding_json(
-            aggregate_request_sha256,
-            aggregate_sha256,
-            public_aggregate_request_sha256,
-            public_aggregate_result_sha256,
-        )?;
-        let accepted_sequence: i64 = sqlx::query_scalar(
-            "INSERT INTO acceptance_sequences (created_at_ms) VALUES (?) RETURNING sequence",
-        )
-        .bind(verified_at_ms)
-        .fetch_one(&mut **tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO full_campaign_runs (id, chain_id, terminal_run_id, \
-                aggregate_request_sha256, aggregate_sha256, aggregate_json, \
-                aggregate_request_json, public_aggregate_request_sha256, \
-                public_aggregate_request_json, public_aggregate_result_sha256, \
-                public_aggregate_result_json, public_projection_binding_json, \
-                campaign_complete_evidence_sha256, campaign_content_manifest_id, \
-                config_id, ruleset_id, \
-                canonical_campaign_state_json, \
-                competition_manifest_id, starting_campaign_sha256, starting_campaign_bytes, \
-                final_campaign_sha256, final_campaign_bytes, \
-                starting_campaign_score, final_campaign_score, active_simulation_ticks, \
-                ransom_collected, max_concurrent_players, participant_instance_count, \
-                named_participant_instance_count, anonymous_participant_instance_count, \
-                accepted_sequence, verified_at_ms) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-                     ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&full_campaign_run_id)
-        .bind(&chain_id)
-        .bind(terminal_run_id)
-        .bind(aggregate_request_sha256.as_bytes().as_slice())
-        .bind(aggregate_sha256.as_bytes().as_slice())
-        .bind(&aggregate_json)
-        .bind(&aggregate_request_json)
-        .bind(public_aggregate_request_sha256.as_bytes().as_slice())
-        .bind(&public_aggregate_request_json)
-        .bind(public_aggregate_result_sha256.as_bytes().as_slice())
-        .bind(&public_aggregate_result_json)
-        .bind(&public_projection_binding_json)
-        .bind(campaign_complete_evidence_sha256.as_slice())
-        .bind(campaign_content_manifest_id.as_slice())
-        .bind(config_id.as_slice())
-        .bind(ruleset_id.as_slice())
-        .bind(&canonical_campaign_state_json)
-        .bind(
-            competition_manifest_id
-                .as_ref()
-                .map(|digest| digest.as_slice()),
-        )
-        .bind(canonical_genesis_campaign.sha256.as_bytes().as_slice())
-        .bind(
-            i64::try_from(canonical_genesis_campaign.byte_length).map_err(|_| {
-                DbError::ResultInvariant("campaign length exceeds SQLite INTEGER".to_owned())
-            })?,
-        )
-        .bind(final_campaign.sha256.as_bytes().as_slice())
-        .bind(i64::try_from(final_campaign.byte_length).map_err(|_| {
-            DbError::ResultInvariant("campaign length exceeds SQLite INTEGER".to_owned())
-        })?)
-        .bind(i64::from(starting_campaign_score))
-        .bind(i64::from(final_campaign_score))
-        .bind(i64::try_from(aggregate_ticks).map_err(|_| {
-            DbError::ResultInvariant("campaign tick sum exceeds SQLite INTEGER".to_owned())
-        })?)
-        .bind(i64::try_from(aggregate_ransom).map_err(|_| {
-            DbError::ResultInvariant("campaign ransom sum exceeds SQLite INTEGER".to_owned())
-        })?)
-        .bind(i64::from(aggregate_max_concurrent))
-        .bind(i64::from(aggregate_participant_instances))
-        .bind(i64::from(aggregate_named_instances))
-        .bind(i64::from(aggregate_anonymous_instances))
-        .bind(accepted_sequence)
-        .bind(verified_at_ms)
-        .execute(&mut **tx)
-        .await?;
-        for (ordinal, session) in aggregate.sessions.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO full_campaign_sessions (full_campaign_run_id, ordinal, run_id) \
-                 VALUES (?, ?, ?)",
-            )
-            .bind(&full_campaign_run_id)
-            .bind(i64::try_from(ordinal).map_err(|_| {
-                DbError::ResultInvariant("campaign session ordinal exceeds i64".to_owned())
-            })?)
-            .bind(session.run_id.as_str())
-            .execute(&mut **tx)
-            .await?;
-        }
-        for public_key in &public_named_keys {
-            sqlx::query(
-                "INSERT INTO full_campaign_participants \
-                 (full_campaign_run_id, public_key) VALUES (?, ?)",
-            )
-            .bind(&full_campaign_run_id)
-            .bind(public_key.as_bytes().as_slice())
-            .execute(&mut **tx)
-            .await?;
-        }
-        let aggregate_score = i64::from(final_campaign_score) - i64::from(starting_campaign_score);
-        for (metric, value) in [
-            ("original_score", aggregate_score),
-            (
-                "fastest_success",
-                i64::try_from(aggregate_ticks).map_err(|_| {
-                    DbError::ResultInvariant("campaign tick sum exceeds SQLite INTEGER".to_owned())
-                })?,
-            ),
-        ] {
-            sqlx::query(
-                "INSERT INTO full_campaign_metrics (full_campaign_run_id, metric, value) \
-                 VALUES (?, ?, ?)",
-            )
-            .bind(&full_campaign_run_id)
-            .bind(metric)
-            .bind(value)
-            .execute(&mut **tx)
-            .await?;
-        }
-        Ok(full_campaign_run_id)
     }
 
     /// Wait for SQLx return/rollback before releasing an externally held fence.
@@ -3409,19 +2696,19 @@ async fn verify_pinned_database_leaf(
     let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
         #[cfg(target_os = "linux")]
         {
-            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+            use rustix::fs::{Mode, OFlags};
             use std::os::fd::AsFd as _;
 
             // Closing any ordinary descriptor for this inode would discard
             // SQLite's process-wide POSIX locks, even on another thread. An
             // O_PATH descriptor can authenticate the leaf without that close
             // side effect. Keep the same beneath/no-symlink path confinement.
-            let fd = openat2(
+            let fd = crate::secure_fs::open_no_symlinks_at(
                 opened_parent.as_fd(),
                 std::path::Path::new(&opened_leaf),
                 OFlags::PATH | OFlags::CLOEXEC,
                 Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+                rustix::fs::ResolveFlags::BENEATH,
             )
             .map_err(std::io::Error::from)?;
             let file = std::fs::File::from(fd);
@@ -3503,18 +2790,18 @@ async fn ensure_schema_current(pool: &SqlitePool) -> Result<(), DbError> {
 async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Result<(), DbError> {
     #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::unix::fs::PermissionsExt as _;
         let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;
         if directory {
             flags |= OFlags::DIRECTORY;
         }
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             flags,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )
         .map_err(std::io::Error::from)
         .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
@@ -3650,20 +2937,37 @@ fn fixed_32(bytes: Vec<u8>) -> Result<[u8; 32], DbError> {
         .map_err(|_| DbError::Corrupt("expected a 32-byte digest".to_owned()))
 }
 
-fn active_ruleset_predicate(column: &str, active_ruleset_ids: &[[u8; 32]]) -> String {
-    if active_ruleset_ids.is_empty() {
-        return "0".to_owned();
+fn push_ruleset_filter(
+    query: &mut QueryBuilder<Sqlite>,
+    column: &'static str,
+    ids: impl IntoIterator<Item = [u8; 32]>,
+) {
+    let mut ids = ids.into_iter().peekable();
+    if ids.peek().is_none() {
+        query.push("0");
+        return;
     }
-    let digests = active_ruleset_ids
-        .iter()
-        .map(|digest| format!("X'{}'", hex::encode(digest)))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("{column} IN ({digests})")
+    query.push(column).push(" IN (");
+    let mut separated = query.separated(", ");
+    for digest in ids {
+        separated.push_bind(digest.to_vec());
+    }
+    query.push(")");
 }
 
 fn nonnegative_u64(value: i64, field: &str) -> Result<u64, DbError> {
     u64::try_from(value).map_err(|_| DbError::Corrupt(format!("{field} is negative")))
+}
+
+/// Decode a SQLite INTEGER into a bounded public count. Callers retain their
+/// domain-specific corruption message; SQL type/column errors remain SQLx
+/// errors instead of being disguised as an absent or zero count.
+fn checked_count<T: TryFrom<i64>>(
+    row: &SqliteRow,
+    column: &str,
+    corruption: &'static str,
+) -> Result<T, DbError> {
+    T::try_from(row.try_get::<i64, _>(column)?).map_err(|_| DbError::Corrupt(corruption.to_owned()))
 }
 
 fn optional_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<Option<u32>, DbError> {
@@ -3947,20 +3251,117 @@ fn is_public_rejection_code(value: &str) -> bool {
         .is_ok()
 }
 
-mod hex_array {
-    use serde::Serializer;
-
-    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(&hex::encode(value))
+async fn pin_database_sidecars(
+    database_parent: &Arc<cap_std::fs::Dir>,
+    leaf: &str,
+) -> Result<Vec<std::fs::File>, DbError> {
+    let mut sidecars = Vec::new();
+    for suffix in ["-wal", "-shm"] {
+        let sidecar_name = format!("{leaf}{suffix}");
+        let sidecar_parent = Arc::clone(database_parent);
+        match tokio::task::spawn_blocking(move || {
+            crate::secure_fs::open_regular_file(
+                &sidecar_parent,
+                std::path::Path::new(&sidecar_name),
+            )
+        })
+        .await
+        .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
+        {
+            Ok(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    if file
+                        .metadata()
+                        .map_err(sqlx::Error::Io)?
+                        .permissions()
+                        .mode()
+                        & 0o777
+                        != crate::secure_fs::SHARED_MUTABLE_FILE_MODE
+                    {
+                        file.set_permissions(std::fs::Permissions::from_mode(
+                            crate::secure_fs::SHARED_MUTABLE_FILE_MODE,
+                        ))
+                        .map_err(sqlx::Error::Io)?;
+                    }
+                }
+                sidecars.push(file);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(DbError::Sql(sqlx::Error::Io(error))),
+        }
     }
+    Ok(sidecars)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issued_nonce_uses_protocol_hex_representation() {
+        let issued = IssuedChallenge {
+            id: "nonce-fixture".into(),
+            nonce: robin_run_protocol::ChallengeNonce32::from_bytes([0xab; 32]),
+            expires_at_ms: 123,
+        };
+        assert_eq!(
+            serde_json::to_value(issued).unwrap(),
+            serde_json::json!({
+                "id": "nonce-fixture", "nonce": "ab".repeat(32), "expires_at_ms": 123,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn count_columns_preserve_bounds_and_corruption_errors() {
+        use sqlx::Connection;
+        let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+        for value in [-1, 0, 65_535, 65_536, i64::MAX] {
+            let row = sqlx::query("SELECT ? AS count")
+                .bind(value)
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            let result = checked_count::<u16>(&row, "count", "count out of range");
+            match u16::try_from(value) {
+                Ok(expected) => assert_eq!(result.unwrap(), expected),
+                Err(_) => assert!(
+                    matches!(result, Err(DbError::Corrupt(message)) if message == "count out of range")
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn ruleset_filters_bind_values_in_order_and_reject_empty_allowlists() {
+        use sqlx::Connection;
+        let mut connection = sqlx::SqliteConnection::connect(":memory:").await.unwrap();
+        for (allowed, expected) in [
+            (vec![], 0_i64),
+            (vec![[1; 32]], 1),
+            (vec![[2; 32]], 0),
+            (vec![[2; 32], [1; 32]], 1),
+        ] {
+            let mut query = QueryBuilder::<Sqlite>::new("WITH candidate AS (SELECT ");
+            query
+                .push_bind(vec![1_u8; 32])
+                .push(" AS ruleset_id) SELECT COUNT(*) FROM candidate WHERE ");
+            push_ruleset_filter(&mut query, "candidate.ruleset_id", allowed);
+            query
+                .push(" AND ")
+                .push_bind(7_i64)
+                .push(" = ")
+                .push_bind(7_i64);
+            assert!(!query.sql().contains("X'"));
+            let actual: i64 = query
+                .build_query_scalar()
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
     use robin_run_protocol::{
         ChallengeNonce32, CompetitionRunGrantClaimV1, CompetitionRunGrantRequestClaimV1,
         PublicKey32, RankedSessionConfigV1, ResourceLocaleRootV1, SCHEMA_VERSION_V1, Signature64,
@@ -4448,7 +3849,12 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, public_key, username)
+            .apply_username_update(
+                &challenge.id,
+                challenge.nonce.into_bytes(),
+                public_key,
+                username,
+            )
             .await
             .unwrap();
     }
@@ -4886,7 +4292,7 @@ mod tests {
                 .await
                 .unwrap();
             database
-                .apply_username_update(&challenge.id, challenge.nonce, key, username)
+                .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, username)
                 .await
                 .unwrap();
         }
@@ -4919,7 +4325,7 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, key, "Marian")
+            .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, "Marian")
             .await
             .unwrap();
         database

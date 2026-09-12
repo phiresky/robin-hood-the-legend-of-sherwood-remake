@@ -55,7 +55,7 @@ mod restored_pass_door_completion_tests {
     #[test]
     fn restored_crenel_exit_completes_without_active_door_pass() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(airborne_pc());
+        let owner = engine.add_test_entity(airborne_pc());
         engine.apply_door_pass_transition_completion_side_effects(
             &LevelAssets::new(),
             owner,
@@ -75,7 +75,7 @@ mod restored_pass_door_completion_tests {
             OrderType::TransitionClimbingLadderDownWaitingUprightAlerted,
         ] {
             let mut engine = EngineInner::new();
-            let owner = engine.add_entity(airborne_pc());
+            let owner = engine.add_test_entity(airborne_pc());
             engine
                 .get_entity_mut(owner)
                 .unwrap()
@@ -105,7 +105,7 @@ mod restored_pass_door_completion_tests {
     #[test]
     fn unrelated_transition_still_requires_active_door_pass() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(airborne_pc());
+        let owner = engine.add_test_entity(airborne_pc());
         engine.apply_door_pass_transition_completion_side_effects(
             &LevelAssets::new(),
             owner,
@@ -139,7 +139,7 @@ mod frozen_actor_entry_condolation_tests {
             },
             ..Default::default()
         };
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::ActorSoldier;
@@ -391,8 +391,8 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(10.0, 5.0)));
-        let second = engine.add_entity(mobile_fx(0, MapPoint::new(20.0, 5.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(10.0, 5.0)));
+        let second = engine.add_test_entity(mobile_fx(0, MapPoint::new(20.0, 5.0)));
         engine
             .world
             .mobile_elements
@@ -454,11 +454,11 @@ mod mobile_owner_boundary_tests {
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
         if actor_before {
-            engine.add_entity(inactive_civilian(MapPoint::new(-10.0, 0.0)));
+            engine.add_test_entity(inactive_civilian(MapPoint::new(-10.0, 0.0)));
         }
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
         if !actor_before {
-            engine.add_entity(inactive_civilian(MapPoint::new(10.0, 0.0)));
+            engine.add_test_entity(inactive_civilian(MapPoint::new(10.0, 0.0)));
         }
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
@@ -495,7 +495,7 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let hole = engine.add_entity(Entity::Fx(ElementFx {
+        let hole = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -504,8 +504,8 @@ mod mobile_owner_boundary_tests {
             fx: FxData::default(),
         }));
         engine.remove_entity(hole);
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(20.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(20.0, 0.0)));
         engine.world.mobile_elements.push(mobile(vec![first]));
         engine.world.mobile_elements.push(mobile(vec![second]));
         let assets = LevelAssets {
@@ -524,7 +524,7 @@ mod mobile_owner_boundary_tests {
                 visited.borrow_mut().push(owner);
                 engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner);
                 if owner == first {
-                    let tail = engine.add_entity(Entity::Fx(ElementFx {
+                    let tail = engine.add_test_entity(Entity::Fx(ElementFx {
                         element: {
                             let mut initial_element = ElementData::default();
                             initial_element.kind = ElementKind::Fx;
@@ -548,8 +548,8 @@ mod mobile_owner_boundary_tests {
     fn mobile_boundary_precedes_static_dispatch_in_live_owner_walk() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let static_fx = engine.add_entity(Entity::Fx(ElementFx {
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let static_fx = engine.add_test_entity(Entity::Fx(ElementFx {
             element: {
                 let mut initial_element = ElementData::default();
                 initial_element.kind = ElementKind::Fx;
@@ -591,9 +591,9 @@ mod mobile_owner_boundary_tests {
     fn production_walk_uses_saved_original_creation_order_not_rust_slots() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
-        let third = engine.add_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(10.0, 0.0)));
+        let third = engine.add_test_entity(mobile_fx(2, MapPoint::new(20.0, 0.0)));
         engine.world.install_original_creation_orders(
             [(first, 80), (second, 42), (third, 61)]
                 .into_iter()
@@ -619,7 +619,7 @@ mod mobile_owner_boundary_tests {
         crate::sim_rng::with_seed(17, |sim| {
             let mut engine = EngineInner::new();
             engine.set_actors_frozen(true);
-            let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+            let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
             let mut owner = mobile(vec![child]);
             owner.speed = 2.0;
             owner.goal = MapPoint::new(2.0, 0.0);
@@ -696,7 +696,7 @@ mod mobile_owner_boundary_tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
-        let child = engine.add_entity(mobile_fx(0, MapPoint::new(10.0, 0.0)));
+        let child = engine.add_test_entity(mobile_fx(0, MapPoint::new(10.0, 0.0)));
         let mut owner = mobile(vec![child]);
         owner.position = MapPoint::new(20.0, 0.0);
         owner.old_position = MapPoint::new(0.0, 0.0);
@@ -750,8 +750,8 @@ mod mobile_owner_boundary_tests {
     fn first_child_boundary_rejects_a_later_child_with_the_wrong_mobile_index() {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let first = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
-        let second = engine.add_entity(mobile_fx(1, MapPoint::new(0.0, 0.0)));
+        let first = engine.add_test_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
+        let second = engine.add_test_entity(mobile_fx(1, MapPoint::new(0.0, 0.0)));
         engine
             .world
             .mobile_elements
@@ -853,7 +853,7 @@ mod generic_actor_line_crossing_tests {
         }
         element.set_direction_instantly(13);
         let stale_increment = element.sprite.position_iface.raw_increment_map();
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData {
                 action_state: ActionState::WaitingSword,
@@ -955,7 +955,7 @@ mod generic_actor_line_crossing_tests {
         // invalidates the cached increment before corpse placement commits.
         element.sprite.position_iface.set_map_goal(MapPoint::ZERO);
         element.set_position_map_delayed(destination);
-        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+        let owner = engine.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: ActorData::default(),
             human: HumanData {
@@ -6099,7 +6099,7 @@ mod bow_command_body_parity_tests {
     fn launch_bow_command_and_tick(command: Command, action_state: ActionState) -> EngineInner {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(action_state));
+        let pc_id = engine.add_test_entity(make_aiming_pc(action_state));
         engine.launch_element(SequenceElement::new(1, command, Some(pc_id)));
 
         let mut display = HostDisplayState::default();
@@ -6177,7 +6177,7 @@ mod bow_command_body_parity_tests {
     fn bow_lean_out_commands_keep_transition_order_live() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let soldier_id = engine.add_entity(make_bow_soldier(
+        let soldier_id = engine.add_test_entity(make_bow_soldier(
             Posture::Upright,
             ActionState::AimingWithBow,
         ));
@@ -6230,7 +6230,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(ActionState::AimingWithBow));
+        let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::AimingWithBow));
         let mut sequence = Sequence::new();
         sequence.append_element(SequenceElement::new(1, Command::EquipBow, Some(pc_id)));
         let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
@@ -6256,7 +6256,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let pc_id = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let pc_id = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut sequence = Sequence::new();
         let mut expiring = SequenceElement::new_generic(1, Command::Timer, Some(pc_id));
         expiring.set_property(Field::Timer, FieldValue::Integer(1));
@@ -6330,7 +6330,8 @@ mod bow_command_body_parity_tests {
         use crate::sequence::{Field, FieldValue};
 
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
         turn.set_property(Field::Direction, FieldValue::Integer(5));
         let seq_id = engine.orders.sequence_manager.launch_element(turn);
@@ -6378,7 +6379,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.set_property(Field::Timer, FieldValue::Integer(7));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -6523,7 +6524,7 @@ mod bow_command_body_parity_tests {
     #[test]
     fn ladder_fall_wait_owns_legacy_scalar_over_dormant_seek() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
         let actor = engine
             .world
             .entities
@@ -6554,7 +6555,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         wait.set_property(Field::Timer, FieldValue::Integer(0));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -6608,7 +6609,7 @@ mod bow_command_body_parity_tests {
             );
             owner_entity.actor_data_mut().unwrap().wait_time = wait_time;
             owner_entity.actor_data_mut().unwrap().seek_refresh_wait = wait_time;
-            let owner = engine.add_entity(owner_entity);
+            let owner = engine.add_test_entity(owner_entity);
 
             let mut wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
             wait.priority = crate::sequence::SequencePriority::Normal;
@@ -6695,7 +6696,7 @@ mod bow_command_body_parity_tests {
         );
         owner_entity.element_data_mut().sprite.current_row = 1;
         owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingUpright;
-        let owner = engine.add_entity(owner_entity);
+        let owner = engine.add_test_entity(owner_entity);
         let parry_sequence =
             engine.launch_element(SequenceElement::new(1, Command::ParrySword, Some(owner)));
         assert_eq!(
@@ -6756,7 +6757,7 @@ mod bow_command_body_parity_tests {
     fn owner_local_stop_movement_new_id_preserves_execute_start() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Moving));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Moving));
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -6827,7 +6828,7 @@ mod bow_command_body_parity_tests {
     fn fresh_waypoint_start_advancing_to_older_stop_transition_is_in_progress() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::MovingFast));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::MovingFast));
         let mut movement = SequenceElement::new_movement(
             1,
             Command::MoveOk,
@@ -6907,7 +6908,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -6948,7 +6950,7 @@ mod bow_command_body_parity_tests {
             unreachable!();
         };
         soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
-        let owner = engine.add_entity(soldier_entity);
+        let owner = engine.add_test_entity(soldier_entity);
         engine
             .world
             .entities
@@ -6986,7 +6988,7 @@ mod bow_command_body_parity_tests {
     fn stealth_context_crouches_and_preserves_terminated_order() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7030,7 +7032,7 @@ mod bow_command_body_parity_tests {
     fn wait_timer_context_rejects_missing_timer_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let wait = SequenceElement::new_generic(1, Command::WaitTimer, Some(owner));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
 
@@ -7048,7 +7050,7 @@ mod bow_command_body_parity_tests {
     fn wait_context_rejects_stale_owner_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let wait = SequenceElement::new(1, Command::Wait, Some(owner));
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
         engine.remove_entity(owner);
@@ -7068,7 +7070,7 @@ mod bow_command_body_parity_tests {
 
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         // Crouch bodies now stay live until their transition animation
         // completes, so use LeaveSpy — the stealth context still snaps the
         // posture and terminates it synchronously inside its dispatch slot.
@@ -7107,7 +7109,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7149,7 +7151,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7177,7 +7179,7 @@ mod bow_command_body_parity_tests {
     fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_aiming_pc(ActionState::Waiting));
+        let owner = engine.add_test_entity(make_aiming_pc(ActionState::Waiting));
         let seq_id = engine
             .orders
             .sequence_manager
@@ -7206,7 +7208,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn position_assertion_context_interrupts_at_tolerance_boundary() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let mut assertion = SequenceElement::new_movement(
             1,
             Command::AssertPosition,
@@ -7246,7 +7249,8 @@ mod bow_command_body_parity_tests {
     #[test]
     fn position_assertion_context_accepts_nan_distance_like_original() {
         let mut engine = EngineInner::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         engine
             .world
             .entities
@@ -7294,7 +7298,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         engine.world.fast_grid_mut().lift_state_mut(0).wait_time = 2;
@@ -7363,7 +7368,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_rejects_crenel_lift_type_contextually() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         let door = crate::gate::Door {
@@ -7406,7 +7412,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_context_reserves_direction_before_terminating() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         let door = crate::gate::Door {
@@ -7477,7 +7484,8 @@ mod bow_command_body_parity_tests {
     fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         {
@@ -7586,7 +7594,8 @@ mod bow_command_body_parity_tests {
     fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
         let mut engine = EngineInner::new();
         let assets = LevelAssets::new();
-        let owner = engine.add_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
+        let owner =
+            engine.add_test_entity(make_bow_soldier(Posture::Upright, ActionState::Waiting));
         let sector_number = crate::sector::SectorNumber::new(42);
         install_test_lift_sector(&mut engine, owner, sector_number);
         crate::engine::test_support::ensure_ordinary_sector(&mut engine, 0, 0);
@@ -7781,8 +7790,8 @@ mod soldier_take_drink_parity_tests {
     ) -> (EngineInner, EntityId) {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let actor_id = engine.add_entity(actor);
-        let antagonist_id = engine.add_entity(antagonist);
+        let actor_id = engine.add_test_entity(actor);
+        let antagonist_id = engine.add_test_entity(antagonist);
         engine.launch_element(SequenceElement::new_interaction(
             1,
             command,
@@ -7862,9 +7871,9 @@ mod soldier_take_drink_parity_tests {
     fn nearby_pc_does_not_pick_up_bonus_without_take_command() {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        engine.add_entity(make_pc_at(100.0, 100.0));
+        engine.add_test_entity(make_pc_at(100.0, 100.0));
         let bonus_id =
-            engine.add_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
+            engine.add_test_entity(make_bonus_object_at(ObjectType::BonusPurse, 100.0, 100.0));
 
         let mut dev = DevState::default();
         let mut display = HostDisplayState::default();
@@ -7981,7 +7990,7 @@ mod drop_ammo_merge_tests {
                 crate::coordinates::MapVec::new(5.0, 5.0),
             ));
 
-        let pc_id = engine.add_entity(crate::element::Entity::Pc(ActorPc {
+        let pc_id = engine.add_test_entity(crate::element::Entity::Pc(ActorPc {
             element,
             actor: Default::default(),
             human: Default::default(),

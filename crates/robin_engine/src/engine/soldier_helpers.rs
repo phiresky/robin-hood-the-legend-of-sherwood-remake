@@ -1908,22 +1908,24 @@ impl EngineInner {
                     self.debug_building_exit_wait_pc_route(pc_id, source_sector, goal_sector);
                     let _ = self.build_gate_movement_sequence(
                         sim,
-                        pc_id,
-                        Some(source_sector),
-                        path,
-                        GoalShape::Point {
-                            point: MapPoint::new(goal.x, goal.y),
-                            tolerance: 0.0,
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: pc_id,
+                            source_sector: Some(source_sector),
+                            gate_path: path,
+                            goal: GoalShape::Point {
+                                point: MapPoint::new(goal.x, goal.y),
+                                tolerance: 0.0,
+                            },
+                            goal_layer: goal.level,
+                            base_action: crate::order::OrderType::RunningUpright,
+                            move_after_last_door: true,
+                            speed_factor: 1.0,
+                            initial_flags: MoveFlags::empty(),
+                            prefix_elements: vec![wait],
+                            tail_elements: tail_elements,
+                            append_arrival_speech: false,
+                            append_recovery: false,
                         },
-                        goal.level,
-                        crate::order::OrderType::RunningUpright,
-                        true,
-                        1.0,
-                        MoveFlags::empty(),
-                        vec![wait],
-                        tail_elements,
-                        false,
-                        false,
                     );
                     return;
                 }
@@ -2015,7 +2017,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        let owner = engine.add_entity(Entity::Pc(crate::element::ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
                     crate::element::Posture::Upright,
@@ -2159,7 +2161,7 @@ mod tests {
         element.set_position_map(point_in);
         element.set_sector(crate::position_interface::SectorHandle::new(118));
         element.set_layer(6);
-        let pc = engine.add_entity(Entity::Pc(ActorPc {
+        let pc = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {

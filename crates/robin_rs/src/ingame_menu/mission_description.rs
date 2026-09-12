@@ -20,6 +20,7 @@
 //! tooltips use.
 
 use crate::gfx_types::Keycode;
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine::{
@@ -162,7 +163,7 @@ impl MissionDescriptionModalState {
         let win_y = (MENU_H - layout_consts::WINDOW_HEIGHT) / 2;
         let pic_x = layout_consts::PICTURE_FRAME_RIGHT_EDGE - pic_w;
         let pic_y = layout_consts::PICTURE_FRAME_Y;
-        let (btn_w, btn_h) = resources.ok_button_dimensions();
+        let (btn_w, btn_h) = resources.seal_button_dimensions(SealButton::Ok);
         let buttons = screen.buttons();
         let widths: Vec<i32> = buttons.iter().map(|_| btn_w).collect();
         let xs = center_horizontally_x(
@@ -170,9 +171,7 @@ impl MissionDescriptionModalState {
             layout_consts::WINDOW_WIDTH,
             layout_consts::BUTTON_GAP,
         );
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         for (idx, button) in buttons.iter().enumerate() {
             let sprite_id = match button {
                 MissionDescriptionButton::Cancel => robin_engine::resource_ids::RHID_CANCEL,
@@ -215,8 +214,7 @@ impl MissionDescriptionModalState {
                 as u32;
         let blazon_box_h =
             (layout_consts::BLAZON_BOX_BOTTOM - layout_consts::BLAZON_BOX_Y).max(0) as u32;
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             mission_index,
             screen,

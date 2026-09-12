@@ -61,20 +61,12 @@ impl EngineInner {
                     let entity = self.world.entities.get(source_id).unwrap_or_else(|| {
                         panic!("patrol broadcast chief {} disappeared", source_id.index())
                     });
-                    let chief_ctx = build_ai_context_from_entity(
+                    let chief_ctx = self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,
                         building_sector,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.navigation.hiking_paths,
-                        &assets.navigation.hiking_waypoint_sectors,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
+                        &scratch,
+                        assets,
                     );
                     let chief_ai = entity.enemy_ai().unwrap_or_else(|| {
                         panic!(
@@ -107,20 +99,12 @@ impl EngineInner {
                         self.world.entities.get(member_id).unwrap_or_else(|| {
                             panic!("patrol broadcast member {member} disappeared")
                         });
-                    build_ai_context_from_entity(
+                    self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,
                         building_sector,
-                        self.world.weather.is_forest_level,
-                        self.world.weather.ambiance,
-                        self.ai.standard_view_polygon_radius,
-                        &scratch.ai_entity_views,
-                        &scratch.ai_sight_obstacles,
-                        &self.world.fast_grid,
-                        &assets.navigation.hiking_paths,
-                        &assets.navigation.hiking_waypoint_sectors,
-                        &self.ai.global.all_soldier_handles,
-                        self.control.sim_config.difficulty,
+                        &scratch,
+                        assets,
                     )
                 };
                 let tick_data = self.build_npc_tick_data(sim, member_id, assets);
@@ -224,9 +208,10 @@ impl EngineInner {
                 let grid = &self.world.fast_grid;
                 self.world
                     .entities
-                    .get_mut(chief_id)
-                    .and_then(Entity::enemy_ai_mut)
-                    .unwrap_or_else(|| panic!("patrol chief {chief} lost its EnemyAi"))
+                    .expect_enemy_ai_mut(
+                        chief_id,
+                        format_args!("patrol chief {chief} lost its EnemyAi"),
+                    )
                     .dispatch_stimulus_to_whole_patrol(
                         sim,
                         &stimulus,
@@ -430,9 +415,10 @@ impl EngineInner {
             let grid = &self.world.fast_grid;
             self.world
                 .entities
-                .get_mut(source_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| panic!("Think-result caller {caller} lost its EnemyAi"))
+                .expect_enemy_ai_mut(
+                    source_id,
+                    format_args!("Think-result caller {caller} lost its EnemyAi"),
+                )
                 .resolve_think_result(
                     sim,
                     accepted,
@@ -600,11 +586,10 @@ impl EngineInner {
                 crate::ai::AlertContinuation::SoldierSawOfficer => self
                     .world
                     .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::enemy_ai_mut)
-                    .unwrap_or_else(|| {
-                        panic!("soldier CALL_ALERT caller {caller} lost its EnemyAi")
-                    })
+                    .expect_enemy_ai_mut(
+                        source_id,
+                        format_args!("soldier CALL_ALERT caller {caller} lost its EnemyAi"),
+                    )
                     .resolve_alert_request(sim, accepted, continuation, &source_ctx, &source_tick),
             }
         }

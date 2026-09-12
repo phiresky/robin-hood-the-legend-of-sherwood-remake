@@ -24,7 +24,7 @@ required-features = ["engine-adapters"]
 
 [[example]]
 name = "jxl_sprite_probe"
-required-features = ["engine-adapters"]
+required-features = ["engine-adapters", "research"]
 
 [[example]]
 name = "asset_decode_bench"
@@ -52,15 +52,16 @@ tracing.workspace = true
 anyhow.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 flate2 = "1"
+crc32fast = "1.5"
 # Fast non-cryptographic hasher for the sprite codec's context maps (hot
 # path: several map lookups per decoded tile).
 foldhash = "0.2"
 # Most adaptive contexts contain only a few symbols; keep them inline.
-smallvec = { version = "1", features = ["union"] }
+smallvec = { workspace = true, features = ["union"] }
 bitcode.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
-png = { version = "0.18", optional = true }
+png = { workspace = true, optional = true }
 zstd.workspace = true
 # Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
 # decode terrain `.map` files when the converter has transcoded them to
@@ -91,12 +92,10 @@ memmap2 = "0.9"
 # buildable for wasm (cargo builds every dev-dependency for example targets).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile.workspace = true
-# PNG export for the jxl_sprite_probe research example (cjxl input files).
-png = "0.18"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 js-sys = "0.3"
-wasm-bindgen = "0.2"
+wasm-bindgen.workspace = true
 
 # Browser thread pool for parallel VQ chunk decode (feature `wasm-threads`).
 # The build must also enable `-C target-feature=+atomics,+bulk-memory,
@@ -108,11 +107,10 @@ wasm-bindgen = "0.2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rayon = { version = "1", optional = true }
 wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"], optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
+wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
 futures-channel = { version = "0.3", optional = true }
-futures-util = { version = "0.3", optional = true }
+futures-util = { workspace = true, optional = true }
 # Global allocator for every wasm build (src/wasm_alloc.rs): std's dlmalloc
 # funnels every thread through one futex lock, which measurably INVERTS
 # worker-pool decode scaling past ~4 threads, and talc is ~9% faster even
@@ -123,6 +121,8 @@ spinning_top = "0.3"
 
 [features]
 default = ["engine-adapters"]
+# Expensive offline experiments are built only when explicitly requested.
+research = []
 # Game-level preparation, VM tooling and resource-manager adapters. Raw sprite,
 # picture and compression codecs remain usable without the simulation crate.
 engine-adapters = ["dep:robin_engine", "dep:png"]
@@ -132,7 +132,6 @@ engine-adapters = ["dep:robin_engine", "dep:png"]
 wasm-threads = [
     "dep:rayon",
     "dep:wasm-bindgen-rayon",
-    "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
     "dep:futures-channel",
@@ -151,4 +150,5 @@ name = "mission_sprite_audit"
 required-features = ["engine-adapters"]
 
 [dev-dependencies]
-clap = { version = "4", features = ["derive"] }
+robin_test_support.workspace = true
+clap = { workspace = true, features = ["derive"] }

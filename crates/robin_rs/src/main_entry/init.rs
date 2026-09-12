@@ -13,7 +13,7 @@ use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
 #[cfg(any(test, not(target_arch = "wasm32")))]
-use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
+use robin_engine::sbfile::SbFileError;
 use robin_engine::sbfile::{SbFile, SbFileSystem};
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 use robin_run_protocol::{
@@ -45,7 +45,10 @@ pub enum InitError {
     DataDirectoryCancelled,
 
     #[error("Unable to install datadir {path}: file error {status}")]
-    DataDirectoryInstall { path: String, status: i32 },
+    DataDirectoryInstall {
+        path: String,
+        status: robin_engine::sbfile::SbFileError,
+    },
 
     #[error(
         "ERROR: 'Data' directory not found in {cwd}\nSet ROBINHOOD_DATA_DIR=/path/to/game to the directory that\ncontains the game's Data/ folder (with Data/robinhood.bks).\nIf you do not own the game, I recommend buying it on GOG:\n{gog_store_url}"
@@ -83,7 +86,10 @@ pub enum InitError {
     },
 
     #[error("Failed to open {path}: error {status}")]
-    ContentProfilesOpen { path: &'static str, status: i32 },
+    ContentProfilesOpen {
+        path: &'static str,
+        status: robin_engine::sbfile::SbFileError,
+    },
 
     #[error("Failed to read profiles from {path}: error {source}")]
     ContentProfilesRead {
@@ -281,9 +287,9 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         roots.sort();
         for path in roots {
             match crate::mod_pack::mount_mod_overlay(files, &path) {
-                SBFILE_NO_ERROR => tracing::info!("Registered mod overlay: {}", path.display()),
-                SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-                error => {
+                Ok(()) => tracing::info!("Registered mod overlay: {}", path.display()),
+                Err(SbFileError::PathAlreadyPresent) => {}
+                Err(error) => {
                     tracing::warn!("Failed to register mod overlay {}: {error}", path.display())
                 }
             }
@@ -299,11 +305,11 @@ fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
         }
         let path = path.to_string_lossy().into_owned();
         match crate::mod_pack::mount_mod_overlay(files, Path::new(&path)) {
-            SBFILE_NO_ERROR => tracing::info!("Registered overlay datadir: {path}"),
-            SBFILE_ERROR_PATH_ALREADY_PRESENT => {
+            Ok(()) => tracing::info!("Registered overlay datadir: {path}"),
+            Err(SbFileError::PathAlreadyPresent) => {
                 tracing::debug!("Overlay datadir already registered: {path}")
             }
-            err => tracing::warn!("Failed to register overlay datadir {path}: {err}"),
+            Err(err) => tracing::warn!("Failed to register overlay datadir {path}: {err}"),
         }
     }
     Ok(())
@@ -325,13 +331,19 @@ fn add_language_folder() {
     // no `1033/`).
     let _ = SbFile::add_alternate_path(FALLBACK_LOCALE_FOLDER);
 
-    // Probe each candidate with `SbFile::exists` (which also walks already-
+    // Probe each candidate with `try_exists` (which also walks already-
     // registered alternate paths) and stop at the first hit.
     for &folder in LANGUAGE_FOLDERS {
-        if SbFile::exists(folder) {
-            tracing::info!("Detected language folder: {folder}");
-            let _ = SbFile::add_alternate_path(folder);
-            return;
+        match robin_engine::sbfile::global_file_system().try_exists(folder) {
+            Ok(true) => {
+                tracing::info!("Detected language folder: {folder}");
+                let _ = SbFile::add_alternate_path(folder);
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(folder, %error, "Cannot inspect candidate language folder")
+            }
         }
     }
     tracing::info!(
@@ -345,8 +357,8 @@ fn add_language_folder() {
 #[cfg(any(test, not(target_arch = "wasm32")))]
 fn add_language_folder_with_files(files: &SbFileSystem) -> Result<(), InitError> {
     let add = |path: &str| match files.add_alternate_path(path) {
-        SBFILE_NO_ERROR | SBFILE_ERROR_PATH_ALREADY_PRESENT => Ok(()),
-        status => Err(InitError::DataDirectoryInstall {
+        Ok(()) | Err(SbFileError::PathAlreadyPresent) => Ok(()),
+        Err(status) => Err(InitError::DataDirectoryInstall {
             path: path.into(),
             status,
         }),
@@ -380,28 +392,49 @@ pub fn register_language_data_paths_for_tool() {
     add_language_folder();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn configured_data_dir(explicit: Option<&Path>, environment: Option<String>) -> Option<String> {
+    explicit
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .or_else(|| environment.filter(|dir| !dir.is_empty()))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn install_primary_data_dir(files: &SbFileSystem, path: String) -> Result<(), InitError> {
+    files
+        .set_primary_path(&path)
+        .map_err(|status| InitError::DataDirectoryInstall { path, status })
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[test]
+fn explicit_datadir_precedes_environment_without_hiding_an_empty_override() {
+    assert_eq!(
+        configured_data_dir(Some(Path::new("explicit")), Some("environment".into())),
+        Some("explicit".into())
+    );
+    assert_eq!(
+        configured_data_dir(Some(Path::new("")), Some("environment".into())),
+        Some(String::new())
+    );
+    assert_eq!(configured_data_dir(None, Some(String::new())), None);
+    assert_eq!(configured_data_dir(None, None), None);
+    assert_eq!(
+        configured_data_dir(None, Some("environment".into())),
+        Some("environment".into())
+    );
+}
+
 /// Set up the working directory so that `Data/` is accessible.
 ///
 /// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
 /// over the `ROBINHOOD_DATA_DIR` environment variable.
 #[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
 fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = data_dir_override
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| {
-            std::env::var("ROBINHOOD_DATA_DIR")
-                .ok()
-                .filter(|dir| !dir.is_empty())
-        });
+    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
     if let Some(data_dir) = data_dir {
         tracing::info!("using primary datadir {}", data_dir);
-        let status = files.set_primary_path(&data_dir);
-        if status != SBFILE_NO_ERROR {
-            return Err(InitError::DataDirectoryInstall {
-                path: data_dir,
-                status,
-            });
-        }
+        install_primary_data_dir(files, data_dir)?;
     } else {
         // No override and no env var: reuse the remembered datadir, or
         // auto-detect (working directory, executable directory, well-known
@@ -415,13 +448,7 @@ fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Res
         // Cancelling the picker must stop startup before installing any data.
         let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
-        let status = files.set_primary_path(&chosen.to_string_lossy());
-        if status != SBFILE_NO_ERROR {
-            return Err(InitError::DataDirectoryInstall {
-                path: chosen.display().to_string(),
-                status,
-            });
-        }
+        install_primary_data_dir(files, chosen.to_string_lossy().into_owned())?;
     }
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
@@ -483,21 +510,9 @@ fn datadir_cancellation_does_not_fall_back_to_working_directory() {
 /// `ShippingDatadir` / `asset_fs` bundle.
 #[cfg(target_os = "android")]
 fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = data_dir_override
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| {
-            std::env::var("ROBINHOOD_DATA_DIR")
-                .ok()
-                .filter(|dir| !dir.is_empty())
-        });
+    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
     if let Some(data_dir) = data_dir {
-        let status = files.set_primary_path(&data_dir);
-        if status != SBFILE_NO_ERROR {
-            return Err(InitError::DataDirectoryInstall {
-                path: data_dir,
-                status,
-            });
-        }
+        install_primary_data_dir(files, data_dir)?;
     }
 
     if robin_engine::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
@@ -1072,7 +1087,7 @@ mod tests {
         )));
         assert_eq!(
             files.set_primary_path(root.path().to_str().unwrap()),
-            SBFILE_NO_ERROR
+            Ok(())
         );
         add_language_folder_with_files(&files).unwrap();
         let service =
@@ -1128,7 +1143,7 @@ mod tests {
             (
                 InitError::DataDirectoryInstall {
                     path: "/game".to_owned(),
-                    status: -1,
+                    status: robin_engine::sbfile::SbFileError::NotFound,
                 },
                 InitErrorCategory::DataDirectory,
             ),
@@ -1141,7 +1156,7 @@ mod tests {
             (
                 InitError::ContentProfilesOpen {
                     path: "Data/Configuration/profile.cpf",
-                    status: -2,
+                    status: robin_engine::sbfile::SbFileError::NoFile,
                 },
                 InitErrorCategory::Content,
             ),
@@ -1182,11 +1197,14 @@ mod tests {
 
         let profile = InitError::ContentProfilesOpen {
             path: "Data/Configuration/profile.cpf",
-            status: -7,
+            status: robin_engine::sbfile::SbFileError::BadArchive,
         };
         assert_eq!(
             profile.to_string(),
-            "Failed to open Data/Configuration/profile.cpf: error -7"
+            format!(
+                "Failed to open Data/Configuration/profile.cpf: error {}",
+                robin_engine::sbfile::SbFileError::BadArchive
+            )
         );
     }
 
@@ -1300,11 +1318,11 @@ mod tests {
         let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
         assert_eq!(
             files.add_overlay_path(directory.path().to_str().unwrap()),
-            SBFILE_NO_ERROR
+            Ok(())
         );
         assert_eq!(
             files.add_overlay_zip_bytes_for_mission("patch", bytes.into(), None),
-            SBFILE_NO_ERROR
+            Ok(())
         );
         let mut profiles = ProfileManager::new();
         profiles.soldiers.push(engine_profiles::SoldierProfile {

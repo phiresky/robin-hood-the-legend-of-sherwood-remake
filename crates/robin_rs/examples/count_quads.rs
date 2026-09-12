@@ -1,10 +1,18 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
+use clap::Parser;
 use robin_assets::scb;
 use std::collections::BTreeMap;
-fn main() {
+
+#[derive(Parser, serde::Serialize, serde::Deserialize)]
+struct Args {
+    /// Original .scb bytecode file to inspect.
+    path: std::path::PathBuf,
+}
+
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    let path = "Data/Levels/Dem_Lei_MP.scb";
-    let scb = scb::parse_file(path).unwrap();
+    let args = Args::parse();
+    let scb = scb::parse_file(&args.path)?;
     let mut hist: BTreeMap<u8, u32> = BTreeMap::new();
     for c in &scb.classes {
         for q in &c.quads {
@@ -20,4 +28,5 @@ fn main() {
             tracing::info!("  {op:2}: {count}", op = *op);
         }
     }
+    Ok(())
 }

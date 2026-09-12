@@ -57,134 +57,6 @@ pub enum CampaignLayer {
     PracticeReturnSnapshot,
 }
 
-trait CampaignLayerState {
-    fn missions(&self) -> &[robin_engine::mission::Mission];
-    fn characters(&self) -> &[robin_engine::campaign::PcDescription];
-    fn accessible_mission_indices(&self) -> &[usize];
-    fn pending_accessible_mission_indices(&self) -> &[usize];
-    fn last_mission_idx(&self) -> Option<usize>;
-    fn current_mission_idx(&self) -> Option<usize>;
-    fn next_mission_idx(&self) -> Option<usize>;
-    fn blazon_mission_idx(&self) -> Option<usize>;
-    fn history_replay_mission_idx(&self) -> Option<usize>;
-    fn gang_indices(&self) -> &[usize];
-    fn reservist_indices(&self) -> &[usize];
-    fn mission_team_indices(&self) -> &[usize];
-    fn peasant_names(&self) -> &[String];
-    fn collected_relics(&self) -> &[u32];
-    fn ares(&self) -> i8;
-    fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction];
-    fn mission_attempt_sequence(&self) -> u64;
-}
-
-impl<S: robin_util::state_hash::StateHash> CampaignLayerState for Campaign<S> {
-    fn missions(&self) -> &[robin_engine::mission::Mission] {
-        &self.missions
-    }
-    fn characters(&self) -> &[robin_engine::campaign::PcDescription] {
-        &self.characters
-    }
-    fn accessible_mission_indices(&self) -> &[usize] {
-        &self.accessible_mission_indices
-    }
-    fn pending_accessible_mission_indices(&self) -> &[usize] {
-        &self.pending_accessible_mission_indices
-    }
-    fn last_mission_idx(&self) -> Option<usize> {
-        self.last_mission_idx
-    }
-    fn current_mission_idx(&self) -> Option<usize> {
-        self.current_mission_idx
-    }
-    fn next_mission_idx(&self) -> Option<usize> {
-        self.next_mission_idx
-    }
-    fn blazon_mission_idx(&self) -> Option<usize> {
-        self.blazon_mission_idx
-    }
-    fn history_replay_mission_idx(&self) -> Option<usize> {
-        self.history_replay_mission_idx
-    }
-    fn gang_indices(&self) -> &[usize] {
-        &self.gang_indices
-    }
-    fn reservist_indices(&self) -> &[usize] {
-        &self.reservist_indices
-    }
-    fn mission_team_indices(&self) -> &[usize] {
-        &self.mission_team_indices
-    }
-    fn peasant_names(&self) -> &[String] {
-        &self.peasant_names
-    }
-    fn collected_relics(&self) -> &[u32] {
-        &self.collected_relics
-    }
-    fn ares(&self) -> i8 {
-        self.ares
-    }
-    fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction] {
-        &self.production_sectors
-    }
-    fn mission_attempt_sequence(&self) -> u64 {
-        self.mission_attempt_sequence
-    }
-}
-
-impl CampaignLayerState for CampaignPracticeReturnView<'_> {
-    fn missions(&self) -> &[robin_engine::mission::Mission] {
-        self.missions
-    }
-    fn characters(&self) -> &[robin_engine::campaign::PcDescription] {
-        self.characters
-    }
-    fn accessible_mission_indices(&self) -> &[usize] {
-        self.accessible_mission_indices
-    }
-    fn pending_accessible_mission_indices(&self) -> &[usize] {
-        self.pending_accessible_mission_indices
-    }
-    fn last_mission_idx(&self) -> Option<usize> {
-        self.last_mission_idx
-    }
-    fn current_mission_idx(&self) -> Option<usize> {
-        self.current_mission_idx
-    }
-    fn next_mission_idx(&self) -> Option<usize> {
-        self.next_mission_idx
-    }
-    fn blazon_mission_idx(&self) -> Option<usize> {
-        self.blazon_mission_idx
-    }
-    fn history_replay_mission_idx(&self) -> Option<usize> {
-        None
-    }
-    fn gang_indices(&self) -> &[usize] {
-        self.gang_indices
-    }
-    fn reservist_indices(&self) -> &[usize] {
-        self.reservist_indices
-    }
-    fn mission_team_indices(&self) -> &[usize] {
-        self.mission_team_indices
-    }
-    fn peasant_names(&self) -> &[String] {
-        self.peasant_names
-    }
-    fn collected_relics(&self) -> &[u32] {
-        self.collected_relics
-    }
-    fn ares(&self) -> i8 {
-        self.ares
-    }
-    fn production_sectors(&self) -> &[robin_engine::sector_production::SectorProduction] {
-        self.production_sectors
-    }
-    fn mission_attempt_sequence(&self) -> u64 {
-        self.mission_attempt_sequence
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CampaignCollection {
@@ -878,7 +750,7 @@ fn validate_decoded_replay_campaign(
     };
 
     let (mission_index, mut deferred_content_checks) = validate_campaign_layer(
-        &campaign,
+        &campaign.validation_view(),
         CampaignLayer::Current,
         Some(header_profile_index),
         header_mission_id,
@@ -914,7 +786,7 @@ fn validate_decoded_replay_campaign(
             });
         }
         let (_, snapshot_deferred) = validate_campaign_layer(
-            snapshot,
+            &snapshot.validation_view(),
             CampaignLayer::PreMissionSnapshot,
             campaign
                 .pre_mission_was_preselected
@@ -1024,15 +896,15 @@ fn validate_decoded_replay_campaign(
 }
 
 fn validate_campaign_layer(
-    campaign: &impl CampaignLayerState,
+    campaign: &CampaignPracticeReturnView<'_>,
     layer: CampaignLayer,
     required_header_profile_index: Option<usize>,
     header_mission_id: &str,
     profiles: &ProfileManager,
     limits: &ReplayAdmissionLimits,
 ) -> Result<(Option<usize>, DeferredReplayCampaignContentChecks), ReplayCampaignValidationError> {
-    let missions = campaign.missions();
-    let characters = campaign.characters();
+    let missions = campaign.missions;
+    let characters = campaign.characters;
     check_collection_limit(
         layer,
         CampaignCollection::Missions,
@@ -1116,48 +988,48 @@ fn validate_campaign_layer(
         .transpose()?;
 
     validate_optional_mission_index(
-        campaign.last_mission_idx(),
+        campaign.last_mission_idx,
         CampaignIndexField::LastMission,
         missions.len(),
         layer,
     )?;
     validate_optional_mission_index(
-        campaign.current_mission_idx(),
+        campaign.current_mission_idx,
         CampaignIndexField::CurrentMission,
         missions.len(),
         layer,
     )?;
     validate_optional_mission_index(
-        campaign.next_mission_idx(),
+        campaign.next_mission_idx,
         CampaignIndexField::NextMission,
         missions.len(),
         layer,
     )?;
     validate_optional_mission_index(
-        campaign.blazon_mission_idx(),
+        campaign.blazon_mission_idx,
         CampaignIndexField::BlazonMission,
         missions.len(),
         layer,
     )?;
     validate_optional_mission_index(
-        campaign.history_replay_mission_idx(),
+        campaign.history_replay_mission_idx,
         CampaignIndexField::HistoryReplayMission,
         missions.len(),
         layer,
     )?;
     if let Some(mission_index) = required_mission_index
-        && campaign.current_mission_idx() != Some(mission_index)
+        && campaign.current_mission_idx != Some(mission_index)
     {
         return Err(ReplayCampaignValidationError::CurrentMissionMismatch {
             layer,
-            current: campaign.current_mission_idx(),
+            current: campaign.current_mission_idx,
             expected: mission_index,
             mission_id: header_mission_id.to_owned(),
         });
     }
 
     let accessible = validate_index_collection(
-        campaign.accessible_mission_indices(),
+        campaign.accessible_mission_indices,
         CampaignCollection::AccessibleMissions,
         CampaignIndexField::AccessibleMission,
         missions.len(),
@@ -1165,7 +1037,7 @@ fn validate_campaign_layer(
         limits,
     )?;
     let pending = validate_index_collection(
-        campaign.pending_accessible_mission_indices(),
+        campaign.pending_accessible_mission_indices,
         CampaignCollection::PendingAccessibleMissions,
         CampaignIndexField::PendingAccessibleMission,
         missions.len(),
@@ -1206,7 +1078,7 @@ fn validate_campaign_layer(
     }
 
     let gang = validate_index_collection(
-        campaign.gang_indices(),
+        campaign.gang_indices,
         CampaignCollection::Gang,
         CampaignIndexField::GangCharacter,
         characters.len(),
@@ -1214,7 +1086,7 @@ fn validate_campaign_layer(
         limits,
     )?;
     let reservists = validate_index_collection(
-        campaign.reservist_indices(),
+        campaign.reservist_indices,
         CampaignCollection::Reservists,
         CampaignIndexField::ReservistCharacter,
         characters.len(),
@@ -1222,7 +1094,7 @@ fn validate_campaign_layer(
         limits,
     )?;
     let team = validate_index_collection(
-        campaign.mission_team_indices(),
+        campaign.mission_team_indices,
         CampaignCollection::MissionTeam,
         CampaignIndexField::MissionTeamCharacter,
         characters.len(),
@@ -1263,11 +1135,11 @@ fn validate_campaign_layer(
     check_collection_limit(
         layer,
         CampaignCollection::PeasantNames,
-        campaign.peasant_names().len(),
+        campaign.peasant_names.len(),
         limits.max_campaign_collection_entries,
     )?;
     let mut peasant_names = BTreeSet::new();
-    for (name_index, name) in campaign.peasant_names().iter().enumerate() {
+    for (name_index, name) in campaign.peasant_names.iter().enumerate() {
         check_string_limit(
             layer,
             format!("peasant_names[{name_index}]"),
@@ -1284,11 +1156,11 @@ fn validate_campaign_layer(
     check_collection_limit(
         layer,
         CampaignCollection::CollectedRelics,
-        campaign.collected_relics().len(),
+        campaign.collected_relics.len(),
         limits.max_campaign_collection_entries,
     )?;
     let mut relics = BTreeSet::new();
-    for &relic in campaign.collected_relics() {
+    for &relic in campaign.collected_relics {
         if !(12..=18).contains(&relic) {
             return Err(ReplayCampaignValidationError::InvalidRelicIdentity {
                 layer,
@@ -1303,13 +1175,13 @@ fn validate_campaign_layer(
         }
     }
 
-    if campaign.ares() < -1 {
+    if campaign.ares < -1 {
         return Err(ReplayCampaignValidationError::InvalidAresSentinel {
             layer,
-            ares: campaign.ares(),
+            ares: campaign.ares,
         });
     }
-    if campaign.ares() != -1 {
+    if campaign.ares != -1 {
         for (mission_index, mission) in missions.iter().enumerate() {
             let profile_index =
                 mission
@@ -1327,14 +1199,14 @@ fn validate_campaign_layer(
                 },
             )?;
             if profile.ares_sensible
-                && usize::try_from(campaign.ares())
+                && usize::try_from(campaign.ares)
                     .ok()
                     .filter(|&index| index < profile.available_in_ares_state.len())
                     .is_none()
             {
                 return Err(ReplayCampaignValidationError::AresOutOfRange {
                     layer,
-                    ares: campaign.ares(),
+                    ares: campaign.ares,
                     mission_index,
                     available_states: profile.available_in_ares_state.len(),
                 });
@@ -1458,15 +1330,15 @@ fn validate_disjoint(
 }
 
 fn validate_production(
-    campaign: &impl CampaignLayerState,
+    campaign: &CampaignPracticeReturnView<'_>,
     layer: CampaignLayer,
     limits: &ReplayAdmissionLimits,
     gang: &BTreeSet<usize>,
     reservists: &BTreeSet<usize>,
     team: &BTreeSet<usize>,
 ) -> Result<DeferredReplayCampaignContentChecks, ReplayCampaignValidationError> {
-    let production_sectors = campaign.production_sectors();
-    let characters = campaign.characters();
+    let production_sectors = campaign.production_sectors;
+    let characters = campaign.characters;
     if production_sectors.len() != CANONICAL_PRODUCTION_TYPES.len() {
         return Err(ReplayCampaignValidationError::ProductionSectorCount {
             layer,
@@ -1650,21 +1522,21 @@ fn validate_finite_coordinate(
 }
 
 fn validate_history(
-    campaign: &impl CampaignLayerState,
+    campaign: &CampaignPracticeReturnView<'_>,
     layer: CampaignLayer,
     limits: &ReplayAdmissionLimits,
 ) -> Result<(), ReplayCampaignValidationError> {
-    if campaign.mission_attempt_sequence().checked_add(1).is_none() {
+    if campaign.mission_attempt_sequence.checked_add(1).is_none() {
         return Err(ReplayCampaignValidationError::HistorySequenceExhausted {
             layer,
-            sequence: campaign.mission_attempt_sequence(),
+            sequence: campaign.mission_attempt_sequence,
         });
     }
     let mut total_attempts = 0usize;
     let mut total_recruited_characters = 0usize;
     let mut sequences = BTreeSet::new();
     let mut greatest_sequence = 0u64;
-    for (mission_index, mission) in campaign.missions().iter().enumerate() {
+    for (mission_index, mission) in campaign.missions.iter().enumerate() {
         let history = mission.attempt_history();
         if history.schema_version() != CAMPAIGN_HISTORY_SCHEMA_VERSION {
             return Err(ReplayCampaignValidationError::HistorySchema {
@@ -1741,10 +1613,10 @@ fn validate_history(
             greatest_sequence = greatest_sequence.max(sequence);
         }
     }
-    if campaign.mission_attempt_sequence() != greatest_sequence {
+    if campaign.mission_attempt_sequence != greatest_sequence {
         return Err(ReplayCampaignValidationError::HistorySequenceCounter {
             layer,
-            observed: campaign.mission_attempt_sequence(),
+            observed: campaign.mission_attempt_sequence,
             expected: greatest_sequence,
         });
     }
@@ -2130,6 +2002,34 @@ mod tests {
             validate(&profiles, &campaign),
             Err(ReplayCampaignValidationError::CurrentMissionMismatch {
                 layer: CampaignLayer::PreMissionSnapshot,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn borrowed_views_preserve_history_replay_index_authority_in_both_layers() {
+        let (profiles, mut campaign) = fixture();
+        campaign.history_replay_mission_idx = Some(usize::MAX);
+        assert!(matches!(
+            validate(&profiles, &campaign),
+            Err(ReplayCampaignValidationError::IndexOutOfRange {
+                layer: CampaignLayer::Current,
+                field: CampaignIndexField::HistoryReplayMission,
+                ..
+            })
+        ));
+        campaign.history_replay_mission_idx = None;
+        campaign
+            .pre_mission_snapshot
+            .as_mut()
+            .unwrap()
+            .history_replay_mission_idx = Some(usize::MAX);
+        assert!(matches!(
+            validate(&profiles, &campaign),
+            Err(ReplayCampaignValidationError::IndexOutOfRange {
+                layer: CampaignLayer::PreMissionSnapshot,
+                field: CampaignIndexField::HistoryReplayMission,
                 ..
             })
         ));

@@ -25,55 +25,14 @@ use geo::Rect;
 // SectorIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::level::sectors` (the flat grid sector
 /// table).  Wraps [`nonmax::NonMaxU32`] so `Option<SectorIndex>` is
 /// 4 bytes via niche optimization.  Distinct from a sector *number*
 /// (the script-facing `i16` id) and from `BuildingIdx` (which indexes
 /// the building table); this is the FastFindGrid array slot.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct SectorIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(SectorIndex, u32);
-
-impl SectorIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<SectorIndex> for u32 {
-    #[inline]
-    fn from(i: SectorIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<SectorIndex> for usize {
-    #[inline]
-    fn from(i: SectorIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for SectorIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct SectorIndex(pub nonmax::NonMaxU32), u32
+);
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -183,54 +142,13 @@ pub enum ImpactType {
 // LineIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::level::lines` (motion / elevation / repulsive
 /// grid lines).  Wraps [`nonmax::NonMaxU32`] so `Option<LineIndex>` is
 /// 4 bytes via niche optimization.  Distinct from [`crate::jump_line::JumpLineIndex`]
 /// which indexes `level::jump_lines`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct LineIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(LineIndex, u32);
-
-impl LineIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<LineIndex> for u32 {
-    #[inline]
-    fn from(i: LineIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<LineIndex> for usize {
-    #[inline]
-    fn from(i: LineIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for LineIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct LineIndex(pub nonmax::NonMaxU32), u32
+);
 
 /// A line stored in the grid, representing the properties of a level
 /// line that are relevant for pathfinding collision queries.
@@ -1133,9 +1051,11 @@ impl LiftRuntimeState {
 /// deep copy. The fields directly on this struct are the runtime
 /// per-element mutable flags + sparse overlays (cheap to clone, and
 /// what `EngineSnapshot` actually carries).
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct FastFindGrid {
     /// Static level-loaded grid data, shared with rollback snapshots.
+    #[serde(skip)]
+    #[state_hash(skip)]
     pub level: std::sync::Arc<LevelGrid>,
 
     // ── Runtime per-element flags ──
@@ -1161,15 +1081,6 @@ pub struct FastFindGrid {
     /// which sets the APEX bit on a sector at runtime. Effective sector
     /// type = `level.sectors[i].sector_type | overlay.get(&i).copied().unwrap_or_default()`.
     pub sector_type_overlay: std::collections::BTreeMap<u32, crate::sector::SectorType>,
-}
-
-#[derive(Serialize)]
-struct FastFindGridSnapshotRef<'a> {
-    line_active: &'a [bool],
-    sector_active: &'a [bool],
-    mask_active: &'a [bool],
-    lift_state: &'a std::collections::BTreeMap<u32, LiftRuntimeState>,
-    sector_type_overlay: &'a std::collections::BTreeMap<u32, crate::sector::SectorType>,
 }
 
 #[derive(Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -1232,54 +1143,6 @@ impl crate::bitcode_adapters::NativeBitcode for FastFindGrid {
 }
 
 crate::bitcode_adapters::impl_native_bitcode!(FastFindGrid);
-
-impl Serialize for FastFindGrid {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        FastFindGridSnapshotRef {
-            line_active: &self.line_active,
-            sector_active: &self.sector_active,
-            mask_active: &self.mask_active,
-            lift_state: &self.lift_state,
-            sector_type_overlay: &self.sector_type_overlay,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for FastFindGrid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(FastFindGridSnapshot::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-impl robin_util::state_hash::StateHash for FastFindGrid {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.line_active.state_hash(state);
-        self.sector_active.state_hash(state);
-        self.mask_active.state_hash(state);
-        self.lift_state.state_hash(state);
-        self.sector_type_overlay.state_hash(state);
-    }
-}
-
-impl Clone for FastFindGrid {
-    fn clone(&self) -> Self {
-        Self {
-            level: self.level.clone(),
-            line_active: self.line_active.clone(),
-            sector_active: self.sector_active.clone(),
-            mask_active: self.mask_active.clone(),
-            lift_state: self.lift_state.clone(),
-            sector_type_overlay: self.sector_type_overlay.clone(),
-        }
-    }
-}
 
 impl Default for FastFindGrid {
     fn default() -> Self {
@@ -1545,7 +1408,10 @@ impl FastFindGrid {
         self.line_active
             .get(usize::from(line_idx))
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Read the active state of a sector. Returns `false` if the index
@@ -1555,7 +1421,10 @@ impl FastFindGrid {
         self.sector_active
             .get(sector_idx as usize)
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Read the active state of a mask. Returns `false` if the index is
@@ -1565,7 +1434,10 @@ impl FastFindGrid {
         self.mask_active
             .get(usize::from(mask_idx))
             .copied()
-            .unwrap_or(false)
+            .unwrap_or_else(|| {
+                tracing::warn!("active-state query references an out-of-range spatial index");
+                false
+            })
     }
 
     /// Mutable accessor to the lift runtime state. Inserts a default
@@ -3678,7 +3550,6 @@ impl FastFindGrid {
         &self,
         origin: crate::coordinates::WorldPoint3D,
         destination: crate::coordinates::WorldPoint3D,
-        _layer: u16,
         type_filter: u32,
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) -> bool {
@@ -4153,6 +4024,31 @@ impl ThickMoveCorridor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn runtime_grid_clone_and_serialization_keep_distinct_level_ownership() {
+        let mut grid = super::FastFindGrid::new();
+        grid.size_map(4, 4);
+        grid.allocate_layers(1);
+        let cloned = grid.clone();
+        assert!(std::sync::Arc::ptr_eq(&grid.level, &cloned.level));
+
+        let json = serde_json::to_value(&grid).unwrap();
+        assert!(json.get("level").is_none());
+        let restored: super::FastFindGrid = serde_json::from_value(json.clone()).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&grid.level, &restored.level));
+        assert_eq!(serde_json::to_value(&restored).unwrap(), json);
+
+        use robin_util::state_hash::StateHash;
+        use std::hash::Hasher;
+        let hash = |grid: &super::FastFindGrid| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            grid.state_hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_eq!(hash(&grid), hash(&restored));
+        assert_eq!(bitcode::encode(&grid), bitcode::encode(&restored));
+    }
+
     use super::*;
 
     #[test]
@@ -4252,7 +4148,6 @@ mod tests {
         assert!(grid.is_reachable_3d(
             crate::coordinates::WorldPoint3D::new(64.0, 96.0, 20.0),
             crate::coordinates::WorldPoint3D::new(64.0, 160.0, 20.0),
-            0,
             crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
             crate::sight_obstacle::ObstacleList::empty(),
         ));

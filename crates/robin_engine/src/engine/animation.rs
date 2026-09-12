@@ -5021,8 +5021,8 @@ mod shoulder_idle_initialization_tests {
             std::sync::Arc::new(vec![script]),
             std::sync::Arc::new(conversion),
         );
-        let helper_id = engine.add_entity(helper);
-        let climber_id = engine.add_entity(Entity::Pc(ActorPc {
+        let helper_id = engine.add_test_entity(helper);
+        let climber_id = engine.add_test_entity(Entity::Pc(ActorPc {
             element: {
                 let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
                 initial_element.kind = ElementKind::ActorPc;
@@ -5102,7 +5102,7 @@ mod shoulder_idle_initialization_tests {
             pc: PcData::default(),
         };
         helper.element.set_direction_instantly(4);
-        let helper_id = engine.add_entity(Entity::Pc(helper));
+        let helper_id = engine.add_test_entity(Entity::Pc(helper));
 
         let mut climber = ActorPc {
             element: {
@@ -5134,7 +5134,7 @@ mod shoulder_idle_initialization_tests {
             std::sync::Arc::new(scripts),
             std::sync::Arc::new(conversion),
         );
-        let climber_id = engine.add_entity(Entity::Pc(climber));
+        let climber_id = engine.add_test_entity(Entity::Pc(climber));
 
         let mut wait = SequenceElement::new(1, Command::Wait, Some(climber_id));
         wait.orders

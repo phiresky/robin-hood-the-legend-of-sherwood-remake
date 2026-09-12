@@ -146,7 +146,7 @@ fn replay_owned_point_seek_fixture() -> (
     let mut engine = crate::engine::EngineInner::new();
     engine.scripts.mission = Some(minimal_mission());
     engine.script_domains.interactables.doors = drop_ale_exit_doors();
-    let owner = engine.add_entity(test_pc_at(100.0, 100.0, 133));
+    let owner = engine.add_test_entity(test_pc_at(100.0, 100.0, 133));
     let destination = crate::coordinates::MapPoint::new(778.0, 1714.0);
     let sequence_id = engine
         .orders
@@ -376,7 +376,7 @@ fn lost_target_moveok_stop_transition_publishes_waiting_before_terminal_handoff(
         actor.continuation.seek_to_point = false;
     }
     owner_entity.element_data_mut().sprite.last_action = OrderType::WalkingStairs;
-    let owner = engine.add_entity(owner_entity);
+    let owner = engine.add_test_entity(owner_entity);
 
     let mut movement =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::RunningUpright);
@@ -707,7 +707,7 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
     build_gate_links(&mut doors);
     engine.script_domains.interactables.doors = doors;
 
-    let owner = engine.add_entity(test_pc_at(50.0, 50.0, 0));
+    let owner = engine.add_test_entity(test_pc_at(50.0, 50.0, 0));
     {
         let owner_position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
         // The adopted PC carries only the public sector. Original's
@@ -718,7 +718,7 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
             -4.0, -4.0, 4.0, 4.0,
         ));
     }
-    let target = engine.add_entity(test_pc_at(350.0, 50.0, 88));
+    let target = engine.add_test_entity(test_pc_at(350.0, 50.0, 88));
     {
         let target_element = engine.get_entity_mut(target).unwrap().element_data_mut();
         target_element.set_layer(2);
@@ -802,14 +802,14 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             -4.0, -4.0, 4.0, 4.0,
         ));
-    let owner = engine.add_entity(owner_entity);
+    let owner = engine.add_test_entity(owner_entity);
     let mut target_entity = test_pc_at(50.0, 0.0, 2);
     target_entity
         .position_iface_mut()
         .set_move_box(crate::coordinates::MoveBox::from_coords(
             46.0, -4.0, 54.0, 4.0,
         ));
-    let target = engine.add_entity(target_entity);
+    let target = engine.add_test_entity(target_entity);
 
     let mut seek =
         SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
@@ -881,30 +881,32 @@ fn ordinary_cross_sector_pc_move_still_appends_posture_recovery() {
     owner_entity
         .element_data_mut()
         .publish_order_posture(Posture::HelpingToClimb);
-    let owner = engine.add_entity(owner_entity);
+    let owner = engine.add_test_entity(owner_entity);
 
     let sequence_id = engine
         .build_gate_movement_sequence(
             &sim,
-            owner,
-            crate::position_interface::SectorHandle::new(1),
-            vec![GatePathStep {
-                door_index: DoorIndex::new(0).expect("valid door index"),
-                direct: true,
-            }],
-            GoalShape::Point {
-                point: MapPoint::new(50.0, 0.0),
-                tolerance: 0.0,
+            crate::engine::movement::GateRouteRequest {
+                entity_id: owner,
+                source_sector: crate::position_interface::SectorHandle::new(1),
+                gate_path: vec![GatePathStep {
+                    door_index: DoorIndex::new(0).expect("valid door index"),
+                    direct: true,
+                }],
+                goal: GoalShape::Point {
+                    point: MapPoint::new(50.0, 0.0),
+                    tolerance: 0.0,
+                },
+                goal_layer: 0,
+                base_action: OrderType::WalkingUpright,
+                move_after_last_door: true,
+                speed_factor: 1.0,
+                initial_flags: MoveFlags::empty(),
+                prefix_elements: Vec::new(),
+                tail_elements: Vec::new(),
+                append_arrival_speech: true,
+                append_recovery: true,
             },
-            0,
-            OrderType::WalkingUpright,
-            true,
-            1.0,
-            MoveFlags::empty(),
-            Vec::new(),
-            Vec::new(),
-            true,
-            true,
         )
         .expect("ordinary cross-sector move route");
     let route = engine
@@ -936,8 +938,8 @@ fn resolve_stop_npc_seek_with_target_at(
             -6.0, -4.0, 6.0, 4.0,
         ));
     owner_entity.actor_data_mut().unwrap().action_state = ActionState::Moving;
-    let owner = engine.add_entity(owner_entity);
-    let target = engine.add_entity(test_moving_soldier_at(target_position));
+    let owner = engine.add_test_entity(owner_entity);
+    let target = engine.add_test_entity(test_moving_soldier_at(target_position));
     crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
 
     let _ = engine.resolve_entity_seek(
@@ -996,8 +998,8 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
     let sim = &sim_context;
     let mut engine = crate::engine::EngineInner::new();
     let assets = LevelAssets::new();
-    let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-    let target = engine.add_entity(test_pc_at(80.0, 10.0, 1));
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+    let target = engine.add_test_entity(test_pc_at(80.0, 10.0, 1));
 
     let mut seek =
         SequenceElement::new_movement(1, Command::Seek, Some(owner), OrderType::WalkingUpright);
@@ -1086,8 +1088,8 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .push(crate::profiles::CharacterProfile::default());
-    let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-    let target = engine.add_entity(test_pc_at(80.0, 10.0, target_sector));
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+    let target = engine.add_test_entity(test_pc_at(80.0, 10.0, target_sector));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -1247,8 +1249,8 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
     let sim = crate::sim_rng::test_context();
     let mut engine = crate::engine::EngineInner::new();
     let assets = LevelAssets::new();
-    let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-    let target = engine.add_entity(test_pc_at(80.0, 10.0, 2));
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+    let target = engine.add_test_entity(test_pc_at(80.0, 10.0, 2));
 
     let mut seek =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::ClimbingWallUp);
@@ -1301,9 +1303,9 @@ fn climbing_seek_flag_does_not_run_perform_seek_refresh() {
 #[test]
 fn moved_target_refresh_uses_actor_owned_seek_target_over_element_target() {
     let mut engine = crate::engine::EngineInner::new();
-    let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
-    let actor_target = engine.add_entity(test_pc_at(40.0, 10.0, 1));
-    let competing_element_target = engine.add_entity(test_pc_at(100.0, 10.0, 1));
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
+    let actor_target = engine.add_test_entity(test_pc_at(40.0, 10.0, 1));
+    let competing_element_target = engine.add_test_entity(test_pc_at(100.0, 10.0, 1));
 
     let mut seek =
         SequenceElement::new_movement(1, Command::MoveOk, Some(owner), OrderType::WalkingUpright);
@@ -1368,8 +1370,8 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
         .expect("test PC is an actor")
         .action_state = ActionState::MovingSword;
     owner_entity.element_data_mut().set_direction_instantly(0);
-    let owner = engine.add_entity(owner_entity);
-    let target = engine.add_entity(test_pc_at(100.0, 0.0, 1));
+    let owner = engine.add_test_entity(owner_entity);
+    let target = engine.add_test_entity(test_pc_at(100.0, 0.0, 1));
     engine
         .get_entity_mut(owner)
         .expect("owner")
@@ -1430,7 +1432,7 @@ fn sword_walk_seek_refresh_still_faces_the_opponent() {
 #[test]
 fn relaunch_seek_replacement_clears_selected_seek_goal_before_queuing_replacement() {
     let mut engine = crate::engine::EngineInner::new();
-    let owner = engine.add_entity(test_pc_at(10.0, 10.0, 1));
+    let owner = engine.add_test_entity(test_pc_at(10.0, 10.0, 1));
     let stale_goal = MapPoint::new(70.0, 80.0);
 
     let seek =

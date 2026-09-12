@@ -82,13 +82,13 @@ impl RuntimeDatabaseFence {
         );
         #[cfg(target_os = "linux")]
         let directory_file = {
-            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-            let descriptor = openat2(
+            use rustix::fs::{Mode, OFlags};
+            let descriptor = crate::secure_fs::open_no_symlinks_at(
                 rustix::fs::CWD,
                 directory_path,
                 OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
                 Mode::empty(),
-                ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+                rustix::fs::ResolveFlags::empty(),
             )?;
             std::fs::File::from(descriptor)
         };
@@ -165,17 +165,14 @@ impl RuntimeDatabaseFence {
 
     #[cfg(target_os = "linux")]
     fn open_leaf_from(directory: &cap_std::fs::Dir, name: &str) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags};
         use std::os::fd::AsFd as _;
-        let descriptor = openat2(
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             directory.as_fd(),
             Path::new(name),
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH
-                | ResolveFlags::NO_SYMLINKS
-                | ResolveFlags::NO_MAGICLINKS
-                | ResolveFlags::NO_XDEV,
+            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
         )?;
         Ok(std::fs::File::from(descriptor))
     }
@@ -210,13 +207,13 @@ impl RuntimeDatabaseFence {
 
     #[cfg(target_os = "linux")]
     fn open_directory_file(path: &Path) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-        let descriptor = openat2(
+        use rustix::fs::{Mode, OFlags};
+        let descriptor = crate::secure_fs::open_no_symlinks_at(
             rustix::fs::CWD,
             path,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
             Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::empty(),
         )?;
         Ok(std::fs::File::from(descriptor))
     }
@@ -224,7 +221,7 @@ impl RuntimeDatabaseFence {
     fn lock_shared_admission_blocking(&self) -> anyhow::Result<std::fs::File> {
         self.revalidate()?;
         let file = self.open_leaf(DB_ADMISSION_LOCK, self.inner.admission_identity)?;
-        fs2::FileExt::lock_shared(&file)?;
+        crate::secure_fs::file_lock::lock_shared(&file)?;
         self.revalidate()?;
         Ok(file)
     }
@@ -232,7 +229,7 @@ impl RuntimeDatabaseFence {
     fn lock_shared_quiescence_blocking(&self) -> anyhow::Result<SharedQuiescenceGuard> {
         self.revalidate()?;
         let file = self.open_leaf(DB_QUIESCENCE_LOCK, self.inner.quiescence_identity)?;
-        fs2::FileExt::lock_shared(&file)?;
+        crate::secure_fs::file_lock::lock_shared(&file)?;
         self.revalidate()?;
         Ok(SharedQuiescenceGuard {
             fence: self.clone(),
@@ -245,7 +242,7 @@ impl RuntimeDatabaseFence {
         tokio::task::spawn_blocking(move || {
             let admission = fence.lock_shared_admission_blocking()?;
             let quiescence = fence.lock_shared_quiescence_blocking()?;
-            fs2::FileExt::unlock(&admission)?;
+            crate::secure_fs::file_lock::unlock(&admission)?;
             fence.revalidate()?;
             Ok(quiescence)
         })
@@ -258,18 +255,18 @@ impl RuntimeDatabaseFence {
     pub fn try_acquire_one_off_shared(&self) -> anyhow::Result<Option<SharedQuiescenceGuard>> {
         self.revalidate()?;
         let admission = self.open_leaf(DB_ADMISSION_LOCK, self.inner.admission_identity)?;
-        match fs2::FileExt::try_lock_shared(&admission) {
+        match crate::secure_fs::file_lock::try_lock_shared(&admission) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
             Err(error) => return Err(error.into()),
         }
         let file = self.open_leaf(DB_QUIESCENCE_LOCK, self.inner.quiescence_identity)?;
-        let acquired = match fs2::FileExt::try_lock_shared(&file) {
+        let acquired = match crate::secure_fs::file_lock::try_lock_shared(&file) {
             Ok(()) => true,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
             Err(error) => return Err(error.into()),
         };
-        fs2::FileExt::unlock(&admission)?;
+        crate::secure_fs::file_lock::unlock(&admission)?;
         self.revalidate()?;
         if !acquired {
             return Ok(None);
@@ -285,7 +282,7 @@ impl RuntimeDatabaseFence {
     pub fn try_lock_exclusive_admission(&self) -> anyhow::Result<Option<ExclusiveAdmissionGuard>> {
         self.revalidate()?;
         let file = self.open_leaf(DB_ADMISSION_LOCK, self.inner.admission_identity)?;
-        match fs2::FileExt::try_lock_exclusive(&file) {
+        match crate::secure_fs::file_lock::try_lock_exclusive(&file) {
             Ok(()) => {
                 self.revalidate()?;
                 Ok(Some(ExclusiveAdmissionGuard {
@@ -303,7 +300,7 @@ impl RuntimeDatabaseFence {
     ) -> anyhow::Result<Option<ExclusiveQuiescenceGuard>> {
         self.revalidate()?;
         let file = self.open_leaf(DB_QUIESCENCE_LOCK, self.inner.quiescence_identity)?;
-        match fs2::FileExt::try_lock_exclusive(&file) {
+        match crate::secure_fs::file_lock::try_lock_exclusive(&file) {
             Ok(()) => {
                 self.revalidate()?;
                 Ok(Some(ExclusiveQuiescenceGuard {
@@ -458,7 +455,7 @@ impl ProcessDatabaseFenceManager {
                 .ok_or_else(|| anyhow::anyhow!("database fence generation overflows"))?;
             let generation = state.generation;
             drop(state);
-            fs2::FileExt::unlock(&admission)?;
+            crate::secure_fs::file_lock::unlock(&admission)?;
             manager.inner.runtime.revalidate()?;
             Ok::<_, anyhow::Error>(generation)
         })

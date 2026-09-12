@@ -633,7 +633,11 @@ impl LoadingScreenRenderer {
         // Loading-screen behavior stores fonts behind a shared handle;
         // keep either native bitmap or locale-selected TrueType resolves and
         // dispatch at render time.
-        let font_config = crate::native_font::load_font_config(files).ok();
+        let font_config = crate::native_font::load_font_config(files)
+            .inspect_err(
+                |error| tracing::warn!(%error, "Loading-screen font configuration unavailable"),
+            )
+            .ok();
         let load_font = |name: &str| -> Option<Font> {
             let cfg = font_config.as_ref()?;
             match crate::native_font::load_font_by_name_for_locale(cfg, name, files) {
@@ -887,5 +891,5 @@ fn loading_version_text(datadir_kind: LoadingDatadirKind) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "loading_screen_tests.rs"]
+#[path = "loading_screen/tests.rs"]
 mod tests;

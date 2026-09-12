@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
-use std::io::{Read as _, Write as _};
+use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -435,7 +435,6 @@ fn build_verifier_job_config_catalog_v1(
     Ok(catalog)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_profile_rules_tuple(
     profile: &CatalogAdmissionProfileV1,
     content_digest: Digest32,
@@ -895,7 +894,7 @@ fn load_document_directory<T, F>(
     mut identity: F,
 ) -> Result<BTreeMap<Digest32, T>>
 where
-    T: DeserializeOwned + Serialize,
+    T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
     F: FnMut(&T) -> Result<Digest32>,
 {
     let directory = root.join(kind);
@@ -1015,34 +1014,18 @@ fn validate_verifier_bundles(
 }
 
 fn tree_inventory(root: &Path) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)> {
-    let mut files = BTreeSet::new();
-    let mut directories = BTreeSet::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "authority tree contains a symlink"
-            );
-            let relative = path.strip_prefix(root)?.to_path_buf();
-            ensure_safe_relative_path(&relative)?;
-            if metadata.is_dir() {
-                ensure!(
-                    directories.insert(relative),
-                    "authority tree repeats a directory"
-                );
-                pending.push(path);
-            } else if metadata.is_file() {
-                ensure!(files.insert(relative), "authority tree repeats a file");
-            } else {
-                bail!("authority tree contains a special filesystem node");
-            }
-        }
+    let (files, directories) = crate::fs_util::walk_regular_tree(root)?;
+    for relative in files
+        .iter()
+        .map(|(relative, _)| relative)
+        .chain(&directories)
+    {
+        ensure_safe_relative_path(relative)?;
     }
-    Ok((files, directories))
+    Ok((
+        files.into_iter().map(|(relative, _)| relative).collect(),
+        directories,
+    ))
 }
 
 fn parent_directories(files: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
@@ -1167,55 +1150,27 @@ fn ensure_safe_relative_path(path: &Path) -> Result<()> {
 }
 
 fn read_bounded_regular_file(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path)?;
+    let bytes = crate::fs_util::read_regular_file_bounded(path, maximum)?;
     ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "operator input is not a regular non-symlink file: {}",
+        !bytes.is_empty(),
+        "operator input is empty: {}",
         path.display()
-    );
-    ensure!(
-        metadata.len() > 0 && metadata.len() <= maximum,
-        "operator input is empty or exceeds its byte limit: {}",
-        path.display()
-    );
-    let mut file = fs::File::open(path)?;
-    ensure!(file.metadata()?.is_file(), "operator input changed type");
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    std::io::Read::by_ref(&mut file)
-        .take(maximum.saturating_add(1))
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        !bytes.is_empty() && bytes.len() as u64 <= maximum,
-        "operator input changed length while reading"
     );
     Ok(bytes)
 }
 
 fn load_canonical_document<T>(path: &Path) -> Result<(T, Vec<u8>)>
 where
-    T: DeserializeOwned + Serialize,
+    T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
 {
-    let bytes = read_bounded_regular_file(path, MAX_OPERATOR_DOCUMENT_BYTES)?;
-    let document: T = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse canonical document {}", path.display()))?;
-    ensure!(
-        canonical_json_bytes(&document)? == bytes,
-        "document is not canonical JSON: {}",
-        path.display()
-    );
+    let (document, bytes): (T, _) =
+        crate::fs_util::load_canonical_bytes(path, MAX_OPERATOR_DOCUMENT_BYTES)?;
+    document.validate()?;
     Ok((document, bytes))
 }
 
 fn reject_placeholders(bytes: &[u8], label: &str) -> Result<()> {
-    let text = std::str::from_utf8(bytes)?;
-    let lowercase = text.to_ascii_lowercase();
-    ensure!(
-        !lowercase.contains("placeholder")
-            && !lowercase.contains("changeme")
-            && !lowercase.contains("example.invalid"),
-        "{label} contains a placeholder value"
-    );
-    Ok(())
+    crate::fs_util::reject_placeholders(bytes, label, false)
 }
 
 fn write_new_file(path: &Path, bytes: &[u8]) -> Result<()> {

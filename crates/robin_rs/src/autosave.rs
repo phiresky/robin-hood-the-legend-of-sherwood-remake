@@ -9,26 +9,43 @@
 use crate::game::Game;
 use crate::host::Host;
 use crate::save_file::{GameSaveFile, SaveProvenance, Thumbnail};
+pub(crate) use crate::savegame::autosave_store::payload_exists;
+use crate::savegame::autosave_store::*;
+pub use crate::savegame::autosave_store::{AUTOSAVE_SLOT_COUNT, AutosaveManifest};
 use crate::savegame::{SaveGame, SaveGameManager};
 use anyhow::{Context, Result, bail};
 use robin_engine::engine::Engine;
 use robin_engine::profiles::ProfileManager;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 #[cfg(target_arch = "wasm32")]
 use std::collections::VecDeque;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::{Path, PathBuf};
 
 /// Default autosave cadence: five minutes of admitted 25 Hz gameplay ticks.
 pub const AUTOSAVE_INTERVAL_ACTIVE_SECONDS: u32 = 5 * 60;
 pub const AUTOSAVE_INTERVAL_FRAMES: u64 = AUTOSAVE_INTERVAL_ACTIVE_SECONDS as u64 * 25;
-/// Number of independently loadable autosave generations retained per profile.
-pub const AUTOSAVE_SLOT_COUNT: usize = 3;
-const AUTOSAVE_MANIFEST_VERSION: u32 = 1;
-#[cfg(not(target_arch = "wasm32"))]
-const AUTOSAVE_MANIFEST_FILE: &str = "autosaves.json";
 
+/// Borrowed capture inputs shared by periodic and mission-entry requests.
+/// Thumbnail completion and publication policy remain separate from capture.
+#[derive(Serialize)]
+pub(crate) struct AutosaveRequest<'a> {
+    #[serde(skip)]
+    pub host: &'a Host,
+    #[serde(skip)]
+    pub game: &'a Game,
+    #[serde(skip)]
+    pub engine: &'a Engine,
+    pub mission_id: u32,
+    #[serde(skip)]
+    pub profiles: &'a ProfileManager,
+}
+
+impl<'de, 'a> Deserialize<'de> for AutosaveRequest<'a> {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "autosave capture requires live mission borrows",
+        ))
+    }
+}
 pub(crate) const fn session_allows_autosave(
     setting_enabled: bool,
     multiplayer: bool,
@@ -44,57 +61,6 @@ pub enum AutosaveReason {
     Periodic,
     Backgrounded,
     MissionTransition,
-}
-
-/// The authoritative list of autosaves published independently of manual saves.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AutosaveManifest {
-    pub version: u32,
-    pub saves: Vec<SaveGame>,
-}
-
-impl Default for AutosaveManifest {
-    fn default() -> Self {
-        Self {
-            version: AUTOSAVE_MANIFEST_VERSION,
-            saves: Vec::new(),
-        }
-    }
-}
-
-impl AutosaveManifest {
-    fn validate(&self) -> Result<()> {
-        if self.version != AUTOSAVE_MANIFEST_VERSION {
-            bail!(
-                "unsupported autosave manifest version: expected {}, got {}",
-                AUTOSAVE_MANIFEST_VERSION,
-                self.version
-            );
-        }
-        if self.saves.len() > AUTOSAVE_SLOT_COUNT {
-            bail!(
-                "autosave manifest contains {} slots; policy permits {AUTOSAVE_SLOT_COUNT}",
-                self.saves.len()
-            );
-        }
-        let mut filenames = std::collections::BTreeSet::new();
-        for save in &self.saves {
-            save.validate_published_metadata()?;
-            if !crate::savegame::is_generated_autosave_filename(&save.filename) {
-                bail!(
-                    "autosave manifest contains non-autosave filename {:?}",
-                    save.filename
-                );
-            }
-            if !filenames.insert(&save.filename) {
-                bail!(
-                    "autosave manifest contains duplicate filename {:?}",
-                    save.filename
-                );
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Fully captured write request. Engine state is cloned on the game thread;
@@ -349,18 +315,20 @@ impl AutosaveCoordinator {
         Some(reason)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn prepare_job(
         &mut self,
         manager: &SaveGameManager,
-        host: &Host,
-        game: &Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: &ProfileManager,
+        request: AutosaveRequest<'_>,
         thumbnail: Option<Thumbnail>,
         reason: AutosaveReason,
     ) -> Result<(AutosaveJob, PlannedAutosave)> {
+        let AutosaveRequest {
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+        } = request;
         let planned = self
             .planned
             .filter(|planned| planned.mission_id == mission_id && planned.reason == reason)
@@ -411,21 +379,14 @@ impl AutosaveCoordinator {
         Ok((job, planned))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue(
         &mut self,
         manager: &SaveGameManager,
-        host: &Host,
-        game: &Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: &ProfileManager,
+        request: AutosaveRequest<'_>,
         thumbnail: Option<Thumbnail>,
         reason: AutosaveReason,
     ) -> Result<()> {
-        let (job, planned) = self.prepare_job(
-            manager, host, game, engine, mission_id, profiles, thumbnail, reason,
-        )?;
+        let (job, planned) = self.prepare_job(manager, request, thumbnail, reason)?;
         #[cfg(not(target_arch = "wasm32"))]
         self.command_tx
             .send(Some(job))
@@ -469,17 +430,13 @@ impl AutosaveCoordinator {
     /// thumbnail independently of the live frame. Real exits/background events
     /// still use enqueue's synchronous publication path.
     #[cfg(target_arch = "wasm32")]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_initial_with_thumbnail(
         &mut self,
         manager: &SaveGameManager,
-        host: &Host,
-        game: &Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: &ProfileManager,
+        request: AutosaveRequest<'_>,
         thumbnail: std::pin::Pin<Box<dyn std::future::Future<Output = Option<Thumbnail>>>>,
     ) -> Result<()> {
+        let mission_id = request.mission_id;
         let planned = self.planned.context("missing initial autosave plan")?;
         if planned.frame != 0
             || planned.reason != AutosaveReason::MissionTransition
@@ -488,16 +445,8 @@ impl AutosaveCoordinator {
             bail!("deferred thumbnail requires the initial mission-entry autosave");
         }
         let started = web_time::Instant::now();
-        let (mut job, planned) = self.prepare_job(
-            manager,
-            host,
-            game,
-            engine,
-            mission_id,
-            profiles,
-            None,
-            AutosaveReason::MissionTransition,
-        )?;
+        let (mut job, planned) =
+            self.prepare_job(manager, request, None, AutosaveReason::MissionTransition)?;
         tracing::debug!(
             elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
             "initial autosave: immutable payload capture"
@@ -716,27 +665,6 @@ fn metadata_from_payload(
     Ok(metadata)
 }
 
-fn staged_manifest(
-    existing: AutosaveManifest,
-    metadata: SaveGame,
-) -> (AutosaveManifest, Vec<String>) {
-    let mut saves = existing.saves;
-    saves.retain(|save| save.filename != metadata.filename);
-    saves.push(metadata);
-    let remove_count = saves.len().saturating_sub(AUTOSAVE_SLOT_COUNT);
-    let evicted_filenames = saves
-        .drain(..remove_count)
-        .map(|save| save.filename)
-        .collect();
-    (
-        AutosaveManifest {
-            version: AUTOSAVE_MANIFEST_VERSION,
-            saves,
-        },
-        evicted_filenames,
-    )
-}
-
 fn write_job(job: &AutosaveJob) -> Result<AutosaveCompletion> {
     let started = web_time::Instant::now();
     tracing::info!(
@@ -771,492 +699,6 @@ fn write_job(job: &AutosaveJob) -> Result<AutosaveCompletion> {
         filename: job.filename.clone(),
         reason: job.reason,
     })
-}
-
-/// Commit one immutable generation. The closure ordering is the crash-safety
-/// contract: payload first, manifest publication second, obsolete generation
-/// cleanup only after the new manifest is durable. Cleanup failures cannot
-/// roll back an already-published recovery point and are repaired by orphan
-/// collection on the next open/write.
-fn commit_generation(
-    existing: AutosaveManifest,
-    metadata: SaveGame,
-    mut write_payload: impl FnMut() -> Result<()>,
-    mut publish_manifest: impl FnMut(&AutosaveManifest) -> Result<()>,
-    mut cleanup_generation: impl FnMut(&str) -> Result<()>,
-) -> Result<AutosaveManifest> {
-    let (manifest, evicted_filenames) = staged_manifest(existing, metadata);
-    manifest.validate()?;
-    write_payload().context("committing autosave payload before manifest publication")?;
-    publish_manifest(&manifest).context("publishing autosave manifest after payload commit")?;
-    for filename in evicted_filenames {
-        if let Err(error) = cleanup_generation(&filename) {
-            tracing::warn!(
-                filename,
-                "published autosave but could not remove rotated generation: {error:#}"
-            );
-        }
-    }
-    Ok(manifest)
-}
-
-/// Merge the independently committed autosave manifest into a save manager.
-pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
-    // The manifest owns menu metadata. Decode and validate only the selected
-    // payload on load, so opening the menu never reads every saved simulation.
-    let legacy_seed = AutosaveManifest {
-        version: AUTOSAVE_MANIFEST_VERSION,
-        saves: manager
-            .saves()
-            .filter(|save| save.is_autosave())
-            .cloned()
-            .collect(),
-    };
-    manager.replace_autosaves(Vec::new())?;
-    let manifest = load_manifest(manager.save_directory())?.unwrap_or(legacy_seed);
-    manifest.validate()?;
-    garbage_collect_orphans(manager.save_directory(), &manifest)?;
-    manager.replace_autosaves(manifest.saves)?;
-    Ok(())
-}
-
-pub(crate) fn validate_metadata_payload_binding(
-    metadata: &SaveGame,
-    payload: &GameSaveFile,
-) -> Result<()> {
-    if !crate::savegame::is_generated_autosave_filename(&metadata.filename) {
-        bail!("published autosave metadata has an invalid filename");
-    }
-    if metadata.mission_id != payload.header.mission_id {
-        bail!(
-            "autosave {:?} mission mismatch: manifest {}, payload {}",
-            metadata.filename,
-            metadata.mission_id,
-            payload.header.mission_id
-        );
-    }
-    if metadata.version != payload.header.version {
-        bail!(
-            "autosave {:?} version mismatch: manifest {}, payload {}",
-            metadata.filename,
-            metadata.version,
-            payload.header.version
-        );
-    }
-    let timestamp = metadata.timestamp.parse::<u64>().with_context(|| {
-        format!(
-            "autosave {:?} manifest timestamp is not an unsigned integer",
-            metadata.filename
-        )
-    })?;
-    if timestamp != payload.header.timestamp_unix {
-        bail!(
-            "autosave {:?} timestamp mismatch: manifest {}, payload {}",
-            metadata.filename,
-            timestamp,
-            payload.header.timestamp_unix
-        );
-    }
-    Ok(())
-}
-
-fn validate_generated_filename(filename: &str) -> Result<()> {
-    if !crate::savegame::is_generated_autosave_filename(filename) {
-        bail!("invalid autosave storage filename {filename:?}");
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn manifest_path(save_directory: &str) -> PathBuf {
-    Path::new(save_directory).join(AUTOSAVE_MANIFEST_FILE)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn load_manifest(save_directory: &str) -> Result<Option<AutosaveManifest>> {
-    let path = manifest_path(save_directory);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
-    };
-    let manifest: AutosaveManifest =
-        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))?;
-    manifest.validate()?;
-    Ok(Some(manifest))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn persist_manifest(save_directory: &str, manifest: &AutosaveManifest) -> Result<()> {
-    manifest.validate()?;
-    let bytes = serde_json::to_vec_pretty(manifest).context("serializing autosave manifest")?;
-    crate::save_file::atomic_write(&manifest_path(save_directory), &bytes)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn persist_payload(
-    save_directory: &str,
-    filename: &str,
-    payload: &GameSaveFile,
-    thumbnail: Option<&Thumbnail>,
-) -> Result<()> {
-    validate_generated_filename(filename)?;
-    let path = Path::new(save_directory)
-        .join(filename)
-        .with_extension("json");
-    payload.write_to(&path)?;
-    if let Some(thumbnail) = thumbnail {
-        let path = Path::new(save_directory).join(format!("{filename}_thumb.png"));
-        if let Err(error) = thumbnail.write_to(&path) {
-            // A thumbnail is auxiliary: never discard a valid recovery point
-            // because its preview could not be written, but do report it.
-            tracing::warn!(
-                filename,
-                "autosave thumbnail could not be written: {error:#}"
-            );
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn read_payload(save_directory: &str, filename: &str) -> Result<GameSaveFile> {
-    validate_generated_filename(filename)?;
-    GameSaveFile::read_from(
-        &Path::new(save_directory)
-            .join(filename)
-            .with_extension("json"),
-    )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn payload_exists(save_directory: &str, filename: &str) -> Result<bool> {
-    validate_generated_filename(filename)?;
-    let path = Path::new(save_directory)
-        .join(filename)
-        .with_extension("json");
-    path.try_exists()
-        .with_context(|| format!("checking autosave payload {}", path.display()))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn read_thumbnail(save_directory: &str, filename: &str) -> Result<Option<Thumbnail>> {
-    validate_generated_filename(filename)?;
-    let path = Path::new(save_directory).join(format!("{filename}_thumb.png"));
-    Thumbnail::read_optional_from(&path)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn remove_payload(save_directory: &str, filename: &str) -> Result<()> {
-    validate_generated_filename(filename)?;
-    for path in [
-        Path::new(save_directory)
-            .join(filename)
-            .with_extension("json"),
-        Path::new(save_directory).join(format!("{filename}_thumb.png")),
-    ] {
-        match std::fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| format!("removing {}", path.display()));
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) -> Result<()> {
-    let referenced: BTreeSet<_> = manifest
-        .saves
-        .iter()
-        .map(|save| save.filename.as_str())
-        .collect();
-    let directory = Path::new(save_directory);
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| {
-                format!("enumerating autosave directory {}", directory.display())
-            });
-        }
-    };
-    for entry in entries {
-        let entry = entry.with_context(|| {
-            format!(
-                "reading an entry from autosave directory {}",
-                directory.display()
-            )
-        })?;
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("reading file type for {}", entry.path().display()))?;
-        if !file_type.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        let orphan = generated_filename_from_storage_name(name)
-            .is_some_and(|filename| !referenced.contains(filename));
-        let interrupted_stage = name.starts_with(".robin-autosave-staging-");
-        if orphan || interrupted_stage {
-            std::fs::remove_file(entry.path()).with_context(|| {
-                format!(
-                    "removing orphan autosave artifact {}",
-                    entry.path().display()
-                )
-            })?;
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn generated_filename_from_storage_name(name: &str) -> Option<&str> {
-    let filename = name
-        .strip_suffix("_thumb.png")
-        .or_else(|| name.strip_suffix(".json"))?;
-    crate::savegame::is_generated_autosave_filename(filename).then_some(filename)
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn browser_autosave_filename_from_key<'a>(namespace: &str, key: &'a str) -> Option<&'a str> {
-    let payload_prefix = format!("{namespace}.payload.");
-    let thumbnail_prefix = format!("{namespace}.thumbnail.");
-    let filename = key
-        .strip_prefix(&payload_prefix)
-        .or_else(|| key.strip_prefix(&thumbnail_prefix))?;
-    crate::savegame::is_generated_autosave_filename(filename).then_some(filename)
-}
-
-// Browser autosaves use compressed, checksummed localStorage records. The
-// browser's storage API commits each key atomically, and the separate manifest
-// is published only after the immutable payload key succeeds.
-#[cfg(target_arch = "wasm32")]
-const BROWSER_STORAGE_PREFIX: &str = "robinhood.autosave.v1";
-
-#[cfg(any(test, target_arch = "wasm32"))]
-#[derive(Debug, Serialize, Deserialize)]
-struct BrowserBlob {
-    version: u32,
-    sha256: String,
-    compressed_base64: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage> {
-    crate::browser_storage::local_storage().map_err(anyhow::Error::msg)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_namespace(save_directory: &str) -> String {
-    use base64::Engine as _;
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(save_directory.as_bytes());
-    format!(
-        "{BROWSER_STORAGE_PREFIX}.{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
-    )
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_key(save_directory: &str, suffix: &str) -> String {
-    format!("{}.{}", browser_namespace(save_directory), suffix)
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn encode_browser_blob<T: Serialize>(value: &T) -> Result<String> {
-    use sha2::{Digest, Sha256};
-    let json = serde_json::to_vec(value).context("serializing browser autosave value")?;
-    let mut encoded =
-        base64::write::EncoderStringWriter::new(&base64::engine::general_purpose::STANDARD);
-    zstd::stream::copy_encode(std::io::Cursor::new(&json), &mut encoded, 3)
-        .context("compressing browser autosave value")?;
-    let blob = BrowserBlob {
-        version: 1,
-        sha256: hex::encode(Sha256::digest(&json)),
-        compressed_base64: encoded.into_inner(),
-    };
-    serde_json::to_string(&blob).context("serializing browser autosave envelope")
-}
-
-#[cfg(any(test, target_arch = "wasm32"))]
-fn decode_browser_blob<T: for<'de> Deserialize<'de>>(encoded: &str) -> Result<T> {
-    use sha2::{Digest, Sha256};
-    let blob: BrowserBlob =
-        serde_json::from_str(encoded).context("parsing browser autosave envelope")?;
-    if blob.version != 1 {
-        bail!(
-            "unsupported browser autosave envelope version {}",
-            blob.version
-        );
-    }
-    let compressed = base64::read::DecoderReader::new(
-        blob.compressed_base64.as_bytes(),
-        &base64::engine::general_purpose::STANDARD,
-    );
-    let json = zstd::stream::decode_all(compressed)
-        .context("decoding and decompressing browser autosave value")?;
-    let actual = hex::encode(Sha256::digest(&json));
-    if actual != blob.sha256 {
-        bail!(
-            "browser autosave checksum mismatch: expected {}, got {actual}",
-            blob.sha256
-        );
-    }
-    serde_json::from_slice(&json).context("parsing browser autosave value")
-}
-
-#[cfg(target_arch = "wasm32")]
-fn load_manifest(save_directory: &str) -> Result<Option<AutosaveManifest>> {
-    let storage = browser_storage()?;
-    let key = browser_key(save_directory, "manifest");
-    let Some(encoded) = storage
-        .get_item(&key)
-        .map_err(|error| anyhow::anyhow!("reading browser autosave manifest failed: {error:?}"))?
-    else {
-        return Ok(None);
-    };
-    let manifest: AutosaveManifest = decode_browser_blob(&encoded)?;
-    manifest.validate()?;
-    Ok(Some(manifest))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn persist_manifest(save_directory: &str, manifest: &AutosaveManifest) -> Result<()> {
-    manifest.validate()?;
-    let storage = browser_storage()?;
-    let key = browser_key(save_directory, "manifest");
-    let value = encode_browser_blob(manifest)?;
-    storage
-        .set_item(&key, &value)
-        .map_err(|error| anyhow::anyhow!("publishing browser autosave manifest failed: {error:?}"))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn persist_payload(
-    save_directory: &str,
-    filename: &str,
-    payload: &GameSaveFile,
-    thumbnail: Option<&Thumbnail>,
-) -> Result<()> {
-    validate_generated_filename(filename)?;
-    let storage = browser_storage()?;
-    let payload_key = browser_key(save_directory, &format!("payload.{filename}"));
-    let payload_value = encode_browser_blob(payload)?;
-    storage
-        .set_item(&payload_key, &payload_value)
-        .map_err(|error| anyhow::anyhow!("writing browser autosave payload failed: {error:?}"))?;
-    if let Some(thumbnail) = thumbnail {
-        let thumbnail_key = browser_key(save_directory, &format!("thumbnail.{filename}"));
-        match encode_browser_blob(thumbnail) {
-            Ok(thumbnail_value) => {
-                if let Err(error) = storage.set_item(&thumbnail_key, &thumbnail_value) {
-                    // Keep the payload loadable when browser quota permits
-                    // the game state but not its optional preview image.
-                    tracing::warn!(
-                        filename,
-                        "browser autosave thumbnail could not be written: {error:?}"
-                    );
-                }
-            }
-            Err(error) => {
-                tracing::warn!(
-                    filename,
-                    "browser autosave thumbnail could not be encoded: {error:#}"
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn read_payload(save_directory: &str, filename: &str) -> Result<GameSaveFile> {
-    validate_generated_filename(filename)?;
-    let storage = browser_storage()?;
-    let key = browser_key(save_directory, &format!("payload.{filename}"));
-    let encoded = storage
-        .get_item(&key)
-        .map_err(|error| anyhow::anyhow!("reading browser autosave payload failed: {error:?}"))?
-        .with_context(|| format!("browser autosave payload {filename:?} is missing"))?;
-    decode_browser_blob(&encoded)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn payload_exists(save_directory: &str, filename: &str) -> Result<bool> {
-    validate_generated_filename(filename)?;
-    let storage = browser_storage()?;
-    storage
-        .get_item(&browser_key(save_directory, &format!("payload.{filename}")))
-        .map(|value| value.is_some())
-        .map_err(|error| anyhow::anyhow!("checking browser autosave payload failed: {error:?}"))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn read_thumbnail(save_directory: &str, filename: &str) -> Result<Option<Thumbnail>> {
-    validate_generated_filename(filename)?;
-    let storage = browser_storage()?;
-    let key = browser_key(save_directory, &format!("thumbnail.{filename}"));
-    let Some(encoded) = storage
-        .get_item(&key)
-        .map_err(|error| anyhow::anyhow!("reading browser autosave thumbnail failed: {error:?}"))?
-    else {
-        return Ok(None);
-    };
-    decode_browser_blob(&encoded).map(Some)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn remove_payload(save_directory: &str, filename: &str) -> Result<()> {
-    validate_generated_filename(filename)?;
-    let storage = browser_storage()?;
-    for suffix in [
-        format!("payload.{filename}"),
-        format!("thumbnail.{filename}"),
-    ] {
-        storage
-            .remove_item(&browser_key(save_directory, &suffix))
-            .map_err(|error| anyhow::anyhow!("removing browser autosave failed: {error:?}"))?;
-    }
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) -> Result<()> {
-    let referenced: BTreeSet<_> = manifest
-        .saves
-        .iter()
-        .map(|save| save.filename.as_str())
-        .collect();
-    let storage = browser_storage()?;
-    let namespace = browser_namespace(save_directory);
-    let mut remove = Vec::new();
-    for index in 0..storage.length().map_err(|error| {
-        anyhow::anyhow!("enumerating browser autosave storage failed: {error:?}")
-    })? {
-        let Some(key) = storage.key(index).map_err(|error| {
-            anyhow::anyhow!("reading browser autosave storage key failed: {error:?}")
-        })?
-        else {
-            continue;
-        };
-        if let Some(filename) = browser_autosave_filename_from_key(&namespace, &key)
-            && !referenced.contains(filename)
-        {
-            remove.push(key);
-        }
-    }
-    for key in remove {
-        storage.remove_item(&key).map_err(|error| {
-            anyhow::anyhow!("removing orphan browser autosave {key:?} failed: {error:?}")
-        })?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1631,12 +1073,12 @@ mod tests {
         let restored =
             read_payload(&save_directory, &filename).expect("published autosave payload");
         let mut manager = SaveGameManager::new(save_directory.clone());
-        load_into_manager(&mut manager).unwrap();
+        manager.load_autosaves().unwrap();
         manager.preflight_exact_slot(0).unwrap();
         let mut mismatched_manifest = manifest.clone();
         mismatched_manifest.saves[0].mission_id += 1;
         persist_manifest(&save_directory, &mismatched_manifest).unwrap();
-        load_into_manager(&mut manager).unwrap();
+        manager.load_autosaves().unwrap();
         let error = manager.preflight_exact_slot(0).unwrap_err();
         assert!(format!("{error:#}").contains("mission mismatch"));
         assert!(
@@ -1858,7 +1300,7 @@ mod tests {
         }
 
         let mut manager = SaveGameManager::new(save_directory.to_owned());
-        load_into_manager(&mut manager).unwrap();
+        manager.load_autosaves().unwrap();
         for removed in [
             "Autosave_1_0000.json",
             "Autosave_1_0000_thumb.png",
@@ -1898,7 +1340,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            load_into_manager(&mut manager).unwrap();
+            manager.load_autosaves().unwrap();
             assert_eq!(manager.saves().len(), 2);
             assert!(manager.saves().any(|save| save == &manual));
             assert!(manager.saves().any(|save| save == &autosave));

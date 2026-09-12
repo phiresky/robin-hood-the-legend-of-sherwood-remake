@@ -1161,7 +1161,7 @@ fn reserve_legacy<T>(
 
 /// Read a Vec<u32> as a u32 count prefix + N u32 values.
 fn read_u32_vec(reader: &mut LegacyReader<'_>, field: &str) -> LegacyResult<Vec<u32>> {
-    reader.scope(field, |reader| {
+    reader.scope(field.to_owned(), |reader| {
         let count = read_count(reader, "count")?;
         let mut values = reserve_legacy(reader, "items", count)?;
         for index in 0..count {
@@ -1176,7 +1176,7 @@ fn read_profiles<T>(
     field: &str,
     mut read_one: impl FnMut(&mut LegacyReader<'_>, usize) -> LegacyResult<T>,
 ) -> LegacyResult<Vec<T>> {
-    reader.scope(field, |reader| {
+    reader.scope(field.to_owned(), |reader| {
         let count = read_count(reader, "count")?;
         let mut values = reserve_legacy(reader, "items", count)?;
         for index in 0..count {
@@ -1791,10 +1791,18 @@ pub enum ProfileJsonLoadError {
     #[error("Invalid profile document {path}: {message}")]
     Schema { path: String, message: String },
 
-    #[error("Failed to open {path}: error {status}")]
-    Open { path: String, status: i32 },
-    #[error("Failed to read {path}: error {status}")]
-    Read { path: String, status: i32 },
+    #[error("Failed to open {path}: error {source}")]
+    Open {
+        path: String,
+        #[source]
+        source: crate::sbfile::SbFileError,
+    },
+    #[error("Failed to read {path}: error {source}")]
+    Read {
+        path: String,
+        #[source]
+        source: crate::sbfile::SbFileError,
+    },
     #[error("Failed to decode {path} as UTF-8: {source}")]
     Utf8 {
         path: String,
@@ -1850,15 +1858,15 @@ impl ProfileManager {
     ) -> Result<serde_json::Value, ProfileJsonLoadError> {
         let mut file = files
             .open(path)
-            .map_err(|status| ProfileJsonLoadError::Open {
+            .map_err(|source| ProfileJsonLoadError::Open {
                 path: path.into(),
-                status,
+                source,
             })?;
         let mut bytes = vec![0u8; file.get_size() as usize];
-        file.serialize_bytes(&mut bytes)
-            .map_err(|status| ProfileJsonLoadError::Read {
+        file.read(&mut bytes)
+            .map_err(|source| ProfileJsonLoadError::Read {
                 path: path.into(),
-                status,
+                source,
             })?;
         let data = String::from_utf8(bytes).map_err(|source| ProfileJsonLoadError::Utf8 {
             path: path.into(),
@@ -2062,6 +2070,11 @@ mod tests {
             assert!(
                 matches!(error, ProfileJsonLoadError::Open { ref path, .. } if path == "typed-profiles/missing.json")
             );
+            assert!(
+                std::error::Error::source(&error)
+                    .expect("preserve the underlying file error")
+                    .is::<crate::sbfile::SbFileError>()
+            );
         }
         for error in [
             ProfileManager::load_json_with_files("typed-profiles/utf8.json", &files).unwrap_err(),
@@ -2144,12 +2157,7 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    mod original_data {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../test-support/original_data.rs"
-        ));
-    }
+    use robin_test_support::original_data;
 
     #[test]
     fn hackable_soldier_identifier_is_readable_and_uniquely_resolved() {

@@ -123,13 +123,8 @@ fn install_crash_diagnostics() {
 
     #[cfg(unix)]
     unsafe {
-        for sig in [
-            libc_sig::SIGSEGV,
-            libc_sig::SIGABRT,
-            libc_sig::SIGILL,
-            libc_sig::SIGBUS,
-        ] {
-            libc_sig::signal(sig, crash_handler as *const () as usize);
+        for sig in [libc::SIGSEGV, libc::SIGABRT, libc::SIGILL, libc::SIGBUS] {
+            libc::signal(sig, crash_handler as libc::sighandler_t);
         }
     }
 }
@@ -137,32 +132,16 @@ fn install_crash_diagnostics() {
 #[cfg(all(not(target_arch = "wasm32"), unix))]
 extern "C" fn crash_handler(sig: std::ffi::c_int) {
     let msg: &[u8] = match sig {
-        libc_sig::SIGSEGV => b"\n[robin] fatal: SIGSEGV (segfault)\n",
-        libc_sig::SIGABRT => b"\n[robin] fatal: SIGABRT (abort -- usually assertion / panic)\n",
-        libc_sig::SIGILL => b"\n[robin] fatal: SIGILL (illegal instruction)\n",
-        libc_sig::SIGBUS => b"\n[robin] fatal: SIGBUS (bad memory access)\n",
+        libc::SIGSEGV => b"\n[robin] fatal: SIGSEGV (segfault)\n",
+        libc::SIGABRT => b"\n[robin] fatal: SIGABRT (abort -- usually assertion / panic)\n",
+        libc::SIGILL => b"\n[robin] fatal: SIGILL (illegal instruction)\n",
+        libc::SIGBUS => b"\n[robin] fatal: SIGBUS (bad memory access)\n",
         _ => b"\n[robin] fatal: unknown signal\n",
     };
     unsafe {
-        libc_sig::write(2, msg.as_ptr().cast(), msg.len());
-        libc_sig::signal(sig, libc_sig::SIG_DFL);
-        libc_sig::raise(sig);
-    }
-}
-
-#[cfg(all(not(target_arch = "wasm32"), unix))]
-#[allow(non_camel_case_types)]
-mod libc_sig {
-    use std::ffi::{c_int, c_void};
-    pub const SIGSEGV: c_int = 11;
-    pub const SIGABRT: c_int = 6;
-    pub const SIGILL: c_int = 4;
-    pub const SIGBUS: c_int = 7;
-    pub const SIG_DFL: usize = 0;
-    unsafe extern "C" {
-        pub unsafe fn signal(signum: c_int, handler: usize) -> usize;
-        pub unsafe fn raise(sig: c_int) -> c_int;
-        pub unsafe fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
+        libc::write(libc::STDERR_FILENO, msg.as_ptr().cast(), msg.len());
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
     }
 }
 

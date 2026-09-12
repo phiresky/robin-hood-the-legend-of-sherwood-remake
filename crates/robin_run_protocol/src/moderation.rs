@@ -25,11 +25,7 @@ pub struct DeletionChallengeRequestV1 {
 impl Validate for DeletionChallengeRequestV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("DeletionChallengeRequestV1", self.schema_version)?;
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "deletion_challenge_request.public_key",
-            });
-        }
+        crate::validation::nonzero("deletion_challenge_request.public_key", &self.public_key)?;
         Ok(())
     }
 }
@@ -49,21 +45,16 @@ pub struct DeletionChallengeV1 {
 impl Validate for DeletionChallengeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         crate::validation::schema("DeletionChallengeV1", self.schema_version)?;
-        if self.deletion_challenge_nonce.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "deletion_challenge.deletion_challenge_nonce",
-            });
-        }
+        crate::validation::nonzero(
+            "deletion_challenge.deletion_challenge_nonce",
+            &self.deletion_challenge_nonce,
+        )?;
         if self.expires_at_unix_ms == 0 {
             return Err(ValidationError::Zero {
                 field: "deletion_challenge.expires_at_unix_ms",
             });
         }
-        if self.public_key.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "deletion_challenge.public_key",
-            });
-        }
+        crate::validation::nonzero("deletion_challenge.public_key", &self.public_key)?;
         Ok(())
     }
 }
@@ -112,11 +103,7 @@ impl DeletionRequestEnvelopeV1 {
 impl Validate for DeletionRequestEnvelopeV1 {
     fn validate(&self) -> Result<(), ValidationError> {
         self.validate_signing_claim()?;
-        if self.signature.is_zero() {
-            return Err(ValidationError::Zero {
-                field: "deletion_request.signature",
-            });
-        }
+        crate::validation::nonzero("deletion_request.signature", &self.signature)?;
         Ok(())
     }
 }

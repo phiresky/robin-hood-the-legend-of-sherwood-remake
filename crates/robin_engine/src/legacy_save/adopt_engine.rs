@@ -2,8 +2,8 @@
 //!
 //! Every child plan is constructed against the same initialized mission
 //! before any mutation occurs. Applying the coordinator to a detached clone is
-//! then infallible. The public replay entry point remains disconnected until
-//! the remaining decoded sections have plans and are included here.
+//! then infallible. [`adopt_known_linux_v48_replay`] is the live entry point
+//! shared by the client save importer and the Original parity replay runner.
 
 use std::collections::BTreeSet;
 
@@ -51,9 +51,9 @@ pub struct LegacyKnownAdoptionError {
 
 /// All currently implemented engine-owned sections, validated as one unit.
 ///
-/// TODO(save-import): include the outstanding sound/messenger/game,
-/// Soldier leaf, waypoint/projectile, dead-PC/shield, and host-state plans
-/// before exposing installation to replay or normal save loading.
+/// The fields below are the authoritative inventory of adopted sections.
+/// Host-only outputs are returned separately from simulation installation;
+/// decode-only evidence must not be mistaken for restored runtime authority.
 pub(crate) struct LegacyKnownAdoptionPlan {
     campaign: LegacyCampaignAdoptionPlan,
     preamble: LegacyLinuxPreambleState,
@@ -407,8 +407,8 @@ impl LegacyKnownHostState {
 /// Validate every adoption slice currently assembled into the coordinator
 /// without changing the live engine.
 ///
-/// This is exposed for corpus auditing while final installation remains
-/// crate-internal and deliberately disconnected.
+/// Corpus auditing uses this entry point without installing the candidate;
+/// [`adopt_known_linux_v48_replay`] performs validation and installation.
 pub fn preflight_known_linux_v48_adoption(
     engine: &Engine,
     assets: &LevelAssets,
@@ -706,9 +706,9 @@ mod tests {
         }
 
         let mut engine = EngineInner::new();
-        let corpse = engine.add_entity(pc(0, true, 0xFFFF_FFFF));
-        let replacement = engine.add_entity(pc(100, false, 0xFFFF_FFFF));
-        let awaiting_replacement = engine.add_entity(pc(0, true, 12));
+        let corpse = engine.add_test_entity(pc(0, true, 0xFFFF_FFFF));
+        let replacement = engine.add_test_entity(pc(100, false, 0xFFFF_FFFF));
+        let awaiting_replacement = engine.add_test_entity(pc(0, true, 12));
 
         retire_loaded_replaced_pcs(&mut engine);
 

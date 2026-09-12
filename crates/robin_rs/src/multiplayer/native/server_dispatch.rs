@@ -177,7 +177,7 @@ pub(super) async fn run_server_outgoing_pump(
                     },
                 ) {
                     tracing::error!(%error, "authoritative modal broadcast failed");
-                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                    super::fail_server(&context, error);
                 }
             }
             NetOutbound::ReconnectForSnapshot { player_id, reason } => {
@@ -281,14 +281,14 @@ pub(super) async fn run_server_outgoing_pump(
                     let error =
                         format!("host rejected invalid official ranked wire setup: {error}");
                     tracing::error!(%error);
-                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                    super::fail_server(&context, error);
                     continue;
                 }
                 if let Err(error) =
                     broadcast_msg_required(&context, NetMsg::RankedOfficialSessionSetup(setup))
                 {
                     tracing::error!(%error, "official ranked setup broadcast failed");
-                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                    super::fail_server(&context, error);
                 }
             }
             NetOutbound::RankedContinuationReceiptSelectionRequest(request) => {
@@ -300,7 +300,7 @@ pub(super) async fn run_server_outgoing_pump(
                         "host rejected invalid continuation receipt selection request: {error}"
                     );
                     tracing::error!(%error);
-                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                    super::fail_server(&context, error);
                     continue;
                 }
                 if let Err(error) = broadcast_msg_required(
@@ -308,13 +308,13 @@ pub(super) async fn run_server_outgoing_pump(
                     NetMsg::RankedContinuationReceiptSelectionRequest(request),
                 ) {
                     tracing::error!(%error, "continuation receipt selection broadcast failed");
-                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                    super::fail_server(&context, error);
                 }
             }
             NetOutbound::RankedContinuationReceiptSelection(_) => {
                 let error = "multiplayer host attempted to send a client-only continuation receipt selection".to_string();
                 tracing::error!(%error);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                super::fail_server(&context, error);
             }
             NetOutbound::RankedContinuationPreflightClaim { to, claim } => {
                 let decoded = decode_ranked_wire_document::<
@@ -327,7 +327,7 @@ pub(super) async fn run_server_outgoing_pump(
                             "host rejected invalid continuation preflight claim for {to:?}: {error}"
                         );
                         tracing::error!(%error);
-                        let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                        super::fail_server(&context, error);
                         continue;
                     }
                 };
@@ -357,7 +357,7 @@ pub(super) async fn run_server_outgoing_pump(
                                 "continuation preflight controller {to:?} disconnected before claim delivery"
                             );
                             tracing::error!(%error);
-                            let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                            super::fail_server(&context, error);
                         }
                     }
                     None => {
@@ -365,14 +365,14 @@ pub(super) async fn run_server_outgoing_pump(
                             "continuation preflight target {to:?} is not the authenticated controller"
                         );
                         tracing::error!(%error);
-                        let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                        super::fail_server(&context, error);
                     }
                 }
             }
             NetOutbound::RankedContinuationPreflightSignature(_) => {
                 let error = "multiplayer host attempted to send a client-only continuation preflight signature".to_string();
                 tracing::error!(%error);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                super::fail_server(&context, error);
             }
             NetOutbound::RankedCoSignContext {
                 to,
@@ -490,12 +490,12 @@ pub(super) async fn run_server_outgoing_pump(
                                 "authenticated leaderboard co-sign target {to:?} closed before request delivery"
                             );
                             tracing::error!(%error);
-                            let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                            super::fail_server(&context, error);
                         }
                     }
                     Err(error) => {
                         tracing::error!(%error, "leaderboard co-sign request rejected");
-                        let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                        super::fail_server(&context, error);
                     }
                 }
             }
@@ -504,14 +504,14 @@ pub(super) async fn run_server_outgoing_pump(
                     "multiplayer host attempted to arm a client-only leaderboard co-sign request"
                         .to_string();
                 tracing::error!(%error);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                super::fail_server(&context, error);
             }
             NetOutbound::LeaderboardCoSignResponse(_) => {
                 let error =
                     "multiplayer host attempted to send a client-only leaderboard co-sign response"
                         .to_string();
                 tracing::error!(%error);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                super::fail_server(&context, error);
             }
             NetOutbound::ContentRequest { .. }
             | NetOutbound::ContentReject { .. }

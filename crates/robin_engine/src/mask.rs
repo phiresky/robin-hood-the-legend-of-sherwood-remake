@@ -24,53 +24,12 @@ use crate::level_data::{MASK_CHARACTER, MASK_OBSTACLE, MASK_PROJECTILE, RawMask}
 // MaskIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::level::masks` (sprite-occlusion masks).
 /// Wraps [`nonmax::NonMaxU32`] so `Option<MaskIndex>` is 4 bytes via
 /// niche optimization.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct MaskIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(MaskIndex, u32);
-
-impl MaskIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<MaskIndex> for u32 {
-    #[inline]
-    fn from(i: MaskIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<MaskIndex> for usize {
-    #[inline]
-    fn from(i: MaskIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for MaskIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct MaskIndex(pub nonmax::NonMaxU32), u32
+);
 
 /// Runtime form of a building/occlusion mask.
 #[derive(
@@ -152,13 +111,10 @@ impl RuntimeMask {
         // When absent we cannot apply to actors, so skip.
         let character_polyline: Vec<MapPoint> = raw
             .character_polyline
-            .as_ref()
-            .map(|pts| {
-                pts.iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .iter()
+            .flatten()
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+            .collect();
         if character_polyline.is_empty() && (raw.mask_type & MASK_CHARACTER) != 0 {
             // Declared character mask but no polyline — skip, since the
             // polyline test would early-exit on empty anyway.
@@ -167,13 +123,10 @@ impl RuntimeMask {
 
         let projectile_polyline: Vec<MapPoint> = raw
             .projectile_polyline
-            .as_ref()
-            .map(|pts| {
-                pts.iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .iter()
+            .flatten()
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+            .collect();
 
         // Last-write-wins semantics for `lower_y_for_mask`: both the
         // character and projectile init passes write to the same scalar,

@@ -995,33 +995,18 @@ impl crate::engine::EngineInner {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        let _ = self.build_gate_movement_sequence(
-            sim,
-            owner,
-            Some(path_src_sector),
-            gate_path,
-            GoalShape::Seek {
+        let _ = self.build_gate_movement_sequence(sim, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(path_src_sector), gate_path: gate_path, goal: GoalShape::Seek {
                 point: resolved.destination,
                 target,
                 tolerance: resolved.tolerance,
-            },
-            target_layer,
-            action,
-            true,
-            resolved.speed_factor,
-            flags,
-            Vec::new(),
-            // Seek refresh leaves the post-seek sequence on the
+            }, goal_layer: target_layer, base_action: action, move_after_last_door: true, speed_factor: resolved.speed_factor, initial_flags: flags, prefix_elements: Vec::new(), tail_elements: // Seek refresh leaves the post-seek sequence on the
             // actor while replacing the path sequence. It may refresh the
             // seek repeatedly as a moving target crosses sectors, and every
             // replacement must retain the same eventual interaction.
             //
             // Appending the interaction to this transient gate route instead
             // loses it when the next seek refresh interrupts that route.
-            Vec::new(),
-            false,
-            false,
-        );
+            Vec::new(), append_arrival_speech: false, append_recovery: false });
 
         tracing::trace!(
             ?owner,
@@ -1185,28 +1170,13 @@ impl crate::engine::EngineInner {
             CascadeFlags::NEXT_LEVEL,
         );
 
-        let _ = self.build_gate_movement_sequence(
-            sim,
-            owner,
-            Some(src_sector),
-            gate_path,
-            GoalShape::Point {
+        let _ = self.build_gate_movement_sequence(sim, crate::engine::movement::GateRouteRequest { entity_id: owner, source_sector: Some(src_sector), gate_path: gate_path, goal: GoalShape::Point {
                 point: destination,
                 tolerance: seek_distance,
-            },
-            goal_layer,
-            action,
-            true,
-            1.0,
-            flags | MoveFlags::SEEK,
-            Vec::new(),
-            // The post-seek interaction lives on the actor, not on this
+            }, goal_layer: goal_layer, base_action: action, move_after_last_door: true, speed_factor: 1.0, initial_flags: flags | MoveFlags::SEEK, prefix_elements: Vec::new(), tail_elements: // The post-seek interaction lives on the actor, not on this
             // transient route, so a later refresh that replaces the route
             // keeps it.
-            Vec::new(),
-            false,
-            false,
-        );
+            Vec::new(), append_arrival_speech: false, append_recovery: false });
 
         tracing::trace!(
             ?owner,

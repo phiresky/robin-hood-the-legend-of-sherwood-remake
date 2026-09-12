@@ -12,16 +12,9 @@ mod suite {
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     fn make_test_pc(posture: Posture) -> Entity {
-        Entity::Pc(ActorPc {
-            element: {
-                let mut initial_element = ElementData::from_initial_posture(posture);
-                initial_element.kind = ElementKind::ActorPc;
-                initial_element
-            },
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData::default(),
-        })
+        let mut entity = crate::engine::test_support::actors::make_test_pc(posture);
+        entity.position_iface_mut().clear_pathfinder_index();
+        entity
     }
 
     fn assets_with_test_pc_profile() -> LevelAssets {
@@ -93,7 +86,7 @@ mod suite {
         pc.element_data_mut().set_position_map(start);
         pc.element_data_mut().set_direction_instantly(4);
         pc.actor_data_mut().unwrap().action_state = action_state;
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -187,14 +180,14 @@ mod suite {
             ..ActorData::default()
         };
         let owner = if owner_is_pc {
-            engine.add_entity(Entity::Pc(ActorPc {
+            engine.add_test_entity(Entity::Pc(ActorPc {
                 element,
                 actor,
                 human: HumanData::default(),
                 pc: PcData::default(),
             }))
         } else {
-            engine.add_entity(Entity::Soldier(ActorSoldier {
+            engine.add_test_entity(Entity::Soldier(ActorSoldier {
                 element,
                 actor,
                 human: HumanData::default(),
@@ -383,7 +376,7 @@ mod suite {
             &crate::bow_shot::shield_params_for_pc(false),
         );
         pc.actor_data_mut().unwrap().shield_obstacle = Some(stale);
-        let owner = engine.add_entity(pc);
+        let owner = engine.add_test_entity(pc);
 
         let mut movement = SequenceElement::new_movement(
             1,
@@ -466,7 +459,7 @@ mod suite {
             .position_iface
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 action_state: initial_action_state,
@@ -630,7 +623,7 @@ mod suite {
             let mut enemy_ai = crate::ai_enemy::EnemyAi::new(0);
             enemy_ai.hth_weapon_id = 1;
             npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(enemy_ai));
-            engine.add_entity(Entity::Soldier(ActorSoldier {
+            engine.add_test_entity(Entity::Soldier(ActorSoldier {
                 element,
                 actor,
                 human: HumanData::default(),
@@ -641,7 +634,7 @@ mod suite {
                 },
             }))
         } else {
-            engine.add_entity(Entity::Pc(ActorPc {
+            engine.add_test_entity(Entity::Pc(ActorPc {
                 element,
                 actor,
                 human: HumanData::default(),
@@ -751,7 +744,7 @@ mod suite {
         // opponent facing and seeking, so seek refresh must never replace it.
         let (mut engine, owner, movement_sequence, order_id, _start) =
             install_sword_movement(false);
-        let target = engine.add_entity(make_test_pc(Posture::Upright));
+        let target = engine.add_test_entity(make_test_pc(Posture::Upright));
         engine
             .get_entity_mut(target)
             .unwrap()
@@ -876,7 +869,7 @@ mod suite {
             initial_element
         };
         opponent_element.set_position_map(MapPoint::new(100.0, 50.0));
-        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+        let opponent = engine.add_test_entity(Entity::Pc(ActorPc {
             element: opponent_element,
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1264,7 +1257,7 @@ mod suite {
                 .element_data()
                 .position(),
         );
-        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+        let opponent = engine.add_test_entity(Entity::Pc(ActorPc {
             element: opponent_element,
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1336,7 +1329,7 @@ mod suite {
             initial_element
         };
         opponent_element.set_position_map(opponent_position);
-        let opponent = engine.add_entity(Entity::Pc(ActorPc {
+        let opponent = engine.add_test_entity(Entity::Pc(ActorPc {
             element: opponent_element,
             actor: ActorData::default(),
             human: HumanData {
@@ -1421,7 +1414,7 @@ mod suite {
             .position_iface
             .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
-        let owner = engine.add_entity(Entity::Pc(ActorPc {
+        let owner = engine.add_test_entity(Entity::Pc(ActorPc {
             element,
             actor: ActorData {
                 // QuitSwordfight's lowering animation has completed before

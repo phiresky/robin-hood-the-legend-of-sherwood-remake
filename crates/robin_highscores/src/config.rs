@@ -429,6 +429,24 @@ impl ServerConfig {
         scope: ConfigSecretScope,
         candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
     ) -> anyhow::Result<()> {
+        self.validate_limits_and_backup_paths()?;
+        self.validate_paths_and_secrets(scope)?;
+        self.validate_cors_origins()?;
+        self.validate_network_limits()?;
+        self.validate_build_and_campaign_registries()?;
+        let mut profile_ids = std::collections::HashSet::new();
+        for profile in &self.admission_profiles {
+            anyhow::ensure!(
+                profile_ids.insert(&profile.id),
+                "duplicate admission profile ID: {}",
+                profile.id
+            );
+            self.validate_profile(profile, candidate)?;
+        }
+        self.validate_competitions(&profile_ids)
+    }
+
+    fn validate_limits_and_backup_paths(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.max_replay_bytes > 0,
             "max_replay_bytes must be positive"
@@ -532,6 +550,10 @@ impl ServerConfig {
             (60..=7 * 24 * 60 * 60).contains(&self.run_preflight_ttl_seconds),
             "run preflight TTL must be between one minute and seven days"
         );
+        Ok(())
+    }
+
+    fn validate_paths_and_secrets(&self, scope: ConfigSecretScope) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.database_path.file_name().is_some(),
             "database_path must name a file"
@@ -598,6 +620,10 @@ impl ServerConfig {
                 "worker configuration must not contain an API moderation credential"
             ),
         }
+        Ok(())
+    }
+
+    fn validate_cors_origins(&self) -> anyhow::Result<()> {
         for origin in &self.allowed_origins {
             let parsed = url::Url::parse(origin)
                 .map_err(|error| anyhow::anyhow!("invalid CORS origin {origin}: {error}"))?;
@@ -623,6 +649,10 @@ impl ServerConfig {
                 "CORS entries must be exact origins without credentials, paths, queries, or fragments"
             );
         }
+        Ok(())
+    }
+
+    fn validate_network_limits(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             (1..=10_000).contains(&self.challenge_requests_per_minute_per_ip),
             "challenge_requests_per_minute_per_ip must be in 1..=10000"
@@ -648,7 +678,10 @@ impl ServerConfig {
                 anyhow::anyhow!("invalid trusted proxy CIDR {network}: {error}")
             })?;
         }
-        let mut profile_ids = std::collections::HashSet::new();
+        Ok(())
+    }
+
+    fn validate_build_and_campaign_registries(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.admission_profiles.is_empty() || self.manifest_directory.is_some(),
             "manifest_directory is required when admission profiles are configured"
@@ -688,356 +721,13 @@ impl ServerConfig {
                 );
             }
         }
-        for profile in &self.admission_profiles {
-            anyhow::ensure!(
-                profile_ids.insert(&profile.id),
-                "duplicate admission profile ID: {}",
-                profile.id
-            );
-            profile.content_subject.validate().map_err(|error| {
-                anyhow::anyhow!(
-                    "invalid content subject in admission profile {}: {error}",
-                    profile.id
-                )
-            })?;
-            OpaqueId::new(profile.template_id.clone()).map_err(|error| {
-                anyhow::anyhow!(
-                    "invalid template ID in admission profile {}: {error}",
-                    profile.id
-                )
-            })?;
-            anyhow::ensure!(
-                !profile.allowed_scopes.is_empty()
-                    && profile.allowed_scopes.iter().all(|scope| matches!(
-                        scope.as_str(),
-                        "individual_level" | "campaign_genesis" | "campaign_continuation"
-                    )),
-                "invalid allowed_scopes in admission profile {}",
-                profile.id
-            );
-            anyhow::ensure!(
-                !profile.allowed_metrics.is_empty()
-                    && profile.allowed_metrics.iter().all(|metric| matches!(
-                        metric.as_str(),
-                        "original_score" | "fastest_success"
-                    )),
-                "invalid allowed_metrics in admission profile {}",
-                profile.id
-            );
-            for (kind, value) in [
-                ("build manifest", &profile.build_manifest_id),
-                ("content manifest", &profile.content_manifest_id),
-                ("config", &profile.config_id),
-                ("ruleset", &profile.ruleset_id),
-            ] {
-                anyhow::ensure!(
-                    value.len() == 64
-                        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        && value == &value.to_ascii_lowercase(),
-                    "{kind} ID in profile {} must be 64 lowercase hexadecimal digits",
-                    profile.id
-                );
-            }
-            let build = digest32(&profile.build_manifest_id, "build manifest")?;
-            let content = digest32(&profile.content_manifest_id, "content manifest")?;
-            let rules_config = digest32(&profile.config_id, "rules config")?;
-            let ruleset = digest32(&profile.ruleset_id, "ruleset manifest")?;
-            let loaded_build = self.manifests.builds.get(&build).ok_or_else(|| {
-                anyhow::anyhow!("profile {} references a missing build manifest", profile.id)
-            })?;
-            anyhow::ensure!(
-                loaded_build.public_digest() == build,
-                "profile {} resolved a build registry entry under the wrong public digest",
-                profile.id
-            );
-            let build_doc = loaded_build.semantics();
-            let content_doc = self
-                .manifests
-                .content_manifests
-                .get(&content)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "profile {} references a missing content manifest",
-                        profile.id
-                    )
-                })?;
-            let rules_config_doc =
-                self.manifests
-                    .rules_configs
-                    .get(&rules_config)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("profile {} references a missing rules config", profile.id)
-                    })?;
-            let published = self.manifests.rulesets.get(&ruleset).ok_or_else(|| {
-                anyhow::anyhow!("profile {} references a missing ruleset", profile.id)
-            })?;
-            validate_current_sim_config(rules_config_doc).map_err(|error| {
-                anyhow::anyhow!(
-                    "profile {} references an invalid current SimConfig: {error}",
-                    profile.id
-                )
-            })?;
-            published
-                .manifest
-                .validate_ranked_simulation_policy(rules_config_doc)
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "profile {} ruleset simulation-policy identity mismatch: {error}",
-                        profile.id
-                    )
-                })?;
-            validate_current_ranked_build(loaded_build, published)?;
-            let has_individual = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "individual_level");
-            let has_campaign_genesis = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "campaign_genesis");
-            let has_campaign_continuation = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "campaign_continuation");
-            let expected_scopes = expected_admission_scopes(
-                profile.canonical_campaign_state.requirement.edition,
-                &profile.content_subject,
-            );
-            anyhow::ensure!(
-                profile
-                    .allowed_scopes
-                    .iter()
-                    .map(String::as_str)
-                    .eq(expected_scopes.iter().copied())
-                    && (!has_individual
-                        || published
-                            .manifest
-                            .board_scopes
-                            .binary_search(&RulesetBoardScopeV1::IndividualLevel)
-                            .is_ok())
-                    && (!(has_campaign_genesis || has_campaign_continuation)
-                        || (published
-                            .manifest
-                            .board_scopes
-                            .binary_search(&RulesetBoardScopeV1::CampaignMission)
-                            .is_ok()
-                            && published
-                                .manifest
-                                .board_scopes
-                                .binary_search(&RulesetBoardScopeV1::FullCampaign)
-                                .is_ok())),
-                "profile {} scopes do not match its exact edition/subject and immutable ruleset boards",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.allowed_metrics.iter().all(|metric| {
-                    let metric = match metric.as_str() {
-                        "original_score" => BoardMetricV1::OriginalScore,
-                        "fastest_success" => BoardMetricV1::FastestSuccess,
-                        _ => return false,
-                    };
-                    published.manifest.metrics.binary_search(&metric).is_ok()
-                }),
-                "profile {} metrics do not match its immutable ruleset",
-                profile.id
-            );
-            anyhow::ensure!(
-                published.manifest.rules_config_sha256 == rules_config
-                    && published.manifest.canonical_campaign_state
-                        == profile.canonical_campaign_state.requirement
-                    && published
-                        .manifest
-                        .allowed_build_manifest_sha256
-                        .binary_search(&build)
-                        .is_ok()
-                    && published
-                        .manifest
-                        .allowed_content_manifest_sha256
-                        .binary_search(&content)
-                        .is_ok()
-                    && rules_config_doc.replay_schema_version == build_doc.replay_schema_version,
-                "profile {} does not match its immutable manifest tuple",
-                profile.id
-            );
-            profile
-                .canonical_campaign_state
-                .validate()
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "profile {} has an invalid canonical campaign-state pin: {error}",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                profile
-                    .canonical_campaign_state
-                    .requirement
-                    .rules_config_sha256
-                    == rules_config
-                    && profile.canonical_campaign_state.requirement.edition == content_doc.edition,
-                "profile {} campaign-state authority differs from its config or edition",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.ruleset_display_name == published.manifest.display_name
-                    && profile.preset_id == published.manifest.preset_id.as_str()
-                    && profile.preset_name == published.manifest.preset_name
-                    && profile.difficulty_id == published.manifest.difficulty_id.as_str()
-                    && profile.difficulty_name == published.manifest.difficulty_name,
-                "profile {} labels do not match its digest-bound ruleset manifest",
-                profile.id
-            );
-            anyhow::ensure!(
-                content_doc.subject == profile.content_subject,
-                "profile {} does not bind its exact typed content subject",
-                profile.id
-            );
-            let offers_campaign = has_campaign_genesis || has_campaign_continuation;
-            let campaign_content = profile
-                .campaign_content_manifest_id
-                .as_deref()
-                .map(|value| digest32(value, "campaign content manifest"))
-                .transpose()?;
-            anyhow::ensure!(
-                offers_campaign == campaign_content.is_some(),
-                "profile {} must configure a campaign content manifest exactly for campaign scopes",
-                profile.id
-            );
-            if let Some(campaign_content) = campaign_content {
-                let catalog = self
-                    .manifests
-                    .campaign_content_manifests
-                    .get(&campaign_content)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "profile {} campaign content manifest is missing",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    catalog.edition == content_doc.edition
-                        && catalog.content_for(&content_doc.subject) == Some(content),
-                    "profile {} campaign catalog does not contain its exact edition/subject content",
-                    profile.id
-                );
-                anyhow::ensure!(
-                    published
-                        .manifest
-                        .allowed_campaign_content_manifest_sha256
-                        .binary_search(&campaign_content)
-                        .is_ok(),
-                    "profile {} campaign catalog is not allowlisted by its ruleset",
-                    profile.id
-                );
-                published
-                    .manifest
-                    .validate_campaign_completion_catalog(catalog)
-                    .map_err(|error| {
-                        anyhow::anyhow!(
-                            "profile {} campaign completion catalog is invalid: {error}",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    published.manifest.campaign_completion_policy.required()
-                        == Some(&official_full_campaign_completion_policy_v1()),
-                    "profile {} does not publish the exact official H12 completion predicate",
-                    profile.id
-                );
-            }
-            for policy in [
-                &published.manifest.input_provenance_policy,
-                &published.manifest.command_admission_policy,
-                &published.manifest.submission_admission_policy,
-                &published.manifest.verifier_policy,
-            ] {
-                let document = self
-                    .manifests
-                    .policies
-                    .get(&policy.manifest_sha256)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "profile {} references a missing immutable policy",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    document.kind == policy.kind && document.version == policy.version,
-                    "profile {} policy identity does not match its document",
-                    profile.id
-                );
-            }
-            anyhow::ensure!(
-                profile.canonical_campaign_state.artifact.byte_length <= self.max_campaign_bytes,
-                "canonical campaign state in profile {} exceeds the server limit",
-                profile.id
-            );
-            let campaign_state_path = profile
-                .canonical_campaign_state_path
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "installed profile {} is missing its canonical campaign-state path",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                campaign_state_path.is_absolute(),
-                "canonical campaign-state path in profile {} must be absolute",
-                profile.id
-            );
-            let (actual_digest, actual_byte_length) =
-                if let Some((authenticated_candidate_files, source_commit)) = candidate {
-                    let expected_parent =
-                        Path::new("/home/robinhood/.local/opt/robin-highscores/releases")
-                            .join(source_commit)
-                            .join("private/campaign-states");
-                    hash_authenticated_candidate_campaign_state(
-                        authenticated_candidate_files,
-                        campaign_state_path,
-                        &expected_parent,
-                        HARD_MAX_CAMPAIGN_BYTES,
-                    )?
-                } else {
-                    let path = campaign_state_path;
-                    hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(
-                        |error| {
-                            anyhow::anyhow!(
-                                "canonical campaign-state path in profile {} is unsafe: {error}",
-                                profile.id
-                            )
-                        },
-                    )?
-                };
-            anyhow::ensure!(
-                actual_digest
-                    == profile
-                        .canonical_campaign_state
-                        .artifact
-                        .sha256
-                        .into_bytes()
-                    && actual_byte_length == profile.canonical_campaign_state.artifact.byte_length,
-                "canonical campaign-state file in profile {} differs from its exact pin",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.viewer_available == profile.viewer_unavailable_reason.is_none(),
-                "profile {} viewer availability and reason disagree",
-                profile.id
-            );
-            anyhow::ensure!(
-                (profile.viewer_available
-                    && profile
-                        .viewer_content_requirement
-                        .is_some_and(|requirement| {
-                            requirement.matches_edition(content_doc.edition)
-                        }))
-                    || (!profile.viewer_available && profile.viewer_content_requirement.is_none()),
-                "profile {} viewer content requirement does not match its {:?} content edition",
-                profile.id,
-                content_doc.edition
-            );
-        }
+        Ok(())
+    }
+
+    fn validate_competitions(
+        &self,
+        profile_ids: &std::collections::HashSet<&String>,
+    ) -> anyhow::Result<()> {
         let mut competition_ids = std::collections::HashSet::new();
         for competition in &self.competitions {
             let manifest_sha256 = digest32(&competition.manifest_sha256, "competition manifest")?;
@@ -1109,6 +799,354 @@ impl ServerConfig {
                 manifest.competition_id.as_str()
             );
         }
+        Ok(())
+    }
+
+    fn validate_profile(
+        &self,
+        profile: &AdmissionProfile,
+        candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
+    ) -> anyhow::Result<()> {
+        profile.content_subject.validate().map_err(|error| {
+            anyhow::anyhow!(
+                "invalid content subject in admission profile {}: {error}",
+                profile.id
+            )
+        })?;
+        OpaqueId::new(profile.template_id.clone()).map_err(|error| {
+            anyhow::anyhow!(
+                "invalid template ID in admission profile {}: {error}",
+                profile.id
+            )
+        })?;
+        anyhow::ensure!(
+            !profile.allowed_scopes.is_empty()
+                && profile.allowed_scopes.iter().all(|scope| matches!(
+                    scope.as_str(),
+                    "individual_level" | "campaign_genesis" | "campaign_continuation"
+                )),
+            "invalid allowed_scopes in admission profile {}",
+            profile.id
+        );
+        anyhow::ensure!(
+            !profile.allowed_metrics.is_empty()
+                && profile
+                    .allowed_metrics
+                    .iter()
+                    .all(|metric| matches!(metric.as_str(), "original_score" | "fastest_success")),
+            "invalid allowed_metrics in admission profile {}",
+            profile.id
+        );
+        for (kind, value) in [
+            ("build manifest", &profile.build_manifest_id),
+            ("content manifest", &profile.content_manifest_id),
+            ("config", &profile.config_id),
+            ("ruleset", &profile.ruleset_id),
+        ] {
+            anyhow::ensure!(
+                value.len() == 64
+                    && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && value == &value.to_ascii_lowercase(),
+                "{kind} ID in profile {} must be 64 lowercase hexadecimal digits",
+                profile.id
+            );
+        }
+        let build = digest32(&profile.build_manifest_id, "build manifest")?;
+        let content = digest32(&profile.content_manifest_id, "content manifest")?;
+        let rules_config = digest32(&profile.config_id, "rules config")?;
+        let ruleset = digest32(&profile.ruleset_id, "ruleset manifest")?;
+        let loaded_build = self.manifests.builds.get(&build).ok_or_else(|| {
+            anyhow::anyhow!("profile {} references a missing build manifest", profile.id)
+        })?;
+        anyhow::ensure!(
+            loaded_build.public_digest() == build,
+            "profile {} resolved a build registry entry under the wrong public digest",
+            profile.id
+        );
+        let build_doc = loaded_build.semantics();
+        let content_doc = self
+            .manifests
+            .content_manifests
+            .get(&content)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "profile {} references a missing content manifest",
+                    profile.id
+                )
+            })?;
+        let rules_config_doc =
+            self.manifests
+                .rules_configs
+                .get(&rules_config)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("profile {} references a missing rules config", profile.id)
+                })?;
+        let published = self.manifests.rulesets.get(&ruleset).ok_or_else(|| {
+            anyhow::anyhow!("profile {} references a missing ruleset", profile.id)
+        })?;
+        validate_current_sim_config(rules_config_doc).map_err(|error| {
+            anyhow::anyhow!(
+                "profile {} references an invalid current SimConfig: {error}",
+                profile.id
+            )
+        })?;
+        published
+            .manifest
+            .validate_ranked_simulation_policy(rules_config_doc)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "profile {} ruleset simulation-policy identity mismatch: {error}",
+                    profile.id
+                )
+            })?;
+        validate_current_ranked_build(loaded_build, published)?;
+        let has_individual = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "individual_level");
+        let has_campaign_genesis = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "campaign_genesis");
+        let has_campaign_continuation = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "campaign_continuation");
+        let expected_scopes = expected_admission_scopes(
+            profile.canonical_campaign_state.requirement.edition,
+            &profile.content_subject,
+        );
+        anyhow::ensure!(
+            profile
+                .allowed_scopes
+                .iter()
+                .map(String::as_str)
+                .eq(expected_scopes.iter().copied())
+                && (!has_individual
+                    || published
+                        .manifest
+                        .board_scopes
+                        .binary_search(&RulesetBoardScopeV1::IndividualLevel)
+                        .is_ok())
+                && (!(has_campaign_genesis || has_campaign_continuation)
+                    || (published
+                        .manifest
+                        .board_scopes
+                        .binary_search(&RulesetBoardScopeV1::CampaignMission)
+                        .is_ok()
+                        && published
+                            .manifest
+                            .board_scopes
+                            .binary_search(&RulesetBoardScopeV1::FullCampaign)
+                            .is_ok())),
+            "profile {} scopes do not match its exact edition/subject and immutable ruleset boards",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.allowed_metrics.iter().all(|metric| {
+                let metric = match metric.as_str() {
+                    "original_score" => BoardMetricV1::OriginalScore,
+                    "fastest_success" => BoardMetricV1::FastestSuccess,
+                    _ => return false,
+                };
+                published.manifest.metrics.binary_search(&metric).is_ok()
+            }),
+            "profile {} metrics do not match its immutable ruleset",
+            profile.id
+        );
+        anyhow::ensure!(
+            published.manifest.rules_config_sha256 == rules_config
+                && published.manifest.canonical_campaign_state
+                    == profile.canonical_campaign_state.requirement
+                && published
+                    .manifest
+                    .allowed_build_manifest_sha256
+                    .binary_search(&build)
+                    .is_ok()
+                && published
+                    .manifest
+                    .allowed_content_manifest_sha256
+                    .binary_search(&content)
+                    .is_ok()
+                && rules_config_doc.replay_schema_version == build_doc.replay_schema_version,
+            "profile {} does not match its immutable manifest tuple",
+            profile.id
+        );
+        profile
+            .canonical_campaign_state
+            .validate()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "profile {} has an invalid canonical campaign-state pin: {error}",
+                    profile.id
+                )
+            })?;
+        anyhow::ensure!(
+            profile
+                .canonical_campaign_state
+                .requirement
+                .rules_config_sha256
+                == rules_config
+                && profile.canonical_campaign_state.requirement.edition == content_doc.edition,
+            "profile {} campaign-state authority differs from its config or edition",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.ruleset_display_name == published.manifest.display_name
+                && profile.preset_id == published.manifest.preset_id.as_str()
+                && profile.preset_name == published.manifest.preset_name
+                && profile.difficulty_id == published.manifest.difficulty_id.as_str()
+                && profile.difficulty_name == published.manifest.difficulty_name,
+            "profile {} labels do not match its digest-bound ruleset manifest",
+            profile.id
+        );
+        anyhow::ensure!(
+            content_doc.subject == profile.content_subject,
+            "profile {} does not bind its exact typed content subject",
+            profile.id
+        );
+        let offers_campaign = has_campaign_genesis || has_campaign_continuation;
+        let campaign_content = profile
+            .campaign_content_manifest_id
+            .as_deref()
+            .map(|value| digest32(value, "campaign content manifest"))
+            .transpose()?;
+        anyhow::ensure!(
+            offers_campaign == campaign_content.is_some(),
+            "profile {} must configure a campaign content manifest exactly for campaign scopes",
+            profile.id
+        );
+        if let Some(campaign_content) = campaign_content {
+            let catalog = self
+                .manifests
+                .campaign_content_manifests
+                .get(&campaign_content)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "profile {} campaign content manifest is missing",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                catalog.edition == content_doc.edition
+                    && catalog.content_for(&content_doc.subject) == Some(content),
+                "profile {} campaign catalog does not contain its exact edition/subject content",
+                profile.id
+            );
+            anyhow::ensure!(
+                published
+                    .manifest
+                    .allowed_campaign_content_manifest_sha256
+                    .binary_search(&campaign_content)
+                    .is_ok(),
+                "profile {} campaign catalog is not allowlisted by its ruleset",
+                profile.id
+            );
+            published
+                .manifest
+                .validate_campaign_completion_catalog(catalog)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "profile {} campaign completion catalog is invalid: {error}",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                published.manifest.campaign_completion_policy.required()
+                    == Some(&official_full_campaign_completion_policy_v1()),
+                "profile {} does not publish the exact official H12 completion predicate",
+                profile.id
+            );
+        }
+        for policy in [
+            &published.manifest.input_provenance_policy,
+            &published.manifest.command_admission_policy,
+            &published.manifest.submission_admission_policy,
+            &published.manifest.verifier_policy,
+        ] {
+            let document = self
+                .manifests
+                .policies
+                .get(&policy.manifest_sha256)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "profile {} references a missing immutable policy",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                document.kind == policy.kind && document.version == policy.version,
+                "profile {} policy identity does not match its document",
+                profile.id
+            );
+        }
+        anyhow::ensure!(
+            profile.canonical_campaign_state.artifact.byte_length <= self.max_campaign_bytes,
+            "canonical campaign state in profile {} exceeds the server limit",
+            profile.id
+        );
+        let campaign_state_path = profile
+            .canonical_campaign_state_path
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "installed profile {} is missing its canonical campaign-state path",
+                    profile.id
+                )
+            })?;
+        anyhow::ensure!(
+            campaign_state_path.is_absolute(),
+            "canonical campaign-state path in profile {} must be absolute",
+            profile.id
+        );
+        let (actual_digest, actual_byte_length) =
+            if let Some((authenticated_candidate_files, source_commit)) = candidate {
+                let expected_parent = Path::new(crate::deployment::paths::INSTALLED_RELEASE_ROOT)
+                    .join(source_commit)
+                    .join("private/campaign-states");
+                hash_authenticated_candidate_campaign_state(
+                    authenticated_candidate_files,
+                    campaign_state_path,
+                    &expected_parent,
+                    HARD_MAX_CAMPAIGN_BYTES,
+                )?
+            } else {
+                let path = campaign_state_path;
+                hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(|error| {
+                    anyhow::anyhow!(
+                        "canonical campaign-state path in profile {} is unsafe: {error}",
+                        profile.id
+                    )
+                })?
+            };
+        anyhow::ensure!(
+            actual_digest
+                == profile
+                    .canonical_campaign_state
+                    .artifact
+                    .sha256
+                    .into_bytes()
+                && actual_byte_length == profile.canonical_campaign_state.artifact.byte_length,
+            "canonical campaign-state file in profile {} differs from its exact pin",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.viewer_available == profile.viewer_unavailable_reason.is_none(),
+            "profile {} viewer availability and reason disagree",
+            profile.id
+        );
+        anyhow::ensure!(
+            (profile.viewer_available
+                && profile
+                    .viewer_content_requirement
+                    .is_some_and(|requirement| {
+                        requirement.matches_edition(content_doc.edition)
+                    }))
+                || (!profile.viewer_available && profile.viewer_content_requirement.is_none()),
+            "profile {} viewer content requirement does not match its {:?} content edition",
+            profile.id,
+            content_doc.edition
+        );
         Ok(())
     }
 
@@ -1567,19 +1605,7 @@ where
 }
 
 #[cfg(target_os = "linux")]
-fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    let fd = openat2(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let file = std::fs::File::from(fd);
-    anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
-    Ok(file)
-}
+use crate::secure_fs::open_regular_no_symlinks;
 
 #[cfg(not(target_os = "linux"))]
 fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
@@ -1594,19 +1620,7 @@ fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
 }
 
 fn read_regular_file_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
-    let file = open_regular_no_symlinks(path)?;
-    let metadata = file.metadata()?;
-    anyhow::ensure!(
-        metadata.len() <= limit,
-        "operator document exceeds the {limit}-byte safety limit"
-    );
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    file.take(limit + 1).read_to_end(&mut bytes)?;
-    anyhow::ensure!(
-        bytes.len() as u64 <= limit,
-        "operator document grew beyond its limit"
-    );
-    Ok(bytes)
+    crate::secure_fs::read_bounded_regular_file(open_regular_no_symlinks(path)?, limit)
 }
 
 fn hash_authenticated_candidate_campaign_state(
@@ -1684,7 +1698,7 @@ fn digest32(value: &str, field: &str) -> anyhow::Result<Digest32> {
 
 #[cfg(target_os = "linux")]
 fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::Read as _;
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -1698,12 +1712,12 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("moderation bearer token must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1712,12 +1726,12 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
         )
     })?;
     let parent_file = std::fs::File::from(parent_fd);
-    let token_fd = openat2(
+    let token_fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let file = std::fs::File::from(token_fd);
     let metadata = file.metadata()?;
@@ -1749,7 +1763,7 @@ fn load_private_bearer_token(_path: &Path) -> anyhow::Result<Vec<u8>> {
 
 #[cfg(target_os = "linux")]
 fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -1759,12 +1773,12 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1780,23 +1794,23 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     );
 
     let open_existing = || -> anyhow::Result<std::fs::File> {
-        let fd = openat2(
+        let fd = crate::secure_fs::open_no_symlinks_at(
             &parent_file,
             filename,
             OFlags::RDONLY | OFlags::CLOEXEC,
             Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         )?;
         Ok(std::fs::File::from(fd))
     };
 
     let mut file = if create_if_missing {
-        match openat2(
+        match crate::secure_fs::open_no_symlinks_at(
             &parent_file,
             filename,
             OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o400),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            rustix::fs::ResolveFlags::BENEATH,
         ) {
             Ok(fd) => {
                 let mut file = std::fs::File::from(fd);
@@ -1832,7 +1846,7 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
 
 #[cfg(target_os = "linux")]
 fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -1842,12 +1856,12 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(|error| {
         anyhow::anyhow!(
@@ -1869,7 +1883,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     } else {
         OFlags::RDONLY | OFlags::CLOEXEC
     };
-    let fd = openat2(
+    let fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         flags,
@@ -1878,7 +1892,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
         } else {
             Mode::empty()
         },
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH ,
     )
     .map_err(|error| {
         if create_new {
@@ -1960,16 +1974,16 @@ fn revalidate_backup_authority_path(
     expected_key: &[u8; 32],
     label: &str,
 ) -> anyhow::Result<()> {
-    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+    use rustix::fs::{Mode, OFlags};
     use std::io::Read as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    let parent_fd = openat2(
+    let parent_fd = crate::secure_fs::open_no_symlinks_at(
         rustix::fs::CWD,
         parent,
         OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::empty(),
     )?;
     let parent_file = std::fs::File::from(parent_fd);
     let parent_metadata = parent_file.metadata()?;
@@ -1981,12 +1995,12 @@ fn revalidate_backup_authority_path(
             && parent_metadata.uid() == rustix::process::geteuid().as_raw(),
         "{label} parent path changed during access"
     );
-    let file_fd = openat2(
+    let file_fd = crate::secure_fs::open_no_symlinks_at(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
         Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let mut file = std::fs::File::from(file_fd);
     let metadata = file.metadata()?;
@@ -2659,7 +2673,7 @@ mod tests {
     #[test]
     fn manifestctl_split_ruleset_layout_loads_and_cross_binds() {
         let directory = empty_manifest_registry_directory();
-        let published = crate::web::tests::published_ruleset_fixture();
+        let published = crate::test_support::published_ruleset_fixture();
         let digest = published.ruleset_manifest_sha256;
         std::fs::write(
             directory
@@ -2694,7 +2708,7 @@ mod tests {
     #[test]
     fn build_registry_preserves_exact_v2_identity_and_separate_semantics() {
         let directory = empty_manifest_registry_directory();
-        let build = crate::web::tests::viewer_build_v2();
+        let build = crate::test_support::viewer_build_v2();
         let document = VersionedBuildManifest::V2(build.clone());
         let public_digest = document.canonical_digest().unwrap();
         let semantic = document.backend_visible_v1().unwrap();
@@ -2716,7 +2730,7 @@ mod tests {
 
     #[test]
     fn build_registry_rejects_wrong_filename_private_fields_and_duplicate_semantics() {
-        let build = crate::web::tests::viewer_build_v2();
+        let build = crate::test_support::viewer_build_v2();
         let document = VersionedBuildManifest::V2(build.clone());
         let public_digest = document.canonical_digest().unwrap();
 
@@ -2782,13 +2796,13 @@ mod tests {
 
     #[test]
     fn current_ranked_build_requires_v2_and_stale_build_requires_quarantine() {
-        let build_v2 = crate::web::tests::viewer_build_v2();
+        let build_v2 = crate::test_support::viewer_build_v2();
         let mut build = LoadedBuildManifest::new(VersionedBuildManifest::V2(build_v2)).unwrap();
         assert_eq!(
             build.semantics().save_schema_version,
             robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1
         );
-        let published = crate::web::tests::published_ruleset_fixture();
+        let published = crate::test_support::published_ruleset_fixture();
         validate_current_ranked_build(&build, &published).unwrap();
 
         assert_eq!(
@@ -2823,9 +2837,10 @@ mod tests {
         };
         validate_current_ranked_build(&build, &quarantined).unwrap();
 
-        let historical =
-            LoadedBuildManifest::new(VersionedBuildManifest::V1(crate::web::tests::viewer_build()))
-                .unwrap();
+        let historical = LoadedBuildManifest::new(VersionedBuildManifest::V1(
+            crate::test_support::viewer_build(),
+        ))
+        .unwrap();
         assert!(validate_current_ranked_build(&historical, &quarantined).is_ok());
         quarantined.operational_status = RulesetOperationalStatusV1::Active;
         assert!(validate_current_ranked_build(&historical, &quarantined).is_err());
