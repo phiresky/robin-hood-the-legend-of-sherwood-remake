@@ -14,13 +14,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs::File, io::Read, path::Path};
 
 use robin_engine::mission_assets::{
-    ArchiveIdentity, ArchiveMissionAssets, MissionAssetDescriptor, MissionAssetSource,
+    ArchiveIdentity, ArchiveMissionAssets, DistributedCacheIdentity, InstalledArchiveLocator,
+    MissionAssetDescriptor, MissionAssetSource,
 };
 use robin_engine::spellforge::{SpellforgePackage, hex_hash};
 use sha2::{Digest, Sha256};
 
 #[cfg(not(target_arch = "wasm32"))]
-use robin_engine::mission_assets::{InstalledArchiveLocator, InstalledModsRoot};
+use robin_engine::mission_assets::InstalledModsRoot;
 
 use crate::distributed_mod::{DISTRIBUTED_MOD_SCHEMA_VERSION, validate_mission_archives};
 use crate::distributed_mod_cache::DistributedModCacheLease;
@@ -159,53 +160,68 @@ pub fn resolve_built_in_mission_assets(
 ///
 /// Unlike cold restoration this function never resolves a path or cache key:
 /// callers must first read or receive the exact immutable bytes they intend to
-/// launch. The returned owner mounts those same `Arc`s, and the package passed
-/// here is the only package later handed to the Lua runtime.
+/// launch. Admission, descriptor construction, and mounting stay in this one
+/// boundary: no caller can substitute bytes or metadata after admission. The
+/// returned package is derived from those same bytes, not supplied by callers.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn retain_live_mission_assets(
-    descriptor: &MissionAssetDescriptor,
+    mission_basename: &str,
+    map_filename: &str,
+    rhm_entry: &str,
+    requires_spellforge: bool,
     mission_archive: Arc<[u8]>,
     shared_archive: Option<Arc<[u8]>>,
-    embedded_spellforge_package: Option<&SpellforgePackage>,
+    installed: Option<InstalledArchiveLocator>,
+    distributed_cache: Option<DistributedCacheIdentity>,
     files: Arc<robin_engine::sbfile::SbFileSystem>,
-) -> Result<ResolvedMissionAssets, MissionAssetRestoreError> {
-    descriptor
-        .validate()
-        .map_err(|error| MissionAssetRestoreError::InvalidDescriptor(error.to_string()))?;
-    let MissionAssetSource::Archive(archive) = &descriptor.source else {
-        return Err(MissionAssetRestoreError::ArchiveAdmission(
-            "live custom-mission preparation requires an archive descriptor".to_owned(),
-        ));
-    };
-    validate_proto_and_map(descriptor)?;
-    verify_archive_arc_identity("mission", &mission_archive, &archive.mission_archive)?;
-    match (&shared_archive, &archive.shared_archive) {
-        (Some(bytes), Some(identity)) => {
-            verify_archive_arc_identity("shared library", bytes, identity)?;
-        }
-        (None, None) => {}
-        _ => return Err(MissionAssetRestoreError::InstalledSharedArchiveShape),
-    }
+) -> Result<(ResolvedMissionAssets, Option<SpellforgePackage>), String> {
     let admitted = validate_mission_archives(
         &mission_archive,
         shared_archive.as_deref(),
-        &descriptor.mission_basename,
-        &archive.selected_rhm_entry,
-        &descriptor.map_filename,
-        embedded_spellforge_package.is_some(),
+        mission_basename,
+        rhm_entry,
+        map_filename,
+        requires_spellforge,
     )
-    .map_err(|error| MissionAssetRestoreError::ArchiveAdmission(error.to_string()))?;
-    verify_spellforge_authority(
-        admitted.spellforge_package.as_ref(),
-        embedded_spellforge_package,
-    )?;
-    mount_resolved(
-        descriptor,
-        archive,
+    .map_err(|error| format!("admit exact custom-mission archives: {error}"))?;
+    let spellforge_package = admitted.spellforge_package;
+    let identity = |bytes: &[u8]| ArchiveIdentity {
+        sha256: Sha256::digest(bytes).into(),
+        bytes: bytes.len() as u64,
+    };
+    let archive = ArchiveMissionAssets {
+        mission_archive: identity(&mission_archive),
+        selected_rhm_entry: rhm_entry.to_owned(),
+        shared_archive: shared_archive.as_deref().map(identity),
+        installed,
+        distributed_cache,
+    };
+    let descriptor =
+        MissionAssetDescriptor::archive(mission_basename, map_filename, map_filename, archive)
+            .map_err(|error| error.to_string())?;
+    descriptor
+        .validate_spellforge_package(spellforge_package.as_ref())
+        .map_err(|error| error.to_string())?;
+    if let Some(package) = &spellforge_package {
+        package.validate_wire().map_err(|error| {
+            MissionAssetRestoreError::SpellforgePackageMismatch(format!(
+                "embedded package is invalid: {error}"
+            ))
+            .to_string()
+        })?;
+    }
+    let resolved = mount_resolved(
+        &descriptor,
+        descriptor
+            .archive_assets()
+            .expect("constructed archive descriptor"),
         mission_archive,
         shared_archive,
         None,
         files,
     )
+    .map_err(|error| error.to_string())?;
+    Ok((resolved, spellforge_package))
 }
 
 impl Drop for ResolvedMissionAssets {
@@ -997,6 +1013,33 @@ mod tests {
             error,
             MissionAssetRestoreError::ArchiveIdentityMismatch { .. }
         ));
+        assert!(files.read_all("Data/Levels/ColdMission.rhm").is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn cold_restore_still_admits_archives_with_matching_identity() {
+        use crate::distributed_mod::MISSION_ARCHIVE_ADMISSIONS;
+
+        let files = independent_files();
+        let temp = tempfile::tempdir().unwrap();
+        let selected = "ColdMission.rhm";
+        // Correct ZIP and descriptor hashes cannot authorize a different RHM map.
+        let archive = zip(&[(selected, rhm("WrongMap", 1))]);
+        let descriptor = installed_descriptor(&archive, "mission.zip", selected);
+        std::fs::write(temp.path().join("mission.zip"), archive).unwrap();
+        let roots = MissionAssetRoots {
+            configured_mods: temp.path().to_owned(),
+            bundled_mods: None,
+        };
+        let before = MISSION_ARCHIVE_ADMISSIONS.get();
+        let error = resolve_native_mission_assets(&descriptor, None, &roots, None, files.clone())
+            .expect_err("matching archive identity does not bypass cold admission");
+        assert_eq!(MISSION_ARCHIVE_ADMISSIONS.get() - before, 1);
+        assert!(
+            matches!(error, MissionAssetRestoreError::ArchiveAdmission(_)),
+            "{error}"
+        );
         assert!(files.read_all("Data/Levels/ColdMission.rhm").is_err());
     }
 
