@@ -246,6 +246,10 @@ codegen-backend = "cranelift"
 [profile.test.package.rilua]
 codegen-backend = "llvm"
 
+# Probe tests exercise panic unwinding, which Cranelift cannot catch reliably.
+[profile.test.package.robin_test_support]
+codegen-backend = "llvm"
+
 # Full-debuginfo profile for interactive debugging (gdb/lldb).
 # `debug` is a reserved cargo profile name (alias for `dev`), so this is
 # named `dev-debug`. Use with `cargo build --profile dev-debug`.
