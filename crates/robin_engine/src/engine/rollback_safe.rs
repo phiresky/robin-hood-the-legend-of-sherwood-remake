@@ -1969,7 +1969,7 @@ impl Engine {
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub fn test_add_entity(&mut self, entity: crate::element::Entity) -> EntityId {
-        self.inner.add_entity(entity)
+        self.inner.add_test_entity(entity)
     }
 
     /// Seed real sequence-manager insertion order for persistence regressions.

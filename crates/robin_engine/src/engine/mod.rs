@@ -1280,7 +1280,14 @@ impl EngineInner {
         self.initialize_entity_for_publication(id, &mut entity);
         self.world.entities.push(Some(entity));
         self.world.assign_next_original_creation_order(id);
-        #[cfg(any(test, feature = "test-helpers"))]
+        id
+    }
+
+    /// Publish a fixture and explicitly complete identities normally supplied
+    /// by level loading. Gameplay publication never changes under `cfg(test)`.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub(crate) fn add_test_entity(&mut self, entity: Entity) -> EntityId {
+        let id = self.add_entity(entity);
         self.backfill_test_entity_identity(id);
         id
     }
@@ -1297,8 +1304,6 @@ impl EngineInner {
         self.world.entities.push(Some(entity));
         self.world
             .assign_reserved_original_creation_order(id, creation_order);
-        #[cfg(any(test, feature = "test-helpers"))]
-        self.backfill_test_entity_identity(id);
         id
     }
 
@@ -1379,8 +1384,8 @@ impl EngineInner {
     /// Give a directly-constructed test actor the identity fields that level
     /// loading writes in production.
     ///
-    /// Unit-test fixtures build `Entity` values from `Default` and hand them
-    /// straight to [`Self::add_entity`], so two required identities are never
+    /// Unit-test fixtures build `Entity` values from `Default` and publish them
+    /// explicitly through [`Self::add_test_entity`], so two required identities are never
     /// filled in: a PC's stable campaign description
     /// identity behind coma/guard/ammo lookups) and an NPC brain's own actor
     /// handle. Both are backfilled here so individual fixtures don't have to
