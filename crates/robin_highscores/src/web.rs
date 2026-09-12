@@ -273,7 +273,14 @@ impl ChallengeRateLimiter {
             values.pop_front();
         }
         if values.len() >= self.maximum_per_minute {
-            return Err(ApiError::QueueFull);
+            let retry_after = values.front().map_or(Duration::from_secs(60), |first| {
+                (*first + Duration::from_secs(60)).saturating_duration_since(now)
+            });
+            return Err(ApiError::RateLimited {
+                retry_after_ms: u64::try_from(retry_after.as_millis())
+                    .expect("a sixty-second rate limit fits in u64 milliseconds")
+                    .max(1),
+            });
         }
         values.push_back(now);
         Ok(())
@@ -566,9 +573,10 @@ async fn database_fence_gate(
         Err(error) => {
             tracing::error!(
                 error_code = "database_fence_owner",
+                task_panicked = error.is_panic(),
+                task_cancelled = error.is_cancelled(),
                 "database fence-owner task failed"
             );
-            let _ = error;
             Err(ApiError::Unavailable)
         }
     }
@@ -4717,9 +4725,10 @@ fn configuration_error(context: &str, _error: impl std::fmt::Display) -> ApiErro
     ApiError::Internal
 }
 
-fn internal_json(_error: serde_json::Error) -> ApiError {
+fn internal_json(error: serde_json::Error) -> ApiError {
     tracing::error!(
         error_code = "internal_json_serialization",
+        category = ?error.classify(),
         "internal JSON serialization failed"
     );
     ApiError::Internal
