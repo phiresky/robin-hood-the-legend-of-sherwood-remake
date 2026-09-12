@@ -54,7 +54,7 @@ pub(super) fn pin_runtime_fence_intent(
     name: &std::ffi::OsStr,
     allowed_modes: &[u32],
 ) -> Result<PinnedRuntimeFenceIntentV1> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat};
+    use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, openat2, statat};
 
     use std::os::fd::AsFd as _;
 
@@ -223,7 +223,7 @@ pub(super) fn remove_runtime_fence_writing_scratch(
     state: &std::os::fd::OwnedFd,
     name: &std::ffi::OsStr,
 ) -> Result<()> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat, unlinkat};
+    use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, openat2, statat, unlinkat};
     use std::os::fd::AsFd as _;
 
     let state_metadata = rustix::fs::fstat(state)?;
