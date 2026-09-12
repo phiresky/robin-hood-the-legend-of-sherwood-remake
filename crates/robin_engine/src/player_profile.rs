@@ -134,28 +134,14 @@ impl DifficultyRuleField {
 }
 
 /// Why a custom difficulty rule set was rejected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("difficulty field '{}' is {value}, expected {min}..={max}", .field.name())]
 pub struct InvalidDifficultyRules {
     pub field: DifficultyRuleField,
     pub value: u16,
     pub min: u16,
     pub max: u16,
 }
-
-impl std::fmt::Display for InvalidDifficultyRules {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "difficulty field '{}' is {}, expected {}..={}",
-            self.field.name(),
-            self.value,
-            self.min,
-            self.max
-        )
-    }
-}
-
-impl std::error::Error for InvalidDifficultyRules {}
 
 impl DifficultyRules {
     pub const EASY: Self = Self {
@@ -468,16 +454,9 @@ impl<'de> Deserialize<'de> for DifficultyLevel {
 }
 
 /// Invalid conversion from the retail numeric difficulty ABI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("unknown legacy difficulty level {0}")]
 pub struct InvalidDifficultyLevel(pub u32);
-
-impl std::fmt::Display for InvalidDifficultyLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown legacy difficulty level {}", self.0)
-    }
-}
-
-impl std::error::Error for InvalidDifficultyLevel {}
 
 impl DifficultyLevel {
     pub fn from_u32(v: u32) -> Result<Self, InvalidDifficultyLevel> {

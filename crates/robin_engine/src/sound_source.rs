@@ -27,7 +27,9 @@ use crate::sound_geometry::{SoundSourceAltitude, SoundSourceInfo};
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    num_enum::TryFromPrimitive,
 )]
+#[repr(u8)]
 pub enum SoundSourceKind {
     /// Played once then stopped.
     Single = 0,
@@ -41,13 +43,7 @@ pub enum SoundSourceKind {
 
 impl SoundSourceKind {
     pub fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::Single),
-            1 => Some(Self::Looped),
-            2 => Some(Self::Delayed),
-            3 => Some(Self::Volatile),
-            _ => None,
-        }
+        Self::try_from(v).ok()
     }
 }
 

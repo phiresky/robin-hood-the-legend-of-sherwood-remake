@@ -28,52 +28,11 @@ use crate::coordinates::{MapPoint, MapVec};
 // JumpLineIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::jump_lines`.  Wraps [`nonmax::NonMaxU32`]
 /// so `Option<JumpLineIndex>` is 4 bytes via niche optimization.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct JumpLineIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(JumpLineIndex, u32);
-
-impl JumpLineIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<JumpLineIndex> for u32 {
-    #[inline]
-    fn from(i: JumpLineIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<JumpLineIndex> for usize {
-    #[inline]
-    fn from(i: JumpLineIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for JumpLineIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct JumpLineIndex(pub nonmax::NonMaxU32), u32
+);
 
 /// A jump line with 3D endpoints and paired-line / sector metadata.
 #[derive(

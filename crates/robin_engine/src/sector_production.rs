@@ -16,7 +16,9 @@ use serde::{Deserialize, Serialize};
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    num_enum::TryFromPrimitive,
 )]
+#[repr(i32)]
 pub enum Type {
     MakeArrow,
     MakePurse,
@@ -55,22 +57,9 @@ impl Type {
     }
 
     pub fn from_script_i32(value: i32) -> Option<Self> {
-        match value {
-            0 => Some(Type::MakeArrow),
-            1 => Some(Type::MakePurse),
-            2 => Some(Type::MakeStone),
-            3 => Some(Type::MakeApple),
-            4 => Some(Type::MakeAle),
-            5 => Some(Type::MakeLamblegg),
-            6 => Some(Type::MakePlant),
-            7 => Some(Type::MakeNet),
-            8 => Some(Type::MakeWaspNest),
-            9 => Some(Type::TrainBow),
-            10 => Some(Type::TrainHandToHand),
-            11 => Some(Type::Heal),
-            12 => Some(Type::Relic),
-            _ => None,
-        }
+        Self::try_from(value)
+            .ok()
+            .filter(|kind| *kind != Self::Unknown)
     }
 }
 

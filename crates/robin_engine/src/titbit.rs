@@ -37,55 +37,12 @@ pub const INVALID_ID: Option<TitbitId> = None;
 // TitbitId — nominal newtype for titbit identifiers
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Unique titbit identifier.  Newtype around `NonMaxU32` so
 /// `Option<TitbitId>` niche-optimizes to 4 bytes — the `0xFFFF_FFFF`
 /// [`INVALID_ID`] sentinel literally cannot sit in a real id.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct TitbitId(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(TitbitId, u32);
-
-impl TitbitId {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-impl From<TitbitId> for u32 {
-    #[inline]
-    fn from(id: TitbitId) -> u32 {
-        id.get()
-    }
-}
-impl From<TitbitId> for usize {
-    #[inline]
-    fn from(id: TitbitId) -> usize {
-        id.get() as usize
-    }
-}
-
-impl std::fmt::Display for TitbitId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
-    }
-}
+pub struct TitbitId(pub nonmax::NonMaxU32), u32
+);
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -854,8 +811,8 @@ impl TitbitManager {
                 UpdateAction::Remove => {
                     self.titbits.remove(i);
                 }
-                UpdateAction::Mutate(f) => {
-                    f(&mut self.titbits[i]);
+                UpdateAction::Mutate(mutation) => {
+                    mutation.apply(&mut self.titbits[i]);
                 }
             }
         }
@@ -871,7 +828,7 @@ impl TitbitManager {
                 if t.phase + 1 >= 6 {
                     UpdateAction::Remove
                 } else {
-                    UpdateAction::Mutate(Box::new(|t| t.phase += 1))
+                    UpdateAction::Mutate(Mutation::AdvancePhase)
                 }
             }
 
@@ -884,16 +841,9 @@ impl TitbitManager {
                 } else {
                     // Advance sprite frame for star rotation.
                     let num_frames = mgr.num_frames_for_row(t.sprite_row);
-                    UpdateAction::Mutate(Box::new(move |t| {
-                        t.frame_count += 1;
-                        if t.frame_count > TITBIT_FRAME_DELAY {
-                            t.frame_count = 0;
-                            t.sprite_frame += 1;
-                            if t.sprite_frame >= num_frames {
-                                t.sprite_frame = 0;
-                            }
-                        }
-                    }))
+                    UpdateAction::Mutate(Mutation::Animate {
+                        num_frames: num_frames,
+                    })
                 }
             }
 
@@ -904,16 +854,9 @@ impl TitbitManager {
                     } else {
                         // Advance sprite frame for star rotation.
                         let num_frames = mgr.num_frames_for_row(t.sprite_row);
-                        UpdateAction::Mutate(Box::new(move |t| {
-                            t.frame_count += 1;
-                            if t.frame_count > TITBIT_FRAME_DELAY {
-                                t.frame_count = 0;
-                                t.sprite_frame += 1;
-                                if t.sprite_frame >= num_frames {
-                                    t.sprite_frame = 0;
-                                }
-                            }
-                        }))
+                        UpdateAction::Mutate(Mutation::Animate {
+                            num_frames: num_frames,
+                        })
                     }
                 } else {
                     // Misused as "teleport stars" — count down phase.
@@ -923,7 +866,7 @@ impl TitbitManager {
                     if t.phase <= 1 {
                         UpdateAction::Remove
                     } else {
-                        UpdateAction::Mutate(Box::new(|t| t.phase -= 1))
+                        UpdateAction::Mutate(Mutation::RetreatPhase)
                     }
                 }
             }
@@ -932,7 +875,7 @@ impl TitbitManager {
                 if t.sprite_frame >= COUNTER_LIMIT {
                     UpdateAction::Remove
                 } else {
-                    UpdateAction::Mutate(Box::new(|t| t.sprite_frame += 1))
+                    UpdateAction::Mutate(Mutation::AdvanceFrame)
                 }
             }
 
@@ -955,10 +898,10 @@ impl TitbitManager {
                     UpdateAction::Remove
                 } else {
                     let rise = 2.0 + (query.random_u32() % 4) as f32;
-                    UpdateAction::Mutate(Box::new(move |t| {
-                        t.sprite_frame = new_frame;
-                        t.position.z += rise;
-                    }))
+                    UpdateAction::Mutate(Mutation::Rise {
+                        sprite_frame: new_frame,
+                        rise: rise,
+                    })
                 }
             }
 
@@ -967,10 +910,10 @@ impl TitbitManager {
                 if t.sprite_frame + 1 >= limit {
                     UpdateAction::Remove
                 } else {
-                    UpdateAction::Mutate(Box::new(|t| {
-                        t.sprite_frame += 1;
-                        t.position.z += 1.0;
-                    }))
+                    UpdateAction::Mutate(Mutation::Rise {
+                        sprite_frame: t.sprite_frame + 1,
+                        rise: 1.0,
+                    })
                 }
             }
 
@@ -979,10 +922,10 @@ impl TitbitManager {
                 if t.sprite_frame + 1 >= limit {
                     UpdateAction::Remove
                 } else {
-                    UpdateAction::Mutate(Box::new(|t| {
-                        t.sprite_frame += 1;
-                        t.position.z += 1.0;
-                    }))
+                    UpdateAction::Mutate(Mutation::Rise {
+                        sprite_frame: t.sprite_frame + 1,
+                        rise: 1.0,
+                    })
                 }
             }
 
@@ -1018,28 +961,12 @@ impl TitbitManager {
                 if t.sprite_row == 0 {
                     UpdateAction::Keep
                 } else if t.sprite_row == SpriteRow::EmoticonGrowingQMark as u16 {
-                    UpdateAction::Mutate(Box::new(|t| {
-                        t.frame_count += 1;
-                        if t.frame_count > TITBIT_FRAME_DELAY {
-                            t.frame_count = 0;
-                            t.sprite_frame += 1;
-                            if t.sprite_frame >= 8 {
-                                t.sprite_frame = 0;
-                            }
-                        }
-                    }))
+                    UpdateAction::Mutate(Mutation::Animate { num_frames: 8 })
                 } else {
                     let num_frames = mgr.num_frames_for_row(t.sprite_row);
-                    UpdateAction::Mutate(Box::new(move |t| {
-                        t.frame_count += 1;
-                        if t.frame_count > TITBIT_FRAME_DELAY {
-                            t.frame_count = 0;
-                            t.sprite_frame += 1;
-                            if t.sprite_frame >= num_frames {
-                                t.sprite_frame = 0;
-                            }
-                        }
-                    }))
+                    UpdateAction::Mutate(Mutation::Animate {
+                        num_frames: num_frames,
+                    })
                 }
             }
 
@@ -1054,10 +981,10 @@ impl TitbitManager {
                 if new_frame == limit {
                     UpdateAction::Remove
                 } else {
-                    UpdateAction::Mutate(Box::new(move |t| {
-                        t.sprite_frame = new_frame;
-                        t.position.z += 1.0;
-                    }))
+                    UpdateAction::Mutate(Mutation::Rise {
+                        sprite_frame: new_frame,
+                        rise: 1.0,
+                    })
                 }
             }
 
@@ -1122,7 +1049,40 @@ fn initial_sprite_row_for_kind(kind: TitbitKind) -> u16 {
 enum UpdateAction {
     Keep,
     Remove,
-    Mutate(Box<dyn FnOnce(&mut TitbitInfo)>),
+    Mutate(Mutation),
+}
+
+#[derive(Serialize, Deserialize)]
+enum Mutation {
+    AdvancePhase,
+    RetreatPhase,
+    AdvanceFrame,
+    Animate { num_frames: u16 },
+    Rise { sprite_frame: u16, rise: f32 },
+}
+
+impl Mutation {
+    fn apply(self, titbit: &mut TitbitInfo) {
+        match self {
+            Self::AdvancePhase => titbit.phase += 1,
+            Self::RetreatPhase => titbit.phase -= 1,
+            Self::AdvanceFrame => titbit.sprite_frame += 1,
+            Self::Animate { num_frames } => {
+                titbit.frame_count += 1;
+                if titbit.frame_count > TITBIT_FRAME_DELAY {
+                    titbit.frame_count = 0;
+                    titbit.sprite_frame += 1;
+                    if titbit.sprite_frame >= num_frames {
+                        titbit.sprite_frame = 0;
+                    }
+                }
+            }
+            Self::Rise { sprite_frame, rise } => {
+                titbit.sprite_frame = sprite_frame;
+                titbit.position.z += rise;
+            }
+        }
+    }
 }
 
 /// Trait that engine integration code implements to answer entity

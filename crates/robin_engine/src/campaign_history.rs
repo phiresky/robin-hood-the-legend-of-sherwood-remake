@@ -450,46 +450,19 @@ impl MissionAttempt {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum MissionAchievementAttestationError {
+    #[error("achievement attestation campaign has no run identity")]
     CampaignHasNoRunId,
+    #[error("achievement attestation campaign run mismatch: expected {expected}, got {actual}")]
     CampaignRunMismatch { expected: u64, actual: u64 },
+    #[error("achievement attestation attempt {} was not found in campaign run {}", .0.sequence, .0.campaign_run_id)]
     AttemptNotFound(MissionAttemptKey),
+    #[error("mission attempt {sequence} has no calculated achievement results")]
     AttemptHasNoCalculatedResults { sequence: u64 },
+    #[error("mission attempt {sequence} already has a different eligibility attestation")]
     ConflictingAttestation { sequence: u64 },
 }
-
-impl std::fmt::Display for MissionAchievementAttestationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::CampaignHasNoRunId => {
-                write!(
-                    formatter,
-                    "achievement attestation campaign has no run identity"
-                )
-            }
-            Self::CampaignRunMismatch { expected, actual } => write!(
-                formatter,
-                "achievement attestation campaign run mismatch: expected {expected}, got {actual}"
-            ),
-            Self::AttemptNotFound(key) => write!(
-                formatter,
-                "achievement attestation attempt {} was not found in campaign run {}",
-                key.sequence, key.campaign_run_id
-            ),
-            Self::AttemptHasNoCalculatedResults { sequence } => write!(
-                formatter,
-                "mission attempt {sequence} has no calculated achievement results"
-            ),
-            Self::ConflictingAttestation { sequence } => write!(
-                formatter,
-                "mission attempt {sequence} already has a different eligibility attestation"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for MissionAchievementAttestationError {}
 
 /// Append-only history for one mission.
 #[derive(
@@ -765,45 +738,21 @@ impl Default for ProfileCampaignHistory {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProfileHistoryPromotionError {
+    #[error("unsupported profile campaign-history schema {0}")]
     UnsupportedSchema(u16),
+    #[error("campaign has {stored_attempts} stored attempt(s) but no run identity")]
     MissingCampaignRunId { stored_attempts: usize },
+    #[error("campaign mission {mission_index} has no profile")]
     MissingMissionProfile { mission_index: usize },
+    #[error("lifetime campaign attempt {} in run {} conflicts with its canonical campaign record", .0.sequence, .0.campaign_run_id)]
     ConflictingAttempt(MissionAttemptKey),
+    #[error(
+        "completed campaign envelope for run {campaign_run_id} conflicts with its canonical path"
+    )]
     ConflictingCampaignEnvelope { campaign_run_id: u64 },
 }
-
-impl std::fmt::Display for ProfileHistoryPromotionError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::UnsupportedSchema(version) => {
-                write!(
-                    formatter,
-                    "unsupported profile campaign-history schema {version}"
-                )
-            }
-            Self::MissingCampaignRunId { stored_attempts } => write!(
-                formatter,
-                "campaign has {stored_attempts} stored attempt(s) but no run identity"
-            ),
-            Self::MissingMissionProfile { mission_index } => {
-                write!(formatter, "campaign mission {mission_index} has no profile")
-            }
-            Self::ConflictingAttempt(key) => write!(
-                formatter,
-                "lifetime campaign attempt {} in run {} conflicts with its canonical campaign record",
-                key.sequence, key.campaign_run_id
-            ),
-            Self::ConflictingCampaignEnvelope { campaign_run_id } => write!(
-                formatter,
-                "completed campaign envelope for run {campaign_run_id} conflicts with its canonical path"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for ProfileHistoryPromotionError {}
 
 impl ProfileCampaignHistory {
     pub const fn schema_version(&self) -> u16 {
@@ -826,6 +775,15 @@ impl ProfileCampaignHistory {
     }
 
     pub fn achievement_aggregation(&self) -> AchievementAggregationSummary {
+        let mut won_attempts = std::collections::BTreeMap::<_, Vec<_>>::new();
+        for entry in &self.attempts {
+            if entry.attempt.outcome == MissionAttemptOutcome::Won {
+                won_attempts
+                    .entry((entry.campaign_run_id, entry.mission_id))
+                    .or_default()
+                    .push(entry);
+            }
+        }
         AchievementAggregationSummary::from_inputs(|id| {
             let mut any_earned_missions = std::collections::BTreeSet::new();
             let mut any_unverifiable_missions = std::collections::BTreeSet::new();
@@ -858,12 +816,10 @@ impl ProfileCampaignHistory {
                 let mut earned = 0_u32;
                 let mut unverifiable = 0_u32;
                 for &mission_id in &envelope.required_mission_ids {
-                    let matching = self.attempts.iter().filter(|entry| {
-                        entry.campaign_run_id == envelope.campaign_run_id
-                            && entry.mission_id == mission_id
-                            && entry.attempt.outcome == MissionAttemptOutcome::Won
-                    });
-                    let matching = matching.collect::<Vec<_>>();
+                    let matching = won_attempts
+                        .get(&(envelope.campaign_run_id, mission_id))
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
                     if matching.iter().any(|entry| {
                         entry
                             .attempt
