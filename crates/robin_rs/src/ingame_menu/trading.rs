@@ -20,7 +20,7 @@ use super::resources::{
     MT_STR_TRADE_REJECTED, MT_STR_TRADE_ROW, MT_STR_TRADE_SOLD, MT_STR_TRADE_WAITING,
     MT_TTL_SHERWOOD_TRADING,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 
 const ID_SELL_ONE: u32 = 400;
 const ID_SELL_FIVE: u32 = 401;
@@ -164,13 +164,14 @@ impl TradingModalState {
 
     pub fn tick(
         &mut self,
-        window: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
+        io: &mut ModalScreenIo<'_, '_>,
         receipts: Vec<TradeReceipt>,
         sectors: &[SectorProduction],
-        cursor: Option<ModalCursor<'_>>,
     ) -> Option<TradingOutcome> {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         self.refresh_stocks(sectors);
         for receipt in receipts {
             self.apply_receipt(resources, receipt);
@@ -445,7 +446,7 @@ impl TradingModalState {
         renderer: &mut Renderer,
         resources: &IngameMenuResources,
         transform: MenuTransform,
-        cursor: Option<ModalCursor<'_>>,
+        cursor: Option<&ModalCursor<'_>>,
     ) {
         enter_modal_gpu_phase(renderer);
         dim_screen(renderer);

@@ -652,9 +652,11 @@ impl EnemyAi {
         self.list_them.retain(|&h| h != 0); // basic cleanup
 
         if debug_them {
-            eprintln!(
-                "[THEM frame={} co={:?} me={} phase=battle_entry list={:?}]",
-                ctx.frame, ctx.original_creation_order, self.base.me, self.list_them,
+            crate::ai_enemy::parity_trace::them_battle_entry(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.base.me),
+                &(self.list_them),
             );
         }
 
@@ -696,13 +698,12 @@ impl EnemyAi {
         if super::primary_swap_debug_enabled()
             && super::primary_swap_debug_matches(ctx.frame, self.base.me)
         {
-            eprintln!(
-                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=battle_primary_selected list_them={:?} selected={:?}]",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.base.me,
-                self.list_them,
-                self.base.primary_target,
+            crate::ai_enemy::parity_trace::primary_swap_battle_primary_selected(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.base.me),
+                &(self.list_them),
+                &(self.base.primary_target),
             );
         }
 
@@ -926,17 +927,16 @@ impl EnemyAi {
         }
 
         if debug_them {
-            eprintln!(
-                "[THEM frame={} co={:?} me={} phase=battle_cleanup_after visible_count={} list={:?} unconscious={:?}]",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.base.me,
-                num_enemies_i_can_see,
-                self.list_them,
-                unconscious_enemies_from_them
+            crate::ai_enemy::parity_trace::them_battle_cleanup_after(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.base.me),
+                &(num_enemies_i_can_see),
+                &(self.list_them),
+                &(unconscious_enemies_from_them
                     .iter()
                     .map(|enemy| enemy.handle)
-                    .collect::<Vec<_>>(),
+                    .collect::<Vec<_>>()),
             );
         }
 
@@ -1124,24 +1124,24 @@ impl EnemyAi {
 
                 if self.is_archer() && self.base.blood_alcohol == 0 {
                     if crate::ai_enemy::battle_decision_debug_enabled() {
-                        eprintln!(
-                            "ARCHER_DECISION frame={} me={} tower={} sbb={:?} shooting_point={:?} too_near={} pos={:?} primary={:?} primary_pos={:?}",
-                            ctx.frame,
-                            self.base.me,
-                            self.tower_guard,
-                            self.shield_bearer_before_me,
-                            self.my_shooting_point,
-                            self.base.primary_target.is_some()
+                        crate::ai_enemy::parity_trace::archer_decision(
+                            &(ctx.frame),
+                            &(self.base.me),
+                            &(self.tower_guard),
+                            &(self.shield_bearer_before_me),
+                            &(self.my_shooting_point),
+                            &(self.base.primary_target.is_some()
                                 && self.archer_is_too_near_to_enemy(
                                     &ctx.position,
                                     self.base.primary_target,
                                     ctx,
                                     tick,
-                                ),
-                            ctx.position,
-                            self.base.primary_target,
-                            self.find_fighter(self.base.primary_target, tick)
-                                .map(|f| f.position),
+                                )),
+                            &(ctx.position),
+                            &(self.base.primary_target),
+                            &(self
+                                .find_fighter(self.base.primary_target, tick)
+                                .map(|f| f.position)),
                         );
                     }
                     // Archer offensive.
@@ -1316,15 +1316,14 @@ impl EnemyAi {
             "battle_decisions: chose decision"
         );
         if crate::ai_enemy::battle_decision_debug_enabled() {
-            eprintln!(
-                "BATTLE_DECISION frame={} me={} decision={:?} old_substate={:?} primary={:?} seen={} friends_nearer={}",
-                ctx.frame,
-                self.base.me,
-                decision,
-                old_substate,
-                self.base.primary_target,
-                num_enemies_i_can_see,
-                friends_nearer_to_enemy
+            crate::ai_enemy::parity_trace::battle_decision(
+                &(ctx.frame),
+                &(self.base.me),
+                &(decision),
+                &(old_substate),
+                &(self.base.primary_target),
+                &(num_enemies_i_can_see),
+                &(friends_nearer_to_enemy),
             );
         }
         // Carry out decision (with possible fallback loop). The Observe
@@ -1975,23 +1974,22 @@ impl EnemyAi {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reconsider_enter reachpoint={} state={:?}/{:?} primary={:?} seek=({:08x},{:08x},sector={:?},level={}) rider={} couldnt={} already={} owner_work={:?}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                reachpoint,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.primary_target,
-                self.base.seek_position.x.to_bits(),
-                self.base.seek_position.y.to_bits(),
-                self.base.seek_position.sector,
-                self.base.seek_position.level,
-                ctx.self_is_rider,
-                self.base.couldnt_reachpoint,
-                self.base.already_on_point,
-                self.base.outbox.reentrant.owner_work,
+            crate::ai_enemy::parity_trace::aidecision_reconsider_enter(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(reachpoint),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.primary_target),
+                &(self.base.seek_position.x.to_bits()),
+                &(self.base.seek_position.y.to_bits()),
+                &(self.base.seek_position.sector),
+                &(self.base.seek_position.level),
+                &(ctx.self_is_rider),
+                &(self.base.couldnt_reachpoint),
+                &(self.base.already_on_point),
+                &(self.base.outbox.reentrant.owner_work),
             );
         }
         // Already swordfighting? stay.
@@ -2114,19 +2112,18 @@ impl EnemyAi {
         }
 
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=reconsider_close_enough working_distance_bits={:08x} working_distance={} sword_range={} run_distance={} b_charge={} b_first={} my_line_jump={:?} target_in_lift={} working_target={:?}",
-                ctx.frame,
-                self.base.me,
-                working_distance.to_bits(),
-                working_distance,
-                sword_range,
-                run_distance,
-                b_charge,
-                b_first_consideration,
-                my_line_jump,
-                target_in_lift,
-                working_target,
+            crate::ai_enemy::parity_trace::aidecision_reconsider_close_enough(
+                &(ctx.frame),
+                &(self.base.me),
+                &(working_distance.to_bits()),
+                &(working_distance),
+                &(sword_range),
+                &(run_distance),
+                &(b_charge),
+                &(b_first_consideration),
+                &(my_line_jump),
+                &(target_in_lift),
+                &(working_target),
             );
         }
         // Close enough to fight? Charging units defer until the
@@ -2447,20 +2444,19 @@ impl EnemyAi {
                 },
             );
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=reconsider_deferred state={:?}/{:?} primary={:?} target_position=({:08x},{:08x},sector={:?},level={}) couldnt={} already={} owner_work={:?}",
-                    ctx.frame,
-                    self.base.me,
-                    self.base.current_state,
-                    self.base.current_substate,
-                    self.base.primary_target,
-                    working_target_pos.x.to_bits(),
-                    working_target_pos.y.to_bits(),
-                    working_target_pos.sector,
-                    working_target_pos.level,
-                    self.base.couldnt_reachpoint,
-                    self.base.already_on_point,
-                    self.base.outbox.reentrant.owner_work,
+                crate::ai_enemy::parity_trace::aidecision_reconsider_deferred(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(self.base.current_state),
+                    &(self.base.current_substate),
+                    &(self.base.primary_target),
+                    &(working_target_pos.x.to_bits()),
+                    &(working_target_pos.y.to_bits()),
+                    &(working_target_pos.sector),
+                    &(working_target_pos.level),
+                    &(self.base.couldnt_reachpoint),
+                    &(self.base.already_on_point),
+                    &(self.base.outbox.reentrant.owner_work),
                 );
             }
         }
@@ -2482,28 +2478,29 @@ impl EnemyAi {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reconsider_resume_enter state={:?}/{:?} couldnt={} already={} target_position=({:08x},{:08x},sector={:?},level={}) avenger_wait={:?} owner_work={:?}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.couldnt_reachpoint,
-                self.base.already_on_point,
-                target_position.x.to_bits(),
-                target_position.y.to_bits(),
-                target_position.sector,
-                target_position.level,
-                avenger_wait_position,
-                self.base.outbox.reentrant.owner_work,
+            crate::ai_enemy::parity_trace::aidecision_reconsider_resume_enter(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.couldnt_reachpoint),
+                &(self.base.already_on_point),
+                &(target_position.x.to_bits()),
+                &(target_position.y.to_bits()),
+                &(target_position.sector),
+                &(target_position.level),
+                &(avenger_wait_position),
+                &(self.base.outbox.reentrant.owner_work),
             );
         }
         if !self.base.couldnt_reachpoint {
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=route_ok state={:?}/{:?}",
-                    ctx.frame, self.base.me, self.base.current_state, self.base.current_substate,
+                crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_route_ok(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(self.base.current_state),
+                    &(self.base.current_substate),
                 );
             }
             return;
@@ -2512,10 +2509,10 @@ impl EnemyAi {
             // The original game returns without clearing the unreachable-point flag when the
             // reverse gate walk cannot find a blocking gate.
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=reconsider_resume_result result=failed_without_wait_position couldnt=true",
-                    ctx.frame, self.base.me,
-                );
+                crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_failed_without_wait_position(
+&(ctx.frame),
+&(self.base.me)
+);
             }
             return;
         };
@@ -2545,15 +2542,14 @@ impl EnemyAi {
         // keeps the actual avenger position for the later face/wait behavior.
         self.base.seek_position = target_position;
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=reconsider_resume_result result=avenger_fallback state={:?}/{:?} couldnt={} already={} owner_work={:?}",
-                ctx.frame,
-                self.base.me,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.couldnt_reachpoint,
-                self.base.already_on_point,
-                self.base.outbox.reentrant.owner_work,
+            crate::ai_enemy::parity_trace::aidecision_reconsider_resume_result_avenger_fallback(
+                &(ctx.frame),
+                &(self.base.me),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.couldnt_reachpoint),
+                &(self.base.already_on_point),
+                &(self.base.outbox.reentrant.owner_work),
             );
         }
     }
@@ -2658,22 +2654,21 @@ impl EnemyAi {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=rider_attack_enter state={:?}/{:?} primary={:?} rider={} position=({:08x},{:08x},sector={:?},level={}) direction={} list_them={:?} fighters={}",
-                ctx.frame,
-                self.base.me,
-                ctx.original_creation_order,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.primary_target,
-                ctx.self_is_rider,
-                ctx.position.x.to_bits(),
-                ctx.position.y.to_bits(),
-                ctx.position.sector,
-                ctx.position.level,
-                ctx.direction,
-                self.list_them,
-                tick.nearby_fighters.len(),
+            crate::ai_enemy::parity_trace::aidecision_rider_attack_enter(
+                &(ctx.frame),
+                &(self.base.me),
+                &(ctx.original_creation_order),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.primary_target),
+                &(ctx.self_is_rider),
+                &(ctx.position.x.to_bits()),
+                &(ctx.position.y.to_bits()),
+                &(ctx.position.sector),
+                &(ctx.position.level),
+                &(ctx.direction),
+                &(self.list_them),
+                &(tick.nearby_fighters.len()),
             );
         }
         assert!(ctx.self_is_rider);
@@ -2775,14 +2770,13 @@ impl EnemyAi {
         );
         if !ok {
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=rider_attack_result result=no_destination final_primary={:?} couldnt={} already={} owner_work={:?}",
-                    ctx.frame,
-                    self.base.me,
-                    self.base.primary_target,
-                    self.base.couldnt_reachpoint,
-                    self.base.already_on_point,
-                    self.base.outbox.reentrant.owner_work,
+                crate::ai_enemy::parity_trace::aidecision_rider_attack_result_no_destination(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(self.base.primary_target),
+                    &(self.base.couldnt_reachpoint),
+                    &(self.base.already_on_point),
+                    &(self.base.outbox.reentrant.owner_work),
                 );
             }
             return false;
@@ -2834,21 +2828,20 @@ impl EnemyAi {
         }
 
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=rider_attack_result result=accepted target={} destination=({:08x},{:08x},sector={:?},level={}) begin_charge={} state={:?}/{:?} couldnt={} already={} owner_work={:?}",
-                ctx.frame,
-                self.base.me,
-                target,
-                dest.x.to_bits(),
-                dest.y.to_bits(),
-                dest.sector,
-                dest.level,
-                begin_charge,
-                self.base.current_state,
-                self.base.current_substate,
-                self.base.couldnt_reachpoint,
-                self.base.already_on_point,
-                self.base.outbox.reentrant.owner_work,
+            crate::ai_enemy::parity_trace::aidecision_rider_attack_result_accepted(
+                &(ctx.frame),
+                &(self.base.me),
+                &(target),
+                &(dest.x.to_bits()),
+                &(dest.y.to_bits()),
+                &(dest.sector),
+                &(dest.level),
+                &(begin_charge),
+                &(self.base.current_state),
+                &(self.base.current_substate),
+                &(self.base.couldnt_reachpoint),
+                &(self.base.already_on_point),
+                &(self.base.outbox.reentrant.owner_work),
             );
         }
 
@@ -2872,19 +2865,18 @@ impl EnemyAi {
         let debug_decision_path = super::decision_path_debug_enabled()
             && super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=rider_candidate_enter candidate={} me=({:08x},{:08x},level={}) enemy=({:08x},{:08x},level={}) direction={} move_box={:?}",
-                ctx.frame,
-                self.base.me,
-                candidate,
-                my_pos.x.to_bits(),
-                my_pos.y.to_bits(),
-                my_pos.level,
-                enemy_pos.x.to_bits(),
-                enemy_pos.y.to_bits(),
-                enemy_pos.level,
-                my_dir,
-                ctx.move_box,
+            crate::ai_enemy::parity_trace::aidecision_rider_candidate_enter(
+                &(ctx.frame),
+                &(self.base.me),
+                &(candidate),
+                &(my_pos.x.to_bits()),
+                &(my_pos.y.to_bits()),
+                &(my_pos.level),
+                &(enemy_pos.x.to_bits()),
+                &(enemy_pos.y.to_bits()),
+                &(enemy_pos.level),
+                &(my_dir),
+                &(ctx.move_box),
             );
         }
         let geometry = match rider_charge_goal_geometry(
@@ -2896,42 +2888,37 @@ impl EnemyAi {
             Err(reject) => {
                 if debug_decision_path {
                     match reject {
-                        RiderChargeReject::Behind { forward_dot } => eprintln!(
-                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_behind forward_dot_bits={:08x}",
-                            ctx.frame,
-                            self.base.me,
-                            candidate,
-                            forward_dot.to_bits(),
-                        ),
-                        RiderChargeReject::TooNear { norm, sq_norm } => eprintln!(
-                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_too_near norm_bits={:08x} sq_norm_bits={:08x}",
-                            ctx.frame,
-                            self.base.me,
-                            candidate,
-                            norm.to_bits(),
-                            sq_norm.to_bits(),
-                        ),
-                        RiderChargeReject::ZeroOrthogonal { ortho_len } => eprintln!(
-                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_orthogonal ortho_len_bits={:08x}",
-                            ctx.frame,
-                            self.base.me,
-                            candidate,
-                            ortho_len.to_bits(),
-                        ),
-                        RiderChargeReject::ZeroHitVector { hp_len } => eprintln!(
-                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_vector hp_len_bits={:08x}",
-                            ctx.frame,
-                            self.base.me,
-                            candidate,
-                            hp_len.to_bits(),
-                        ),
-                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => eprintln!(
-                            "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_zero_hit_norm hit_norm_bits={:08x}",
-                            ctx.frame,
-                            self.base.me,
-                            candidate,
-                            hit_norm_len.to_bits(),
-                        ),
+                        RiderChargeReject::Behind { forward_dot } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_behind(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(forward_dot.to_bits())
+),
+                        RiderChargeReject::TooNear { norm, sq_norm } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_too_near(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(norm.to_bits()),
+&(sq_norm.to_bits())
+),
+                        RiderChargeReject::ZeroOrthogonal { ortho_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_orthogonal(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(ortho_len.to_bits())
+),
+                        RiderChargeReject::ZeroHitVector { hp_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_hit_vector(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(hp_len.to_bits())
+),
+                        RiderChargeReject::ZeroHitNorm { hit_norm_len } => crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_zero_hit_norm(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(hit_norm_len.to_bits())
+),
                     }
                 }
                 return None;
@@ -2953,17 +2940,16 @@ impl EnemyAi {
             let pt_goal = crate::coordinates::MapPoint::new(goal_x, goal_y);
             if !g.is_straight_movement_authorized(pt_me, pt_goal, my_pos.level, &ctx.move_box) {
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_straight goal=({:08x},{:08x}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x}",
-                        ctx.frame,
-                        self.base.me,
-                        candidate,
-                        goal_x.to_bits(),
-                        goal_y.to_bits(),
-                        forward_dot.to_bits(),
-                        sq_norm.to_bits(),
-                        cos_alpha.to_bits(),
-                    );
+                    crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_straight(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(goal_x.to_bits()),
+&(goal_y.to_bits()),
+&(forward_dot.to_bits()),
+&(sq_norm.to_bits()),
+&(cos_alpha.to_bits())
+);
                 }
                 return None;
             }
@@ -3045,18 +3031,17 @@ impl EnemyAi {
                     let fp = geo::Point::new(f.raw_position.x as f64, f.raw_position.y as f64);
                     if poly.contains(&fp) {
                         if debug_decision_path {
-                            eprintln!(
-                                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=reject_friendly friendly={} friendly_position=({:08x},{:08x},level={}) goal=({:08x},{:08x})",
-                                ctx.frame,
-                                self.base.me,
-                                candidate,
-                                f.handle,
-                                f.raw_position.x.to_bits(),
-                                f.raw_position.y.to_bits(),
-                                f.raw_position.level,
-                                goal_x.to_bits(),
-                                goal_y.to_bits(),
-                            );
+                            crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_reject_friendly(
+&(ctx.frame),
+&(self.base.me),
+&(candidate),
+&(f.handle),
+&(f.raw_position.x.to_bits()),
+&(f.raw_position.y.to_bits()),
+&(f.raw_position.level),
+&(goal_x.to_bits()),
+&(goal_y.to_bits())
+);
                         }
                         return None;
                     }
@@ -3076,20 +3061,19 @@ impl EnemyAi {
         let begin_charge_anim = sq_hit_dist < Self::RIDER_CHARGE_SQR_LOOP_DISTANCE;
 
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=rider_candidate_result candidate={} result=accepted goal=({:08x},{:08x},sector={:?},level={}) forward_dot_bits={:08x} sq_norm_bits={:08x} cos_bits={:08x} sq_hit_bits={:08x} begin_charge={}",
-                ctx.frame,
-                self.base.me,
-                candidate,
-                destination.x.to_bits(),
-                destination.y.to_bits(),
-                destination.sector,
-                destination.level,
-                forward_dot.to_bits(),
-                sq_norm.to_bits(),
-                cos_alpha.to_bits(),
-                sq_hit_dist.to_bits(),
-                begin_charge_anim,
+            crate::ai_enemy::parity_trace::aidecision_rider_candidate_result_accepted(
+                &(ctx.frame),
+                &(self.base.me),
+                &(candidate),
+                &(destination.x.to_bits()),
+                &(destination.y.to_bits()),
+                &(destination.sector),
+                &(destination.level),
+                &(forward_dot.to_bits()),
+                &(sq_norm.to_bits()),
+                &(cos_alpha.to_bits()),
+                &(sq_hit_dist.to_bits()),
+                &(begin_charge_anim),
             );
         }
 
@@ -4138,18 +4122,21 @@ impl EnemyAi {
                 self.base.me,
             );
             if debug_step_back {
-                eprintln!(
-                    "[ARCHERSTEP frame={} co={:?} me={} phase=decision old_substate={old_substate:?} target={target} owner_pos={:?} enemy_pos={enemy_pos:?} goal={goal:?} animation={:?} action_state={:?} reached_done={} timer_running={} timer_ring={} already_on_point={}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    ctx.position,
-                    ctx.self_animation,
-                    ctx.self_action_state,
-                    ctx.self_animation_reached_action_done,
-                    self.base.timer_is_running,
-                    self.base.when_does_timer_ring,
-                    self.base.already_on_point,
+                crate::ai_enemy::parity_trace::archerstep_decision(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.base.me),
+                    &(ctx.position),
+                    &(ctx.self_animation),
+                    &(ctx.self_action_state),
+                    &(ctx.self_animation_reached_action_done),
+                    &(self.base.timer_is_running),
+                    &(self.base.when_does_timer_ring),
+                    &(self.base.already_on_point),
+                    &(old_substate),
+                    &(target),
+                    &(enemy_pos),
+                    &(goal),
                 );
             }
             self.go_to(
@@ -4160,18 +4147,17 @@ impl EnemyAi {
                 ctx,
             );
             if debug_step_back {
-                eprintln!(
-                    "[ARCHERSTEP frame={} co={:?} me={} phase=after_goto state={:?} substate={:?} already_on_point={} couldnt_reachpoint={} halt={} additional_halts={} order_count={}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    self.base.current_state,
-                    self.base.current_substate,
-                    self.base.already_on_point,
-                    self.base.couldnt_reachpoint,
-                    self.base.outbox.actor.halt,
-                    self.base.outbox.actor.additional_halts,
-                    self.base.outbox.actor.orders.len(),
+                crate::ai_enemy::parity_trace::archerstep_after_goto(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.base.me),
+                    &(self.base.current_state),
+                    &(self.base.current_substate),
+                    &(self.base.already_on_point),
+                    &(self.base.couldnt_reachpoint),
+                    &(self.base.outbox.actor.halt),
+                    &(self.base.outbox.actor.additional_halts),
+                    &(self.base.outbox.actor.orders.len()),
                 );
             }
         } else {
@@ -4272,17 +4258,16 @@ impl EnemyAi {
                 });
             let d = pos_diff(&target_pos, &cover_pos);
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                eprintln!(
-                    "COVER_ARM frame={} me={} bearer={} cover={:?} target={:?} target_pos={:?} sq={} sq_view={} grid={}",
-                    ctx.frame,
-                    self.base.me,
-                    cover_shield_bearer,
-                    cover_pos,
-                    self.base.primary_target,
-                    target_pos,
-                    square_norm(d),
-                    ctx.sq_standard_view_radius,
-                    grid.is_some(),
+                crate::ai_enemy::parity_trace::cover_arm(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(cover_shield_bearer),
+                    &(cover_pos),
+                    &(self.base.primary_target),
+                    &(target_pos),
+                    &(square_norm(d)),
+                    &(ctx.sq_standard_view_radius),
+                    &(grid.is_some()),
                 );
             }
             if square_norm(d) >= ctx.sq_standard_view_radius {
@@ -4324,12 +4309,11 @@ impl EnemyAi {
                 });
         } else {
             if crate::ai_enemy::battle_decision_debug_enabled() {
-                eprintln!(
-                    "COVER_ARM frame={} me={} bearer={} cover=None grid={}",
-                    ctx.frame,
-                    self.base.me,
-                    cover_shield_bearer,
-                    grid.is_some(),
+                crate::ai_enemy::parity_trace::cover_arm_2(
+                    &(ctx.frame),
+                    &(self.base.me),
+                    &(cover_shield_bearer),
+                    &(grid.is_some()),
                 );
             }
             // Can't compute position — give up cover attempt.
@@ -4470,15 +4454,14 @@ impl EnemyAi {
                 continue;
             }
             if debug_them {
-                eprintln!(
-                    "[THEM frame={} co={:?} me={} phase=battle_friend_after_360 friend={} state={:?} substate={:?} primary_target={:?}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    friend.handle,
-                    friend.ai_state,
-                    friend.ai_substate,
-                    friend.primary_target,
+                crate::ai_enemy::parity_trace::them_battle_friend_after_360(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.base.me),
+                    &(friend.handle),
+                    &(friend.ai_state),
+                    &(friend.ai_substate),
+                    &(friend.primary_target),
                 );
             }
             self.base.list_us.push(friend.handle);
@@ -4689,23 +4672,24 @@ impl EnemyAi {
         for cand in &tick.friend_swap_candidates {
             if working_target.is_none() {
                 if debug_primary_swap {
-                    eprintln!(
-                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_stop_zero friend={:?}]",
-                        ctx.frame, ctx.original_creation_order, self.base.me, cand.friend_id,
+                    crate::ai_enemy::parity_trace::primary_swap_swap_stop_zero(
+                        &(ctx.frame),
+                        &(ctx.original_creation_order),
+                        &(self.base.me),
+                        &(cand.friend_id),
                     );
                 }
                 break;
             }
             if cand.friend_primary_target == working_target {
                 if debug_primary_swap {
-                    eprintln!(
-                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_skip_same friend={:?} owner_target={:?} friend_target={:?}]",
-                        ctx.frame,
-                        ctx.original_creation_order,
-                        self.base.me,
-                        cand.friend_id,
-                        working_target,
-                        cand.friend_primary_target,
+                    crate::ai_enemy::parity_trace::primary_swap_swap_skip_same(
+                        &(ctx.frame),
+                        &(ctx.original_creation_order),
+                        &(self.base.me),
+                        &(cand.friend_id),
+                        &(working_target),
+                        &(cand.friend_primary_target),
                     );
                 }
                 continue;
@@ -4729,29 +4713,28 @@ impl EnemyAi {
             let right = working_distance + friend_to_friend_target;
             let swap = left < right;
             if debug_primary_swap {
-                eprintln!(
-                    "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_test friend={:?} owner_target={:?} friend_target={:?} owner_pos=({:08x},{:08x}) owner_target_pos=({:08x},{:08x}) friend_pos=({:08x},{:08x}) friend_target_pos=({:08x},{:08x}) working_distance={:08x} me_to_friend_target={:08x} friend_to_my_target={:08x} friend_to_friend_target={:08x} left={:08x} right={:08x} swap={}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    cand.friend_id,
-                    working_target,
-                    cand.friend_primary_target,
-                    ctx.position.x.to_bits(),
-                    ctx.position.y.to_bits(),
-                    working_target_pos.x.to_bits(),
-                    working_target_pos.y.to_bits(),
-                    cand.friend_position.x.to_bits(),
-                    cand.friend_position.y.to_bits(),
-                    cand.friend_primary_target_position.x.to_bits(),
-                    cand.friend_primary_target_position.y.to_bits(),
-                    working_distance.to_bits(),
-                    me_to_friend_target.to_bits(),
-                    friend_to_my_target.to_bits(),
-                    friend_to_friend_target.to_bits(),
-                    left.to_bits(),
-                    right.to_bits(),
-                    swap,
+                crate::ai_enemy::parity_trace::primary_swap_swap_test(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.base.me),
+                    &(cand.friend_id),
+                    &(working_target),
+                    &(cand.friend_primary_target),
+                    &(ctx.position.x.to_bits()),
+                    &(ctx.position.y.to_bits()),
+                    &(working_target_pos.x.to_bits()),
+                    &(working_target_pos.y.to_bits()),
+                    &(cand.friend_position.x.to_bits()),
+                    &(cand.friend_position.y.to_bits()),
+                    &(cand.friend_primary_target_position.x.to_bits()),
+                    &(cand.friend_primary_target_position.y.to_bits()),
+                    &(working_distance.to_bits()),
+                    &(me_to_friend_target.to_bits()),
+                    &(friend_to_my_target.to_bits()),
+                    &(friend_to_friend_target.to_bits()),
+                    &(left.to_bits()),
+                    &(right.to_bits()),
+                    &(swap),
                 );
             }
             if swap {
@@ -4772,16 +4755,15 @@ impl EnemyAi {
             }
         }
         if debug_primary_swap {
-            eprintln!(
-                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_final target={:?} target_pos=({:08x},{:08x}) distance={:08x} queued_swaps={:?}]",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.base.me,
-                working_target,
-                working_target_pos.x.to_bits(),
-                working_target_pos.y.to_bits(),
-                working_distance.to_bits(),
-                self.base.outbox.actor.friend_primary_target_swaps,
+            crate::ai_enemy::parity_trace::primary_swap_swap_final(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.base.me),
+                &(working_target),
+                &(working_target_pos.x.to_bits()),
+                &(working_target_pos.y.to_bits()),
+                &(working_distance.to_bits()),
+                &(self.base.outbox.actor.friend_primary_target_swaps),
             );
         }
 

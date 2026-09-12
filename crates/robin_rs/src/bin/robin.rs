@@ -124,7 +124,7 @@ fn install_crash_diagnostics() {
     #[cfg(unix)]
     unsafe {
         for sig in [libc::SIGSEGV, libc::SIGABRT, libc::SIGILL, libc::SIGBUS] {
-            libc::signal(sig, crash_handler as libc::sighandler_t);
+            libc::signal(sig, crash_handler as *const () as libc::sighandler_t);
         }
     }
 }

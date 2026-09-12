@@ -736,12 +736,15 @@ pub fn prepare_forecast_destination_for_ia(
     }
 
     if forecast_ia_debug_enabled() && grid_sector.is_some_and(|gs| gs.sector_type.is_lift()) {
-        eprintln!(
-            "FORECAST input={input:?} out=({}, {}, sector={}, layer={layer}) dir={direction} gates={} entry={entry_gate:?}",
-            point.x,
-            point.y,
-            u16::from(sector),
-            building_gates.len(),
+        crate::ai::parity_trace::forecast(
+            &(point.x),
+            &(point.y),
+            &(u16::from(sector)),
+            &(building_gates.len()),
+            &(input),
+            &(layer),
+            &(direction),
+            &(entry_gate),
         );
     }
 

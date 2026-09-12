@@ -65,7 +65,12 @@ pub async fn show_yesno(
 ) -> bool {
     let mut state = YesNoModalState::new(event_pump, renderer, resources, message.to_string());
     loop {
-        if let Some(result) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
+        if let Some(result) = state.tick(&mut widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: cursor.as_ref(),
+        }) {
             return result;
         }
         crate::window::sleep_ui_frame().await;
@@ -174,13 +179,11 @@ impl YesNoModalState {
         }
     }
 
-    pub fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) -> Option<bool> {
+    pub fn tick(&mut self, io: &mut widget_bridge::ModalScreenIo<'_, '_>) -> Option<bool> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         if let Some(choice) = self.choice {
             return Some(choice == YesNoChoice::Yes);
         }

@@ -30,7 +30,7 @@ const REVIEWED_PUBLIC_ENTRY_POINTS: &[&str] = &[
 
 const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
     (
-        "crates/robin_engine/src/engine/types.rs|fastrand::Rng::with_seed",
+        "crates/robin_engine/src/engine/simulation_rng.rs|fastrand::Rng::with_seed",
         2,
     ),
     (
@@ -42,7 +42,7 @@ const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
         2,
     ),
     (
-        "crates/robin_rs/src/leaderboard_ranked_session.rs|rand::random",
+        "crates/robin_rs/src/leaderboard/ranked_session.rs|rand::random",
         2,
     ),
     (
@@ -220,6 +220,34 @@ fn rust_sources(root: &Path) -> Vec<PathBuf> {
     }
     result.sort();
     result
+}
+
+#[test]
+fn gaussian_sampler_sites_must_be_explicit_at_each_draw() {
+    for (source, expected_unlabelled) in [
+        (
+            "fn sample() { let site = RngSite::AiRandomValueGauss; sim_rng::i16(sim, site, 0..width); }",
+            1,
+        ),
+        (
+            "fn sample() { let draw = || sim_rng::i16(sim, RngSite::AiRandomValueGauss, 0..width); draw(); draw(); draw(); }",
+            0,
+        ),
+    ] {
+        let syntax = syn::parse_file(source).expect("parse sampler inventory fixture");
+        let mut visitor = RngSourceVisitor {
+            file: Path::new("crates/robin_engine/src/ai/controller.rs"),
+            sites: BTreeMap::new(),
+            auxiliary_sites: BTreeMap::new(),
+            unlabelled_calls: Vec::new(),
+            ambient_rng: Vec::new(),
+            macro_rng: Vec::new(),
+        };
+        visitor.visit_file(&syntax);
+        assert_eq!(visitor.unlabelled_calls.len(), expected_unlabelled);
+        assert!(visitor.macro_rng.is_empty());
+        assert!(visitor.sites.contains_key("AiRandomValueGauss"));
+    }
 }
 
 #[test]

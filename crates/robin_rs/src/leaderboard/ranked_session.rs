@@ -750,6 +750,7 @@ pub fn verify_named_seat_join(
     )
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingAdmissionKind {
     Fresh,
@@ -766,7 +767,9 @@ struct LifecycleObservation {
 #[derive(Clone, Debug)]
 struct ParticipantState {
     claim: ParticipantClaimV1,
+    #[cfg(any(test, feature = "multiplayer"))]
     last_connection_epoch: u32,
+    #[cfg(any(test, feature = "multiplayer"))]
     connected: bool,
 }
 
@@ -775,8 +778,10 @@ struct ParticipantState {
 pub struct RankedSessionHost {
     genesis: ReplaySessionGenesisV1,
     participants: BTreeMap<u16, ParticipantState>,
+    #[cfg(any(test, feature = "multiplayer"))]
     owner_seats: BTreeMap<PublicKey32, u16>,
     observations: Vec<LifecycleObservation>,
+    #[cfg(any(test, feature = "multiplayer"))]
     pending_admission: Option<(PendingAdmissionKind, NamedSeatJoinClaimV1)>,
 }
 
@@ -957,6 +962,7 @@ impl RankedSessionLifecycle {
         }
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn install_ranked(&mut self, session: RankedSessionHost) -> Result<(), RankedSessionError> {
         if !matches!(self, Self::AwaitingPreparedInputs) {
             return Err(RankedSessionError::InvalidDocument(
@@ -1002,7 +1008,12 @@ impl RankedSessionLifecycle {
         *self = Self::RankedClient(Box::new(client));
         Ok(())
     }
+}
 
+// Transport mutations remain available to the default unit suite, without
+// admitting unused transport authority into a local-only production client.
+#[cfg(any(test, feature = "multiplayer"))]
+impl RankedSessionLifecycle {
     pub fn update_ranked_client_roster(
         &mut self,
         session_genesis: &ReplaySessionGenesisV1,
@@ -1047,7 +1058,9 @@ impl RankedSessionLifecycle {
             | Self::BrowseOnly { .. } => None,
         }
     }
+}
 
+impl RankedSessionLifecycle {
     pub fn ranked_session(&self) -> Option<&RankedSessionHost> {
         match self {
             Self::Ranked(session) => Some(session),
@@ -1316,13 +1329,16 @@ impl RankedSessionHost {
             0,
             ParticipantState {
                 claim: host_claim,
+                #[cfg(any(test, feature = "multiplayer"))]
                 last_connection_epoch: 0,
+                #[cfg(any(test, feature = "multiplayer"))]
                 connected: true,
             },
         );
         Ok(Self {
             genesis,
             participants,
+            #[cfg(any(test, feature = "multiplayer"))]
             owner_seats: BTreeMap::from([(host_public_key, 0)]),
             observations: vec![LifecycleObservation {
                 seat: 0,
@@ -1331,6 +1347,7 @@ impl RankedSessionHost {
                     connection_epoch: 0,
                 },
             }],
+            #[cfg(any(test, feature = "multiplayer"))]
             pending_admission: None,
         })
     }
@@ -1345,7 +1362,10 @@ impl RankedSessionHost {
             .map(|participant| participant.claim.clone())
             .collect()
     }
+}
 
+#[cfg(any(test, feature = "multiplayer"))]
+impl RankedSessionHost {
     /// Prepare the only claim a newly assigned seat may sign. The caller must
     /// not publish the deterministic ConnectSeat command until `admit_join`
     /// succeeds for the returned claim.
@@ -1607,7 +1627,9 @@ impl RankedSessionHost {
         });
         Ok(())
     }
+}
 
+impl RankedSessionHost {
     /// Bind the transport observations to the exact dense replay ordinals.
     /// Any missing, extra, reordered, or differently targeted lifecycle
     /// command makes the run unrankable instead of fabricating a transcript.
@@ -2906,6 +2928,7 @@ mod tests {
     }
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SeatClaimIdentity {
     public_key: PublicKey32,
@@ -2917,6 +2940,7 @@ struct SeatClaimIdentity {
 }
 
 /// Compare immutable session bindings; fresh/reconnect lifecycle checks stay at their callers.
+#[cfg(any(test, feature = "multiplayer"))]
 fn claim_binds_genesis(
     claim: &NamedSeatJoinClaimV1,
     genesis: &ReplaySessionGenesisV1,

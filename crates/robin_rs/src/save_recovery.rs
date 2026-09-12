@@ -1,6 +1,7 @@
 //! Recoverable save-store admission. Failed admission never constructs an empty
 //! writable store, and Retry only repeats the store's validated open operation.
 
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use serde::{Deserialize, Serialize};
 
 use crate::host::ApplicationContext;
@@ -241,13 +242,11 @@ impl ErrorNotice {
 
     /// `true` means acknowledged; a close request also stays set on the window
     /// so the adapter can propagate it instead of consuming it as an OK click.
-    pub(crate) fn tick(
-        &mut self,
-        window: &mut GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) -> bool {
+    pub(crate) fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
         let mut dismissed = false;
         for event in events {

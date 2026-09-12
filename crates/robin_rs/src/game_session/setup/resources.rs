@@ -276,13 +276,22 @@ mod tests {
         let files = std::sync::Arc::new(engine_sbfile::SbFileSystem::new(std::sync::Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         )));
+        assert_eq!(
+            files.read_shared("../forbidden.res").unwrap_err(),
+            engine_sbfile::SbFileError::Read,
+        );
         let mut resources = ResourceManager::with_files(files);
         let error = attach_mission_archive(&mut resources, "../forbidden.res", None).unwrap_err();
-        assert!(matches!(
+        assert_eq!(
             error,
-            ResourcePreparationError::Unavailable { .. }
-        ));
-        assert!(error.to_string().contains("error -5"));
+            ResourcePreparationError::Unavailable {
+                path: "../forbidden.res".into(),
+                detail: format!(
+                    "read resource file '../forbidden.res': error {}",
+                    engine_sbfile::SbFileError::Read,
+                ),
+            },
+        );
     }
     #[test]
     fn required_selected_locale_archive_is_not_optional_absence() {

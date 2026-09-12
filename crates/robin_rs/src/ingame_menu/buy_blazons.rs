@@ -33,7 +33,7 @@ use super::layout::{
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalInputState};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 400;
@@ -157,11 +157,12 @@ impl BuyBlazonsModalState {
 
     pub fn tick(
         &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
+        io: &mut widget_bridge::ModalScreenIo<'_, '_>,
     ) -> Option<BuyBlazonsOutcome> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         if !self.screen.can_buy() {
             return Some(BuyBlazonsOutcome::Cancelled);
         }
@@ -263,7 +264,7 @@ impl BuyBlazonsModalState {
             ey + 1,
             Renderer::create_color_16(255, 220, 80),
         );
-        if let Some(cursor) = &cursor {
+        if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input_state);
         }
         renderer.present();

@@ -871,11 +871,12 @@ impl SpellforgeContentSettingsState {
     pub(crate) fn tick(
         &mut self,
         application_context: &ApplicationContext,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut widget_bridge::ModalScreenIo<'_, '_>,
     ) -> SpellforgeContentSettingsOutcome {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         self.poll_cache_clear(application_context, resources);
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         self.transform = transform;
@@ -1101,10 +1102,12 @@ pub async fn show_spellforge_content_settings(
     loop {
         match state.tick(
             application_context,
-            event_pump,
-            renderer,
-            resources,
-            cursor.as_ref(),
+            &mut widget_bridge::ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            },
         ) {
             SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ui_frame().await,
             SpellforgeContentSettingsOutcome::Closed

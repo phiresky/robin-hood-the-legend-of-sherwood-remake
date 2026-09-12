@@ -288,10 +288,12 @@ pub async fn show_gameplay(
     loop {
         let outcome = state.tick(
             application_context,
-            event_pump,
-            renderer,
-            resources,
-            cursor.as_ref(),
+            &mut widget_bridge::ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            },
         );
         if state.take_content_request() {
             super::spellforge_content::show_spellforge_content_settings(
@@ -403,11 +405,12 @@ impl GameplayScreenState {
     pub fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut widget_bridge::ModalScreenIo<'_, '_>,
     ) -> Option<ModalScreenOutcome<GameplayConfig>> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         let mut outcome = None;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         self.transform = transform;

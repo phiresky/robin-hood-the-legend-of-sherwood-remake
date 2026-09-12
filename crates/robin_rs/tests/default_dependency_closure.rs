@@ -53,8 +53,21 @@ fn video_dependency_features_exclude_capture_and_filter_subsystems() {
 
 #[test]
 fn default_dependency_closure_excludes_optional_integrations() {
-    let output = std::process::Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version=1"])
+    assert_client_dependency_policy(false);
+}
+
+#[test]
+fn script_rpc_dependency_closure_does_not_enable_multiplayer() {
+    assert_client_dependency_policy(true);
+}
+
+fn assert_client_dependency_policy(script_rpc: bool) {
+    let mut command = std::process::Command::new(env!("CARGO"));
+    command.args(["metadata", "--locked", "--format-version=1"]);
+    if script_rpc {
+        command.arg("--features=script-rpc");
+    }
+    let output = command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("run cargo metadata");
@@ -108,16 +121,25 @@ fn default_dependency_closure_excludes_optional_integrations() {
         .iter()
         .find_map(|(id, name)| (name == "robin_rs").then_some(id.clone()))
         .expect("robin_rs package in metadata");
-    // Native RPC now owns cancellable Hyper connections on Tokio. These are
-    // required even without multiplayer (reqwest also uses Tokio internally).
-    // Keep the optional game integrations excluded independently below.
+    // Tokio remains shared native infrastructure. Only the opt-in listener
+    // owns direct Hyper dependencies; neither configuration needs multiplayer.
+    // Transitive Hyper use by HTTP clients is independent of listener authority.
     let direct_dependencies = graph.get(&root).expect("robin_rs dependency node");
-    for required in ["tokio", "hyper", "hyper-util"] {
-        assert!(
-            direct_dependencies
-                .iter()
-                .any(|id| package_names.get(id).is_some_and(|name| name == required)),
-            "native RPC transport requires {required} without enabling multiplayer"
+    assert!(
+        direct_dependencies
+            .iter()
+            .any(|id| package_names.get(id).is_some_and(|name| name == "tokio")),
+        "native client infrastructure requires Tokio without enabling multiplayer"
+    );
+    for listener_dependency in ["hyper", "hyper-util"] {
+        let directly_enabled = direct_dependencies.iter().any(|id| {
+            package_names
+                .get(id)
+                .is_some_and(|name| name == listener_dependency)
+        });
+        assert_eq!(
+            directly_enabled, script_rpc,
+            "direct {listener_dependency} dependency must follow script-rpc={script_rpc}"
         );
     }
     // OS data/save directories are standard native functionality, not an
@@ -170,6 +192,6 @@ fn default_dependency_closure_excludes_optional_integrations() {
         .collect::<Vec<_>>();
     assert!(
         present.is_empty(),
-        "optional integrations reached the default robin_rs closure: {present:?}"
+        "optional integrations reached the robin_rs closure with script-rpc={script_rpc}: {present:?}"
     );
 }
