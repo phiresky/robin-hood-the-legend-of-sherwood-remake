@@ -110,3 +110,112 @@ pub(super) struct Sprite {
     pub display_order_reference: Option<ParityEntityReference>,
     pub replacements: Vec<AnimationReplacement>,
 }
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct SoundSource {
+    pub kind: u8,
+    pub id: u32,
+    pub global: bool,
+    pub inner_distance: u16,
+    pub outer_distance: u16,
+    pub noise_covering_distance: u16,
+    pub inner_volume: u16,
+    pub outer_volume: u16,
+    pub shape: Vec<Point2>,
+    pub altitude: u8,
+    pub min_delay: u16,
+    pub max_delay: u16,
+    pub delay_stepping: u16,
+    pub timer: u16,
+    pub active: bool,
+    pub ambience_enabled: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct SeekPointStatus {
+    pub frame_when_full_interest: u32,
+    pub last_calculated_interest: u8,
+    pub locked: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct ArcherySector {
+    pub num_owners: u16,
+    pub point_owners: Vec<Option<ParityEntityReference>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct ForbiddenRemark {
+    pub remark: u32,
+    pub flags: u16,
+    pub speech_id: u32,
+    pub guy_index: u16,
+    pub bad_guy: bool,
+    pub forbidden_till_frame: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct GlobalAi {
+    pub stupid_soldiers_cheat: bool,
+    pub seek_points: Vec<SeekPointStatus>,
+    pub archery_sectors: Vec<ArcherySector>,
+    pub green_alert_soldiers: u16,
+    pub yellow_alert_soldiers: u16,
+    pub red_alert_soldiers: u16,
+    pub overall_alert_status: u32,
+    pub overall_villain_alert_status: u32,
+    pub saved_random_seed: i64,
+    pub forbidden_remarks: Vec<ForbiddenRemark>,
+    pub current_speech_variant: u16,
+}
+
+/// Optional component projections are omitted, unlike optional references inside
+/// components, which are emitted as explicit nulls. Keep these policies distinct.
+#[derive(Serialize, Deserialize)]
+pub(super) struct EntityRuntime {
+    pub position: Position,
+    pub sprite: Sprite,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub npc_ai: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub human_continuation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub human_structure: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pc_tail: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pc_core: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pc_qa: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pc_interface: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pc_portrait: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct FloatBits {
+    pub bits: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct Point3Bits {
+    pub x: FloatBits,
+    pub y: FloatBits,
+    pub z: FloatBits,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct ShieldController {
+    pub is_protected: bool,
+    pub protected_pc: Option<ParityEntityReference>,
+    pub danger_point: Point3Bits,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct SoundCompletion {
+    pub source_index: u32,
+    pub finish_frame: u32,
+}

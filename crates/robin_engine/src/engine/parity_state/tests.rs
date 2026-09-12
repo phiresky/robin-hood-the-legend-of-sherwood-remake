@@ -264,3 +264,226 @@ fn script_globals_projection_remains_an_ordered_signed_scalar_array() {
         serde_json::json!([-2147483648i64, -1, 0, 2147483647i64, 0])
     );
 }
+
+impl Engine {
+    fn original_parity_sound_sources_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let float = parity_float;
+        let sources = &self.inner.feedback.sound_sim.sources;
+        let mut result = Vec::with_capacity(sources.num_sources());
+        for index in 0..sources.num_sources() {
+            let Some(source) = sources.get(index) else {
+                result.push(Value::Null);
+                continue;
+            };
+            let kind = match source.source_kind {
+                crate::sound_source::SoundSourceKind::Single => 0,
+                crate::sound_source::SoundSourceKind::Looped => 1,
+                crate::sound_source::SoundSourceKind::Delayed => 2,
+                crate::sound_source::SoundSourceKind::Volatile => 3,
+            };
+            let altitude = match source.altitude {
+                crate::sound_geometry::SoundSourceAltitude::Ground => 0,
+                crate::sound_geometry::SoundSourceAltitude::Middle => 1,
+                crate::sound_geometry::SoundSourceAltitude::Top => 2,
+                crate::sound_geometry::SoundSourceAltitude::NoAltitude => 3,
+            };
+            result.push(json!({
+                "kind": kind,
+                "id": source.id,
+                "global": source.is_global,
+                "inner_distance": source.inner_distance,
+                "outer_distance": source.outer_distance,
+                "noise_covering_distance": source.noise_covering_distance,
+                "inner_volume": source.inner_volume,
+                "outer_volume": source.outer_volume,
+                "shape": source.shape.iter().map(|point| json!({
+                    "x": float(point.x), "y": float(point.y)
+                })).collect::<Vec<_>>(),
+                "altitude": altitude,
+                "min_delay": source.min_delay,
+                "max_delay": source.max_delay,
+                "delay_stepping": source.delay_stepping,
+                "timer": source.timer,
+                "active": source.active,
+                "ambience_enabled": source.ambience_enabled,
+            }));
+        }
+        Value::Array(result)
+    }
+    fn original_parity_sound_completion_frontier_state(&self) -> serde_json::Value {
+        use serde_json::json;
+
+        serde_json::Value::Array(
+            self.inner
+                .feedback
+                .sound_sim
+                .playing_sources
+                .iter()
+                .map(|playing| {
+                    if self
+                        .inner
+                        .feedback
+                        .sound_sim
+                        .sources
+                        .get(playing.source_index as usize)
+                        .is_none()
+                    {
+                        panic!(
+                            "sound completion frontier references missing source {}",
+                            playing.source_index
+                        );
+                    }
+                    json!({
+                        "source_index": playing.source_index,
+                        "finish_frame": playing.finish_frame,
+                    })
+                })
+                .collect(),
+        )
+    }
+    fn original_parity_ai_global_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = parity_entity_reference;
+        let global = &self.inner.ai.global;
+        json!({
+            "stupid_soldiers_cheat": global.stupid_soldiers_cheat,
+            "seek_points": global.seek_points.iter().map(|point| json!({
+                "frame_when_full_interest": point.frame_when_full_interest,
+                "last_calculated_interest": point.last_calculated_interest,
+                "locked": point.locked,
+            })).collect::<Vec<_>>(),
+            "archery_sectors": global.archery_sectors.iter().map(|sector| json!({
+                "num_owners": sector.num_owners,
+                "point_owners": sector.points.iter().map(|point| point.owner
+                    .map(&entity).unwrap_or(Value::Null)).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "green_alert_soldiers": global.green_alert_soldiers,
+            "yellow_alert_soldiers": global.yellow_alert_soldiers,
+            "red_alert_soldiers": global.red_alert_soldiers,
+            "overall_alert_status": global.overall_alert_status as u32,
+            "overall_villain_alert_status": global.overall_villain_alert_status as u32,
+            "saved_random_seed": global.saved_random_seed,
+            "forbidden_remarks": global.forbidden_remarks.iter().map(|entry| json!({
+                "remark": entry.remark as u32,
+                "flags": entry.flags,
+                "speech_id": entry.speech_id,
+                // This is deliberately the stored scalar, not a normalized
+                // entity reference. The original game stores creation order here;
+                // parity must expose any slot-vs-creation-order divergence.
+                "guy_index": entry.guy_index,
+                "bad_guy": entry.bad_guy,
+                "forbidden_till_frame": entry.forbidden_till_frame,
+            })).collect::<Vec<_>>(),
+            "current_speech_variant": global.current_speech_variant,
+        })
+    }
+    fn original_parity_shield_controller_state(&self) -> serde_json::Value {
+        use serde_json::{Value, json};
+
+        let entity = |id: EntityId| {
+            let kind = match id.kind() {
+                crate::element::EntityIdKind::Pc => "pc",
+                other => panic!("shield controller protects non-PC entity {other:?}"),
+            };
+            json!({ "kind": kind, "index": id.index() })
+        };
+        let shield = &self.inner.world.shield;
+        json!({
+            "is_protected": shield.is_protected,
+            "protected_pc": shield.protected_pc.map(&entity).unwrap_or(Value::Null),
+            "danger_point": {
+                "x": { "bits": shield.danger_point.x.to_bits() },
+                "y": { "bits": shield.danger_point.y.to_bits() },
+                "z": { "bits": shield.danger_point.z.to_bits() },
+            },
+        })
+    }
+}
+
+#[test]
+fn manager_snapshots_match_frozen_json_encoders() {
+    let mut inner = EngineInner::new();
+    inner.ai.global.saved_random_seed = i64::MIN;
+    inner.ai.global.green_alert_soldiers = 7;
+    inner.ai.global.current_speech_variant = u16::MAX;
+    inner.ai.global.seek_points.push(crate::ai::SeekPoint {
+        position: Default::default(),
+        frame_when_full_interest: u32::MAX,
+        directions: vec![1, 3],
+        last_calculated_interest: 19,
+        locked: true,
+        id: 0,
+    });
+    let mut source = crate::sound_source::SoundSource::default();
+    source.id = 17;
+    source.shape = vec![crate::coordinates::MapPoint::new(-0.0, 3.5)];
+    source.timer = 41;
+    inner.feedback.sound_sim.sources.add(source);
+    inner
+        .feedback
+        .sound_sim
+        .playing_sources
+        .push(crate::sound::PlayingSource {
+            source_index: 0,
+            finish_frame: u32::MAX,
+        });
+    let engine = Engine {
+        inner,
+        bootstrap_open: false,
+    };
+    assert_eq!(
+        engine.parity_sound_sources_state(),
+        engine.original_parity_sound_sources_state()
+    );
+    assert_eq!(
+        engine.parity_sound_completion_frontier_state(),
+        engine.original_parity_sound_completion_frontier_state()
+    );
+    assert_eq!(
+        engine.parity_ai_global_state(),
+        engine.original_parity_ai_global_state()
+    );
+    assert_eq!(
+        engine.parity_shield_controller_state(),
+        engine.original_parity_shield_controller_state()
+    );
+}
+
+#[test]
+fn entity_envelope_omits_absent_components_but_keeps_explicit_component_null() {
+    let mut inner = EngineInner::new();
+    let mut element = crate::element::ElementData::default();
+    element.kind = crate::element::ElementKind::Fx;
+    let id = inner.add_test_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+        element,
+        fx: Default::default(),
+    }));
+    let engine = Engine {
+        inner,
+        bootstrap_open: false,
+    };
+    let original = engine.original_position_sprite_frontier(id, &LevelAssets::new());
+    let position = serde_json::from_value(original["position"].clone()).unwrap();
+    let sprite = serde_json::from_value(original["sprite"].clone()).unwrap();
+    let envelope = projections::EntityRuntime {
+        position,
+        sprite,
+        subtype: Some(serde_json::Value::Null),
+        npc_ai: None,
+        human_continuation: None,
+        human_structure: None,
+        pc_tail: None,
+        pc_core: None,
+        pc_qa: Some(vec![]),
+        pc_interface: None,
+        pc_portrait: None,
+    };
+    let value = serde_json::to_value(envelope).unwrap();
+    assert_eq!(value["subtype"], serde_json::Value::Null);
+    assert!(value.as_object().unwrap().contains_key("subtype"));
+    assert!(!value.as_object().unwrap().contains_key("npc_ai"));
+    assert_eq!(value["pc_qa"], serde_json::json!([]));
+}
