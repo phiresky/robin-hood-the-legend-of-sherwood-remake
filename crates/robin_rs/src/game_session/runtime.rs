@@ -665,8 +665,16 @@ impl MissionFrame {
         input: robin_engine::engine::SimulationFrameInput,
     ) {
         self.execution.assert_pre_simulation();
-        self.commands.commands = input.player_inputs();
-        self.post_commands.commands = input.post_player_inputs();
+        self.commands.commands = input
+            .commands
+            .into_iter()
+            .map(robin_engine::engine::SimCommand::into_player_input)
+            .collect();
+        self.post_commands.commands = input
+            .post_commands
+            .into_iter()
+            .map(robin_engine::engine::SimCommand::into_player_input)
+            .collect();
         self.external_actions = input.external_actions;
         self.external_actions_applied = 0;
         self.post_external_actions = input.post_external_actions;
@@ -4678,29 +4686,78 @@ mod tests {
 
     #[test]
     fn mission_frame_adapter_preserves_pre_and_post_command_batches() {
+        use robin_engine::engine::{SimCommand, SimulationFrameInput};
+        use robin_engine::player_command::PlayerId;
+
+        let pre_name = String::from("Before hourglass");
+        let post_name = String::from("After hourglass");
+        let pre_name_ptr = pre_name.as_ptr();
+        let post_name_ptr = post_name.as_ptr();
         let mut frame = MissionFrame::new(777);
         frame.adopt_authoritative_input(
-            robin_engine::engine::SimulationFrameInput::new(vec![
-                robin_engine::engine::SimCommand::from(
-                    PlayerCommand::SetMenToBlazonConversionMode { on: true },
+            SimulationFrameInput::new(vec![
+                SimCommand::new(
+                    PlayerId(2),
+                    PlayerCommand::RegisterPeasantName { name: pre_name },
                 ),
+                SimCommand::from(PlayerCommand::SetMenToBlazonConversionMode { on: true }),
             ])
-            .with_post_commands(vec![robin_engine::engine::SimCommand::from(
-                PlayerCommand::QuitMissionRequested,
-            )]),
+            .with_post_commands(vec![
+                SimCommand::new(
+                    PlayerId(3),
+                    PlayerCommand::RegisterPeasantName { name: post_name },
+                ),
+                SimCommand::from(PlayerCommand::QuitMissionRequested),
+            ]),
         );
+
+        // Adoption owns these inputs: retain their payload allocations rather
+        // than cloning them again after the history/replay ownership boundary.
+        for (batch, seat, expected, pointer) in [
+            (
+                frame.commands(),
+                PlayerId(2),
+                "Before hourglass",
+                pre_name_ptr,
+            ),
+            (
+                frame.post_commands(),
+                PlayerId(3),
+                "After hourglass",
+                post_name_ptr,
+            ),
+        ] {
+            assert_eq!(batch.len(), 2);
+            assert_eq!(batch[0].player_id, seat);
+            let PlayerCommand::RegisterPeasantName { name } = &batch[0].command else {
+                panic!("first command lost its name payload");
+            };
+            assert_eq!(name, expected);
+            assert_eq!(name.as_ptr(), pointer, "owned payload must be moved");
+            assert_eq!(batch[1].player_id, PlayerId::HOST);
+        }
 
         let recorded = frame.authoritative_input();
         let pre = recorded.player_inputs();
         let post = recorded.post_player_inputs();
-        assert_eq!(pre.len(), 1);
+        assert_eq!(pre.len(), 2);
+        assert_eq!(pre[0].player_id, PlayerId(2));
         assert!(matches!(
-            pre[0].command,
+            &pre[0].command,
+            PlayerCommand::RegisterPeasantName { name } if name == "Before hourglass"
+        ));
+        assert!(matches!(
+            pre[1].command,
             PlayerCommand::SetMenToBlazonConversionMode { on: true }
         ));
-        assert_eq!(post.len(), 1);
+        assert_eq!(post.len(), 2);
+        assert_eq!(post[0].player_id, PlayerId(3));
         assert!(matches!(
-            post[0].command,
+            &post[0].command,
+            PlayerCommand::RegisterPeasantName { name } if name == "After hourglass"
+        ));
+        assert!(matches!(
+            post[1].command,
             PlayerCommand::QuitMissionRequested
         ));
     }
