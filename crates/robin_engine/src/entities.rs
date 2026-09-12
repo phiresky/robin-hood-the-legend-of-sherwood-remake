@@ -1022,3 +1022,42 @@ impl Entities {
             .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
     }
 }
+
+#[cfg(test)]
+mod required_ai_access_tests {
+    use super::*;
+    use crate::engine::test_support::actors::{make_test_ai_soldier, make_test_pc};
+
+    #[test]
+    fn typed_ai_access_preserves_one_arena_generation_increment_per_borrow() {
+        let mut entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        ))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        let before = entities.generation(id);
+        entities.expect_ai_controller_mut(id, format_args!("controller test"));
+        assert_eq!(entities.generation(id), before + 1);
+        entities.expect_enemy_ai_mut(id, format_args!("enemy test"));
+        assert_eq!(entities.generation(id), before + 2);
+        entities.expect_ai_actor_data_mut(id, format_args!("actor test"));
+        assert_eq!(entities.generation(id), before + 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no required AI controller")]
+    fn absent_pc_brain_is_not_a_synthetic_controller() {
+        let mut entities =
+            Entities::from_legacy_slots(vec![Some(make_test_pc(crate::element::Posture::Upright))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        entities.expect_ai_controller_mut(id, format_args!("NPC dispatch"));
+    }
+
+    #[test]
+    #[should_panic(expected = "disappeared")]
+    fn missing_owner_is_distinct_from_missing_brain() {
+        Entities::new().expect_enemy_ai_mut(
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            format_args!("NPC dispatch"),
+        );
+    }
+}
