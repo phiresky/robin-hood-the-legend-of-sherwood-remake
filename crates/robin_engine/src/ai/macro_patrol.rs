@@ -3,58 +3,14 @@ use super::*;
 // PatrolPath — wraps a hiking path with current waypoint tracking
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Hiking-path index newtype.  Nominal wrapper around `NonMaxU16` —
 /// `Option<PathId>` is 2 bytes thanks to the niche, and `0xFFFF` is the
 /// binary-format "no path" sentinel so a real path id literally cannot
 /// hold it.  Used for soldier `path_id` / `alert_path_id`, civilian
 /// `path_id`, and the waypoint-script `(PathId, wp_idx)` registration key.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct PathId(pub nonmax::NonMaxU16);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(PathId, u16);
-
-impl PathId {
-    #[inline]
-    pub fn new(v: u16) -> Option<Self> {
-        nonmax::NonMaxU16::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u16 {
-        self.0.get()
-    }
-}
-
-impl From<PathId> for u16 {
-    #[inline]
-    fn from(p: PathId) -> u16 {
-        p.get()
-    }
-}
-
-impl From<PathId> for usize {
-    #[inline]
-    fn from(p: PathId) -> usize {
-        p.get() as usize
-    }
-}
-
-impl std::fmt::Display for PathId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get().fmt(f)
-    }
-}
+pub struct PathId(pub nonmax::NonMaxU16), u16
+);
 
 /// Runtime patrol path state.
 ///
