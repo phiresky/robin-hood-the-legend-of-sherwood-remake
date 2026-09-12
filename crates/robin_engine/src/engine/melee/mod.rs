@@ -2053,11 +2053,9 @@ pub(crate) fn is_possible_sword_strike_victim(
     if let Some(attacker_entity) = entities.get(attacker) {
         let att_belt = compute_belt_point(attacker_entity);
         let tgt_belt = compute_belt_point(target_entity);
-        let att_layer = attacker_entity.element_data().layer();
         if !fast_grid.is_reachable_3d(
             att_belt,
             tgt_belt,
-            att_layer,
             crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
             obstacles,
         ) {
@@ -2602,3 +2600,70 @@ mod swordfight;
 
 #[cfg(test)]
 mod tests;
+
+impl EngineInner {
+    /// Preserve collection order and separate admission from primary scoring:
+    /// reactive warnings may have no principal opponent but still score a
+    /// fallback target. Both are deliberately explicit here.
+    fn collect_strike_estimation_victims<'a>(
+        &self,
+        assets: &'a LevelAssets,
+        attacker_id: EntityId,
+        attacker_pos: (f32, f32),
+        admission_target: Option<EntityId>,
+        primary_target: EntityId,
+    ) -> Vec<crate::combat::NearbyVictim<'a>> {
+        let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
+        let obstacles = self.sight_obstacles(assets);
+        self.world
+            .entities
+            .humans()
+            .filter_map(|(eid, e)| {
+                let elem = e.element_data();
+                if !should_collect_strike_estimation_human(
+                    eid.into(),
+                    attacker_id,
+                    admission_target,
+                    elem.active,
+                ) {
+                    return None;
+                }
+                let eligible_for_regular_strikes = is_possible_sword_strike_victim(
+                    &self.world.entities,
+                    attacker_id,
+                    e,
+                    eid,
+                    &assets.profile_manager,
+                    &self.world.fast_grid,
+                    obstacles,
+                );
+                let vdx = elem.position_map().x - attacker_pos.0;
+                let vdy = (elem.position_map().y - attacker_pos.1) * inv_aspect;
+                let dist = (vdx * vdx + vdy * vdy).sqrt();
+                let sector = crate::position_interface::vector_to_sector_0_to_15(vdx, vdy) as u8;
+                let def_wid = get_hth_weapon_id_full(e, &assets.profile_manager);
+                let def_prof = def_wid.and_then(|id| assets.profile_manager.get_hth_weapon(id));
+                let lp = get_life_points(e);
+                let is_walking_with_sword = e
+                    .actor_data()
+                    .map(|a| a.action_state == ActionState::MovingSword)
+                    .unwrap_or(false);
+                Some(crate::combat::NearbyVictim {
+                    is_active: elem.active,
+                    eligible_for_regular_strikes,
+                    dx: vdx,
+                    dy_stretched: vdy,
+                    distance: dist,
+                    direction_sector: sector,
+                    camp: e.camp(),
+                    facing_direction: elem.direction(),
+                    elevation: elem.position().z,
+                    life_points: lp,
+                    defender_profile: def_prof,
+                    is_primary_target: eid == primary_target,
+                    is_walking_with_sword,
+                })
+            })
+            .collect()
+    }
+}

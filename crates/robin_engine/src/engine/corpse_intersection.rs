@@ -177,7 +177,7 @@ impl EngineInner {
         // Opt-in trace for the anti-collision repulsive-radius frontier:
         // reports every lying-transition callback with the spatial keys the
         // intersect test uses.  Stderr only, outside serialized state.
-        if std::env::var_os("PARITY_DEBUG_CORPSE_INTERSECTION").is_some() {
+        if super::diagnostics::config().corpse_intersection {
             eprintln!(
                 "[CORPSE frame={} corpse={corpse:?} added={b_added} sector={corpse_sector:?} building={} layer={corpse_layer} pos={corpse_pos:?} staged={:?}]",
                 self.control.frame_counter,
@@ -209,7 +209,7 @@ impl EngineInner {
                 logically_lying,
             );
 
-            if std::env::var_os("PARITY_DEBUG_CORPSE_INTERSECTION").is_some() {
+            if super::diagnostics::config().corpse_intersection {
                 eprintln!("[CORPSE   victims={victims:?}]");
             }
 

@@ -35,7 +35,7 @@ use crate::sprite::MotionState as SpriteMotionState;
 pub const HEAL_AMOUNT: i16 = 75;
 
 /// Max life points for PCs.
-pub const LIFEPOINTS_PC: i16 = 100;
+pub use crate::pc_status::LIFEPOINTS_PC;
 
 /// Max distance² for healing / tying (40² = 1600).
 pub const DISTANCE_MAX_SQ: f32 = 1600.0;
@@ -3025,6 +3025,17 @@ struct CarrierSnapshot {
 /// sprite to play the appropriate `BeingLifted*` / `BeingCarried*` /
 /// `BeingDropped*` animation depending on which carry phase the carrier
 /// is in (lift transition / waiting / walking / drop transition).
+fn uses_little_john_carry(
+    profiles: &crate::profiles::ProfileManager,
+    profile_index: crate::profiles::CharacterProfileIdx,
+) -> bool {
+    profiles
+        .get_character(profile_index)
+        .unwrap_or_else(|| panic!("carrier references missing character profile {profile_index:?}"))
+        .contextual_actions
+        .contains(&crate::profiles::Action::LittleJohnCarry)
+}
+
 pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profiles::ProfileManager) {
     // Collect carrier snapshots first to avoid borrow conflicts.
     let mut snapshots: Vec<CarrierSnapshot> = Vec::new();
@@ -3041,13 +3052,7 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
         // *ability* (carry availability checks accept either), but a
         // FarmerCarry carrier still plays the PeasantC lift/carry/drop
         // rows on the body it carries.
-        let little_john_style = profiles
-            .get_character(pc.profile_index)
-            .map(|cp| {
-                cp.contextual_actions
-                    .contains(&crate::profiles::Action::LittleJohnCarry)
-            })
-            .unwrap_or(false);
+        let little_john_style = uses_little_john_carry(profiles, pc.profile_index);
 
         let (last_action, frame, frame_count) = {
             let s = &elem.sprite;
@@ -3242,7 +3247,8 @@ pub fn sync_carried_positions(entities: &mut Entities, profiles: &crate::profile
             if let Some(anim) = helper_anim
                 && let Some(helper) = entities.get_mut(snap.carrier_id)
             {
-                let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
+                let helper_dir = u16::try_from(helper.element_data().direction())
+                    .expect("shoulder helper has negative animation direction");
                 let sprite = &mut helper.element_data_mut().sprite;
                 sprite.force_sprite_row(anim, helper_dir);
                 sprite.synchronize_anim(snap.target_frame, snap.target_frame_count);
@@ -3385,7 +3391,8 @@ pub fn sync_terminal_shoulder_animations(
         let Some(helper) = entities.get_mut(helper_id) else {
             continue;
         };
-        let helper_dir = u16::try_from(helper.element_data().direction()).unwrap_or(0);
+        let helper_dir = u16::try_from(helper.element_data().direction())
+            .expect("shoulder helper has negative animation direction");
         let sprite = &mut helper.element_data_mut().sprite;
         sprite.force_sprite_row(helper_anim, helper_dir);
         sprite.synchronize_anim(frame, frame_count);
@@ -3415,14 +3422,7 @@ pub(crate) fn sync_walking_corpse_for_carrier(
     };
     let position = carrier.element_data().position_map();
     let carrier_direction = carrier.element_data().direction();
-    let little_john_style = profiles
-        .get_character(pc.profile_index)
-        .map(|profile| {
-            profile
-                .contextual_actions
-                .contains(&crate::profiles::Action::LittleJohnCarry)
-        })
-        .unwrap_or(false);
+    let little_john_style = uses_little_john_carry(profiles, pc.profile_index);
 
     let target = entities.get_mut(target_id).unwrap_or_else(|| {
         panic!("WalkingWithCorpse carrier {carrier_id:?} references missing actor {target_id:?}")
@@ -3474,14 +3474,7 @@ pub(crate) fn sync_terminal_corpse_drop_animation(
             sprite.frame_count,
         )
     };
-    let little_john_style = profiles
-        .get_character(profile_index)
-        .map(|profile| {
-            profile
-                .contextual_actions
-                .contains(&crate::profiles::Action::LittleJohnCarry)
-        })
-        .unwrap_or(false);
+    let little_john_style = uses_little_john_carry(profiles, profile_index);
     let animation = if little_john_style {
         OrderType::BeingDroppedLittleJohn
     } else {

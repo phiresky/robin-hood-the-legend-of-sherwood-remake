@@ -24,31 +24,8 @@ fn door_battle_outside_sector(door: &crate::gate::Door) -> crate::position_inter
         .unwrap_or(handle)
 }
 
-struct DamageParryHandoffDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn damage_parry_handoff_debug_config() -> Option<&'static DamageParryHandoffDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<DamageParryHandoffDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when damage-parry handoff debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for damage-parry handoff diagnostic: {error}")
-                })
-            };
-            Some(DamageParryHandoffDebugConfig {
-                frame: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME"),
-                creation_order: parse("PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn damage_parry_handoff_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().damage_parry.as_ref()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -59,44 +36,12 @@ pub(crate) enum AttentiveModeCaller {
     Unclassified,
 }
 
-struct AttentiveModeCallerDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn attentive_mode_caller_debug_config() -> Option<&'static AttentiveModeCallerDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<AttentiveModeCallerDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_ATTENTIVE_MODE_CALLER")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when attentive-mode caller debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for attentive-mode caller diagnostic: {error}")
-                })
-            };
-            Some(AttentiveModeCallerDebugConfig {
-                frame: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_FRAME"),
-                creation_order: parse("PARITY_DEBUG_ATTENTIVE_MODE_CALLER_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn attentive_mode_caller_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().attentive_mode_caller.as_ref()
 }
 
 fn goal_owner_handoff_debug_frame_matches(frame: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
-        return false;
-    }
-    let value = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME").unwrap_or_else(|_| {
-        panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
-    });
-    let expected = value
-        .parse::<u32>()
-        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME={value:?}: {error}"));
-    frame == expected
+    super::diagnostics::config().goal_owner_frame_matches(frame)
 }
 
 #[cfg(test)]

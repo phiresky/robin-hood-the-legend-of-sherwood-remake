@@ -5,28 +5,28 @@ use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
-
 fn arrow_publication_debug_filter(
     frame_after: u32,
     shooter_creation_order: u32,
     projectile_creation_order: Option<u32>,
 ) -> bool {
-    if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
-        .is_none_or(|value| value == frame_after)
-        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER")
-            .is_none_or(|value| value == shooter_creation_order)
-        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER")
-            .is_none_or(|value| projectile_creation_order.is_none_or(|actual| value == actual))
+    static GATE: std::sync::OnceLock<super::diagnostics::ParityGate<3>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        super::diagnostics::ParityGate::from_env(
+            "PARITY_DEBUG_ARROW_PUBLICATION",
+            [
+                "PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER",
+                "PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER",
+                "PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER",
+            ],
+        )
+    })
+    .matches([
+        Some(frame_after),
+        Some(shooter_creation_order),
+        projectile_creation_order,
+    ])
 }
 
 fn record_arrow_publication_debug(
@@ -72,21 +72,19 @@ fn record_arrow_publication_debug(
 }
 
 fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: EntityId) -> bool {
-    if std::env::var_os("PARITY_DEBUG_PROJECTILE_LANDING").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for projectile landing diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_FRAME").is_none_or(|value| value == frame)
-        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_SHOOTER")
-            .is_none_or(|value| value == shooter.index())
-        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_PROJECTILE")
-            .is_none_or(|value| value == projectile.index())
+    static GATE: std::sync::OnceLock<super::diagnostics::ParityGate<3>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        super::diagnostics::ParityGate::from_env(
+            "PARITY_DEBUG_PROJECTILE_LANDING",
+            [
+                "PARITY_DEBUG_PROJECTILE_LANDING_FRAME",
+                "PARITY_DEBUG_PROJECTILE_LANDING_SHOOTER",
+                "PARITY_DEBUG_PROJECTILE_LANDING_PROJECTILE",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(shooter.index()), Some(projectile.index())])
 }
 
 #[cfg(test)]

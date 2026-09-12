@@ -37,11 +37,6 @@ use crate::element::{
 };
 use crate::order::{Order, OrderType};
 
-/// Deserialize an explicitly present optional value.
-///
-/// Serde otherwise maps an absent `Option<T>` field to `None`, which would
-/// silently admit an obsolete or truncated Rust snapshot.
-
 // ═══════════════════════════════════════════════════════════════════
 //  IDs and references
 // ═══════════════════════════════════════════════════════════════════
@@ -4099,7 +4094,13 @@ impl SequenceManager {
     /// only bridge an interrupted replacement handoff; they must not revive
     /// a goal cleared by ordinary movement completion.
     pub(crate) fn clear_retained_movement_goals_for_actor(&mut self, actor: EntityId) {
-        let live = self.actor_live.get(&actor).cloned().unwrap_or_default();
+        let live: Vec<_> = self
+            .actor_live
+            .get(&actor)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect();
         for element_ref in live {
             let element = self
                 .get_element_mut(element_ref.sequence_id, element_ref.element_index)

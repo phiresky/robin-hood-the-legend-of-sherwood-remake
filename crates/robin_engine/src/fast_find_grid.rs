@@ -1133,9 +1133,11 @@ impl LiftRuntimeState {
 /// deep copy. The fields directly on this struct are the runtime
 /// per-element mutable flags + sparse overlays (cheap to clone, and
 /// what `EngineSnapshot` actually carries).
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct FastFindGrid {
     /// Static level-loaded grid data, shared with rollback snapshots.
+    #[serde(skip)]
+    #[state_hash(skip)]
     pub level: std::sync::Arc<LevelGrid>,
 
     // ── Runtime per-element flags ──
@@ -1161,15 +1163,6 @@ pub struct FastFindGrid {
     /// which sets the APEX bit on a sector at runtime. Effective sector
     /// type = `level.sectors[i].sector_type | overlay.get(&i).copied().unwrap_or_default()`.
     pub sector_type_overlay: std::collections::BTreeMap<u32, crate::sector::SectorType>,
-}
-
-#[derive(Serialize)]
-struct FastFindGridSnapshotRef<'a> {
-    line_active: &'a [bool],
-    sector_active: &'a [bool],
-    mask_active: &'a [bool],
-    lift_state: &'a std::collections::BTreeMap<u32, LiftRuntimeState>,
-    sector_type_overlay: &'a std::collections::BTreeMap<u32, crate::sector::SectorType>,
 }
 
 #[derive(Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
@@ -1232,54 +1225,6 @@ impl crate::bitcode_adapters::NativeBitcode for FastFindGrid {
 }
 
 crate::bitcode_adapters::impl_native_bitcode!(FastFindGrid);
-
-impl Serialize for FastFindGrid {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        FastFindGridSnapshotRef {
-            line_active: &self.line_active,
-            sector_active: &self.sector_active,
-            mask_active: &self.mask_active,
-            lift_state: &self.lift_state,
-            sector_type_overlay: &self.sector_type_overlay,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for FastFindGrid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(FastFindGridSnapshot::deserialize(deserializer)?.into_runtime())
-    }
-}
-
-impl robin_util::state_hash::StateHash for FastFindGrid {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.line_active.state_hash(state);
-        self.sector_active.state_hash(state);
-        self.mask_active.state_hash(state);
-        self.lift_state.state_hash(state);
-        self.sector_type_overlay.state_hash(state);
-    }
-}
-
-impl Clone for FastFindGrid {
-    fn clone(&self) -> Self {
-        Self {
-            level: self.level.clone(),
-            line_active: self.line_active.clone(),
-            sector_active: self.sector_active.clone(),
-            mask_active: self.mask_active.clone(),
-            lift_state: self.lift_state.clone(),
-            sector_type_overlay: self.sector_type_overlay.clone(),
-        }
-    }
-}
 
 impl Default for FastFindGrid {
     fn default() -> Self {

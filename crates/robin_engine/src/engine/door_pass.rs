@@ -1998,8 +1998,8 @@ impl EngineInner {
     /// Check whether a sector forces crouched movement.
     pub(super) fn sector_forces_crouch(&self, sector_num: crate::sector::SectorNumber) -> bool {
         self.grid_sector_by_number(sector_num)
-            .map(|gs| gs.force_crouched)
-            .unwrap_or(false)
+            .unwrap_or_else(|| panic!("PassDoor references missing canonical sector {sector_num}"))
+            .force_crouched
     }
 
     /// Get the lift type for a sector, if it's a lift sector.

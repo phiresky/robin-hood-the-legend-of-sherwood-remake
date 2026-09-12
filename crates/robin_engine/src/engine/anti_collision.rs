@@ -37,7 +37,7 @@ thread_local! {
 }
 
 pub(super) fn with_goal_owner_anti_frame<T>(frame: u32, f: impl FnOnce() -> T) -> T {
-    if std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF").is_none() {
+    if !super::diagnostics::config().goal_owner_enabled() {
         return f();
     }
     GOAL_OWNER_ANTI_FRAME.with(|slot| {
@@ -49,41 +49,10 @@ pub(super) fn with_goal_owner_anti_frame<T>(frame: u32, f: impl FnOnce() -> T) -
 }
 
 pub(super) fn goal_owner_anti_debug_frame(mover: EntityId) -> Option<u32> {
-    std::env::var_os("PARITY_DEBUG_GOAL_OWNER_HANDOFF")?;
     let frame = GOAL_OWNER_ANTI_FRAME.with(std::cell::Cell::get)?;
-    let expected_frame = std::env::var("PARITY_DEBUG_GOAL_OWNER_FRAME")
-        .unwrap_or_else(|_| {
-            panic!("PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER_FRAME=FRAME")
-        })
-        .parse::<u32>()
-        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER_FRAME: {error}"));
-    if frame != expected_frame {
-        return None;
-    }
-    let filter = std::env::var("PARITY_DEBUG_GOAL_OWNER").unwrap_or_else(|_| {
-        panic!(
-            "PARITY_DEBUG_GOAL_OWNER_HANDOFF requires PARITY_DEBUG_GOAL_OWNER=pc|soldier|civilian:INDEX"
-        )
-    });
-    let (kind, index) = filter.split_once(':').unwrap_or_else(|| {
-        panic!("PARITY_DEBUG_GOAL_OWNER must look like pc|soldier|civilian:INDEX")
-    });
-    let index = index
-        .parse::<u32>()
-        .unwrap_or_else(|error| panic!("invalid PARITY_DEBUG_GOAL_OWNER={filter:?}: {error}"));
-    let kind_matches = matches!(
-        (kind, mover),
-        ("pc", EntityId::Pc(_))
-            | ("soldier", EntityId::Soldier(_))
-            | ("civilian", EntityId::Civilian(_))
-    );
-    if kind_matches && mover.index() == index {
-        Some(frame)
-    } else if matches!(kind, "pc" | "soldier" | "civilian") {
-        None
-    } else {
-        panic!("PARITY_DEBUG_GOAL_OWNER has unsupported kind {kind:?}")
-    }
+    super::diagnostics::config()
+        .goal_owner_matches(frame, mover)
+        .then_some(frame)
 }
 
 /// Snapshot of everything the anti-collision pre-pass needs from a

@@ -2515,7 +2515,7 @@ pub struct PcData {
 impl Default for PcData {
     fn default() -> Self {
         Self {
-            life_points: 100,
+            life_points: crate::pc_status::LIFEPOINTS_PC,
             immortal: false,
             robin: false,
             already_selected: false,
@@ -3609,7 +3609,7 @@ impl PersistedNpcData {
 impl Default for NpcData {
     fn default() -> Self {
         Self {
-            life_points: 100,
+            life_points: crate::pc_status::LIFEPOINTS_PC,
             ai: AiActorData::default(),
         }
     }
@@ -3886,6 +3886,7 @@ pub struct TrajectoryPointRuntime {
 
 /// Projectile-level data.
 #[derive(
+    Default,
     Debug,
     Clone,
     Serialize,
@@ -3998,45 +3999,6 @@ pub struct ProjectileData {
     /// each `ObjectType::Wasp` child, default for everything else.
     /// See [`WaspData`].
     pub wasp: WaspData,
-}
-
-impl Default for ProjectileData {
-    fn default() -> Self {
-        Self {
-            start: WorldPoint3D::default(),
-            end: WorldPoint3D::default(),
-            start_of_trajectory_x: 0.0,
-            start_of_trajectory_y: 0.0,
-            shooter: None,
-            frame_count: 0,
-            flying: false,
-            noise_distraction: false,
-            dive: false,
-            magic_bullet: false,
-            disappear: false,
-            trajectory: Vec::new(),
-            trajectory_runtime: Vec::new(),
-            terminal_material_pending: false,
-            terminal_material_impact_index: None,
-            trajectory_origin_sector: None,
-            trajectory_origin_sector_index: None,
-            trajectory_origin_layer: None,
-            velocity_increment: WorldVec3D::default(),
-            flight_direction: 0,
-            launch_segment_start: None,
-            trajectory_frame_count: 0,
-            damage: 0,
-            falling: false,
-            last_orientation_sector: 0,
-            last_orientation_azimuth: 0,
-            falling_direction: 0,
-            arrow_bow_profile: None,
-            arrow_flat_shot: false,
-            arrow_play_impact: false,
-            purse: PurseData::default(),
-            wasp: WaspData::default(),
-        }
-    }
 }
 
 /// Net-specific data.
@@ -6471,7 +6433,7 @@ impl Human for ActorPc {
         self.pc.life_points
     }
     fn max_life_points(&self) -> i16 {
-        100
+        crate::pc_status::LIFEPOINTS_PC
     }
     fn camp(&self) -> Camp {
         self.pc.cached_camp
@@ -6572,7 +6534,7 @@ impl Human for ActorCivilian {
         self.npc.life_points
     }
     fn max_life_points(&self) -> i16 {
-        100
+        crate::pc_status::LIFEPOINTS_PC
     } // civilians always 100
     fn camp(&self) -> Camp {
         self.civilian.cached_camp
@@ -6674,63 +6636,6 @@ pub enum OriginalBonusConcreteClass {
     /// TODO(original-parity): add a mapping only when original-game initialization
     /// proves that the object type can inhabit Rust's `Entity::Bonus`.
     Unsupported,
-}
-
-// ─── BonusItemType / ObjectType → Action bridges ──────────────────
-//
-// The enums live in `robin_engine::element_kinds`; inherent impls here
-// would violate the orphan rule, and they can't be in the engine crate
-// because `Action` is in `crate::profiles`. Extension traits bridge it.
-
-pub trait BonusItemTypeExt {
-    fn to_action(self) -> Action;
-}
-
-impl BonusItemTypeExt for BonusItemType {
-    fn to_action(self) -> Action {
-        match self {
-            Self::Arrow => Action::Bow,
-            Self::Stone => Action::Stone,
-            Self::Apple => Action::Apple,
-            Self::Ale => Action::Ale,
-            Self::Lamb => Action::Eat,
-            Self::Plant => Action::Heal,
-            Self::Net => Action::Net,
-            Self::WaspNest => Action::WaspNest,
-            Self::Purse => Action::Purse,
-            Self::Ransom
-            | Self::Amulet
-            | Self::Blazon
-            | Self::Ampulla
-            | Self::CoronationSpoon
-            | Self::RichardsCrown
-            | Self::RoyalSeal
-            | Self::RoyalSceptre
-            | Self::DomesdayBook
-            | Self::SwordOfTheState => Action::NoAction,
-        }
-    }
-}
-
-pub trait ObjectTypeExt {
-    fn to_action(self) -> Action;
-}
-
-impl ObjectTypeExt for ObjectType {
-    fn to_action(self) -> Action {
-        match self {
-            Self::Arrow | Self::BonusArrow => Action::Bow,
-            Self::Stone | Self::BonusStone => Action::Stone,
-            Self::Apple | Self::BonusApple => Action::Apple,
-            Self::Ale | Self::BonusAle => Action::Ale,
-            Self::BonusLambLeg => Action::Eat,
-            Self::BonusPlants => Action::Heal,
-            Self::Net | Self::BonusNet => Action::Net,
-            Self::WaspNest | Self::BonusWaspNest => Action::WaspNest,
-            Self::Purse | Self::BonusPurse => Action::Purse,
-            _ => Action::NoAction,
-        }
-    }
 }
 
 impl ElementProjectile {

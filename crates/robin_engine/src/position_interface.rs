@@ -933,7 +933,6 @@ impl Default for PositionInterface {
 }
 
 impl PositionInterface {
-    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             computed_position: PositionComputed::ALL,

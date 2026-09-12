@@ -1997,3 +1997,46 @@ mod tests {
         }
     }
 }
+
+impl BonusItemType {
+    pub fn to_action(self) -> crate::profiles::Action {
+        match self {
+            Self::Arrow => crate::profiles::Action::Bow,
+            Self::Stone => crate::profiles::Action::Stone,
+            Self::Apple => crate::profiles::Action::Apple,
+            Self::Ale => crate::profiles::Action::Ale,
+            Self::Lamb => crate::profiles::Action::Eat,
+            Self::Plant => crate::profiles::Action::Heal,
+            Self::Net => crate::profiles::Action::Net,
+            Self::WaspNest => crate::profiles::Action::WaspNest,
+            Self::Purse => crate::profiles::Action::Purse,
+            Self::Ransom
+            | Self::Amulet
+            | Self::Blazon
+            | Self::Ampulla
+            | Self::CoronationSpoon
+            | Self::RichardsCrown
+            | Self::RoyalSeal
+            | Self::RoyalSceptre
+            | Self::DomesdayBook
+            | Self::SwordOfTheState => crate::profiles::Action::NoAction,
+        }
+    }
+}
+
+impl ObjectType {
+    pub fn to_action(self) -> crate::profiles::Action {
+        match self {
+            Self::Arrow | Self::BonusArrow => crate::profiles::Action::Bow,
+            Self::Stone | Self::BonusStone => crate::profiles::Action::Stone,
+            Self::Apple | Self::BonusApple => crate::profiles::Action::Apple,
+            Self::Ale | Self::BonusAle => crate::profiles::Action::Ale,
+            Self::BonusLambLeg => crate::profiles::Action::Eat,
+            Self::BonusPlants => crate::profiles::Action::Heal,
+            Self::Net | Self::BonusNet => crate::profiles::Action::Net,
+            Self::WaspNest | Self::BonusWaspNest => crate::profiles::Action::WaspNest,
+            Self::Purse | Self::BonusPurse => crate::profiles::Action::Purse,
+            _ => crate::profiles::Action::NoAction,
+        }
+    }
+}
