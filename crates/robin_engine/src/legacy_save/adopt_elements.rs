@@ -492,7 +492,7 @@ struct ConvertedNpcView {
 #[derive(Clone, Debug)]
 enum ConvertedLocalAi {
     Friendly {
-        common: ConvertedLocalAiCommon,
+        common: AiController,
         fleeing_seen_enemy_counter: u16,
         beggar_dont_talk_counter: u16,
         wants_to_talk: bool,
@@ -500,7 +500,7 @@ enum ConvertedLocalAi {
         can_go_away: bool,
     },
     Enemy {
-        common: ConvertedLocalAiCommon,
+        common: AiController,
         last_stimulus_dispatched_to_patrol: Stimulus,
         frame_when_missed_charly: u32,
         heard_nets: Vec<u32>,
@@ -622,99 +622,6 @@ impl ReferenceKind {
             Self::Net => "Net",
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct ConvertedLocalAiCommon {
-    last_goto_destination: Position,
-    last_goto_flags: GotoFlags,
-    stuck_counter: u16,
-    forbidden_remark_ids: Vec<u32>,
-    current_remark_flags: u16,
-    current_state: AiState,
-    old_state: i32,
-    current_substate: Substate,
-    current_music_alert_status: AlertLevel,
-    view_alert_status: AlertLevel,
-    substate_at_last_timer_launch: Substate,
-    attitude: Attitude,
-    blood_alcohol: u8,
-    initial_action: u32,
-    number_of_looks: u8,
-    can_move: bool,
-    has_patrol_path: bool,
-    patrol_path: Option<PatrolPath>,
-    detached_patrol_path_status: DetachedPatrolPathStatus,
-    stop_before_end_of_path: bool,
-    use_max_norm_to_stop_before_end_of_path: bool,
-    stop_before_end_of_path_distance: u16,
-    macro_cursor: Option<ConvertedMacroCursor>,
-    primary_target: Option<AiEntityHandle>,
-    friend_in_trouble: Option<AiEntityHandle>,
-    detected_body: Option<AiEntityHandle>,
-    interesting_object: Option<AiEntityHandle>,
-    antagonist: Option<AiEntityHandle>,
-    last_stimulus_actor: Option<AiEntityHandle>,
-    macro_in_progress: bool,
-    number_of_remaining_macro_bytes: u16,
-    timer_is_running: bool,
-    when_does_timer_ring: u32,
-    macro_timer_is_running: bool,
-    when_does_macro_timer_ring: u32,
-    standing_around_timer: u16,
-    sorrow_level: u16,
-    last_stimulus: [StimulusType; 5],
-    last_stimulus_multiplicity: [u16; 5],
-    is_master: bool,
-    master: Option<AiEntityHandle>,
-    seek_position: Position,
-    alert_soldiers_point: Position,
-    first_try: bool,
-    panic_center_x: f32,
-    panic_center_y: f32,
-    lasting_panic_runs: u8,
-    directed_panic: bool,
-    list_us: Vec<u32>,
-    list_alerted_us: Vec<u32>,
-    list_staying_us: Vec<u32>,
-    couldnt_reachpoint: bool,
-    already_on_point: bool,
-    already_turned: bool,
-    likes_to_sit_around: bool,
-    special_action: bool,
-    remaining_tequila_gulps: u8,
-    friends_are_alerted: bool,
-    is_stay_at_home: bool,
-    locks_flag_field: AiLockFlags,
-    was_busy: bool,
-    script_locked: bool,
-    remember_events: bool,
-    leave_house_number: u16,
-    last_hint_actuality: u32,
-    last_hint_subject: Question,
-    my_door_index: Option<crate::gate::DoorIndex>,
-    looking_for_help_because_enemy_seen: bool,
-    forgotten_objects: Vec<u32>,
-    object_of_desire: Option<AiEntityHandle>,
-    checkpoint_charly: Option<AiEntityHandle>,
-    synchronize_charly: Option<AiEntityHandle>,
-    inside_halt_method: bool,
-    macro_started_in_this_frame: bool,
-    synchronizing_actors: Vec<u32>,
-    default_path_walking_flags: GotoFlags,
-    current_remark: Remark,
-    next_macro_rand: u8,
-    next_macro_rand_forecasted: bool,
-    knocked_out_in_money_fight: bool,
-    got_beggar_trick: bool,
-    reconnaissance: ReconnaissanceReport,
-    patrol_chief: Option<EntityId>,
-    patrol: Vec<EntityId>,
-    missed_patrol_members: Vec<EntityId>,
-    theoretical_patrol: Vec<EntityId>,
-    patrol_stopped: bool,
-    patrol_direction: u16,
-    stimulus_queue: Vec<Stimulus>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1608,6 +1515,17 @@ fn convert_local_ai(
     }
     let common = convert_local_ai_common(
         &saved.common,
+        runtime
+            .ai_brain
+            .base()
+            .ok_or(LegacyElementAdoptError::AiKindMismatch {
+                creation_order,
+                saved_kind: match &saved.tail {
+                    LegacyLocalAiTail::Friendly(_) => "Friendly",
+                    LegacyLocalAiTail::Enemy(_) => "Enemy",
+                },
+                runtime_kind: ai_brain_kind(&runtime.ai_brain),
+            })?,
         creation_order,
         entities,
         topology,
@@ -1929,12 +1847,13 @@ struct ConvertedMacroCursor {
 
 fn convert_local_ai_common(
     saved: &LegacyLocalAiCommon,
+    runtime: &AiController,
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     view_alert_status: AlertLevel,
     assets: &LevelAssets,
-) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
+) -> Result<AiController, LegacyElementAdoptError> {
     let macro_cursor =
         convert_macro_command(saved, creation_order, &assets.navigation.hiking_paths)?;
     let (patrol_path, detached_patrol_path_status) = convert_patrol_path(
@@ -1949,7 +1868,7 @@ fn convert_local_ai_common(
         "local_ai.current_remark",
     )?;
     let completes_saved_remark = saved_current_remark != Remark::TheSoundOfSilence;
-    Ok(ConvertedLocalAiCommon {
+    let mut converted = AiController {
         last_goto_destination: ai_position(
             saved.last_goto_destination,
             topology,
@@ -2017,7 +1936,6 @@ fn convert_local_ai_common(
         stop_before_end_of_path: saved.stop_before_end_of_path,
         use_max_norm_to_stop_before_end_of_path: saved.use_max_norm_to_stop_before_end_of_path,
         stop_before_end_of_path_distance: saved.stop_before_end_of_path_distance,
-        macro_cursor,
         primary_target: optional_ai_handle(
             entities.resolve_ai_element(saved.primary_target)?,
             ReferenceKind::Human,
@@ -2190,8 +2108,13 @@ fn convert_local_ai_common(
         next_macro_rand: saved.next_macro_rand,
         next_macro_rand_forecasted: saved.next_macro_rand_forecasted,
         knocked_out_in_money_fight: saved.knocked_out_in_money_fight,
-        got_beggar_trick: saved.got_beggar_trick,
-        reconnaissance: reconnaissance(&saved.reconnaissance, creation_order, entities, topology)?,
+        got_the_beggar_trick: saved.got_beggar_trick,
+        my_reconnaissance_report: reconnaissance(
+            &saved.reconnaissance,
+            creation_order,
+            entities,
+            topology,
+        )?,
         patrol_chief: optional_element_entity(
             entities.resolve_element(saved.patrol_chief)?,
             ReferenceKind::Npc,
@@ -2226,7 +2149,18 @@ fn convert_local_ai_common(
             .iter()
             .map(|stimulus| convert_stimulus(stimulus, creation_order, entities, topology))
             .collect::<Result<Vec<_>, _>>()?,
-    })
+        // Preserve mission-initialized fields outside this save section's ownership.
+        ..runtime.clone()
+    };
+    if let Some(cursor) = macro_cursor {
+        converted.macro_command = cursor.command;
+        converted.macro_command_offset = cursor.offset;
+        converted.macro_command_waypoint = cursor.waypoint;
+    }
+    reset_loaded_ai_completion_ownership(&mut converted);
+    // Saved patrol membership is authoritative, not a bootstrap reinitialization request.
+    converted.needs_patrol_reinit = false;
+    Ok(converted)
 }
 
 fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
@@ -2242,7 +2176,7 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
                 can_go_away,
             },
         ) => {
-            apply_local_ai_common(&mut ai.base, common);
+            ai.base = common;
             ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
             ai.beggar_dont_talk_counter = beggar_dont_talk_counter;
             ai.wants_to_talk = wants_to_talk;
@@ -2334,7 +2268,7 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
                 known_enemy_strikes,
             },
         ) => {
-            apply_local_ai_common(&mut ai.base, common);
+            ai.base = common;
             // The original game has one alerted-us list on the common AI
             // base. Runtime EnemyAi keeps the actively coordinated officer
             // group in its typed mirror, so restore that mirror from the
@@ -2425,107 +2359,6 @@ fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
         }
         _ => unreachable!("preflighted local-AI kind changed in candidate engine"),
     }
-}
-
-fn apply_local_ai_common(ai: &mut AiController, saved: ConvertedLocalAiCommon) {
-    ai.last_goto_destination = saved.last_goto_destination;
-    ai.last_goto_flags = saved.last_goto_flags;
-    ai.stuck_counter = saved.stuck_counter;
-    ai.forbidden_remark_ids = saved.forbidden_remark_ids;
-    ai.current_remark_flags = saved.current_remark_flags;
-    ai.current_state = saved.current_state;
-    ai.old_state = saved.old_state;
-    ai.current_substate = saved.current_substate;
-    ai.current_music_alert_status = saved.current_music_alert_status;
-    ai.view_alert_status = saved.view_alert_status;
-    ai.substate_at_last_timer_launch = saved.substate_at_last_timer_launch;
-    ai.attitude = saved.attitude;
-    ai.blood_alcohol = saved.blood_alcohol;
-    ai.initial_action = saved.initial_action;
-    ai.number_of_looks = saved.number_of_looks;
-    ai.can_move = saved.can_move;
-    ai.has_patrol_path = saved.has_patrol_path;
-    ai.patrol_path = saved.patrol_path;
-    ai.detached_patrol_path_status = saved.detached_patrol_path_status;
-    ai.stop_before_end_of_path = saved.stop_before_end_of_path;
-    ai.use_max_norm_to_stop_before_end_of_path = saved.use_max_norm_to_stop_before_end_of_path;
-    ai.stop_before_end_of_path_distance = saved.stop_before_end_of_path_distance;
-    if let Some(cursor) = saved.macro_cursor {
-        ai.macro_command = cursor.command;
-        ai.macro_command_offset = cursor.offset;
-        ai.macro_command_waypoint = cursor.waypoint;
-    }
-    ai.primary_target = saved.primary_target;
-    ai.friend_in_trouble = saved.friend_in_trouble;
-    ai.detected_body = saved.detected_body;
-    ai.interesting_object = saved.interesting_object;
-    ai.antagonist = saved.antagonist;
-    ai.last_stimulus_actor = saved.last_stimulus_actor;
-    ai.macro_in_progress = saved.macro_in_progress;
-    ai.number_of_remaining_macro_bytes = saved.number_of_remaining_macro_bytes;
-    ai.timer_is_running = saved.timer_is_running;
-    ai.when_does_timer_ring = saved.when_does_timer_ring;
-    ai.macro_timer_is_running = saved.macro_timer_is_running;
-    ai.when_does_macro_timer_ring = saved.when_does_macro_timer_ring;
-    ai.standing_around_timer = saved.standing_around_timer;
-    ai.sorrow_level = saved.sorrow_level;
-    ai.last_stimulus = saved.last_stimulus;
-    ai.last_stimulus_multiplicity = saved.last_stimulus_multiplicity;
-    ai.is_master = saved.is_master;
-    ai.master = saved.master;
-    ai.seek_position = saved.seek_position;
-    ai.alert_soldiers_point = saved.alert_soldiers_point;
-    ai.first_try = saved.first_try;
-    ai.panic_center_x = saved.panic_center_x;
-    ai.panic_center_y = saved.panic_center_y;
-    ai.lasting_panic_runs = saved.lasting_panic_runs;
-    ai.directed_panic = saved.directed_panic;
-    ai.list_us = saved.list_us;
-    ai.list_alerted_us = saved.list_alerted_us;
-    ai.list_staying_us = saved.list_staying_us;
-    ai.couldnt_reachpoint = saved.couldnt_reachpoint;
-    ai.already_on_point = saved.already_on_point;
-    ai.already_turned = saved.already_turned;
-    reset_loaded_ai_completion_ownership(ai);
-    ai.likes_to_sit_around = saved.likes_to_sit_around;
-    ai.special_action = saved.special_action;
-    ai.remaining_tequila_gulps = saved.remaining_tequila_gulps;
-    ai.friends_are_alerted = saved.friends_are_alerted;
-    ai.is_stay_at_home = saved.is_stay_at_home;
-    ai.locks_flag_field = saved.locks_flag_field;
-    ai.was_busy = saved.was_busy;
-    ai.script_locked = saved.script_locked;
-    ai.remember_events = saved.remember_events;
-    ai.leave_house_number = saved.leave_house_number;
-    ai.last_hint_actuality = saved.last_hint_actuality;
-    ai.last_hint_subject = saved.last_hint_subject;
-    ai.my_door_index = saved.my_door_index;
-    ai.looking_for_help_because_enemy_seen = saved.looking_for_help_because_enemy_seen;
-    ai.forgotten_objects = saved.forgotten_objects;
-    ai.object_of_desire = saved.object_of_desire;
-    ai.checkpoint_charly = saved.checkpoint_charly;
-    ai.synchronize_charly = saved.synchronize_charly;
-    ai.inside_halt_method = saved.inside_halt_method;
-    ai.macro_started_in_this_frame = saved.macro_started_in_this_frame;
-    ai.synchronizing_actors = saved.synchronizing_actors;
-    ai.default_path_walking_flags = saved.default_path_walking_flags;
-    ai.current_remark = saved.current_remark;
-    ai.next_macro_rand = saved.next_macro_rand;
-    ai.next_macro_rand_forecasted = saved.next_macro_rand_forecasted;
-    ai.knocked_out_in_money_fight = saved.knocked_out_in_money_fight;
-    ai.got_the_beggar_trick = saved.got_beggar_trick;
-    ai.my_reconnaissance_report = saved.reconnaissance;
-    ai.patrol_chief = saved.patrol_chief;
-    ai.patrol = saved.patrol;
-    ai.missed_patrol_members = saved.missed_patrol_members;
-    ai.theoretical_patrol = saved.theoretical_patrol;
-    // Mission bootstrap requests one-time patrol initialization, but an Original
-    // save already contains its authoritative active/missed patrol ordering.
-    // Loading does not initialize the patrol again in the original game.
-    ai.needs_patrol_reinit = false;
-    ai.patrol_stopped = saved.patrol_stopped;
-    ai.patrol_direction = saved.patrol_direction;
-    ai.stimulus_queue = saved.stimulus_queue;
 }
 
 fn reset_loaded_ai_completion_ownership(ai: &mut AiController) {
@@ -3480,7 +3313,7 @@ fn convert_waypoint_macro_cursor(
         return Ok((macro_data.clone(), offset));
     }
 
-    let end = offset
+    offset
         .checked_add(usize::from(remaining))
         .filter(|&end| offset <= macro_data.len() && end <= macro_data.len())
         .ok_or(LegacyElementAdoptError::InvalidMacroCursor {
@@ -3489,7 +3322,6 @@ fn convert_waypoint_macro_cursor(
             remaining,
             length: macro_data.len(),
         })?;
-    let _ = end;
     Ok((macro_data.clone(), offset))
 }
 

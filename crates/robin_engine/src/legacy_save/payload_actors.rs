@@ -6,6 +6,7 @@
 //! order by accepting callbacks for the shared Human payload and embedded
 //! quick-action sequences.
 
+use super::read_helpers::DEFAULT_LIST_LIMIT;
 use super::read_helpers::{read_point2, read_point3};
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +47,8 @@ pub struct LegacyActorLeafLimits {
 impl Default for LegacyActorLeafLimits {
     fn default() -> Self {
         Self {
-            campaign_characters: 4096,
-            pc_name_code_units: 4096,
+            campaign_characters: DEFAULT_LIST_LIMIT,
+            pc_name_code_units: DEFAULT_LIST_LIMIT,
         }
     }
 }
@@ -486,7 +487,7 @@ pub struct LegacySoldierLeaf {
 /// serializer.
 pub fn read_soldier_leaf(
     reader: &mut LegacyReader<'_>,
-    abi_profile: LegacySaveAbiProfile,
+    _abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacySoldierLeaf> {
     let start_offset = reader.offset();
     reader.read_signature(
@@ -539,7 +540,7 @@ pub struct LegacyCivilianLeaf {
 /// concrete civilian serializer.
 pub fn read_civilian_leaf(
     reader: &mut LegacyReader<'_>,
-    abi_profile: LegacySaveAbiProfile,
+    _abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacyCivilianLeaf> {
     let start_offset = reader.offset();
     reader.read_signature(

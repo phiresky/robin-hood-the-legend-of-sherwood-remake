@@ -362,25 +362,7 @@ pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatErr
 /// Decode a trusted compact replay while still enforcing canonical bytes and
 /// the current replay schema. This lane does not apply public resource limits.
 pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
-    trusted_local::decode(text)
-}
-
-/// Trusted developer artifacts only. This decoder has no resource ceilings;
-/// public artifacts must enter through an externally contained worker.
-pub mod trusted_local {
-    use super::*;
-
-    pub fn decode(text: &str) -> Result<(String, ReplayData), FormatError> {
-        decode_compact_inner(text, None, None)
-    }
-}
-
-/// Typed admission entry points. Calling these functions does not create a
-/// sandbox: callers must already be inside the documented resource boundary.
-pub mod contained_worker {
-    pub use super::{
-        decode_compact_for_admission as admit, decode_compact_for_build as admit_for_build,
-    };
+    decode_compact_inner(text, None, None)
 }
 
 /// Decode under explicit limits. This must execute inside a resource-limited
@@ -393,6 +375,9 @@ pub fn decode_compact_bounded(
 }
 
 /// Decode the current build's production format under public limits.
+///
+/// This does not create a sandbox: callers must already run inside the
+/// documented resource-limited admission worker.
 ///
 /// The build hash is rejected before base64/zstd work. Server installations
 /// that route several approved build hashes should call

@@ -7,6 +7,7 @@
 //! [`LegacyLocalAiPayload`] continues through either complete v48 subclass.
 //! No decoder scans for a later fingerprint or guesses byte counts.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, reserved as reserve};
 use serde::{Deserialize, Serialize};
 
@@ -56,16 +57,16 @@ pub struct LegacyLocalAiLimits {
 impl Default for LegacyLocalAiLimits {
     fn default() -> Self {
         Self {
-            forbidden_remarks: 65_535,
-            log_lines: 65_535,
-            path_history: 65_535,
-            element_lists: 65_535,
-            stimulus_queue: 65_535,
-            reconnaissance_bodies: 65_535,
-            enemy_positions: 65_535,
-            ambush_statuses: 65_535,
-            seek_point_ids: 65_535,
-            seek_directions: 65_535,
+            forbidden_remarks: DEFAULT_BULK_LIMIT,
+            log_lines: DEFAULT_BULK_LIMIT,
+            path_history: DEFAULT_BULK_LIMIT,
+            element_lists: DEFAULT_BULK_LIMIT,
+            stimulus_queue: DEFAULT_BULK_LIMIT,
+            reconnaissance_bodies: DEFAULT_BULK_LIMIT,
+            enemy_positions: DEFAULT_BULK_LIMIT,
+            ambush_statuses: DEFAULT_BULK_LIMIT,
+            seek_point_ids: DEFAULT_BULK_LIMIT,
+            seek_directions: DEFAULT_BULK_LIMIT,
         }
     }
 }
@@ -1148,7 +1149,7 @@ fn read_ai_log_lines(
 
 fn read_ai_position(
     reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
+    field: impl Into<std::borrow::Cow<'static, str>>,
 ) -> LegacyResult<LegacyAiPosition> {
     reader.scope(field, |reader| {
         reader.read_signature(

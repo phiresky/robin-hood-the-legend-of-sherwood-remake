@@ -10,6 +10,7 @@
 //! inherited class ID uninitialized. Its reader therefore preserves the raw
 //! ID and deliberately does not use normal class dispatch.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -17,9 +18,9 @@ use crate::legacy_io::{LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{
-    LegacyBoundingBox2, LegacyElementRef, LegacyOpaquePointer32, LegacyPayloadLimits, LegacyPoint2,
-    LegacyPoint3, LegacyPositionPayload, LegacySectorRef, LegacySpritePayload, read_element_ref,
-    read_sector_ref, read_signed_ref,
+    LegacyElementRef, LegacyOpaquePointer32, LegacyPayloadLimits, LegacyPoint2, LegacyPoint3,
+    LegacyPositionPayload, LegacySectorRef, LegacySpritePayload, read_element_ref, read_sector_ref,
+    read_signed_ref,
 };
 use super::payload_nonactors::LegacyRepulsivePointPayload;
 use super::payload_objects::LegacyTrajectoryPoint;
@@ -44,9 +45,9 @@ pub struct LegacyPostHikingLimits {
 impl Default for LegacyPostHikingLimits {
     fn default() -> Self {
         Self {
-            hiking_paths: 65_535,
-            hiking_waypoints: 65_535,
-            trajectory_points: 65_535,
+            hiking_paths: DEFAULT_BULK_LIMIT,
+            hiking_waypoints: DEFAULT_BULK_LIMIT,
+            trajectory_points: DEFAULT_BULK_LIMIT,
             sprite_animation_replacements: LegacyPayloadLimits::default()
                 .sprite_animation_replacements,
         }

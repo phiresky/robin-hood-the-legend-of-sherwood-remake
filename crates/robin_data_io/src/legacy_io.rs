@@ -5,8 +5,8 @@
 //! [`SbFile`] compatibility layer. [`LegacyWriter`] exists for authored-data
 //! tools and byte-layout tests; it is not a save-game writer.
 
-use std::fmt;
 use std::io::{self, Write};
+use std::{borrow::Cow, fmt};
 
 use thiserror::Error;
 
@@ -49,7 +49,7 @@ pub enum LegacyIoErrorKind {
 /// Typed, contextual reads over the read-only legacy-file compatibility layer.
 pub struct LegacyReader<'a> {
     file: &'a mut SbFile,
-    context: Vec<String>,
+    context: Vec<Cow<'static, str>>,
 }
 
 impl<'a> LegacyReader<'a> {
@@ -71,7 +71,7 @@ impl<'a> LegacyReader<'a> {
     /// Add a field/container prefix for all errors produced by `read`.
     pub fn scope<T>(
         &mut self,
-        context: impl Into<String>,
+        context: impl Into<Cow<'static, str>>,
         read: impl FnOnce(&mut Self) -> LegacyResult<T>,
     ) -> LegacyResult<T> {
         self.context.push(context.into());
@@ -316,7 +316,7 @@ pub struct LegacyWriter<W> {
     writer: W,
     path: String,
     offset: u64,
-    context: Vec<String>,
+    context: Vec<Cow<'static, str>>,
 }
 
 impl<W: Write> LegacyWriter<W> {
@@ -339,7 +339,7 @@ impl<W: Write> LegacyWriter<W> {
 
     pub fn scope<T>(
         &mut self,
-        context: impl Into<String>,
+        context: impl Into<Cow<'static, str>>,
         write: impl FnOnce(&mut Self) -> LegacyResult<T>,
     ) -> LegacyResult<T> {
         self.context.push(context.into());

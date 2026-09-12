@@ -4,6 +4,7 @@
 //! Element decoding belongs to a later importer milestone; no scan or guessed
 //! byte skip is used to find that boundary.
 
+use super::read_helpers::DEFAULT_LIST_LIMIT;
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -43,8 +44,8 @@ pub struct LegacyEngineLimits {
 impl Default for LegacyEngineLimits {
     fn default() -> Self {
         Self {
-            short_briefings: 4096,
-            sound_sources: 4096,
+            short_briefings: DEFAULT_LIST_LIMIT,
+            sound_sources: DEFAULT_LIST_LIMIT,
             sound_source_shape_points: 65535,
         }
     }
@@ -129,7 +130,10 @@ pub struct LegacyPoint2 {
 }
 
 impl LegacyPoint2 {
-    fn read(reader: &mut LegacyReader<'_>, field: impl Into<String>) -> LegacyResult<Self> {
+    fn read(
+        reader: &mut LegacyReader<'_>,
+        field: impl Into<std::borrow::Cow<'static, str>>,
+    ) -> LegacyResult<Self> {
         reader.scope(field, |reader| {
             Ok(Self {
                 x: reader.read_f32("x")?,

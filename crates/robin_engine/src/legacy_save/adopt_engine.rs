@@ -407,8 +407,8 @@ impl LegacyKnownHostState {
 /// Validate every adoption slice currently assembled into the coordinator
 /// without changing the live engine.
 ///
-/// This is exposed for corpus auditing while final installation remains
-/// crate-internal and deliberately disconnected.
+/// Corpus auditing uses this entry point without installing the candidate;
+/// [`adopt_known_linux_v48_replay`] performs validation and installation.
 pub fn preflight_known_linux_v48_adoption(
     engine: &Engine,
     assets: &LevelAssets,

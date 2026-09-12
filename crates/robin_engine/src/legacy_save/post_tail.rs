@@ -15,6 +15,7 @@
 //! created by the exact mission data. No boundary scanning or inferred count
 //! is used.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -54,16 +55,16 @@ impl Default for LegacyPostTailLimits {
     fn default() -> Self {
         Self {
             script_globals: crate::natives::DEFAULT_SCRIPT_GLOBAL_SLOT_LIMIT,
-            timer_sequence_elements: 65_535,
-            path_requests: 65_535,
-            mission_pc_names: 65_535,
+            timer_sequence_elements: DEFAULT_BULK_LIMIT,
+            path_requests: DEFAULT_BULK_LIMIT,
+            mission_pc_names: DEFAULT_BULK_LIMIT,
             wide_string_code_units: 4_096,
-            seek_points: 65_535,
-            archery_sectors: 65_535,
-            archery_points_per_sector: 65_535,
-            path_graph_layers: 65_535,
-            path_graph_areas_per_layer: 65_535,
-            linux_copy_eof_bytes: 65_535,
+            seek_points: DEFAULT_BULK_LIMIT,
+            archery_sectors: DEFAULT_BULK_LIMIT,
+            archery_points_per_sector: DEFAULT_BULK_LIMIT,
+            path_graph_layers: DEFAULT_BULK_LIMIT,
+            path_graph_areas_per_layer: DEFAULT_BULK_LIMIT,
+            linux_copy_eof_bytes: DEFAULT_BULK_LIMIT,
         }
     }
 }

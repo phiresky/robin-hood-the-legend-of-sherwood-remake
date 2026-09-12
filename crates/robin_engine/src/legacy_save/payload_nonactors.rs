@@ -5,6 +5,7 @@
 //! members before calling Object, while Target writes its leaf state, script
 //! members, and linked FX list before calling FX.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::hex16;
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +46,7 @@ pub struct LegacyNonActorPayloadLimits {
 impl Default for LegacyNonActorPayloadLimits {
     fn default() -> Self {
         Self {
-            target_linked_fxs: 65_535,
+            target_linked_fxs: DEFAULT_BULK_LIMIT,
         }
     }
 }

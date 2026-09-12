@@ -9,6 +9,7 @@
 //! Wire order follows the original game's engine, minimap, ground-mark, and
 //! titbit serialization.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -36,19 +37,18 @@ pub struct LegacyPostSimpleLimits {
 impl Default for LegacyPostSimpleLimits {
     fn default() -> Self {
         Self {
-            failed_path_requests: 65_535,
-            minimap_highlights: 65_535,
-            selected_elements: 65_535,
-            ground_marks: 65_535,
-            titbits: 65_535,
+            failed_path_requests: DEFAULT_BULK_LIMIT,
+            minimap_highlights: DEFAULT_BULK_LIMIT,
+            selected_elements: DEFAULT_BULK_LIMIT,
+            ground_marks: DEFAULT_BULK_LIMIT,
+            titbits: DEFAULT_BULK_LIMIT,
         }
     }
 }
 
 /// engine failed-path-request list.
 ///
-/// TODO(save-import): the current Rust snapshot does not retain every one of
-/// these retry parameters. Conversion must restore the authoritative queue
+/// [`super::adopt_paths`] must restore the authoritative queue
 /// rather than synthesize a new path request from only actor and destination.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacyFailedPathRequests {
@@ -122,9 +122,8 @@ impl LegacyFailedPathRequests {
 
 /// Serializable state of the UI-owned minimap.
 ///
-/// TODO(save-import): loading must hand this state to the host UI layer. It
-/// must not be dropped merely because the simulation's `Engine` does not own
-/// the minimap widget.
+/// [`super::adopt_simple`] returns this state to the host UI layer; it must not
+/// be dropped merely because the simulation does not own the minimap widget.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacyMinimapState {
     pub abi_profile: LegacySaveAbiProfile,
@@ -215,7 +214,7 @@ pub struct LegacyElementSelection {
 impl LegacyElementSelection {
     pub fn read(
         reader: &mut LegacyReader<'_>,
-        field: impl Into<String>,
+        field: impl Into<std::borrow::Cow<'static, str>>,
         maximum: usize,
     ) -> LegacyResult<Self> {
         reader.scope(field, |reader| {
@@ -259,7 +258,7 @@ impl LegacyFollowViewRefs {
 
 /// Serializable destination markers owned by the ground mark.
 ///
-/// TODO(save-import): preserve the current sprite frame exactly. Recreating a
+/// [`super::adopt_simple`] preserves the current sprite frame exactly. Recreating a
 /// marker through the normal API starts its render lifetime at a different
 /// frame boundary and can cause a visible replay mismatch.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -319,7 +318,7 @@ impl LegacyGroundMarkState {
 /// overwrites the first without checking equality. Preserving both makes
 /// malformed or historically divergent files diagnosable.
 ///
-/// TODO(save-import): rebuild the render-owned blinking/dotted counters using
+/// [`super::adopt_simple`] rebuilds the render-owned blinking/dotted counters using
 /// the Original's load reset values while retaining every authoritative item,
 /// ID, phase, and reference below.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

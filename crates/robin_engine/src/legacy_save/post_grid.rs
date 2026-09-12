@@ -6,6 +6,7 @@
 //! Treating bytes as self-describing here would silently shift every later
 //! save section when the wrong mission data is supplied.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, read_point2, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -35,7 +36,7 @@ pub struct LegacyGridLimits {
 impl Default for LegacyGridLimits {
     fn default() -> Self {
         Self {
-            occupants_per_container: 65_535,
+            occupants_per_container: DEFAULT_BULK_LIMIT,
             static_repulsive_points: 1_000_000,
         }
     }

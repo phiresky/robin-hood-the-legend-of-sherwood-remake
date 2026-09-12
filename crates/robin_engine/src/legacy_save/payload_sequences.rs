@@ -6,6 +6,7 @@
 //! structures are nevertheless shared wire-domain types so the manager-owned
 //! form can add those three pointer fixups without redefining the payload.
 
+use super::read_helpers::{DEFAULT_BULK_LIMIT, DEFAULT_LIST_LIMIT};
 use super::read_helpers::{hex16, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -33,9 +34,9 @@ pub struct LegacySequencePayloadLimits {
 impl Default for LegacySequencePayloadLimits {
     fn default() -> Self {
         Self {
-            elements: 65_535,
-            orders_per_element: 65_535,
-            generic_fields: 4096,
+            elements: DEFAULT_BULK_LIMIT,
+            orders_per_element: DEFAULT_BULK_LIMIT,
+            generic_fields: DEFAULT_LIST_LIMIT,
             nested_sequences: 256,
         }
     }
