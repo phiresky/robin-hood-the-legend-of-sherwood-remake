@@ -31,8 +31,10 @@ class QualitySuitesTests(unittest.TestCase):
             "with open(os.environ['QUALITY_TEST_CALLS'], 'a') as output:\n"
             "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
             "if sys.argv[1] == 'tree': print(sys.argv[sys.argv.index('-p') + 1] + ' v0.1.0')\n"
+            "if '--list' in sys.argv and os.environ.get('QUALITY_TEST_LIST_FAILURE'): sys.exit(42)\n"
             "if '--list' in sys.argv and not os.environ.get('QUALITY_TEST_EMPTY_SELECTION'):\n"
-            "    print(sys.argv[sys.argv.index('--') - 1] + ': test')\n",
+            "    print(sys.argv[sys.argv.index('--') - 1] + ': test')\n"
+            "    if os.environ.get('QUALITY_TEST_MULTIPLE_SELECTION'): print('another_target::fixture: test')\n",
             encoding="utf-8",
         )
         cargo.chmod(0o755)
@@ -201,6 +203,19 @@ class QualitySuitesTests(unittest.TestCase):
         self.assertEqual(len(calls), 2 * len(self.calls()))
         for listing, execution in zip(calls[::2], calls[1::2]):
             self.assertEqual(listing, [*execution, "--list"])
+
+    def test_fixture_listing_failure_is_not_retried_as_execution(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.environment["QUALITY_TEST_LIST_FAILURE"] = "1"
+        self.run_suite("fixtures-demo", expected=42)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(len(self.calls(include_listings=True)), 1)
+
+    def test_exact_fixture_gate_rejects_multiple_compiled_matches(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.environment["QUALITY_TEST_MULTIPLE_SELECTION"] = "1"
+        self.run_suite("fixtures-demo", expected=1)
+        self.assertEqual(self.calls(), [])
 
     def test_converter_fixtures_are_selected_exactly_for_their_distribution(self):
         self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
