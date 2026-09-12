@@ -315,7 +315,8 @@ leaderboard eligibility and recorded post-restore hash validation are covered by
 ranked-resimulation and client archive tests. The fixture retains original
 prefix hashes only: persisted-load reconciliation can change the state, so a
 pre-save checkpoint must not be reused as a post-load expected hash.
-# Wire format freezes
+
+## Wire format freezes
 
 Native parity traces and shipping assets have independent codec contracts.
 `robin_parity` pins crates.io `bitcode` 0.6.9 for authoritative v68 traces;
