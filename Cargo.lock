@@ -6109,6 +6109,7 @@ dependencies = [
  "robin_assets",
  "robin_data_io",
  "robin_engine",
+ "robin_test_support",
  "robin_util",
  "serde",
  "serde_json",
