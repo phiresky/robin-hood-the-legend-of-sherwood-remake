@@ -1013,7 +1013,7 @@ pub(super) fn drain_post_tick_rpc(
     dev: &mut DevState,
     frame: &mut MissionFrame,
 ) {
-    let pending_actions = frame.unapplied_post_external_actions().to_vec();
+    let pending_actions = frame.unapplied_post_external_actions();
     if !pending_actions.is_empty() {
         crate::sim_timeline::run_post_external_action_stage(
             frontend,
@@ -1024,7 +1024,7 @@ pub(super) fn drain_post_tick_rpc(
             assets,
             engine,
             dev,
-            &pending_actions,
+            pending_actions,
         );
         frame.mark_post_external_actions_applied();
     }
