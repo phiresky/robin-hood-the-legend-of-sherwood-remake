@@ -45,30 +45,8 @@ fn raw_owner_boundary_position_to_ai(raw: RawOwnerBoundaryPosition) -> Option<cr
         level: layer?.into(),
     })
 }
-
-#[derive(Clone, Copy)]
-struct ThinkStimulusDebugFilter {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn think_stimulus_debug_filter() -> Option<ThinkStimulusDebugFilter> {
-    static FILTER: std::sync::OnceLock<Option<ThinkStimulusDebugFilter>> =
-        std::sync::OnceLock::new();
-    *FILTER.get_or_init(|| {
-        std::env::var_os("PARITY_DEBUG_THINK_STIMULUS")?;
-        let parse = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("{name} is required for THINK_STIMULUS diagnostic"));
-            value
-                .parse::<u32>()
-                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
-        };
-        Some(ThinkStimulusDebugFilter {
-            frame: parse("PARITY_DEBUG_THINK_STIMULUS_FRAME"),
-            creation_order: parse("PARITY_DEBUG_THINK_STIMULUS_CREATION_ORDER"),
-        })
-    })
+fn think_stimulus_debug_filter() -> Option<super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().think_stimulus
 }
 
 fn spellforge_event_name(key: ScriptVmKey, fn_name: &str) -> &str {
