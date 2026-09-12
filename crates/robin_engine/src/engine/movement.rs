@@ -958,18 +958,20 @@ mod group_move_authorization_tests {
             );
             legacy_unmapped_jump_goal_matches_spatial_source(
                 Some(&topology),
-                Some((crate::sector::SectorNumber::new(806), 0)),
-                exact_goal,
-                route_outcome,
-                door_route,
-                door,
-                jump,
-                lift,
-                true,
-                Some(source),
-                0,
-                retained_jump_falls_back_to_spatial,
-                all_match,
+                LegacyUnmappedJumpGoal {
+                    recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                    exact_goal_index: exact_goal,
+                    has_recorded_route_outcome: route_outcome,
+                    recorded_door_route: door_route,
+                    is_door_click: door,
+                    is_jump_click: jump,
+                    is_lift_click: lift,
+                    is_valid: true,
+                    selected_sector_index: Some(source),
+                    selected_layer: 0,
+                    retained_jump_falls_back_to_spatial: retained_jump_falls_back_to_spatial,
+                    all_source_arenas_match_spatial: all_match,
+                },
             )
         };
 
@@ -1008,40 +1010,44 @@ mod group_move_authorization_tests {
         assert!(!recognized(None, false, None, false, false, false, false));
         assert!(!legacy_unmapped_jump_goal_matches_spatial_source(
             Some(&topology),
-            Some((crate::sector::SectorNumber::new(806), 0)),
-            None,
-            false,
-            Some(false),
-            false,
-            false,
-            false,
-            true,
-            Some(source),
-            0,
-            false,
-            true,
+            LegacyUnmappedJumpGoal {
+                recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                exact_goal_index: None,
+                has_recorded_route_outcome: false,
+                recorded_door_route: Some(false),
+                is_door_click: false,
+                is_jump_click: false,
+                is_lift_click: false,
+                is_valid: true,
+                selected_sector_index: Some(source),
+                selected_layer: 0,
+                retained_jump_falls_back_to_spatial: false,
+                all_source_arenas_match_spatial: true,
+            }
         ));
 
         level.sectors.push(jump);
         assert!(!legacy_unmapped_jump_goal_matches_spatial_source(
             Some(&topology),
-            Some((crate::sector::SectorNumber::new(806), 0)),
-            None,
-            false,
-            None,
-            false,
-            false,
-            false,
-            true,
-            Some(source),
-            0,
-            retained_jump_goal_uses_underlying_sector(
-                &level,
-                crate::sector::SectorNumber::new(806),
-                0,
-                Some(source),
-            ),
-            true,
+            LegacyUnmappedJumpGoal {
+                recorded_goal: Some((crate::sector::SectorNumber::new(806), 0)),
+                exact_goal_index: None,
+                has_recorded_route_outcome: false,
+                recorded_door_route: None,
+                is_door_click: false,
+                is_jump_click: false,
+                is_lift_click: false,
+                is_valid: true,
+                selected_sector_index: Some(source),
+                selected_layer: 0,
+                retained_jump_falls_back_to_spatial: retained_jump_goal_uses_underlying_sector(
+                    &level,
+                    crate::sector::SectorNumber::new(806),
+                    0,
+                    Some(source),
+                ),
+                all_source_arenas_match_spatial: true,
+            }
         ));
     }
 
@@ -4091,9 +4097,8 @@ fn retained_jump_goal_uses_underlying_sector(
 /// valid non-door/non-jump/non-lift sector, and its exact arena is already every
 /// actor's exact source arena. Explicit modern route outcomes and identities
 /// remain authoritative.
-#[allow(clippy::too_many_arguments)]
-fn legacy_unmapped_jump_goal_matches_spatial_source(
-    topology: Option<&crate::engine::LegacyGridTopologyAssets>,
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct LegacyUnmappedJumpGoal {
     recorded_goal: Option<(crate::sector::SectorNumber, u16)>,
     exact_goal_index: Option<crate::fast_find_grid::SectorIndex>,
     has_recorded_route_outcome: bool,
@@ -4106,7 +4111,26 @@ fn legacy_unmapped_jump_goal_matches_spatial_source(
     selected_layer: u16,
     retained_jump_falls_back_to_spatial: bool,
     all_source_arenas_match_spatial: bool,
+}
+
+fn legacy_unmapped_jump_goal_matches_spatial_source(
+    topology: Option<&crate::engine::LegacyGridTopologyAssets>,
+    request: LegacyUnmappedJumpGoal,
 ) -> bool {
+    let LegacyUnmappedJumpGoal {
+        recorded_goal,
+        exact_goal_index,
+        has_recorded_route_outcome,
+        recorded_door_route,
+        is_door_click,
+        is_jump_click,
+        is_lift_click,
+        is_valid,
+        selected_sector_index,
+        selected_layer,
+        retained_jump_falls_back_to_spatial,
+        all_source_arenas_match_spatial,
+    } = request;
     if exact_goal_index.is_some()
         || has_recorded_route_outcome
         || recorded_door_route == Some(true)
@@ -5047,7 +5071,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let (old_pos, new_pos, layer, posture, is_carried, is_pc, is_human) = {
+        let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 panic!("delayed-position owner {entity_id:?} disappeared before actor update");
             };
@@ -5055,16 +5079,13 @@ impl EngineInner {
             let is_carried = entity
                 .human_data()
                 .is_some_and(|human| human.carrier.is_some());
-            let is_pc = entity.is_pc();
             let is_human = entity.is_human();
             let Some((old_pos, new_pos, layer)) =
                 entity.element_data_mut().apply_next_delayed_position()
             else {
                 return;
             };
-            (
-                old_pos, new_pos, layer, posture, is_carried, is_pc, is_human,
-            )
+            (old_pos, new_pos, layer, posture, is_carried, is_human)
         };
 
         if !actor_line_crossing_eligible(
@@ -5124,7 +5145,6 @@ impl EngineInner {
                     .compute_increment_all(compute_direction);
             }
         }
-        let _ = is_pc;
         self.check_for_non_elevation_line_crossing_indices(
             sim,
             assets,

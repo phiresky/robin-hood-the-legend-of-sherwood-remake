@@ -612,18 +612,21 @@ impl EngineInner {
         });
         let legacy_collapsed_simple_route = legacy_unmapped_jump_goal_matches_spatial_source(
             assets.navigation.legacy_grid_topology.as_ref(),
-            goal_override,
-            goal_sector_index_override,
-            !recorded_gate_routes.is_empty() || !recorded_failed_gate_routes.is_empty(),
-            door_route_override,
-            is_door_click,
-            is_jump_click,
-            is_lift_click,
-            hit.is_valid_for_move(&self.world.fast_grid),
-            hit.sector_idx,
-            hit.layer,
-            retained_jump_falls_back_to_spatial,
-            all_source_arenas_match_spatial,
+            LegacyUnmappedJumpGoal {
+                recorded_goal: goal_override,
+                exact_goal_index: goal_sector_index_override,
+                has_recorded_route_outcome: !recorded_gate_routes.is_empty()
+                    || !recorded_failed_gate_routes.is_empty(),
+                recorded_door_route: door_route_override,
+                is_door_click: is_door_click,
+                is_jump_click: is_jump_click,
+                is_lift_click: is_lift_click,
+                is_valid: hit.is_valid_for_move(&self.world.fast_grid),
+                selected_sector_index: hit.sector_idx,
+                selected_layer: hit.layer,
+                retained_jump_falls_back_to_spatial: retained_jump_falls_back_to_spatial,
+                all_source_arenas_match_spatial: all_source_arenas_match_spatial,
+            },
         );
 
         let (
