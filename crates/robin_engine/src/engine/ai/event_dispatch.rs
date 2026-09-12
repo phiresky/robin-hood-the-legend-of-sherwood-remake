@@ -1641,7 +1641,22 @@ impl EngineInner {
             } else {
                 "AI error"
             };
-            let resolved = if raw >= first_vip {
+            let hero_voice = matches!(owner_profile, OwnerProfile::Character(_));
+            let resolved = if hero_voice {
+                // EnemyAi uses soldier Remark indices, while character banks use
+                // HERO_* expressions. Even overlapping indices mean different lines.
+                // TODO: Author a semantic NPC-remark to hero-expression mapping.
+                // Until then use the category rejection callback, so AI continues
+                // without enqueueing an invalid hero speech/timing lookup.
+                tracing::warn!(
+                    target: "ai_speech_mismatch",
+                    owner = owner.index(),
+                    speech_id,
+                    remark = ?attempt.remark,
+                    "AI soldier remark cannot use a hero voice bank"
+                );
+                None
+            } else if raw >= first_vip {
                 if !is_vip {
                     tracing::warn!(
                         target: "ai_speech_mismatch",
@@ -1695,7 +1710,9 @@ impl EngineInner {
             };
 
             let Some((group, exclamation_id)) = resolved else {
-                let reason = if raw >= first_vip {
+                let reason = if hero_voice {
+                    11
+                } else if raw >= first_vip {
                     if is_soldier { 5 } else { 6 }
                 } else if raw >= first_civilian {
                     if is_soldier { 7 } else { 8 }
