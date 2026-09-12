@@ -1123,8 +1123,7 @@ impl BuiltInteractiveMission {
         }
         let transition = self.mission.campaign_transition.take();
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
-        MissionOutcome::from_engine(campaign, rng_seed, sim_config, result)
-            .with_transition(transition)
+        MissionOutcome::new(campaign, rng_seed, sim_config, result).with_transition(transition)
     }
 }
 
@@ -1256,18 +1255,28 @@ impl BuiltHeadlessMission {
     pub(super) async fn run(
         &mut self,
         args: &crate::main_entry::MissionLaunch,
-    ) -> HeadlessMissionOutcome {
+    ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
         self.mission.run(args).await
     }
 
-    pub(super) fn finish(mut self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
-        if outcome.code == GameCode::LevelRestart {
+    pub(super) fn finish(
+        mut self,
+        outcome: Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError>,
+    ) -> MissionOutcome {
+        if matches!(&outcome, Ok(outcome) if outcome.code == GameCode::LevelRestart) {
             self.mission
                 .runtime
                 .preserve_multiplayer_session_for_next_mission();
         }
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
-        MissionOutcome::from_engine(campaign, rng_seed, sim_config, Ok(outcome.code))
+        MissionOutcome::new(
+            campaign,
+            rng_seed,
+            sim_config,
+            outcome
+                .map(|outcome| outcome.code)
+                .map_err(|error| error.to_string()),
+        )
     }
 }
 
@@ -1415,7 +1424,7 @@ impl HeadlessMissionBuilder {
         #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
         if args.simulation_content_export.is_some() {
             let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-            return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
+            return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                 campaign,
                 rng_seed,
                 sim_config,
@@ -1427,7 +1436,7 @@ impl HeadlessMissionBuilder {
             Ok(bootstrap) => bootstrap,
             Err((bootstrap, error)) => {
                 let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-                return HeadlessBuildOutcome::Finished(MissionOutcome::from_engine(
+                return HeadlessBuildOutcome::Finished(MissionOutcome::new(
                     campaign,
                     rng_seed,
                     sim_config,
@@ -1659,7 +1668,7 @@ impl InteractiveMissionBuilder {
             Ok(stage) => stage,
             Err((bootstrap, error)) => {
                 let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-                return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                     campaign,
                     rng_seed,
                     sim_config,
@@ -1673,7 +1682,7 @@ impl InteractiveMissionBuilder {
             Ok(frontend) => frontend,
             Err(error) => {
                 let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
-                return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
+                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                     campaign,
                     rng_seed,
                     sim_config,

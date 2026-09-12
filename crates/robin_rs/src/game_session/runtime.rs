@@ -939,7 +939,8 @@ impl TimelineRuntime {
         host: &mut Host,
         manager: &mut EngineManager,
         assets: &mut Arc<LevelAssets>,
-    ) -> super::multiplayer::NetDrainResult {
+    ) -> Result<super::multiplayer::NetDrainResult, super::multiplayer::MultiplayerSessionError>
+    {
         let result = super::multiplayer::drain_net_inputs(
             host,
             manager,
@@ -947,11 +948,11 @@ impl TimelineRuntime {
             &mut self.network,
             assets,
             &mut self.history.buffer,
-        );
+        )?;
         if result.rewrote_sim_state {
             self.history.reset_checker();
         }
-        result
+        Ok(result)
     }
 
     #[cfg(test)]

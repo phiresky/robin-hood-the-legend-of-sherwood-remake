@@ -4744,6 +4744,23 @@ mod tests {
         (context, incoming_rx)
     }
 
+    #[test]
+    fn fatal_server_failure_cancels_and_notifies_once() {
+        let (context, events) = dispatch_test_context();
+        let shutdown = context.shutdown_tx.subscribe();
+        super::fail_server(&context, "first failure".into());
+        super::fail_server(&context, "later failure".into());
+        assert!(context.cancellation.load(super::Ordering::Acquire));
+        assert!(*shutdown.borrow());
+        assert!(
+            matches!(events.try_recv(), Ok(NetEvent::Fatal(message)) if message == "first failure")
+        );
+        assert!(matches!(
+            events.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+    }
+
     fn admission_challenge(
         seat: u8,
         generation: u64,
