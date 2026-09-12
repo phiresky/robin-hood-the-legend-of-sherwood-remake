@@ -5654,7 +5654,7 @@ impl EngineInner {
             layer,
             Some(&obstacle_check),
         );
-        let purse_id = self.publish_new_purse(sim, assets, actor_id, purse_entity);
+        self.publish_new_purse(sim, assets, actor_id, purse_entity);
         tracing::debug!(
             actor = ?actor_id,
             x = target_pos.x,
