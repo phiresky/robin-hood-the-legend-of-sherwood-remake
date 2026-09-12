@@ -747,14 +747,13 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
         let mut element = ElementData::default();
         element.kind = ElementKind::ActorSoldier;
         let mut inner = EngineInner::new();
+        let mut npc = NpcData::default();
+        npc.ai.ai_brain = brain;
         let id = inner.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),
             human: Default::default(),
-            npc: NpcData {
-                ai_brain: brain,
-                ..Default::default()
-            },
+            npc,
             soldier: Default::default(),
         }));
         let handle = crate::ai::AiEntityHandle::new(id.index());
