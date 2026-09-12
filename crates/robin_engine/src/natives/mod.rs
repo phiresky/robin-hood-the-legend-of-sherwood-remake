@@ -800,6 +800,14 @@ impl NativeContext<'_, '_> {
         }
     }
 
+    fn yield_engine_action(&mut self, request: crate::interp::SynchronousScriptRequest) {
+        let native_return = request.native_return();
+        self.pending_yield = Some(crate::interp::NativeYield {
+            operation: crate::interp::NativeOperation::EngineAction(request),
+            resume: crate::interp::ResumePolicy::Fixed(native_return),
+        });
+    }
+
     fn current_animation(&self, actor: i32) -> Option<OrderType> {
         let entity = self.get_entity(actor)?;
         if let Some(object) = entity.object_data() {
@@ -1318,8 +1326,8 @@ impl NativeContext<'_, '_> {
             .script_state
             .sequence_recorder
             .as_ref()
-            .map(|r| r.current_size())
-            .unwrap_or(0);
+            .expect("movement expansion requires the recording session checked at entry")
+            .current_size();
 
         let mut ended_early = false;
         let mut last_new_sector = source_sector;
@@ -1349,8 +1357,8 @@ impl NativeContext<'_, '_> {
                     .script_state
                     .sequence_recorder
                     .as_ref()
-                    .map(|r| r.current_size())
-                    .unwrap_or(0);
+                    .expect("movement expansion requires the recording session checked at entry")
+                    .current_size();
                 if cur_size != first_gate_size {
                     let mut w = SequenceElement::new_generic(0, Command::WaitTimer, owner);
                     w.set_property(Field::Timer, FieldValue::Integer(50));
@@ -1909,11 +1917,11 @@ impl NativeContext<'_, '_> {
         let quantity = match self.get_entity(handle) {
             Some(Entity::Bonus(e)) => e.object.quantity as i32,
             Some(_) => {
-                tracing::warn!("Script Error: WinBlazon handle {handle} is not a blazon");
+                tracing::warn!(target: "script","Script error: WinBlazon handle {handle} is not a blazon");
                 return;
             }
             None => {
-                tracing::warn!("Script Error: WinBlazon with null handle");
+                tracing::warn!(target: "script","Script error: WinBlazon with null handle");
                 return;
             }
         };
@@ -1922,7 +1930,7 @@ impl NativeContext<'_, '_> {
         if let Some(entity) = self.get_entity(handle)
             && !entity.element_data().active
         {
-            tracing::warn!("Script Error: WinBlazon blazon already won");
+            tracing::warn!(target: "script","Script error: WinBlazon blazon already won");
             return;
         }
 
@@ -2014,10 +2022,10 @@ impl NativeContext<'_, '_> {
                 }
             }
             Some(_) => {
-                tracing::warn!("Script Error: LoseBlazon handle {handle} is not a blazon");
+                tracing::warn!(target: "script","Script error: LoseBlazon handle {handle} is not a blazon");
             }
             None => {
-                tracing::warn!("Script Error: LoseBlazon with null handle");
+                tracing::warn!(target: "script","Script error: LoseBlazon with null handle");
             }
         }
     }
@@ -2033,11 +2041,11 @@ impl NativeContext<'_, '_> {
                 }
             }
             Some(_) => {
-                tracing::warn!("Script Error: IsBlazonWon handle {handle} is not a blazon");
+                tracing::warn!(target: "script","Script error: IsBlazonWon handle {handle} is not a blazon");
                 0
             }
             None => {
-                tracing::warn!("Script Error: IsBlazonWon with null handle");
+                tracing::warn!(target: "script","Script error: IsBlazonWon with null handle");
                 0
             }
         }
@@ -2056,18 +2064,18 @@ impl NativeContext<'_, '_> {
                         _ => unreachable!(),
                     }
                 } else {
-                    tracing::warn!("Script error: IsBonusItemPickedUp item is not a bonus item");
+                    tracing::warn!(target: "script","Script error: IsBonusItemPickedUp item is not a bonus item");
                     0
                 }
             }
             Some(_) => {
-                tracing::debug!(
-                    "Script Error: IsBonusItemPickedUp handle {handle} is not an object"
+                tracing::warn!(target: "script",
+                    "Script error: IsBonusItemPickedUp handle {handle} is not an object"
                 );
                 0
             }
             None => {
-                tracing::debug!("Script Error: IsBonusItemPickedUp invalid handle {handle}");
+                tracing::warn!(target: "script","Script error: IsBonusItemPickedUp invalid handle {handle}");
                 0
             }
         }
@@ -2088,11 +2096,11 @@ impl NativeContext<'_, '_> {
             }
             Some(Entity::Pc(_)) => return, // PCs are skipped
             Some(_) => {
-                tracing::warn!("Script Error: ConfiscateMoney on non-human {handle}");
+                tracing::warn!(target: "script","Script error: ConfiscateMoney on non-human {handle}");
                 return;
             }
             None => {
-                tracing::warn!("Script Error: ConfiscateMoney invalid actor {handle}");
+                tracing::warn!(target: "script","Script error: ConfiscateMoney invalid actor {handle}");
                 return;
             }
         };
@@ -2122,7 +2130,7 @@ impl NativeContext<'_, '_> {
 
         let Some(handle) = target_handle else {
             // Reaching this branch is a script authoring bug.
-            tracing::error!("Script Error: MoveBeamMe no PC with beam_me_index {idx}");
+            tracing::warn!(target: "script","Script error: MoveBeamMe no PC with beam_me_index {idx}");
             return;
         };
 
@@ -2200,26 +2208,26 @@ impl NativeContext<'_, '_> {
             Some(Entity::Target(e)) => {
                 let filter = e.target.action_filter;
                 if filter.contains(TargetFilter::TAKE) {
-                    tracing::warn!(
-                        "Script Error: TransformHandleTargetToTakeTarget already takable"
+                    tracing::warn!(target: "script",
+                        "Script error: TransformHandleTargetToTakeTarget already takable"
                     );
                     return;
                 }
                 if !filter.contains(TargetFilter::HANDLE) {
-                    tracing::warn!("Script Error: TransformHandleTargetToTakeTarget not handlable");
+                    tracing::warn!(target: "script","Script error: TransformHandleTargetToTakeTarget not handlable");
                     return;
                 }
                 // Swap: add TAKE, remove HANDLE
                 e.target.action_filter = (filter | TargetFilter::TAKE) & !TargetFilter::HANDLE;
             }
             Some(_) => {
-                tracing::warn!(
-                    "Script Error: TransformHandleTargetToTakeTarget handle {handle} is not a target"
+                tracing::warn!(target: "script",
+                    "Script error: TransformHandleTargetToTakeTarget handle {handle} is not a target"
                 );
             }
             None => {
-                tracing::warn!(
-                    "Script Error: TransformHandleTargetToTakeTarget invalid handle {handle}"
+                tracing::warn!(target: "script",
+                    "Script error: TransformHandleTargetToTakeTarget invalid handle {handle}"
                 );
             }
         }
@@ -2244,7 +2252,7 @@ impl NativeContext<'_, '_> {
         let entity = match self.get_entity(actor) {
             Some(e) => e,
             None => {
-                tracing::warn!("Script Error: GetPersistentProperty invalid actor {actor}");
+                tracing::warn!(target: "script","Script error: GetPersistentProperty invalid actor {actor}");
                 return -1;
             }
         };
@@ -2263,7 +2271,7 @@ impl NativeContext<'_, '_> {
             //   - Civilian: never has a bow.
             0 => {
                 if !entity.is_human() {
-                    tracing::warn!("Script Error: GetPersistentProperty 'arrows' on non-human");
+                    tracing::warn!(target: "script","Script error: GetPersistentProperty 'arrows' on non-human");
                     return -1;
                 }
                 match entity {
@@ -2309,7 +2317,7 @@ impl NativeContext<'_, '_> {
             // 1: money — requires NPC
             1 => entity.npc_data().map_or_else(
                 || {
-                    tracing::warn!("Script Error: GetPersistentProperty 'money' on non-NPC");
+                    tracing::warn!(target: "script","Script error: GetPersistentProperty 'money' on non-NPC");
                     -1
                 },
                 |npc| npc.money as i32,
@@ -2317,8 +2325,8 @@ impl NativeContext<'_, '_> {
             // 2: life points — requires human
             2 => {
                 if !entity.is_human() {
-                    tracing::warn!(
-                        "Script Error: GetPersistentProperty 'life points' on non-human"
+                    tracing::warn!(target: "script",
+                        "Script error: GetPersistentProperty 'life points' on non-human"
                     );
                     return -1;
                 }
@@ -2332,7 +2340,7 @@ impl NativeContext<'_, '_> {
             // 3: concussion — requires human
             3 => entity.human_data().map_or_else(
                 || {
-                    tracing::warn!("Script Error: GetPersistentProperty 'concussion' on non-human");
+                    tracing::warn!(target: "script","Script error: GetPersistentProperty 'concussion' on non-human");
                     -1
                 },
                 |h| h.concussion_of_the_brain as i32,
@@ -2342,7 +2350,7 @@ impl NativeContext<'_, '_> {
                 let pc = match entity.pc_data() {
                     Some(pc) => pc,
                     None => {
-                        tracing::warn!("Script Error: GetPersistentProperty prop {prop} on non-PC");
+                        tracing::warn!(target: "script","Script error: GetPersistentProperty prop {prop} on non-PC");
                         return -1;
                     }
                 };
@@ -2368,7 +2376,7 @@ impl NativeContext<'_, '_> {
                     .expect("persistent PC ammo property has a live counter") as i32
             }
             _ => {
-                tracing::warn!("Script Error: GetPersistentProperty invalid property {prop}");
+                tracing::warn!(target: "script","Script error: GetPersistentProperty invalid property {prop}");
                 -1
             }
         }
@@ -2392,11 +2400,11 @@ impl NativeContext<'_, '_> {
                         true
                     }
                     Some(_) => {
-                        tracing::warn!("Script Error: SetPersistentProperty 'money' on non-NPC");
+                        tracing::warn!(target: "script","Script error: SetPersistentProperty 'money' on non-NPC");
                         false
                     }
                     None => {
-                        tracing::warn!("Script Error: SetPersistentProperty invalid actor");
+                        tracing::warn!(target: "script","Script error: SetPersistentProperty invalid actor");
                         false
                     }
                 };
@@ -2407,13 +2415,13 @@ impl NativeContext<'_, '_> {
                 match self.get_entity(actor) {
                     Some(entity) if entity.is_human() => {}
                     Some(_) => {
-                        tracing::warn!(
-                            "Script Error: SetPersistentProperty 'life points' on non-human"
+                        tracing::warn!(target: "script",
+                            "Script error: SetPersistentProperty 'life points' on non-human"
                         );
                         return false;
                     }
                     None => {
-                        tracing::warn!("Script Error: SetPersistentProperty invalid actor");
+                        tracing::warn!(target: "script","Script error: SetPersistentProperty invalid actor");
                         return false;
                     }
                 }
@@ -2422,10 +2430,7 @@ impl NativeContext<'_, '_> {
                     amount,
                     native_return: 1,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 return true;
             }
             // 12: name — requires PC, amount selects SPECIAL_PEASANT_A/B/C.
@@ -2437,14 +2442,14 @@ impl NativeContext<'_, '_> {
             // display time (see `PcStatus::display_name`).
             12 => {
                 if !matches!(self.get_entity(actor), Some(Entity::Pc(_))) {
-                    tracing::warn!(
-                        "Script Error: SetPersistentProperty 'name' on non-PC (actor {actor})"
+                    tracing::warn!(target: "script",
+                        "Script error: SetPersistentProperty 'name' on non-PC (actor {actor})"
                     );
                     return false;
                 }
                 let Some(slot) = SpecialPeasantName::from_amount(amount) else {
-                    tracing::warn!(
-                        "Script Error: SetPersistentProperty 'name' invalid name ID {amount}"
+                    tracing::warn!(target: "script",
+                        "Script error: SetPersistentProperty 'name' invalid name ID {amount}"
                     );
                     return false;
                 };
@@ -2474,13 +2479,13 @@ impl NativeContext<'_, '_> {
                 match self.get_entity(actor) {
                     Some(entity) if entity.is_human() => {}
                     Some(_) => {
-                        tracing::warn!(
-                            "Script Error: SetPersistentProperty 'concussion' on non-human"
+                        tracing::warn!(target: "script",
+                            "Script error: SetPersistentProperty 'concussion' on non-human"
                         );
                         return false;
                     }
                     None => {
-                        tracing::warn!("Script Error: SetPersistentProperty invalid actor");
+                        tracing::warn!(target: "script","Script error: SetPersistentProperty invalid actor");
                         return false;
                     }
                 }
@@ -2489,10 +2494,7 @@ impl NativeContext<'_, '_> {
                     amount,
                     native_return: 1,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 return true;
             }
             _ => {}
@@ -2521,16 +2523,16 @@ impl NativeContext<'_, '_> {
                     if prop == 0 {
                         // Arrows: must be human and have a bow.
                         if !entity.is_human() {
-                            tracing::warn!(
-                                "Script Error: SetPersistentProperty 'arrows' on non-human"
+                            tracing::warn!(target: "script",
+                                "Script error: SetPersistentProperty 'arrows' on non-human"
                             );
                             return false;
                         }
                     } else {
                         // Props 4–11: PC-only.
                         if !entity.is_pc() {
-                            tracing::warn!(
-                                "Script Error: SetPersistentProperty prop {prop} on non-PC"
+                            tracing::warn!(target: "script",
+                                "Script error: SetPersistentProperty prop {prop} on non-PC"
                             );
                             return false;
                         }
@@ -2555,21 +2557,21 @@ impl NativeContext<'_, '_> {
                                         return false;
                                     }
                                     None => {
-                                        tracing::warn!(
-                                            "Script Error: SetPersistentProperty invalid actor {actor}"
+                                        tracing::warn!(target: "script",
+                                            "Script error: SetPersistentProperty invalid actor {actor}"
                                         );
                                         return false;
                                     }
                                 };
                                 if !self.soldier_has_bow_profile(soldier_profile_index) {
-                                    tracing::warn!(
-                                        "Script Error: SetPersistentProperty 'arrows' on soldier without bow profile"
+                                    tracing::warn!(target: "script",
+                                        "Script error: SetPersistentProperty 'arrows' on soldier without bow profile"
                                     );
                                     return false;
                                 }
                                 let Some(actor_index) = Self::actor_handle_index(actor) else {
-                                    tracing::warn!(
-                                        "Script Error: SetPersistentProperty invalid actor {actor}"
+                                    tracing::warn!(target: "script",
+                                        "Script error: SetPersistentProperty invalid actor {actor}"
                                     );
                                     return false;
                                 };
@@ -2596,7 +2598,7 @@ impl NativeContext<'_, '_> {
                     }
                 }
                 None => {
-                    tracing::warn!("Script Error: SetPersistentProperty invalid actor {actor}");
+                    tracing::warn!(target: "script","Script error: SetPersistentProperty invalid actor {actor}");
                     return false;
                 }
             };
@@ -2668,8 +2670,8 @@ impl NativeContext<'_, '_> {
             }
 
             let Some(Entity::Pc(pc)) = self.get_entity_mut(actor) else {
-                tracing::warn!(
-                    "Script Error: SetPersistentProperty required PC actor {actor} disappeared"
+                tracing::warn!(target: "script",
+                    "Script error: SetPersistentProperty required PC actor {actor} disappeared"
                 );
                 return false;
             };
@@ -2700,7 +2702,7 @@ impl NativeContext<'_, '_> {
             return true;
         }
 
-        tracing::warn!("Script Error: SetPersistentProperty invalid property {prop}");
+        tracing::warn!(target: "script","Script error: SetPersistentProperty invalid property {prop}");
         false
     }
 
@@ -3019,7 +3021,7 @@ impl NativeContext<'_, '_> {
         if idx >= 0 && (idx as usize) < count {
             return ScriptHandleCodec::encode(kind, idx as usize);
         }
-        tracing::error!("Script Error: invalid {name} ID {idx} (max={count})");
+        tracing::warn!(target: "script","Script error: invalid {name} ID {idx} (max={count})");
         0
     }
 
@@ -3028,7 +3030,7 @@ impl NativeContext<'_, '_> {
     /// `false` so the caller can skip queueing its command.
     fn check_camera_location(loc: i32, native: &str) -> bool {
         if loc == 0 {
-            tracing::warn!("Script Error: {native} called without a location");
+            tracing::warn!(target: "script","Script error: {native} called without a location");
             false
         } else {
             true
@@ -3153,15 +3155,10 @@ impl NativeContext<'_, '_> {
             return;
         }
 
-        self.pending_yield = Some(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::EngineAction(
-                crate::interp::SynchronousScriptRequest::LockAi {
-                    actor,
-                    remember_events,
-                    native_return: 0,
-                },
-            ),
-            resume: crate::interp::ResumePolicy::Fixed(0),
+        self.yield_engine_action(crate::interp::SynchronousScriptRequest::LockAi {
+            actor,
+            remember_events,
+            native_return: 0,
         });
     }
 
@@ -3195,14 +3192,9 @@ impl NativeContext<'_, '_> {
             return;
         }
 
-        self.pending_yield = Some(crate::interp::NativeYield {
-            operation: crate::interp::NativeOperation::EngineAction(
-                crate::interp::SynchronousScriptRequest::UnlockAi {
-                    actor,
-                    native_return: 0,
-                },
-            ),
-            resume: crate::interp::ResumePolicy::Fixed(0),
+        self.yield_engine_action(crate::interp::SynchronousScriptRequest::UnlockAi {
+            actor,
+            native_return: 0,
         });
     }
 

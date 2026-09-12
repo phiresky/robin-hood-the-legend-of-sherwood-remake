@@ -17,19 +17,19 @@ impl NativeContext<'_, '_> {
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity_mut(actor) else {
-                    tracing::error!("Script Error: SetAIAlertStatus invalid actor {actor}");
+                    tracing::warn!(target: "script","Script error: SetAIAlertStatus invalid actor {actor}");
                     return 0;
                 };
                 if entity.is_pc() {
-                    tracing::error!("Script Error: SetAIAlertStatus target {actor} is a PC");
+                    tracing::warn!(target: "script","Script error: SetAIAlertStatus target {actor} is a PC");
                     return 0;
                 }
                 if !entity.is_npc() {
-                    tracing::error!("Script Error: SetAIAlertStatus target {actor} is not an NPC");
+                    tracing::warn!(target: "script","Script error: SetAIAlertStatus target {actor} is not an NPC");
                     return 0;
                 }
                 let Ok(level) = AlertLevel::try_from(val as u32) else {
-                    tracing::error!("Script Error: SetAIAlertStatus illegal alert value {val}");
+                    tracing::warn!(target: "script","Script error: SetAIAlertStatus illegal alert value {val}");
                     return 0;
                 };
                 // Route soldiers through the enemy-side wrapper
@@ -48,11 +48,11 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 // Warn + return false on missing actor / non-NPC.
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::error!("Script Error: GetAIAlertStatus invalid actor {actor}");
+                    tracing::warn!(target: "script","Script error: GetAIAlertStatus invalid actor {actor}");
                     return 0;
                 };
                 let Some(ai) = entity.ai_controller() else {
-                    tracing::error!("Script Error: GetAIAlertStatus target {actor} is not an NPC");
+                    tracing::warn!(target: "script","Script error: GetAIAlertStatus target {actor} is not an NPC");
                     return 0;
                 };
                 // Read the view-parameter alert status — the
@@ -64,11 +64,11 @@ impl NativeContext<'_, '_> {
                 let val = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity_mut(actor) else {
-                    tracing::error!("Script Error: SetAIState invalid actor {actor}");
+                    tracing::warn!(target: "script","Script error: SetAIState invalid actor {actor}");
                     return 0;
                 };
                 if !entity.is_npc() {
-                    tracing::error!("Script Error: SetAIState target {actor} is not an NPC");
+                    tracing::warn!(target: "script","Script error: SetAIState target {actor} is not an NPC");
                     return 0;
                 }
 
@@ -78,33 +78,33 @@ impl NativeContext<'_, '_> {
                 // literally so rejected states return false without yielding.
                 match val {
                     0 => {
-                        tracing::error!(
-                            "Script Error: Sleeping state cannot be set by script on actor {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: Sleeping state cannot be set by script on actor {actor}"
                         );
                         return 0;
                     }
                     2 => {
-                        tracing::error!(
-                            "Script Error: SetAIState illegal state value {val} on actor {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: SetAIState illegal state value {val} on actor {actor}"
                         );
                         return 0;
                     }
                     4 => {
-                        tracing::error!(
-                            "Script Error: Menacing state cannot be set by script on actor {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: Menacing state cannot be set by script on actor {actor}"
                         );
                         return 0;
                     }
                     6 => {
-                        tracing::error!(
-                            "Script Error: Attacking state cannot be set by script on actor {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: Attacking state cannot be set by script on actor {actor}"
                         );
                         return 0;
                     }
                     1 | 3 | 5 | 7 => {}
                     _ => {
-                        tracing::error!(
-                            "Script Error: SetAIState illegal state value {val} on actor {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: SetAIState illegal state value {val} on actor {actor}"
                         );
                         return 0;
                     }
@@ -121,8 +121,8 @@ impl NativeContext<'_, '_> {
                         crate::interp::ScriptAiStateNativeEffect::Seeking
                     }
                     (3, Entity::Civilian(_)) => {
-                        tracing::error!(
-                            "Script Error: SetAIState(SEEKING) on civilian NPC {actor}"
+                        tracing::warn!(target: "script",
+                            "Script error: SetAIState(SEEKING) on civilian NPC {actor}"
                         );
                         return 0;
                     }
@@ -147,16 +147,13 @@ impl NativeContext<'_, '_> {
                     _ => unreachable!("validated SetAIState owner stopped being an NPC"),
                 };
 
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    operation: crate::interp::NativeOperation::EngineAction(
-                        crate::interp::SynchronousScriptRequest::ApplyAiStateNative {
-                            actor,
-                            effect,
-                            native_return: 1,
-                        },
-                    ),
-                    resume: crate::interp::ResumePolicy::Fixed(1),
-                });
+                self.yield_engine_action(
+                    crate::interp::SynchronousScriptRequest::ApplyAiStateNative {
+                        actor,
+                        effect,
+                        native_return: 1,
+                    },
+                );
                 1
             }
             GetAIState => {
@@ -185,11 +182,11 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 match self.get_entity(actor) {
                     None => {
-                        tracing::error!("Script Error: GetAIAttitude invalid actor {actor}");
+                        tracing::warn!(target: "script","Script error: GetAIAttitude invalid actor {actor}");
                         0
                     }
                     Some(e) if !e.is_npc() => {
-                        tracing::error!("Script Error: GetAIAttitude target {actor} is not an NPC");
+                        tracing::warn!(target: "script","Script error: GetAIAttitude target {actor} is not an NPC");
                         0
                     }
                     Some(e) => i32::from(self.is_hostile_to_player(e.camp())),
@@ -206,11 +203,11 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 match self.get_entity(actor) {
                     None => {
-                        tracing::error!("Script Error: SetAILevel invalid actor {actor}");
+                        tracing::warn!(target: "script","Script error: SetAILevel invalid actor {actor}");
                         return 0;
                     }
                     Some(e) if !e.is_npc() => {
-                        tracing::error!("Script Error: SetAILevel target {actor} is not an NPC");
+                        tracing::warn!(target: "script","Script error: SetAILevel target {actor} is not an NPC");
                         return 0;
                     }
                     _ => {}
@@ -224,12 +221,12 @@ impl NativeContext<'_, '_> {
                 let target = stack.pop_i32();
                 let actor = stack.pop_i32();
                 let Some(target_id) = self.actor_id(target) else {
-                    tracing::error!("Script Error: StareActor invalid target {target}");
+                    tracing::warn!(target: "script","Script error: StareActor invalid target {target}");
                     return 0;
                 };
                 if !self.get_entity(actor).is_some_and(|entity| entity.is_npc()) {
-                    tracing::error!(
-                        "Script Error: StareActor actor {actor} is invalid or not an NPC"
+                    tracing::warn!(target: "script",
+                        "Script error: StareActor actor {actor} is invalid or not an NPC"
                     );
                     return 0;
                 }
@@ -239,10 +236,7 @@ impl NativeContext<'_, '_> {
                     turn_sprite,
                     native_return: 0,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 0
             }
             StareLocation => {
@@ -250,22 +244,22 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
                 if !self.get_entity(actor).is_some_and(|entity| entity.is_npc()) {
-                    tracing::error!(
-                        "Script Error: StareLocation actor {actor} is invalid or not an NPC"
+                    tracing::warn!(target: "script",
+                        "Script error: StareLocation actor {actor} is invalid or not an NPC"
                     );
                     return 0;
                 }
                 if !self.is_script_point(loc) {
-                    tracing::error!("Script Error: StareLocation location {loc} is not a point");
+                    tracing::warn!(target: "script","Script error: StareLocation location {loc} is not a point");
                     return 0;
                 }
                 let Some((x, y)) = self.resolve_location_pos(loc) else {
-                    tracing::error!("Script Error: StareLocation location {loc} is missing");
+                    tracing::warn!(target: "script","Script error: StareLocation location {loc} is missing");
                     return 0;
                 };
                 let Some((level, sector)) = self.resolve_location_layer_sector_handle(loc) else {
-                    tracing::error!(
-                        "Script Error: StareLocation location {loc} has no exact layer/sector"
+                    tracing::warn!(target: "script",
+                        "Script error: StareLocation location {loc} has no exact layer/sector"
                     );
                     return 0;
                 };
@@ -280,10 +274,7 @@ impl NativeContext<'_, '_> {
                     turn_sprite,
                     native_return: 0,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 0
             }
             AssignPath => {
@@ -300,10 +291,7 @@ impl NativeContext<'_, '_> {
                     way,
                     native_return: 0,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 0
             }
             AssignPost => {
@@ -343,10 +331,7 @@ impl NativeContext<'_, '_> {
                     direction,
                     native_return: 0,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 0
             }
             ForceBattleDecision => {
@@ -361,14 +346,14 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
 
                 let Some(entity) = self.get_entity_mut(actor) else {
-                    tracing::warn!(
-                        "Script Error: ForceBattleDecision on illegal actor handle {actor}"
+                    tracing::warn!(target: "script",
+                        "Script error: ForceBattleDecision on illegal actor handle {actor}"
                     );
                     return 0;
                 };
                 if !entity.is_soldier() {
-                    tracing::warn!(
-                        "Script Error: ForceBattleDecision on non-soldier actor {actor}"
+                    tracing::warn!(target: "script",
+                        "Script error: ForceBattleDecision on non-soldier actor {actor}"
                     );
                     return 0;
                 }
@@ -401,8 +386,8 @@ impl NativeContext<'_, '_> {
                     16 => Decision::RunToArcheryPoint,
                     99 => Decision::None,
                     other => {
-                        tracing::warn!(
-                            "Script Error: Illegal identifier {other} for battle decision."
+                        tracing::warn!(target: "script",
+                            "Script error: Illegal identifier {other} for battle decision."
                         );
                         return 0;
                     }
@@ -430,12 +415,12 @@ impl NativeContext<'_, '_> {
                     0 => crate::ai::NoiseType::Logs,
                     1 => crate::ai::NoiseType::Drawbridge,
                     _ => {
-                        tracing::error!("Script Error: Illegal noise ID {noise_id}");
+                        tracing::warn!(target: "script","Script error: Illegal noise ID {noise_id}");
                         return 0;
                     }
                 };
                 let Some((origin_x, origin_y)) = self.resolve_location_pos(loc) else {
-                    tracing::error!("Script error: MakeNoise without a location (handle {loc})");
+                    tracing::warn!(target: "script","Script error: MakeNoise without a location (handle {loc})");
                     return 0;
                 };
                 // Emit a deferred command so the engine runs the
@@ -443,7 +428,7 @@ impl NativeContext<'_, '_> {
                 // filter, noise-display update), identical to the
                 // gameplay callsites.
                 let Some((layer, sector)) = self.resolve_location_layer_sector_handle(loc) else {
-                    tracing::error!(
+                    tracing::warn!(target: "script",
                         "Script error: MakeNoise location {loc} has no exact layer/sector metadata"
                     );
                     return 0;
@@ -468,8 +453,8 @@ impl NativeContext<'_, '_> {
                 // Entity-existence and NPC-type guards both warn +
                 // early-return on miss.
                 if !self.actor_exists(actor) {
-                    tracing::error!(
-                        "Script Error: Trying to set path walking style of an invalid actor element."
+                    tracing::warn!(target: "script",
+                        "Script error: Trying to set path walking style of an invalid actor element."
                     );
                     return 0;
                 }
@@ -477,7 +462,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 };
                 if entity.ai_controller().is_none() {
-                    tracing::error!("Script Error: Trying to set path walking style of a non-NPC.");
+                    tracing::warn!(target: "script","Script error: Trying to set path walking style of a non-NPC.");
                     return 0;
                 }
                 let Some(ai) = entity.ai_controller_mut() else {
@@ -505,10 +490,7 @@ impl NativeContext<'_, '_> {
                         actor,
                         native_return: 0,
                     };
-                    self.pending_yield = Some(crate::interp::NativeYield {
-                        resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                        operation: crate::interp::NativeOperation::EngineAction(request),
-                    });
+                    self.yield_engine_action(request);
                 }
                 0
             }
@@ -537,23 +519,20 @@ impl NativeContext<'_, '_> {
                 //   }
                 let actor = stack.pop_i32();
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::error!(
-                        "Script Error: SwitchToAlertPath with invalid soldier ({actor})"
+                    tracing::warn!(target: "script",
+                        "Script error: SwitchToAlertPath with invalid soldier ({actor})"
                     );
                     return 0;
                 };
                 if !entity.is_soldier() {
-                    tracing::error!("Script Error: SwitchToAlertPath with non-soldier ({actor})");
+                    tracing::warn!(target: "script","Script error: SwitchToAlertPath with non-soldier ({actor})");
                     return 0;
                 }
                 let request = crate::interp::SynchronousScriptRequest::SwitchToAlertPath {
                     actor,
                     native_return: 0,
                 };
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
-                    operation: crate::interp::NativeOperation::EngineAction(request),
-                });
+                self.yield_engine_action(request);
                 0
             }
             SetNPCEmoticon => {
@@ -562,16 +541,16 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
                 let frame = self.frame_counter();
                 let Some(entity) = self.get_entity_mut(actor) else {
-                    tracing::warn!("Script Error: SetNPCEmoticon invalid actor {actor}");
+                    tracing::warn!(target: "script","Script error: SetNPCEmoticon invalid actor {actor}");
                     return 0;
                 };
                 if !entity.is_npc() {
-                    tracing::warn!("Script Error: SetNPCEmoticon target {actor} is not an NPC");
+                    tracing::warn!(target: "script","Script error: SetNPCEmoticon target {actor} is not an NPC");
                     return 0;
                 }
                 let Ok(et) = EmoticonType::try_from(emoticon_type as u32) else {
-                    tracing::warn!(
-                        "Script Error: SetNPCEmoticon invalid emoticon id {emoticon_type}"
+                    tracing::warn!(target: "script",
+                        "Script error: SetNPCEmoticon invalid emoticon id {emoticon_type}"
                     );
                     return 0;
                 };
@@ -647,15 +626,15 @@ impl NativeContext<'_, '_> {
 
                 // Guard 1: subordinate exists.
                 let Some(sub_entity) = self.get_entity(subordinate) else {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with invalid subordinate ({subordinate})"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with invalid subordinate ({subordinate})"
                     );
                     return 0;
                 };
                 // Guard 2: subordinate is an NPC.
                 if !sub_entity.is_npc() {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with non-NPC subordinate ({subordinate})"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with non-NPC subordinate ({subordinate})"
                     );
                     return 0;
                 }
@@ -686,8 +665,8 @@ impl NativeContext<'_, '_> {
                     .ai_controller()
                     .is_some_and(|ai| ai.patrol_chief.is_some());
                 if sub_has_chief {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with subordinate ({subordinate}) who already is in a patrol"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with subordinate ({subordinate}) who already is in a patrol"
                     );
                     return 0;
                 }
@@ -697,20 +676,20 @@ impl NativeContext<'_, '_> {
                     .ai_controller()
                     .is_some_and(|ai| !ai.theoretical_patrol.is_empty());
                 if sub_has_patrol {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with subordinate ({subordinate}) who is himself a patrol chief"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with subordinate ({subordinate}) who is himself a patrol chief"
                     );
                     return 0;
                 }
 
                 // Guard 5: chief exists.
                 let Some(chief_entity) = self.get_entity(actor) else {
-                    tracing::error!("Script Error: AddAsSubordinate with invalid chief ({actor})");
+                    tracing::warn!(target: "script","Script error: AddAsSubordinate with invalid chief ({actor})");
                     return 0;
                 };
                 // Guard 6: chief is an NPC.
                 if !chief_entity.is_npc() {
-                    tracing::error!("Script Error: AddAsSubordinate with non-NPC chief ({actor})");
+                    tracing::warn!(target: "script","Script error: AddAsSubordinate with non-NPC chief ({actor})");
                     return 0;
                 }
                 // Guard 7: chief has no chief of its own.
@@ -718,22 +697,22 @@ impl NativeContext<'_, '_> {
                     .ai_controller()
                     .is_some_and(|ai| ai.patrol_chief.is_some());
                 if chief_has_chief {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with chief ({actor}) who is himself in a patrol"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with chief ({actor}) who is himself in a patrol"
                     );
                     return 0;
                 }
                 // Guard 8: subordinate ≠ chief.
                 if subordinate == actor {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with subordinate ({subordinate}) == chief"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with subordinate ({subordinate}) == chief"
                     );
                     return 0;
                 }
 
                 let Some(sub_id) = self.actor_id(subordinate) else {
-                    tracing::error!(
-                        "Script Error: AddAsSubordinate with invalid subordinate handle {subordinate}"
+                    tracing::warn!(target: "script",
+                        "Script error: AddAsSubordinate with invalid subordinate handle {subordinate}"
                     );
                     return 0;
                 };
@@ -778,14 +757,14 @@ impl NativeContext<'_, '_> {
                 let actor = stack.pop_i32();
 
                 let Some(entity) = self.get_entity(actor) else {
-                    tracing::error!(
-                        "Script Error: RemoveAllSubordinates with invalid chief ({actor})"
+                    tracing::warn!(target: "script",
+                        "Script error: RemoveAllSubordinates with invalid chief ({actor})"
                     );
                     return 0;
                 };
                 if !entity.is_npc() {
-                    tracing::error!(
-                        "Script Error: RemoveAllSubordinates with non-NPC chief ({actor})"
+                    tracing::warn!(target: "script",
+                        "Script error: RemoveAllSubordinates with non-NPC chief ({actor})"
                     );
                     return 0;
                 }
@@ -795,15 +774,12 @@ impl NativeContext<'_, '_> {
                 // needs EngineInner + LevelAssets, so suspend this VM at the
                 // native boundary and let the engine complete it before the
                 // next instruction runs.
-                self.pending_yield = Some(crate::interp::NativeYield {
-                    operation: crate::interp::NativeOperation::EngineAction(
-                        crate::interp::SynchronousScriptRequest::RemoveAllSubordinates {
-                            actor,
-                            native_return: 0,
-                        },
-                    ),
-                    resume: crate::interp::ResumePolicy::Fixed(0),
-                });
+                self.yield_engine_action(
+                    crate::interp::SynchronousScriptRequest::RemoveAllSubordinates {
+                        actor,
+                        native_return: 0,
+                    },
+                );
                 0
             }
             AddRepulsivePoint => {
@@ -823,14 +799,14 @@ impl NativeContext<'_, '_> {
                 let radius = f32::from_bits(stack.pop_i32() as u32);
                 let loc = stack.pop_i32();
                 if !self.is_script_point(loc) {
-                    tracing::error!(
-                        "Script Error: AddRepulsivePoint requires a point location (got handle {loc})"
+                    tracing::warn!(target: "script",
+                        "Script error: AddRepulsivePoint requires a point location (got handle {loc})"
                     );
                     return 0;
                 }
                 let Some((x, y)) = self.resolve_location_pos(loc) else {
-                    tracing::error!(
-                        "Script Error: AddRepulsivePoint cannot resolve location {loc}"
+                    tracing::warn!(target: "script",
+                        "Script error: AddRepulsivePoint cannot resolve location {loc}"
                     );
                     return 0;
                 };
