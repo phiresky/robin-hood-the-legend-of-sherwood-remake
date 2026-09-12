@@ -157,13 +157,6 @@ impl WidgetToggleButton {
         };
     }
 
-    /// Whether the toggle is "sleeping" (not eligible for auto-focus).
-    /// Always `true` for menu toggles — the focus manager skips
-    /// sleeping widgets during navigation auto-advance.
-    pub fn is_sleeping(&self) -> bool {
-        true
-    }
-
     /// Hit-test for the focus manager: bbox plus per-pixel sample
     /// against any attached alpha mask.
     ///
@@ -504,10 +497,6 @@ impl WidgetGroupable for WidgetToggleButton {
 
     fn is_enabled(&self) -> bool {
         self.base.enabled
-    }
-
-    fn is_sleeping(&self) -> bool {
-        WidgetToggleButton::is_sleeping(self)
     }
 
     fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
@@ -866,7 +855,6 @@ mod tests {
         let g: &mut dyn WidgetGroupable = &mut w;
         assert_eq!(g.widget_id(), 1);
         assert!(g.is_enabled());
-        assert!(g.is_sleeping());
         let events = g.activate();
         assert_eq!(events[0].msg_type, UiEventType::Activated);
         assert_eq!(events[0].origin, 1);

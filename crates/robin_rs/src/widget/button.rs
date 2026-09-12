@@ -160,11 +160,6 @@ impl WidgetButton {
         }
     }
 
-    /// Whether the widget is "sleeping" (DEFAULT state).
-    pub fn is_sleeping(&self) -> bool {
-        self.base.state == UiState::Default
-    }
-
     /// Process input for one frame.
     ///
     /// Dispatches to either the base button state machine or the
@@ -470,10 +465,6 @@ impl WidgetGroupable for WidgetButton {
 
     fn is_enabled(&self) -> bool {
         self.base.enabled
-    }
-
-    fn is_sleeping(&self) -> bool {
-        WidgetButton::is_sleeping(self)
     }
 
     fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
