@@ -881,11 +881,54 @@ fn store_display_path(store: &PreferenceStore) -> PathBuf {
     }
 }
 
+/// Units displayed in save metadata; templates own their complete inflection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RelativeTimeUnit {
+    Second,
+    Minute,
+    Hour,
+    Day,
+    Week,
+    Month,
+    Year,
+}
+
 /// Strings introduced by the port cannot rely on unused numeric slots in the
 /// retail resource tables. Keep the small language-selector vocabulary in a
 /// stable keyed catalogue alongside the locale service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortTextKey {
+    SaveNewSaveLabel,
+    SaveNewSaveHint,
+    SaveMission,
+    SavePlayer,
+    SaveSaved,
+    SaveExactDate,
+    SaveCampaignProgress,
+    SaveMissions,
+    SaveGangSize,
+    SaveRansom,
+    SaveBlazons,
+    SaveAmulets,
+    SaveLegacyValueUnavailable,
+    SaveInvalidTimestamp,
+    SaveRelativeTimeUnavailable,
+    SaveLocalTimeUnavailable,
+    SaveJustNow,
+    SaveCompactSaved,
+    SaveCompactCampaignProgress,
+    SaveCompactMissions,
+    SaveCompactGangSize,
+    SaveCompactRansom,
+    SaveCompactBlazons,
+    SaveCompactAmulets,
+    /// English fallback currently owns the complete relative-time grammar.
+    SaveRelativeTime {
+        unit: RelativeTimeUnit,
+        future: bool,
+        singular: bool,
+    },
+
     GameplayLabel(crate::gameplay_settings::GameplaySetting),
     GameplayTooltip(crate::gameplay_settings::GameplaySetting),
     GameAutosaved,

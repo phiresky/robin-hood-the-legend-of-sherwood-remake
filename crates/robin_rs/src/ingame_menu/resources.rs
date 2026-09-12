@@ -385,6 +385,8 @@ pub const MT_INFOBULLE_QG_BACKTOMAP: usize = 300;
 #[derive(Default)]
 pub struct MenuText {
     strings: Vec<String>,
+    /// Snapshot of the presentation locale that supplied these resources.
+    locale: Option<String>,
     /// English fallbacks for the ids we actually use, indexed by id.
     fallbacks: Option<&'static HashMap<usize, &'static str>>,
 }
@@ -417,7 +419,7 @@ impl MenuText {
     /// `Data/Text/Level.res` depending on the build.  The caller supplies
     /// the [`ResourceManager`] that already has whichever file is
     /// available attached.
-    pub fn load(res: &mut ResourceManager) -> Self {
+    pub fn load(res: &mut ResourceManager, locale: Option<String>) -> Self {
         let strings = match robin_assets::original_text::load_menu_strings(res) {
             Ok(strings) => strings,
             Err(error) => {
@@ -430,6 +432,7 @@ impl MenuText {
         }
         Self {
             strings,
+            locale,
             fallbacks: Some(default_fallbacks()),
         }
     }
@@ -439,6 +442,7 @@ impl MenuText {
     pub fn english_fallbacks_only() -> Self {
         Self {
             strings: Vec::new(),
+            locale: None,
             fallbacks: Some(default_fallbacks()),
         }
     }
@@ -450,6 +454,10 @@ impl MenuText {
     #[cfg(test)]
     pub fn replace_strings_for_test(&mut self, strings: Vec<String>) {
         self.strings = strings;
+    }
+
+    pub(crate) fn presentation_locale(&self) -> Option<&str> {
+        self.locale.as_deref()
     }
 
     /// Look up a menu text entry by id.  Returns the English fallback
@@ -1177,7 +1185,7 @@ impl IngameMenuResources {
                 return None;
             }
         }
-        let menu_text = MenuText::load(&mut text_res);
+        let menu_text = MenuText::load(&mut text_res, files.presentation_locale());
         timer.step("menu text");
 
         let button = load_sprite_pack(
@@ -1410,7 +1418,7 @@ impl IngameMenuResources {
             attached,
             "neither localized Level.res nor Start.sxt could be loaded"
         );
-        let menu_text = MenuText::load(&mut text_res);
+        let menu_text = MenuText::load(&mut text_res, files.presentation_locale());
         anyhow::ensure!(
             menu_text.is_loaded(),
             "localized resource files contain no recognized core menu table"
@@ -2213,9 +2221,24 @@ mod tests {
         let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
         vfs.install_preloaded_asset("old-demo.res", bytes).unwrap();
         let files = std::sync::Arc::new(robin_engine::sbfile::SbFileSystem::new(vfs));
-        let mut resources = ResourceManager::with_files(files);
+        assert_eq!(
+            files.set_presentation_locale(None, None, Some("de-DE")),
+            robin_engine::sbfile::SBFILE_NO_ERROR
+        );
+        let mut resources = ResourceManager::with_files(files.clone());
         resources.attach_resource_file("old-demo.res").unwrap();
-        let menu = MenuText::load(&mut resources);
+        let menu = MenuText::load(&mut resources, files.presentation_locale());
+        assert_eq!(
+            files.set_presentation_locale(None, None, Some("fr-FR")),
+            robin_engine::sbfile::SBFILE_NO_ERROR
+        );
+        assert_eq!(
+            menu.presentation_locale(),
+            Some("de-DE"),
+            "prepared menu text must retain its locale until publication"
+        );
+        let replacement = MenuText::load(&mut resources, files.presentation_locale());
+        assert_eq!(replacement.presentation_locale(), Some("fr-FR"));
         for index in [54, 100, 144, 166, 167] {
             let (label, _, _) = crate::ui_panel::menu_text_string(&mut resources, index).unwrap();
             assert_eq!(menu.get(index), label);
@@ -2233,6 +2256,7 @@ mod tests {
         let text = MenuText {
             strings: Vec::new(),
             fallbacks: Some(default_fallbacks()),
+            locale: None,
         };
         assert_eq!(text.get(MT_BTN_OK), "OK");
         assert_eq!(text.get(MT_BTN_CONTINUE), "Continue");
@@ -2295,6 +2319,7 @@ mod tests {
         let text = MenuText {
             strings,
             fallbacks: Some(default_fallbacks()),
+            locale: None,
         };
         assert_eq!(text.get(MT_BTN_OK), "Aceptar");
     }
@@ -2305,6 +2330,7 @@ mod tests {
         let text = MenuText {
             strings,
             fallbacks: Some(default_fallbacks()),
+            locale: None,
         };
         // Empty string in table — should fall back
         assert_eq!(text.get(MT_BTN_OK), "OK");
@@ -2317,6 +2343,7 @@ mod tests {
         let text = MenuText {
             strings,
             fallbacks: Some(default_fallbacks()),
+            locale: None,
         };
 
         assert_eq!(
