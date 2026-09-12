@@ -352,6 +352,8 @@ pub(crate) fn validate_mission_archives(
     map_filename: &str,
     requires_spellforge: bool,
 ) -> Result<ValidatedMissionArchives, DistributedModError> {
+    #[cfg(test)]
+    MISSION_ARCHIVE_ADMISSIONS.with(|count| count.set(count.get() + 1));
     let mission_entries = validate_zip("mission", mission_archive)?;
     if let Some(bytes) = shared_library_archive {
         let _ = validate_zip("shared library", bytes)?;
@@ -426,6 +428,12 @@ pub(crate) fn validate_mission_archives(
         strip_prefix,
         prepend_prefix,
     })
+}
+
+#[cfg(test)]
+std::thread_local! {
+    // Per-thread so unrelated parallel tests cannot perturb admission assertions.
+    pub(crate) static MISSION_ARCHIVE_ADMISSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub fn make_distributed_mod_offer(

@@ -8,19 +8,15 @@
 use std::sync::Arc;
 
 #[cfg(not(target_arch = "wasm32"))]
-use robin_engine::mission_assets::InstalledModsRoot;
 use robin_engine::mission_assets::{
-    ArchiveIdentity, ArchiveMissionAssets, DistributedCacheIdentity, InstalledArchiveLocator,
-    MissionAssetDescriptor,
+    ArchiveIdentity, ArchiveMissionAssets, InstalledModsRoot, MissionAssetDescriptor,
 };
+use robin_engine::mission_assets::{DistributedCacheIdentity, InstalledArchiveLocator};
 use robin_engine::spellforge::SpellforgePackage;
-use sha2::{Digest, Sha256};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::distributed_mod::DISTRIBUTED_MOD_ARCHIVE_LIMIT;
-use crate::distributed_mod::{
-    DISTRIBUTED_MOD_SCHEMA_VERSION, ValidatedDistributedMod, validate_mission_archives,
-};
+use crate::distributed_mod::{DISTRIBUTED_MOD_SCHEMA_VERSION, ValidatedDistributedMod};
 use crate::mission_asset_restore::{ResolvedMissionAssets, retain_live_mission_assets};
 
 /// Runtime-only installed source selected by the picker.
@@ -339,40 +335,17 @@ fn prepare_archive_assets(
     distributed_cache: Option<DistributedCacheIdentity>,
     files: Arc<robin_engine::sbfile::SbFileSystem>,
 ) -> Result<PreparedLiveMissionAssets, String> {
-    let admitted = validate_mission_archives(
-        &mission_archive,
-        shared_archive.as_deref(),
+    let (resolved, spellforge_package) = retain_live_mission_assets(
         mission_basename,
+        map_filename,
         rhm_entry,
-        map_filename,
         requires_spellforge,
-    )
-    .map_err(|error| format!("admit exact custom-mission archives: {error}"))?;
-    let spellforge_package = admitted.spellforge_package;
-    let descriptor = MissionAssetDescriptor::archive(
-        mission_basename,
-        map_filename,
-        map_filename,
-        ArchiveMissionAssets {
-            mission_archive: archive_identity(&mission_archive),
-            selected_rhm_entry: rhm_entry.to_owned(),
-            shared_archive: shared_archive.as_deref().map(archive_identity),
-            installed,
-            distributed_cache,
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    descriptor
-        .validate_spellforge_package(spellforge_package.as_ref())
-        .map_err(|error| error.to_string())?;
-    let resolved = retain_live_mission_assets(
-        &descriptor,
         mission_archive,
         shared_archive,
-        spellforge_package.as_ref(),
+        installed,
+        distributed_cache,
         files,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     Ok(PreparedLiveMissionAssets {
         resolved: Arc::new(resolved),
         spellforge_package,
@@ -422,13 +395,6 @@ fn distributed_descriptor(
         .validate_spellforge_package(validated.spellforge_package.as_ref())
         .map_err(|error| error.to_string())?;
     Ok(descriptor)
-}
-
-fn archive_identity(bytes: &[u8]) -> ArchiveIdentity {
-    ArchiveIdentity {
-        sha256: Sha256::digest(bytes).into(),
-        bytes: bytes.len() as u64,
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -743,6 +709,92 @@ mod tests {
         bytes
     }
 
+    #[test]
+    fn live_archives_are_admitted_once_and_retain_the_exact_arc() {
+        use crate::distributed_mod::MISSION_ARCHIVE_ADMISSIONS;
+
+        let files = independent_files();
+        let selected = "German/Data/Levels/H01_Lin.rhm";
+        let level = rhm("lincoln", 0x5a);
+        let script = b"function StartUp() return 1 end".to_vec();
+        let bytes: Arc<[u8]> = zip_bytes(&[
+            (selected, level.clone()),
+            ("German/Data/Levels/H01_Lin.lua", script.clone()),
+        ])
+        .into();
+        for requires_spellforge in [false, true] {
+            let shared: Option<Arc<[u8]>> = requires_spellforge
+                .then(|| zip_bytes(&[("lib/common.lua", b"return 7".to_vec())]).into());
+            let before = MISSION_ARCHIVE_ADMISSIONS.get();
+            let prepared = prepare_archive_assets(
+                "H01_Lin",
+                "lincoln",
+                selected,
+                requires_spellforge,
+                bytes.clone(),
+                shared.clone(),
+                Some(InstalledArchiveLocator {
+                    root: robin_engine::mission_assets::InstalledModsRoot::ConfiguredMods,
+                    mission_relative_path: "mission.zip".into(),
+                    shared_relative_path: shared.as_ref().map(|_| "shared.zip".into()),
+                }),
+                None,
+                files.clone(),
+            )
+            .unwrap();
+            assert_eq!(MISSION_ARCHIVE_ADMISSIONS.get() - before, 1);
+            assert!(Arc::ptr_eq(
+                prepared.resolved.mission_archive().unwrap(),
+                &bytes
+            ));
+            if requires_spellforge {
+                let package = prepared.spellforge_package.as_ref().unwrap();
+                assert_eq!(package.entrypoint, "h01_lin.lua");
+                assert_eq!(package.files["h01_lin.lua"], script);
+                assert_eq!(package.files["lib/common.lua"], b"return 7");
+                assert!(Arc::ptr_eq(
+                    prepared.resolved.shared_archive().unwrap(),
+                    shared.as_ref().unwrap(),
+                ));
+                package.validate_wire().unwrap();
+            } else {
+                assert!(prepared.spellforge_package.is_none());
+            }
+            assert_eq!(files.read_all("Data/Levels/H01_Lin.rhm").unwrap(), level);
+            drop(prepared);
+            assert!(files.read_all("Data/Levels/H01_Lin.rhm").is_err());
+        }
+    }
+
+    #[test]
+    fn live_archive_admission_rejects_corruption_before_descriptor_errors() {
+        let files = independent_files();
+        let selected = "Data/Levels/H01_Lin.rhm";
+        let bytes = zip_bytes(&[(selected, rhm("lincoln", 0x5a))]);
+        let mut corrupt = bytes.clone();
+        let payload = corrupt.windows(4).position(|part| part == b"RHMI").unwrap();
+        corrupt[payload] ^= 1; // Stored entry now disagrees with its ZIP CRC.
+        for (archive, map) in [(corrupt, "lincoln"), (bytes, "wrong_map")] {
+            let error = prepare_archive_assets(
+                "H01_Lin",
+                map,
+                selected,
+                false,
+                archive.into(),
+                None,
+                None,
+                None,
+                files.clone(),
+            )
+            .unwrap_err(); // Missing locator would also invalidate a descriptor.
+            assert!(
+                error.starts_with("admit exact custom-mission archives:"),
+                "{error}"
+            );
+            assert!(files.read_all("Data/Levels/H01_Lin.rhm").is_err());
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn configured_and_bundled_duplicate_names_keep_distinct_locators() {
@@ -830,7 +882,12 @@ mod tests {
         let MissionAssetSource::Archive(assets) = &prepared.resolved.descriptor().source else {
             panic!("live custom mission must have archive descriptor")
         };
-        assert_eq!(assets.mission_archive, archive_identity(&original));
+        use sha2::{Digest, Sha256};
+        assert_eq!(
+            assets.mission_archive.sha256,
+            <[u8; 32]>::from(Sha256::digest(&original))
+        );
+        assert_eq!(assets.mission_archive.bytes, original.len() as u64);
         assert_eq!(
             assets.installed.as_ref().unwrap().mission_relative_path,
             "nested/mission.zip"

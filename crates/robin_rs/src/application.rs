@@ -1139,6 +1139,8 @@ impl ApplicationContext {
         })?
     }
 
+    /// Do not re-enter profile services from a key-store callback: combined
+    /// operations always acquire profiles before keys.
     pub(crate) fn with_key_configs<R>(
         &self,
         read: impl FnOnce(&KeyConfigStore) -> R,
@@ -1151,6 +1153,8 @@ impl ApplicationContext {
         Ok(read(&keys))
     }
 
+    /// Do not re-enter profile services from a key-store callback: combined
+    /// operations always acquire profiles before keys.
     pub(crate) fn with_key_configs_mut<R>(
         &self,
         update: impl FnOnce(&mut KeyConfigStore) -> R,
@@ -1280,15 +1284,29 @@ impl ApplicationContext {
     }
 
     pub fn active_key_configs(&self) -> Result<(KeyConfig, KeyConfig), String> {
-        let profile_id = self.with_active_profile(|profile| profile.id)?;
-        self.with_key_configs(|key_configs| {
-            key_configs
-                .get(profile_id)
-                .map(|entry| (entry.active.clone(), entry.custom.clone()))
+        self.with_active_profile_and_keys(|_, keys| (keys.active.clone(), keys.custom.clone()))
+    }
+
+    /// Project one coherent active-profile/key snapshot. Hold profiles before
+    /// keys, matching first-launch replacement and profile deletion. Both locks
+    /// stay held during the reader. It must not await or re-enter either service;
+    /// no guard escapes this method. Separate preference writes remain separate
+    /// publications; this only observes their current values together.
+    pub(crate) fn with_active_profile_and_keys<R>(
+        &self,
+        read: impl FnOnce(&PlayerProfile, &ProfileKeyConfig) -> R,
+    ) -> Result<R, String> {
+        self.with_active_profile(|profile| {
+            self.with_key_configs(|keys| {
+                let keys = keys.get(profile.id).ok_or_else(|| {
+                    format!(
+                        "ApplicationContext has no key config for active profile {}",
+                        profile.id
+                    )
+                })?;
+                Ok(read(profile, keys))
+            })?
         })?
-        .ok_or_else(|| {
-            format!("ApplicationContext has no key config for active profile {profile_id}")
-        })
     }
 
     /// Persist a queued-verification handoff into the application-owned
