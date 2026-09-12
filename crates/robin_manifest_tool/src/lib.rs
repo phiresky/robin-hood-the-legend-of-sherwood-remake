@@ -7,6 +7,8 @@
 //! materialized only below the private verifier-bundle tree; only DEMO
 //! component objects are copied into the public static tree.
 
+mod fs_util;
+use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
 pub mod plan_v3;
 pub mod publication_v3;
@@ -888,15 +890,8 @@ fn load_canonical_document<T>(path: &Path) -> Result<T>
 where
     T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
 {
-    let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-    let document: T = strict_json_from_slice(&bytes)
-        .with_context(|| format!("parse canonical document {}", path.display()))?;
+    let (document, _): (T, _) = fs_util::load_canonical_bytes(path, MAX_DOCUMENT_BYTES)?;
     document.validate()?;
-    ensure!(
-        canonical_json_bytes(&document)? == bytes,
-        "{} is valid but not byte-for-byte canonical JSON",
-        path.display()
-    );
     Ok(document)
 }
 
@@ -1054,17 +1049,6 @@ fn validate_mount_root(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_regular_file(path: &Path) -> Result<fs::Metadata> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("required file {} is absent", path.display()))?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "{} must be a regular non-symlink file",
-        path.display()
-    );
-    Ok(metadata)
-}
-
 fn validate_relative_source_path(path: &Path) -> Result<()> {
     ensure!(!path.as_os_str().is_empty(), "source path is empty");
     ensure!(!path.is_absolute(), "source path must be relative");
@@ -1088,25 +1072,6 @@ fn resolve_mounted_file(root: &Path, relative: &Path) -> Result<PathBuf> {
         "mounted projection path escapes its declared root"
     );
     Ok(candidate)
-}
-
-fn read_regular_file_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    let metadata = validate_regular_file(path)?;
-    ensure!(
-        metadata.len() <= maximum,
-        "{} exceeds the {} byte operator-document limit",
-        path.display(),
-        maximum
-    );
-    let capacity = usize::try_from(metadata.len()).context("file length does not fit usize")?;
-    let mut bytes = Vec::with_capacity(capacity);
-    File::open(path)?.read_to_end(&mut bytes)?;
-    ensure!(
-        u64::try_from(bytes.len()).ok() == Some(metadata.len()),
-        "{} changed while it was read",
-        path.display()
-    );
-    Ok(bytes)
 }
 
 fn walk_regular_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
@@ -1163,6 +1128,10 @@ fn path_to_manifest(path: &Path) -> Result<String> {
 }
 
 fn validate_relative_source_path_shallow(path: &Path) -> Result<()> {
+    ensure!(
+        fs_util::valid_relative_path(path.to_str().context("path is not UTF-8")?),
+        "path is not canonical relative"
+    );
     ensure!(!path.is_absolute(), "path is absolute");
     ensure!(
         path.components()

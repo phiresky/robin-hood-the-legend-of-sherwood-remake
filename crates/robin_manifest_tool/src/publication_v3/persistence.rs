@@ -129,38 +129,35 @@ pub(super) fn create_pinned_publication_staging_v3(
 const MAX_FAILED_PUBLICATION_STAGING_ENTRIES: usize = 262_144;
 const MAX_FAILED_PUBLICATION_STAGING_DEPTH: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("publication {} was atomically installed with lock {} but parent-directory durability sync failed; the immutable final exists and must be validated and treated as published",
+            .output.display(),
+            .publication_lock_sha256)]
 pub struct PublicationInstalledButParentSyncFailed {
     pub output: PathBuf,
     pub publication_lock_sha256: Digest32,
     pub source: anyhow::Error,
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("Cloudflare publication materialization {} was atomically installed with receipt {} but parent-directory durability sync failed; the exact immutable output exists and must be treated as installed",
+            .output.display(),
+            .materialization_sha256)]
 pub struct CloudflareMaterializationInstalledButParentSyncFailed {
     pub output: PathBuf,
     pub materialization_sha256: Digest32,
     pub source: anyhow::Error,
 }
 
-impl std::fmt::Display for CloudflareMaterializationInstalledButParentSyncFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Cloudflare publication materialization {} was atomically installed with receipt {} but parent-directory durability sync failed; the exact immutable output exists and must be treated as installed",
-            self.output.display(),
-            self.materialization_sha256,
-        )
-    }
-}
-
-impl std::error::Error for CloudflareMaterializationInstalledButParentSyncFailed {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("Cloudflare publication materialization persistence is uncertain; preserve candidate dev={} ino={} last staging name {}, pinned parent dev={} ino={} last path {}, and intended output {} for operator reconciliation",
+            .candidate_device,
+            .candidate_inode,
+            .last_staging_path.display(),
+            .parent_device,
+            .parent_inode,
+            .last_parent_path.display(),
+            .intended_output.display())]
 pub struct CloudflareMaterializationPersistenceStateUncertain {
     pub last_staging_path: PathBuf,
     pub candidate_device: u64,
@@ -171,25 +168,15 @@ pub struct CloudflareMaterializationPersistenceStateUncertain {
     pub intended_output: PathBuf,
 }
 
-impl std::fmt::Display for CloudflareMaterializationPersistenceStateUncertain {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Cloudflare publication materialization persistence is uncertain; preserve candidate dev={} ino={} last staging name {}, pinned parent dev={} ino={} last path {}, and intended output {} for operator reconciliation",
-            self.candidate_device,
-            self.candidate_inode,
-            self.last_staging_path.display(),
-            self.parent_device,
-            self.parent_inode,
-            self.last_parent_path.display(),
-            self.intended_output.display(),
-        )
-    }
-}
-
-impl std::error::Error for CloudflareMaterializationPersistenceStateUncertain {}
-
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("PublicationV3 persistence state is uncertain; preserve candidate dev={} ino={} last staging name {}, pinned parent dev={} ino={} last path {}, and intended output {} for operator reconciliation",
+            .candidate_device,
+            .candidate_inode,
+            .staging_path.display(),
+            .parent_device,
+            .parent_inode,
+            .parent_path.display(),
+            .intended_output.display())]
 pub(super) struct PublicationPersistenceStateUncertain {
     pub(super) staging_path: PathBuf,
     pub(super) candidate_device: u64,
@@ -199,24 +186,6 @@ pub(super) struct PublicationPersistenceStateUncertain {
     pub(super) parent_inode: u64,
     pub(super) intended_output: PathBuf,
 }
-
-impl std::fmt::Display for PublicationPersistenceStateUncertain {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "PublicationV3 persistence state is uncertain; preserve candidate dev={} ino={} last staging name {}, pinned parent dev={} ino={} last path {}, and intended output {} for operator reconciliation",
-            self.candidate_device,
-            self.candidate_inode,
-            self.staging_path.display(),
-            self.parent_device,
-            self.parent_inode,
-            self.parent_path.display(),
-            self.intended_output.display(),
-        )
-    }
-}
-
-impl std::error::Error for PublicationPersistenceStateUncertain {}
 
 fn publication_persistence_state_uncertain(
     staging: &PinnedPublicationStagingV3,
@@ -233,23 +202,6 @@ fn publication_persistence_state_uncertain(
         intended_output: output.to_path_buf(),
     }
     .into()
-}
-
-impl std::fmt::Display for PublicationInstalledButParentSyncFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "publication {} was atomically installed with lock {} but parent-directory durability sync failed; the immutable final exists and must be validated and treated as published",
-            self.output.display(),
-            self.publication_lock_sha256,
-        )
-    }
-}
-
-impl std::error::Error for PublicationInstalledButParentSyncFailed {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
-    }
 }
 
 pub(super) fn installed_publication_durability_error(

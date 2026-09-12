@@ -1356,13 +1356,7 @@ pub(super) fn forbidden_release_path(path: &str) -> bool {
 }
 
 pub(super) fn valid_relative_manifest_path(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('/')
-        && !value.contains('\\')
-        && !value.chars().any(char::is_control)
-        && !value
-            .split('/')
-            .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    crate::fs_util::valid_relative_path(value) && !value.chars().any(char::is_control)
 }
 
 pub(super) fn actual_mode(path: &Path) -> Result<u32> {

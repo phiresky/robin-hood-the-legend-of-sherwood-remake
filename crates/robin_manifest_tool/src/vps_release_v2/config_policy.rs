@@ -598,14 +598,5 @@ pub(super) fn unit_grants_path(text: &str, path: &str) -> bool {
 }
 
 pub(super) fn reject_placeholders(bytes: &[u8], label: &str) -> Result<()> {
-    let text = std::str::from_utf8(bytes)?;
-    let lowercase = text.to_ascii_lowercase();
-    ensure!(
-        !lowercase.contains(&"0".repeat(64))
-            && !lowercase.contains("changeme")
-            && !lowercase.contains("placeholder")
-            && !lowercase.contains("example.invalid"),
-        "{label} contains a zero/example/placeholder value"
-    );
-    Ok(())
+    crate::fs_util::reject_placeholders(bytes, label, true)
 }
