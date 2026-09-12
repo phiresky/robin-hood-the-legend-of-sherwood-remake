@@ -292,7 +292,7 @@ impl EnemyAi {
                 return true;
             }
             StimulusType::EventOutOfView => {
-                return self.unexpected_event_event_out_of_view(
+                return self.on_unexpected_out_of_view(
                     stimulus,
                     global,
                     ThinkEnv {
@@ -305,7 +305,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventCouldntReachPoint => {
-                return self.unexpected_event_event_couldnt_reach_point(
+                return self.on_unexpected_couldnt_reach_point(
                     stimulus,
                     global,
                     ThinkEnv {
@@ -331,7 +331,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventFitAgain => {
-                return self.unexpected_event_event_fit_again(ThinkEnv {
+                return self.on_unexpected_fit_again(ThinkEnv {
                     sim,
                     ctx,
                     tick,
@@ -377,7 +377,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesSoldier => {
-                return self.unexpected_event_event_sees_soldier(
+                return self.on_unexpected_sees_soldier(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -389,7 +389,7 @@ impl EnemyAi {
             }
 
             StimulusType::CallAlert => {
-                return self.unexpected_event_call_alert(
+                return self.on_unexpected_call_alert(
                     stimulus,
                     global,
                     ThinkEnv {
@@ -443,7 +443,7 @@ impl EnemyAi {
             // Soldier accepts the call only if the new task priority
             // outranks the current one.
             StimulusType::CallHey => {
-                return self.unexpected_event_call_hey(
+                return self.on_unexpected_call_hey(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -486,7 +486,7 @@ impl EnemyAi {
             // Special-strike gloating remark. Original guards on the
             // observable special-strike substate.
             StimulusType::EventGoodStrike => {
-                return self.unexpected_event_event_good_strike(ThinkEnv {
+                return self.on_unexpected_good_strike(ThinkEnv {
                     sim,
                     ctx,
                     tick,
@@ -506,7 +506,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventSeesBeggar => {
-                return self.unexpected_event_event_sees_beggar(
+                return self.on_unexpected_sees_beggar(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -555,8 +555,7 @@ impl EnemyAi {
             // continue from where the script left them rather than
             // restarting the patrol.
             StimulusType::EventAfterScriptGoOn => {
-                return self.unexpected_event_event_after_script_go_on(
-                    stimulus,
+                return self.on_unexpected_after_script_go_on(
                     global,
                     ThinkEnv {
                         sim,
@@ -623,7 +622,7 @@ impl EnemyAi {
             // the PC-wait state and bumps an X-mark emoticon; if already
             // waiting for the PC we acknowledge silently.
             StimulusType::CallMrOfficerIAmBack => {
-                return self.unexpected_event_call_mr_officer_iam_back(
+                return self.on_unexpected_call_mr_officer_iam_back(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -639,7 +638,7 @@ impl EnemyAi {
             // eligible substate set the charly memory still gets cleared
             // (default arm).
             StimulusType::CallCharlyIsBack => {
-                return self.unexpected_event_call_charly_is_back(
+                return self.on_unexpected_call_charly_is_back(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -746,7 +745,7 @@ impl EnemyAi {
 
         match stimulus_type {
             StimulusType::EventView => {
-                return self.alerting_event_event_view(
+                return self.on_alerting_view(
                     stimulus,
                     global,
                     ThinkEnv {
@@ -769,7 +768,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventArrowLaunched => {
-                return self.alerting_event_event_arrow_launched(
+                return self.on_alerting_arrow_launched(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -920,7 +919,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventGotHit => {
-                return self.alerting_event_event_got_hit(
+                return self.on_alerting_got_hit(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -932,7 +931,7 @@ impl EnemyAi {
             }
 
             StimulusType::EventApple => {
-                return self.alerting_event_event_apple(
+                return self.on_alerting_apple(
                     stimulus,
                     ThinkEnv {
                         sim,
@@ -2085,7 +2084,7 @@ impl EnemyAi {
 mod tests;
 
 impl EnemyAi {
-    fn unexpected_event_event_out_of_view(
+    fn on_unexpected_out_of_view(
         &mut self,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
@@ -2265,7 +2264,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_event_couldnt_reach_point(
+    fn on_unexpected_couldnt_reach_point(
         &mut self,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
@@ -2424,7 +2423,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_event_fit_again(&mut self, env: ThinkEnv<'_>) -> bool {
+    fn on_unexpected_fit_again(&mut self, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         // Recovered from unconsciousness.
         //
@@ -2478,11 +2477,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_event_sees_soldier(
-        &mut self,
-        stimulus: &Stimulus,
-        env: ThinkEnv<'_>,
-    ) -> bool {
+    fn on_unexpected_sees_soldier(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { ctx, tick, .. } = env;
         // EVENT_SEES_SOLDIER: soldier-spotting-fellow-soldier →
         // "go tell the officer" / "call this soldier over"
@@ -2572,7 +2567,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_call_alert(
+    fn on_unexpected_call_alert(
         &mut self,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
@@ -2726,7 +2721,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_call_hey(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+    fn on_unexpected_call_hey(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { ctx, .. } = env;
         let StimulusInfo::Human(officer) = stimulus.info else {
             return false;
@@ -2789,7 +2784,7 @@ impl EnemyAi {
         true
     }
 
-    fn unexpected_event_event_good_strike(&mut self, env: ThinkEnv<'_>) -> bool {
+    fn on_unexpected_good_strike(&mut self, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { ctx, .. } = env;
         let will_say = self.base.current_substate == Substate::AttackingSwordfightSpecialStrike;
         let debug = good_strike_lifecycle_debug_matches(ctx);
@@ -2822,11 +2817,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_event_sees_beggar(
-        &mut self,
-        stimulus: &Stimulus,
-        env: ThinkEnv<'_>,
-    ) -> bool {
+    fn on_unexpected_sees_beggar(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { ctx, .. } = env;
         // When in a seek-area substate, queue the beggar for later
         // identification (approach → identify1 → identify2).
@@ -2869,9 +2860,8 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_event_after_script_go_on(
+    fn on_unexpected_after_script_go_on(
         &mut self,
-        stimulus: &Stimulus,
         global: &mut AiGlobalState,
         env: ThinkEnv<'_>,
     ) -> bool {
@@ -2882,7 +2872,6 @@ impl EnemyAi {
             grid,
             ..
         } = env;
-        let stimulus_type = stimulus.stimulus_type;
         if self.base.outbox.reentrant.engine_drains_after_script_go_on {
             return false;
         }
@@ -2924,7 +2913,7 @@ impl EnemyAi {
         false
     }
 
-    fn unexpected_event_call_mr_officer_iam_back(
+    fn on_unexpected_call_mr_officer_iam_back(
         &mut self,
         stimulus: &Stimulus,
         env: ThinkEnv<'_>,
@@ -2964,7 +2953,7 @@ impl EnemyAi {
         true
     }
 
-    fn unexpected_event_call_charly_is_back(
+    fn on_unexpected_call_charly_is_back(
         &mut self,
         stimulus: &Stimulus,
         env: ThinkEnv<'_>,
@@ -3009,7 +2998,7 @@ impl EnemyAi {
         false
     }
 
-    fn alerting_event_event_view(
+    fn on_alerting_view(
         &mut self,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
@@ -3171,11 +3160,7 @@ impl EnemyAi {
         false
     }
 
-    fn alerting_event_event_arrow_launched(
-        &mut self,
-        stimulus: &Stimulus,
-        env: ThinkEnv<'_>,
-    ) -> bool {
+    fn on_alerting_arrow_launched(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { ctx, .. } = env;
         // A shield bearer whose current substate says "I am
         // holding / advancing under a shield" slams the shield up
@@ -3254,7 +3239,7 @@ impl EnemyAi {
         false
     }
 
-    fn alerting_event_event_got_hit(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+    fn on_alerting_got_hit(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv {
             ctx, tick, grid, ..
         } = env;
@@ -3377,7 +3362,7 @@ impl EnemyAi {
         false
     }
 
-    fn alerting_event_event_apple(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
+    fn on_alerting_apple(&mut self, stimulus: &Stimulus, env: ThinkEnv<'_>) -> bool {
         let ThinkEnv { sim, ctx, .. } = env;
         let in_swordfight_state = self.base.current_substate.is_any_swordfight();
         let may_interrupt = sim.config().item_gameplay.apple_combat_interrupt;
