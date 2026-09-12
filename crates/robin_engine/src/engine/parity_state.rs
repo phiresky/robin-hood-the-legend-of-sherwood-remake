@@ -13,6 +13,12 @@ mod tests;
 #[path = "parity_state/npc_tests.rs"]
 mod npc_tests;
 
+#[path = "parity_state/human_projections.rs"]
+mod human_projections;
+#[cfg(test)]
+#[path = "parity_state/human_tests.rs"]
+mod human_tests;
+
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ParityEntityKind {
@@ -891,59 +897,68 @@ impl Engine {
             state.subclass = subclass;
             Some(serde_json::to_value(state).expect("typed NPC parity must serialize"))
         });
-        let human_continuation = entity.human_data().map(|human| {
-            json!({
-                "already_detectable_body": human.already_detectable_body,
-                "concussion_healing_timeout": human.concussion_healing_timeout,
-                "tiredness": human.tiredness,
-                "concussion": human.concussion_of_the_brain,
-                "parry_counter": human.parry_counter,
-                "detectable_list_index": human.detectable_list_index,
-                "invulnerable": human.invulnerable,
-                "last_motion_was_step_back": human.last_motion_was_step_back_in_combat,
-                "smalltalk_initiative": human.smalltalk_initiative,
-                "received_smalltalk_initiative": human.received_smalltalk_initiative,
-                "smalltalk_hint": human.smalltalk_hint as u32,
-                "smalltalk_hint_opponent": human.smalltalk_hint_opponent.map_or(Value::Null, entity_ref),
-                "relative_fighting_ability": human.relative_fighting_ability,
-                "hollow_man": human.hollow_man,
-                "killed_by_accident": human.killed_by_accident,
-                "stuck_under_nets_counter": human.stuck_under_nets_counter,
-                "sword_strike_boredom": &human.sword_strike_boredom,
-                "carrier": human.carrier.map_or(Value::Null, entity_ref),
-                "small_repulsive_radius": human.small_repulsive_radius,
-                "hulk": {
-                    "running": human.running_hulk, "time": human.time_hulk,
-                    "level": human.hulk_level, "direction": human.hulk_direction,
-                    "speed": float(human.hulk_speed),
-                },
-            })
-        });
+        let human_continuation =
+            entity
+                .human_data()
+                .map(|human| human_projections::HumanContinuation {
+                    already_detectable_body: human.already_detectable_body,
+                    concussion_healing_timeout: human.concussion_healing_timeout,
+                    tiredness: human.tiredness,
+                    concussion: human.concussion_of_the_brain,
+                    parry_counter: human.parry_counter,
+                    detectable_list_index: human.detectable_list_index,
+                    invulnerable: human.invulnerable,
+                    last_motion_was_step_back: human.last_motion_was_step_back_in_combat,
+                    smalltalk_initiative: human.smalltalk_initiative,
+                    received_smalltalk_initiative: human.received_smalltalk_initiative,
+                    smalltalk_hint: human.smalltalk_hint as u32,
+                    smalltalk_hint_opponent: human
+                        .smalltalk_hint_opponent
+                        .map(typed_entity_reference),
+                    relative_fighting_ability: human.relative_fighting_ability,
+                    hollow_man: human.hollow_man,
+                    killed_by_accident: human.killed_by_accident,
+                    stuck_under_nets_counter: human.stuck_under_nets_counter,
+                    sword_strike_boredom: std::borrow::Cow::Borrowed(&human.sword_strike_boredom),
+                    carrier: human.carrier.map(typed_entity_reference),
+                    small_repulsive_radius: human.small_repulsive_radius,
+                    hulk: human_projections::Hulk {
+                        running: human.running_hulk,
+                        time: human.time_hulk,
+                        level: human.hulk_level,
+                        direction: human.hulk_direction,
+                        speed: float(human.hulk_speed),
+                    },
+                });
         let human_structure = entity.human_data().map(|human| {
             let opponents = human
                 .opponents
                 .iter_with_jump_lines()
-                .map(|(opponent, line)| json!({
-                    "entity": entity_ref(opponent), "jump_line": jump_line(line.map(u32::from)),
-                }))
+                .map(|(opponent, line)| human_projections::Opponent {
+                    entity: typed_entity_reference(opponent),
+                    jump_line: jump_line(line.map(u32::from)),
+                })
                 .collect::<Vec<_>>();
             let repulsive = &human.repulsive_point;
             let shield = &human.shield;
-            let plane = |value: &crate::element::HumanPlaneState| json!({
-                "a": point3(value.a.x, value.a.y, value.a.z),
-                "b": point3(value.b.x, value.b.y, value.b.z),
-                "normal": point3(value.normal.x, value.normal.y, value.normal.z),
-                "origin": point3(value.origin.x, value.origin.y, value.origin.z),
-                "u": point3(value.u.x, value.u.y, value.u.z),
-                "v": point3(value.v.x, value.v.y, value.v.z),
-                "az": float(value.az), "bz": float(value.bz),
-                "dz": float(value.dz), "d": float(value.d),
-            });
-            let box2_state = |value: crate::element::HumanBoundingBox2State| json!({
-                "top_left": point2(value.top_left.x, value.top_left.y),
-                "bottom_right": point2(value.bottom_right.x, value.bottom_right.y),
-                "bounds_are_set": value.bounds_are_set,
-            });
+            let plane = |value: &crate::element::HumanPlaneState| human_projections::Plane {
+                a: point3(value.a.x, value.a.y, value.a.z),
+                b: point3(value.b.x, value.b.y, value.b.z),
+                normal: point3(value.normal.x, value.normal.y, value.normal.z),
+                origin: point3(value.origin.x, value.origin.y, value.origin.z),
+                u: point3(value.u.x, value.u.y, value.u.z),
+                v: point3(value.v.x, value.v.y, value.v.z),
+                az: float(value.az),
+                bz: float(value.bz),
+                dz: float(value.dz),
+                d: float(value.d),
+            };
+            let box2_state =
+                |value: crate::element::HumanBoundingBox2State| human_projections::BoundingBox {
+                    top_left: point2(value.top_left.x, value.top_left.y),
+                    bottom_right: point2(value.bottom_right.x, value.bottom_right.y),
+                    bounds_are_set: value.bounds_are_set,
+                };
             let sequence_ordinals: std::collections::BTreeMap<_, _> = self
                 .inner
                 .orders
@@ -953,47 +968,72 @@ impl Engine {
                 .map(|(ordinal, sequence)| (sequence.id, ordinal))
                 .collect();
             let sequence_ref = |value: crate::sequence::SequenceElementRef| {
-                let sequence = sequence_ordinals.get(&value.sequence_id).copied().unwrap_or_else(|| {
-                    panic!("parity human pending shoot points outside sequence manager: {value:?}")
-                });
-                json!({ "sequence": sequence, "element": value.element_index })
+                let sequence = sequence_ordinals
+                    .get(&value.sequence_id)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "parity human pending shoot points outside sequence manager: {value:?}"
+                        )
+                    });
+                human_projections::SequenceReference {
+                    sequence: sequence,
+                    element: value.element_index,
+                }
             };
-            json!({
-                "opponents": opponents,
-                "repulsive_point": {
-                    "position": point2(repulsive.position.x, repulsive.position.y),
-                    "concave": repulsive.concave,
-                    "limit_left": point2(repulsive.limit_left.x, repulsive.limit_left.y),
-                    "limit_right": point2(repulsive.limit_right.x, repulsive.limit_right.y),
-                    "action_radius": float(repulsive.action_radius),
-                    "force_a": float(repulsive.force_a), "force_b": float(repulsive.force_b),
-                    "radius": float(repulsive.radius), "id": repulsive.id,
-                    "affects_pcs": repulsive.affects_pcs,
-                    "affects_soldiers": repulsive.affects_soldiers,
-                    "affects_civilians": repulsive.affects_civilians,
-                    "affects_animals": repulsive.affects_animals,
+            human_projections::HumanStructure {
+                opponents: opponents,
+                repulsive_point: human_projections::RepulsivePoint {
+                    position: point2(repulsive.position.x, repulsive.position.y),
+                    concave: repulsive.concave,
+                    limit_left: point2(repulsive.limit_left.x, repulsive.limit_left.y),
+                    limit_right: point2(repulsive.limit_right.x, repulsive.limit_right.y),
+                    action_radius: float(repulsive.action_radius),
+                    force_a: float(repulsive.force_a),
+                    force_b: float(repulsive.force_b),
+                    radius: float(repulsive.radius),
+                    id: repulsive.id,
+                    affects_pcs: repulsive.affects_pcs,
+                    affects_soldiers: repulsive.affects_soldiers,
+                    affects_civilians: repulsive.affects_civilians,
+                    affects_animals: repulsive.affects_animals,
                 },
-                "building": sector(human.building_sector),
-                "shield": {
-                    "points": shield.points.iter().map(|value| json!({
-                        "obstacle": value.obstacle.map(float),
-                        "polygon": point2(value.polygon.x, value.polygon.y),
-                    })).collect::<Vec<_>>(),
-                    "top_plane": plane(&shield.top_plane),
-                    "bottom_plane": plane(&shield.bottom_plane),
-                    "box_3d": shield.box_3d.map(float),
-                    "ground_box": box2_state(shield.ground_box),
-                    "screen_box": box2_state(shield.screen_box),
-                    "on_ground": shield.on_ground,
+                building: sector(human.building_sector),
+                shield: human_projections::Shield {
+                    points: shield
+                        .points
+                        .iter()
+                        .map(|value| human_projections::ShieldPoint {
+                            obstacle: value.obstacle.map(float),
+                            polygon: point2(value.polygon.x, value.polygon.y),
+                        })
+                        .collect::<Vec<_>>(),
+                    top_plane: plane(&shield.top_plane),
+                    bottom_plane: plane(&shield.bottom_plane),
+                    box_3d: shield.box_3d.map(float),
+                    ground_box: box2_state(shield.ground_box),
+                    screen_box: box2_state(shield.screen_box),
+                    on_ground: shield.on_ground,
                 },
-                "sword_sweep": {
-                    "victims": human.sword_sweep.victims.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "initial_angle": float(human.sword_sweep.initial_angle),
-                    "current_angle": float(human.sword_sweep.current_angle),
-                    "final_angle": float(human.sword_sweep.final_angle),
+                sword_sweep: human_projections::SwordSweep {
+                    victims: human
+                        .sword_sweep
+                        .victims
+                        .iter()
+                        .copied()
+                        .map(typed_entity_reference)
+                        .collect::<Vec<_>>(),
+                    initial_angle: float(human.sword_sweep.initial_angle),
+                    current_angle: float(human.sword_sweep.current_angle),
+                    final_angle: float(human.sword_sweep.final_angle),
                 },
-                "pending_shoots": human.pending_shoots.iter().copied().map(sequence_ref).collect::<Vec<_>>(),
-            })
+                pending_shoots: human
+                    .pending_shoots
+                    .iter()
+                    .copied()
+                    .map(sequence_ref)
+                    .collect::<Vec<_>>(),
+            }
         });
         let pc_core = entity.pc_data().map(|pc| {
             const ACTIONS: usize = 3;
@@ -1012,28 +1052,28 @@ impl Engine {
             let campaign_description_index = pc.campaign_description_index.unwrap_or_else(|| {
                 panic!("PC {id:?} parity projection has no campaign description index")
             });
-            json!({
-                "work_icon": pc.work_icon as u32,
-                "campaign_description_index": campaign_description_index,
-                "playable": pc.playable,
-                "beam_me_index": pc.beam_me_index,
-                "already_selected": pc.already_selected,
-                "belt_seen": pc.belt_seen,
-                "feet_seen": pc.feet_seen,
-                "head_seen": pc.head_seen,
-                "immortal": pc.immortal,
-                "fried_psykokwack": pc.fried_psykokwack,
-                "list_index": pc.list_index,
-                "teleport_counter": pc.teleport_counter,
-                "current_action": pc.current_action as u32,
-                "saved_action": pc.saved_action as u32,
-                "disabled_actions": pc.disabled_actions,
-                "disabled_actions_temp": pc.disabled_actions_temp,
-                "position_before_teleport": point2(
+            human_projections::PcCore {
+                work_icon: pc.work_icon as u32,
+                campaign_description_index: campaign_description_index,
+                playable: pc.playable,
+                beam_me_index: pc.beam_me_index,
+                already_selected: pc.already_selected,
+                belt_seen: pc.belt_seen,
+                feet_seen: pc.feet_seen,
+                head_seen: pc.head_seen,
+                immortal: pc.immortal,
+                fried_psykokwack: pc.fried_psykokwack,
+                list_index: pc.list_index,
+                teleport_counter: pc.teleport_counter,
+                current_action: pc.current_action as u32,
+                saved_action: pc.saved_action as u32,
+                disabled_actions: std::borrow::Cow::Borrowed(&pc.disabled_actions),
+                disabled_actions_temp: std::borrow::Cow::Borrowed(&pc.disabled_actions_temp),
+                position_before_teleport: point2(
                     pc.position_before_teleport.x,
                     pc.position_before_teleport.y,
                 ),
-            })
+            }
         });
         let pc_qa = entity.pc_data().map(|pc| {
             const QA_SLOTS: usize = crate::macro_store::NUMBER_OF_QA_MEMORY;
@@ -1052,24 +1092,24 @@ impl Engine {
                 );
             }
             (0..QA_SLOTS)
-                .map(|slot| {
-                    json!({
-                        "special_count": pc.quick_action_special_counts[slot],
-                        "quickito": pc.quick_action_types[slot] as u32,
-                        "titbit": pc.titbits[slot].map(crate::titbit::TitbitId::get),
-                        "button": pc.quick_action_buttons[slot],
-                        "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
-                        "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
-                        "seek_size": pc.quick_seek_sequences[slot].as_ref().map(|sequence| sequence.len()),
-                    })
+                .map(|slot| human_projections::PcQa {
+                    special_count: pc.quick_action_special_counts[slot],
+                    quickito: pc.quick_action_types[slot] as u32,
+                    titbit: pc.titbits[slot].map(crate::titbit::TitbitId::get),
+                    button: pc.quick_action_buttons[slot],
+                    interactor: pc.quick_action_interactors[slot].map(typed_entity_reference),
+                    action_size: pc.quick_action_sequences[slot]
+                        .as_ref()
+                        .map(|sequence| sequence.len()),
+                    seek_size: pc.quick_seek_sequences[slot]
+                        .as_ref()
+                        .map(|sequence| sequence.len()),
                 })
                 .collect::<Vec<_>>()
         });
-        let pc_interface = entity.pc_data().map(|pc| {
-            json!({
-                "playable": pc.playable,
-                "displayed": !pc.interface_hidden,
-            })
+        let pc_interface = entity.pc_data().map(|pc| human_projections::PcInterface {
+            playable: pc.playable,
+            displayed: !pc.interface_hidden,
         });
         let pc_portrait = entity.pc_data().map(|pc| {
             let profile = assets
@@ -1088,41 +1128,44 @@ impl Engine {
             let quantities = profile
                 .actions
                 .map(|action| description.status.get_ammo(action));
-            json!({
-                "quantities": quantities,
-                "two_buttons_mode": profile.actions[2] == crate::profiles::Action::NoAction,
-                "displayed": !pc.interface_hidden,
-                "burned": pc.portrait.burned,
-                "open": pc.portrait.open,
-                "life_level": float(f32::from(pc.life_points)),
-                "trumpet_enabled": pc.trumpet_enabled,
-                "quick_icons": pc.portrait.quick_icons.iter().map(|icon| json!({
-                    "titbit": icon.titbit_id.map(crate::titbit::TitbitId::get),
-                    "running": icon.running,
-                })).collect::<Vec<_>>(),
-            })
+            human_projections::PcPortrait {
+                quantities: quantities,
+                two_buttons_mode: profile.actions[2] == crate::profiles::Action::NoAction,
+                displayed: !pc.interface_hidden,
+                burned: pc.portrait.burned,
+                open: pc.portrait.open,
+                life_level: float(f32::from(pc.life_points)),
+                trumpet_enabled: pc.trumpet_enabled,
+                quick_icons: pc
+                    .portrait
+                    .quick_icons
+                    .iter()
+                    .map(|icon| human_projections::QuickIcon {
+                        titbit: icon.titbit_id.map(crate::titbit::TitbitId::get),
+                        running: icon.running,
+                    })
+                    .collect::<Vec<_>>(),
+            }
         });
-        let pc_tail = entity.pc_data().map(|pc| {
-            json!({
-                "carried": pc.carried.map_or(Value::Null, entity_ref),
-                "carried_posture": pc.carried_posture,
-                "shield_danger_point": point3(
-                    pc.shield_danger_point.x,
-                    pc.shield_danger_point.y,
-                    pc.shield_danger_point.z,
-                ),
-                "shield_protected": pc.shield_protected.map_or(Value::Null, entity_ref),
-                "shield_protector": pc.shield_protector.map_or(Value::Null, entity_ref),
-                "guard": pc.guard.map_or(Value::Null, entity_ref),
-                "time_till_reinforcement": pc.time_till_reinforcement,
-                "last_ammo_dropping_position": point2(
-                    pc.last_ammo_dropping_position.x,
-                    pc.last_ammo_dropping_position.y,
-                ),
-                "last_dropped_ammo": pc.last_dropped_ammo.map_or(Value::Null, entity_ref),
-                "update_last_dropped_ammo": pc.update_last_dropped_ammo,
-                "last_dropping_direction": pc.last_dropping_direction,
-            })
+        let pc_tail = entity.pc_data().map(|pc| human_projections::PcTail {
+            carried: pc.carried.map(typed_entity_reference),
+            carried_posture: pc.carried_posture,
+            shield_danger_point: point3(
+                pc.shield_danger_point.x,
+                pc.shield_danger_point.y,
+                pc.shield_danger_point.z,
+            ),
+            shield_protected: pc.shield_protected.map(typed_entity_reference),
+            shield_protector: pc.shield_protector.map(typed_entity_reference),
+            guard: pc.guard.map(typed_entity_reference),
+            time_till_reinforcement: pc.time_till_reinforcement,
+            last_ammo_dropping_position: point2(
+                pc.last_ammo_dropping_position.x,
+                pc.last_ammo_dropping_position.y,
+            ),
+            last_dropped_ammo: pc.last_dropped_ammo.map(typed_entity_reference),
+            update_last_dropped_ammo: pc.update_last_dropped_ammo,
+            last_dropping_direction: pc.last_dropping_direction,
         });
         let subtype = if entity.element_data().active {
             match entity {
