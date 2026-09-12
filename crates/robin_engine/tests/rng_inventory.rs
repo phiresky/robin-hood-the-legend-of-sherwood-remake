@@ -30,7 +30,7 @@ const REVIEWED_PUBLIC_ENTRY_POINTS: &[&str] = &[
 
 const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
     (
-        "crates/robin_engine/src/engine/types.rs|fastrand::Rng::with_seed",
+        "crates/robin_engine/src/engine/simulation_rng.rs|fastrand::Rng::with_seed",
         2,
     ),
     (
@@ -42,7 +42,7 @@ const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
         2,
     ),
     (
-        "crates/robin_rs/src/leaderboard_ranked_session.rs|rand::random",
+        "crates/robin_rs/src/leaderboard/ranked_session.rs|rand::random",
         2,
     ),
     (
