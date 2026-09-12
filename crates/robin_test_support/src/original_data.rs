@@ -75,7 +75,14 @@ pub fn resolve_data_path_from(
         ));
     }
 
-    let path = root.join(relative_path);
+    let path = resolve_distribution_casing(&root, relative_path).map_err(|error| {
+        format!(
+            "required original-data {} {} (from {DATA_DIR_ENV}={}) cannot be resolved: {error}",
+            kind.description(),
+            relative_path.display(),
+            root.display()
+        )
+    })?;
     let resolved = path.canonicalize().map_err(|error| {
         format!(
             "required original-data {} {} (from {DATA_DIR_ENV}={}) cannot be resolved: {error}",
@@ -94,6 +101,48 @@ pub fn resolve_data_path_from(
         ));
     }
 
+    Ok(resolved)
+}
+
+// Original distributions use Data/, DATA/, and locale-specific data/. Prefer
+// exact names; only a unique ASCII case-insensitive sibling may substitute.
+fn resolve_distribution_casing(root: &Path, relative: &Path) -> std::io::Result<PathBuf> {
+    let mut resolved = root.to_path_buf();
+    for component in relative.components() {
+        let exact = resolved.join(component.as_os_str());
+        match std::fs::symlink_metadata(&exact) {
+            Ok(_) => {
+                resolved = exact;
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        let mut matched = None;
+        for entry in std::fs::read_dir(&resolved)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if name
+                .to_str()
+                .zip(component.as_os_str().to_str())
+                .is_some_and(|(actual, requested)| actual.eq_ignore_ascii_case(requested))
+            {
+                if matched.is_some() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("ambiguous original-data path {}", exact.display()),
+                    ));
+                }
+                matched = Some(entry.path());
+            }
+        }
+        resolved = matched.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("missing original-data path {}", exact.display()),
+            )
+        })?;
+    }
     Ok(resolved)
 }
 
@@ -117,6 +166,32 @@ mod tests {
         )
         .expect_err("fixture paths are root-relative");
         assert!(error.contains("must be relative"));
+    }
+
+    #[test]
+    fn fixture_paths_accept_original_distribution_casing() {
+        let root = Some(OsStr::new(env!("CARGO_MANIFEST_DIR")));
+        let exact =
+            resolve_data_path_from(root, Path::new("src/lib.rs"), FixtureKind::File).unwrap();
+        assert_eq!(
+            resolve_data_path_from(root, Path::new("SRC/Lib.RS"), FixtureKind::File).unwrap(),
+            exact
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("SRC"), FixtureKind::Directory)
+                .unwrap()
+                .is_dir()
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("SRC/MISSING.RS"), FixtureKind::File)
+                .unwrap_err()
+                .contains("required original-data file")
+        );
+        assert!(
+            resolve_data_path_from(root, Path::new("SRC"), FixtureKind::File)
+                .unwrap_err()
+                .contains("not a file")
+        );
     }
 
     #[test]
