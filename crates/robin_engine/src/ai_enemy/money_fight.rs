@@ -379,7 +379,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) {
         if self.money_fight_victims.is_empty() {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
         let next = self.money_fight_victims.remove(0);

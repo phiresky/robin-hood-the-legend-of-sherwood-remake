@@ -506,8 +506,12 @@ impl EnemyAi {
 
             self.base
                 .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
-            self.set_state(AiState::Attacking, Substate::AttackingOfficerGivingOrders);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingOfficerGivingOrders,
+                20,
+                ctx,
+            );
             self.base.friends_are_alerted = true;
             return true;
         }
@@ -965,8 +969,12 @@ impl EnemyAi {
 
             self.base
                 .set_transient_emoticon(EmoticonType::XMark, 20, ctx.frame);
-            self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForGroup);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Seeking,
+                Substate::SeekingOfficerWaitForGroup,
+                20,
+                ctx,
+            );
         } else if placement_ok {
             // Indoor alert, found a free spot outside.
             // Stash the gather destination for the leave-house
@@ -983,8 +991,12 @@ impl EnemyAi {
             self.base.launch_timer(50, ctx.frame);
         } else {
             // Indoor alert, no place outside.
-            self.set_state(AiState::Seeking, Substate::SeekingOfficerWaitForGroup);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Seeking,
+                Substate::SeekingOfficerWaitForGroup,
+                20,
+                ctx,
+            );
         }
 
         true

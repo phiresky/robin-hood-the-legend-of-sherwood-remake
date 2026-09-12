@@ -630,8 +630,7 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
             // Enter wondering state
-            self.set_state(AiState::Wondering, Substate::WonderingLooking1);
-            self.base.launch_timer(30, ctx.frame);
+            self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooking1, 30, ctx);
         }
         false
     }
@@ -728,8 +727,7 @@ impl EnemyAi {
                     .launch_commands
                     .push(crate::element::Command::StopParrySword);
             }
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
         }
         false
     }
@@ -785,8 +783,12 @@ impl EnemyAi {
             );
 
             if close_enough {
-                self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingSwordfight,
+                    20,
+                    ctx,
+                );
                 self.base.outbox.actor.set_principal = Some(target_handle);
             } else {
                 // Re-approach
@@ -794,8 +796,12 @@ impl EnemyAi {
                     .go_near(target.position, sword_range as i32, GotoFlags::RUN, ctx);
                 if self.base.already_on_point {
                     self.base.already_on_point = false;
-                    self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-                    self.base.launch_timer(20, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingSwordfight,
+                        20,
+                        ctx,
+                    );
                     self.base.outbox.actor.set_principal = Some(target_handle);
                 }
             }
@@ -815,8 +821,7 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
             self.reconsider_swordfight(sim, false, global, ctx, tick, grid);
         }
         false
@@ -895,14 +900,22 @@ impl EnemyAi {
                 // Fall through to CallCoordinate arm.
                 self.reinitialize_them_list(ctx, tick);
                 self.base.set_emoticon(EmoticonType::None);
-                self.set_state(AiState::Attacking, Substate::AttackingReserveOverview);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingReserveOverview,
+                    20,
+                    ctx,
+                );
             }
             StimulusType::CallCoordinate => {
                 self.reinitialize_them_list(ctx, tick);
                 self.base.set_emoticon(EmoticonType::None);
-                self.set_state(AiState::Attacking, Substate::AttackingReserveOverview);
-                self.base.launch_timer(20, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingReserveOverview,
+                    20,
+                    ctx,
+                );
             }
             _ => {}
         }
@@ -1148,8 +1161,7 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.set_state(AiState::Attacking, Substate::AttackingBowObserving);
-            self.base.launch_timer(50, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingBowObserving, 50, ctx);
         }
         false
     }
@@ -1261,8 +1273,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
             if self.base.primary_target.is_none() {
-                self.set_state(AiState::Attacking, Substate::AttackingDoorFightWaiting);
-                self.base.launch_timer(150, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingDoorFightWaiting,
+                    150,
+                    ctx,
+                );
             } else {
                 self.begin_swordfight(ctx, tick);
             }
@@ -1757,7 +1773,7 @@ impl EnemyAi {
                     self.base.launch_timer(20, ctx.frame);
                 } else if target_is_pc && target_in_coma && target_guard.is_some() {
                     // PC already menaced by another guard — go home.
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 } else if let Some(p) = target_pos {
                     if tick.primary_target_snapshot_handle != self.base.primary_target {
                         panic!(
@@ -2290,7 +2306,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -2306,7 +2322,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
         false
     }
@@ -2330,8 +2346,7 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingSwordfight, 20, ctx);
         }
         false
     }
@@ -2366,8 +2381,12 @@ impl EnemyAi {
                     self.base.face_entity(self.base.primary_target, ctx);
                     self.base.outbox.actor.set_focus(self.base.primary_target);
                 }
-                self.set_state(AiState::Attacking, Substate::AttackingWaitingAtLadder);
-                self.base.launch_timer(1, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Attacking,
+                    Substate::AttackingWaitingAtLadder,
+                    1,
+                    ctx,
+                );
             }
             StimulusType::EventTimer => {
                 self.reconsider_enemy_approach(false, ctx, tick, grid);
@@ -2431,8 +2450,12 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventReachPoint {
             self.base
                 .face_position_3d_with_ctx(self.base.seek_position, ctx);
-            self.set_state(AiState::Attacking, Substate::AttackingWaitForAvengerOnRoof);
-            self.base.launch_timer(100, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingWaitForAvengerOnRoof,
+                100,
+                ctx,
+            );
         }
         false
     }

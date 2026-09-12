@@ -253,10 +253,14 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) {
         if accepted {
-            self.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficerSeen);
-            self.base.launch_timer(10, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Seeking,
+                Substate::SeekingCharlyGoToOfficerSeen,
+                10,
+                ctx,
+            );
         } else {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
         }
     }
 
@@ -273,7 +277,7 @@ impl EnemyAi {
             crate::ai::AlertContinuation::SoldierSawOfficer
         ));
         if !accepted {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
 
@@ -333,7 +337,7 @@ impl EnemyAi {
                     self.base.say(Remark::OfficerCallsSoldier);
                     self.base.launch_timer(20, ctx.frame);
                 } else {
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                    self.return_to_duty_default(sim, ctx, tick);
                 }
             }
             ThinkResultContinuation::OfficerSentCharlyToOfficer => {
@@ -359,7 +363,7 @@ impl EnemyAi {
                     self.pending_group_instruction_seek_flags = 0;
                     self.pending_group_instruction_clear_location_after_accept = false;
                     if self.alerted_us.is_empty() {
-                        self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                        self.return_to_duty_default(sim, ctx, tick);
                     } else {
                         self.set_state(
                             AiState::Seeking,
@@ -494,7 +498,7 @@ impl EnemyAi {
         match continuation {
             AlertSoldiersFailureContinuation::None => {}
             AlertSoldiersFailureContinuation::ReturnToDuty => {
-                self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+                self.return_to_duty_default(sim, ctx, tick);
             }
             AlertSoldiersFailureContinuation::SeekBody { center, radius } => {
                 self.seek_area(

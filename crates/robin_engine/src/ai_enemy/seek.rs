@@ -205,13 +205,13 @@ impl EnemyAi {
 
         // Royalists just return to duty.
         if ctx.is_player_aligned() {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
 
         // Company 100 (combat trainer dummy) just returns to duty.
         if self.company_number == 100 {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
 
@@ -873,7 +873,7 @@ impl EnemyAi {
 
         // No more seek points → return to duty
         if self.my_seek_points.is_empty() {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
 
             // Say "ends search" if nothing alarming was found.
             let quiet_report = self.base.my_reconnaissance_report.report_type <= ReportType::Noise;
@@ -1414,11 +1414,11 @@ impl EnemyAi {
 
         // No checkpoint → return to duty.
         if self.base.checkpoint_charly.is_none() {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
         let Some(view) = ctx.entity_view(self.base.checkpoint_charly) else {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         };
 
@@ -1489,7 +1489,7 @@ impl EnemyAi {
         };
 
         if waypoints.is_empty() {
-            self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
+            self.return_to_duty_default(sim, ctx, tick);
             return;
         }
 

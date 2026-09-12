@@ -2760,8 +2760,12 @@ impl EnemyAi {
                 self.base.say(Remark::ShieldBearerCovers);
             }
 
-            self.set_state(AiState::Attacking, Substate::AttackingProtectingWithShield);
-            self.base.launch_timer(10, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingProtectingWithShield,
+                10,
+                ctx,
+            );
         }
 
         true
@@ -3041,8 +3045,12 @@ impl EnemyAi {
             // The original game uses reciprocal neighbour updates here
             // to keep both links consistent.
             self.clear_combat_neighbours();
-            self.set_state(AiState::Attacking, Substate::AttackingQuittingSwordfight);
-            self.base.launch_timer(3, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Attacking,
+                Substate::AttackingQuittingSwordfight,
+                3,
+                ctx,
+            );
             return;
         }
 
@@ -3942,8 +3950,7 @@ impl EnemyAi {
             }
             self.base.outbox.actor.set_focus(new_primary);
             self.base.stop_all();
-            self.set_state(AiState::Attacking, Substate::AttackingObserve);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingObserve, 20, ctx);
             return;
         }
 
@@ -4230,8 +4237,7 @@ impl EnemyAi {
             self.base.set_direction_goal(dir);
             self.base.outbox.actor.set_focus(self.base.primary_target);
             self.base.stop_all();
-            self.set_state(AiState::Attacking, Substate::AttackingObserve);
-            self.base.launch_timer(20, ctx.frame);
+            self.set_state_with_timer(AiState::Attacking, Substate::AttackingObserve, 20, ctx);
         }
     }
 
