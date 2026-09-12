@@ -453,7 +453,7 @@ fn manager_snapshots_match_frozen_json_encoders() {
 }
 
 #[test]
-fn entity_envelope_omits_absent_components_but_keeps_explicit_component_null() {
+fn entity_envelope_omits_absent_components_but_keeps_null_references() {
     let mut inner = EngineInner::new();
     let mut element = crate::element::ElementData::default();
     element.kind = crate::element::ElementKind::Fx;
@@ -471,7 +471,10 @@ fn entity_envelope_omits_absent_components_but_keeps_explicit_component_null() {
     let envelope = projections::EntityRuntime {
         position,
         sprite,
-        subtype: Some(serde_json::Value::Null),
+        subtype: Some(projectile_projections::Subtype::Scroll {
+            status: 0,
+            script_hourglass_timeout: 17,
+        }),
         npc_ai: None,
         human_continuation: None,
         human_structure: None,
@@ -482,7 +485,8 @@ fn entity_envelope_omits_absent_components_but_keeps_explicit_component_null() {
         pc_portrait: None,
     };
     let value = serde_json::to_value(envelope).unwrap();
-    assert_eq!(value["subtype"], serde_json::Value::Null);
+    assert_eq!(value["subtype"]["kind"], "scroll");
+    assert!(value["position"]["target"].is_null());
     assert!(value.as_object().unwrap().contains_key("subtype"));
     assert!(!value.as_object().unwrap().contains_key("npc_ai"));
     assert_eq!(value["pc_qa"], serde_json::json!([]));

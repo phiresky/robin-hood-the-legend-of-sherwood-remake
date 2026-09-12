@@ -176,7 +176,7 @@ pub(super) struct EntityRuntime {
     pub position: Position,
     pub sprite: Sprite,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subtype: Option<serde_json::Value>,
+    pub subtype: Option<super::projectile_projections::Subtype>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub npc_ai: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]

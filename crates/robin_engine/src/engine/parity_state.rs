@@ -5,6 +5,13 @@ use super::*;
 #[path = "parity_state/projections.rs"]
 mod projections;
 
+#[path = "parity_state/projectile_projections.rs"]
+mod projectile_projections;
+
+#[cfg(test)]
+#[path = "parity_state/projectile_tests.rs"]
+mod projectile_tests;
+
 #[cfg(test)]
 #[path = "parity_state/tests.rs"]
 mod tests;
@@ -367,35 +374,38 @@ impl Engine {
                 .enumerate()
                 .map(|(index, point)| {
                     let runtime = projectile.trajectory_runtime.get(index);
-                    json!({
-                        "position": point3(point.position.x, point.position.y, point.position.z),
-                        "time": point.time,
+                    projectile_projections::TrajectoryPoint {
+                        position: point3(point.position.x, point.position.y, point.position.z),
+                        time: point.time,
                         // `null` is an explicit incomplete runtime mirror, not a fabricated
                         // non-bounce/material value. Fresh trajectory construction must
                         // populate these fields before v29 can pass dynamic-projectile traces.
-                        "bounce": runtime.map(|runtime| runtime.bounce),
-                        "material": runtime.map(|runtime| runtime.material),
-                    })
+                        bounce: runtime.map(|runtime| runtime.bounce),
+                        material: runtime.map(|runtime| runtime.material),
+                    }
                 })
                 .collect::<Vec<_>>();
-            json!({
-                "flying": projectile.flying,
-                "dive": projectile.dive,
-                "magic_bullet": projectile.magic_bullet,
-                "frame_count": projectile.frame_count,
-                "trajectory_origin": {
-                    "map": point2(projectile.start_of_trajectory_x, projectile.start_of_trajectory_y),
-                    "sector": projectile.trajectory_origin_sector,
-                    "layer": projectile
+            projectile_projections::Projectile {
+                flying: projectile.flying,
+                dive: projectile.dive,
+                magic_bullet: projectile.magic_bullet,
+                frame_count: projectile.frame_count,
+                trajectory_origin: projectile_projections::TrajectoryOrigin {
+                    map: point2(
+                        projectile.start_of_trajectory_x,
+                        projectile.start_of_trajectory_y,
+                    ),
+                    sector: projectile.trajectory_origin_sector,
+                    layer: projectile
                         .trajectory_origin_layer
                         .map(crate::position_interface::Layer::get),
                 },
-                "flight_direction": projectile.flight_direction,
-                "start": point3(projectile.start.x, projectile.start.y, projectile.start.z),
-                "end": point3(projectile.end.x, projectile.end.y, projectile.end.z),
-                "shooter": projectile.shooter.map_or(Value::Null, entity_ref),
-                "trajectory": trajectory,
-            })
+                flight_direction: projectile.flight_direction,
+                start: point3(projectile.start.x, projectile.start.y, projectile.start.z),
+                end: point3(projectile.end.x, projectile.end.y, projectile.end.z),
+                shooter: projectile.shooter.map(typed_entity_reference),
+                trajectory: trajectory,
+            }
         };
         let resolve_ai_handle = |handle: u32| -> ParityEntityReference {
             let resolved = self
@@ -522,22 +532,23 @@ impl Engine {
                 info: info,
             }
         };
-        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Option<projections::Stimulus> {
-            use crate::ai::{StimulusInfo, StimulusType};
-            let stimulus = stimulus?;
-            let is_default = stimulus.stimulus_type == StimulusType::NoEvent
-                && matches!(
-                    stimulus.info,
-                    StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
-                )
-                && stimulus.owner.is_none()
-                && !stimulus.to_whole_patrol;
-            if is_default {
-                None
-            } else {
-                Some(stimulus_state(stimulus))
-            }
-        };
+        let patrol_stimulus =
+            |stimulus: Option<&crate::ai::Stimulus>| -> Option<projections::Stimulus> {
+                use crate::ai::{StimulusInfo, StimulusType};
+                let stimulus = stimulus?;
+                let is_default = stimulus.stimulus_type == StimulusType::NoEvent
+                    && matches!(
+                        stimulus.info,
+                        StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
+                    )
+                    && stimulus.owner.is_none()
+                    && !stimulus.to_whole_patrol;
+                if is_default {
+                    None
+                } else {
+                    Some(stimulus_state(stimulus))
+                }
+            };
         let npc_ai = entity.npc_data().and_then(|npc| {
             let ai = npc.ai_brain.base()?;
             let ai_door = |index: Option<crate::gate::DoorIndex>| {
@@ -1126,63 +1137,92 @@ impl Engine {
         });
         let subtype = if entity.element_data().active {
             match entity {
-                crate::element::Entity::Target(target) => Some(json!({
-                    "kind": "target",
-                    "animation": target.target.animation as u32,
-                    "progression": target.target.progression,
-                    "linked_fx": target.target.linked_fx.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "force_display": target.fx.force_display,
-                    "restore_background": target.fx.restore_background,
-                })),
-                crate::element::Entity::Scroll(scroll) => Some(json!({
-                    "kind": "scroll",
-                    "status": self.inner.scroll_status(id) as i32,
-                    "script_hourglass_timeout": scroll.script_hourglass_timeout,
-                })),
-                crate::element::Entity::Net(net) => Some(json!({
-                    "kind": "net",
-                    "projectile": projectile_state(&net.projectile),
-                    "victims": net.net.victims.iter().copied().map(entity_ref).collect::<Vec<_>>(),
-                    "time_till_unfolding": net.net.time_till_unfolding,
-                    "crumpled": net.net.crumpled,
-                    "was_flying": net.net.was_flying,
-                })),
+                crate::element::Entity::Target(target) => {
+                    Some(projectile_projections::Subtype::Target {
+                        animation: target.target.animation as u32,
+                        progression: target.target.progression,
+                        linked_fx: target
+                            .target
+                            .linked_fx
+                            .iter()
+                            .copied()
+                            .map(typed_entity_reference)
+                            .collect::<Vec<_>>(),
+                        force_display: target.fx.force_display,
+                        restore_background: target.fx.restore_background,
+                    })
+                }
+                crate::element::Entity::Scroll(scroll) => {
+                    Some(projectile_projections::Subtype::Scroll {
+                        status: self.inner.scroll_status(id) as i32,
+                        script_hourglass_timeout: scroll.script_hourglass_timeout,
+                    })
+                }
+                crate::element::Entity::Net(net) => Some(projectile_projections::Subtype::Net {
+                    projectile: projectile_state(&net.projectile),
+                    victims: net
+                        .net
+                        .victims
+                        .iter()
+                        .copied()
+                        .map(typed_entity_reference)
+                        .collect::<Vec<_>>(),
+                    time_till_unfolding: net.net.time_till_unfolding,
+                    crumpled: net.net.crumpled,
+                    was_flying: net.net.was_flying,
+                }),
                 crate::element::Entity::Projectile(projectile) => {
                     use crate::element_kinds::ObjectType;
                     let common = projectile_state(&projectile.projectile);
                     Some(match projectile.object.object_type {
-                        ObjectType::Arrow => json!({
-                            "kind": "arrow", "projectile": common,
-                            "bow_profile": projectile.projectile.arrow_bow_profile.flatten(),
-                            "flat_shot": projectile.projectile.arrow_flat_shot,
-                            "falling": projectile.projectile.falling,
-                            "falling_direction": projectile.projectile.falling_direction,
-                            "last_sector": projectile.projectile.last_orientation_sector,
-                            "last_azimuth": projectile.projectile.last_orientation_azimuth,
-                            "play_impact": projectile.projectile.arrow_play_impact,
-                        }),
-                        ObjectType::Purse => json!({
-                            "kind": "purse", "projectile": common,
-                            "number_of_coins": projectile.projectile.purse.number_of_coins,
-                        }),
-                        ObjectType::Coin => json!({
-                            "kind": "coin", "projectile": common,
-                            "source_purse": projectile.projectile.purse.source_purse.map_or(Value::Null, entity_ref),
-                        }),
-                        ObjectType::Wasp => json!({
-                            "kind": "wasp",
-                            "nest": projectile.projectile.wasp.source_nest.map_or(Value::Null, entity_ref),
-                            "victim": projectile.projectile.wasp.victim.map_or(Value::Null, entity_ref),
-                            "stinging": projectile.projectile.wasp.stinging,
-                            "timeout": projectile.projectile.wasp.timeout,
-                            "movement": point3(projectile.projectile.wasp.movement.x,
-                                projectile.projectile.wasp.movement.y, projectile.projectile.wasp.movement.z),
-                        }),
-                        ObjectType::WaspNest | ObjectType::BonusWaspNest => json!({
-                            "kind": "wasp_nest", "projectile": common,
-                            "flying_wasp_count": projectile.projectile.wasp.flying_wasp_count,
-                        }),
-                        _ => json!({ "kind": "projectile", "projectile": common }),
+                        ObjectType::Arrow => projectile_projections::Subtype::Arrow {
+                            projectile: common,
+                            bow_profile: projectile.projectile.arrow_bow_profile.flatten(),
+                            flat_shot: projectile.projectile.arrow_flat_shot,
+                            falling: projectile.projectile.falling,
+                            falling_direction: projectile.projectile.falling_direction,
+                            last_sector: projectile.projectile.last_orientation_sector,
+                            last_azimuth: projectile.projectile.last_orientation_azimuth,
+                            play_impact: projectile.projectile.arrow_play_impact,
+                        },
+                        ObjectType::Purse => projectile_projections::Subtype::Purse {
+                            projectile: common,
+                            number_of_coins: projectile.projectile.purse.number_of_coins,
+                        },
+                        ObjectType::Coin => projectile_projections::Subtype::Coin {
+                            projectile: common,
+                            source_purse: projectile
+                                .projectile
+                                .purse
+                                .source_purse
+                                .map(typed_entity_reference),
+                        },
+                        ObjectType::Wasp => projectile_projections::Subtype::Wasp {
+                            nest: projectile
+                                .projectile
+                                .wasp
+                                .source_nest
+                                .map(typed_entity_reference),
+                            victim: projectile
+                                .projectile
+                                .wasp
+                                .victim
+                                .map(typed_entity_reference),
+                            stinging: projectile.projectile.wasp.stinging,
+                            timeout: projectile.projectile.wasp.timeout,
+                            movement: point3(
+                                projectile.projectile.wasp.movement.x,
+                                projectile.projectile.wasp.movement.y,
+                                projectile.projectile.wasp.movement.z,
+                            ),
+                        },
+                        ObjectType::WaspNest | ObjectType::BonusWaspNest => {
+                            projectile_projections::Subtype::WaspNest {
+                                projectile: common,
+                                flying_wasp_count: projectile.projectile.wasp.flying_wasp_count,
+                            }
+                        }
+                        _ => projectile_projections::Subtype::Projectile { projectile: common },
                     })
                 }
                 _ => None,
