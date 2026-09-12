@@ -801,10 +801,20 @@ impl NativeContext<'_, '_> {
     }
 
     fn yield_engine_action(&mut self, request: crate::interp::SynchronousScriptRequest) {
-        let native_return = request.native_return();
+        // Teleport's final boolean is determined by the engine after its
+        // ordered cleanup/placement phases. Other natives return their fixed
+        // validated admission value, not the driver's operation result.
+        let resume = if matches!(
+            request,
+            crate::interp::SynchronousScriptRequest::SetActorLocation { .. }
+        ) {
+            crate::interp::ResumePolicy::OperationResult
+        } else {
+            crate::interp::ResumePolicy::Fixed(request.native_return())
+        };
         self.pending_yield = Some(crate::interp::NativeYield {
             operation: crate::interp::NativeOperation::EngineAction(request),
-            resume: crate::interp::ResumePolicy::Fixed(native_return),
+            resume,
         });
     }
 
