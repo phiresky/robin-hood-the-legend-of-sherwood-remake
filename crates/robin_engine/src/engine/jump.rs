@@ -715,13 +715,23 @@ fn jump_line_sector_number(
 impl EngineInner {
     /// Convenience wrapper around [`is_jumpable`] that resolves the
     /// PC entity's sector + auth info through the engine.  Returns
-    /// `false` when any of the required data is missing (no mission
-    /// script, entity, sector mapping, etc.).
+    /// `false` with a diagnostic when a required actor/topology dependency
+    /// is missing, instead of silently treating an invalid query as blocked.
     pub fn is_jumpable(&self, jump_line_idx: u32, pc_entity: EntityId, test_posture: bool) -> bool {
         let Some(entity) = self.world.entities.get(pc_entity) else {
+            tracing::warn!(
+                ?pc_entity,
+                jump_line_idx,
+                "jumpability query references missing actor"
+            );
             return false;
         };
         let Some(sector_num) = entity.element_data().sector() else {
+            tracing::warn!(
+                ?pc_entity,
+                jump_line_idx,
+                "jumpability query actor has no sector"
+            );
             return false;
         };
         let Some(&pc_sector_grid_idx) =
@@ -733,6 +743,12 @@ impl EngineInner {
                     u16::from(sector_num) as i16
                 ))
         else {
+            tracing::warn!(
+                ?pc_entity,
+                ?sector_num,
+                jump_line_idx,
+                "jumpability query has no canonical source sector"
+            );
             return false;
         };
         let Some(doors) = self
@@ -741,6 +757,11 @@ impl EngineInner {
             .as_ref()
             .map(|_| self.script_domains.interactables.doors.as_slice())
         else {
+            tracing::warn!(
+                ?pc_entity,
+                jump_line_idx,
+                "jumpability query has no mission script"
+            );
             return false;
         };
         let pc_auth = entity.actor_auth_info();
