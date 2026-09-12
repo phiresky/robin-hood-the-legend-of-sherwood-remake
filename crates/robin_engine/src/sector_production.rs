@@ -304,6 +304,16 @@ mod tests {
     use super::*;
     use crate::element::{ElementBonus, ElementData, ElementKind, Entity, ObjectData, ObjectType};
 
+    #[test]
+    fn script_production_codes_exclude_the_internal_unknown_variant() {
+        for value in 0..=12 {
+            assert_eq!(Type::from_script_i32(value).unwrap() as i32, value);
+        }
+        for value in [i32::MIN, -1, 13, i32::MAX] {
+            assert!(Type::from_script_i32(value).is_none());
+        }
+    }
+
     fn bonus_arrow(quantity: u16) -> Entity {
         Entity::Bonus(ElementBonus {
             element: {

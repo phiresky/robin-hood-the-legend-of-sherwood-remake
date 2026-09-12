@@ -136,7 +136,8 @@ impl ScriptProgram {
 /// Holds an `Arc<ScriptProgram>` (shared, immutable code) plus the
 /// mutable script state that varies at runtime: the shared static area
 /// that all VM instances in a level read/write. Cloning is cheap — the
-/// bytecode is an `Arc` bump, only the static area deep-copies.
+/// bytecode and static memory are `Arc` bumps. Static memory forks only when
+/// a callback writes bytes still observed by another instance or snapshot.
 ///
 /// Serialization carries only mutable VM state. Immutable bytecode is a
 /// level asset and is reattached after decode through [`attach_program`].
@@ -286,8 +287,7 @@ impl ScriptManager {
         let class = &self.program.scb.classes[class_idx];
         let heap_size = class.size_of_member_variables.max(0) as usize;
 
-        let mut vm = Vm::new();
-        vm.heap = vec![0u8; heap_size];
+        let vm = Vm::with_heap_size(heap_size);
 
         ScriptInstance { class_idx, vm }
     }
