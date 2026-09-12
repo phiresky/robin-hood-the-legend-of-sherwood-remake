@@ -1370,7 +1370,7 @@ fn authenticated_reblock_source_survives_missing_canonical() {
     std::fs::remove_file(&native).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::Ready(_)
     ));
     assert!(!native.exists());
@@ -1423,7 +1423,7 @@ fn binding_only_same_inode_canonical_recreates_recovery_link() {
     write_native_reblock_binding(&binding_path, &binding).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::Ready(_)
     ));
     #[cfg(unix)]
@@ -1453,7 +1453,7 @@ fn semantic_equal_postpublish_state_only_cleans_binding() {
     std::fs::remove_file(&source).unwrap();
 
     assert!(matches!(
-        prepare_native_reblock_source(&native, &source, &binding_path),
+        prepare_native_reblock_source(&native, &source, &binding_path).unwrap(),
         NativeReblockPreparation::AlreadyCommitted
     ));
     assert!(native.exists());
