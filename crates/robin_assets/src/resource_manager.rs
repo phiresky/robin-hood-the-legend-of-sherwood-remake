@@ -33,9 +33,6 @@ use crate::picture::Picture;
 use robin_data_io::sbfile::{SbFile, SbFileSystem};
 use robin_engine::coordinates::CursorHotspot;
 
-#[cfg(test)]
-include!("resource_wire_contract.rs");
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -2409,6 +2406,9 @@ mod tests {
 #[cfg(test)]
 #[path = "resource_opacity_tests.rs"]
 mod opacity_tests;
+
+#[cfg(test)]
+include!("resource_wire_contract.rs");
 
 #[cfg(test)]
 mod cache_lookup_tests {

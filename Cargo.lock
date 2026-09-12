@@ -5908,6 +5908,7 @@ dependencies = [
  "bytemuck",
  "bzip2",
  "clap",
+ "crc32fast",
  "flate2",
  "foldhash 0.2.0",
  "futures-channel",

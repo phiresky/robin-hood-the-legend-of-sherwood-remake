@@ -24,7 +24,7 @@ required-features = ["engine-adapters"]
 
 [[example]]
 name = "jxl_sprite_probe"
-required-features = ["engine-adapters"]
+required-features = ["engine-adapters", "research"]
 
 [[example]]
 name = "asset_decode_bench"
@@ -52,6 +52,7 @@ tracing.workspace = true
 anyhow.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 flate2 = "1"
+crc32fast = "1.5"
 # Fast non-cryptographic hasher for the sprite codec's context maps (hot
 # path: several map lookups per decoded tile).
 foldhash = "0.2"
@@ -91,8 +92,6 @@ memmap2 = "0.9"
 # buildable for wasm (cargo builds every dev-dependency for example targets).
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile.workspace = true
-# PNG export for the jxl_sprite_probe research example (cjxl input files).
-png = "0.18"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 js-sys = "0.3"
@@ -108,7 +107,6 @@ wasm-bindgen = "0.2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rayon = { version = "1", optional = true }
 wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"], optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
 futures-channel = { version = "0.3", optional = true }
@@ -123,6 +121,8 @@ spinning_top = "0.3"
 
 [features]
 default = ["engine-adapters"]
+# Expensive offline experiments are built only when explicitly requested.
+research = []
 # Game-level preparation, VM tooling and resource-manager adapters. Raw sprite,
 # picture and compression codecs remain usable without the simulation crate.
 engine-adapters = ["dep:robin_engine", "dep:png"]
@@ -132,7 +132,6 @@ engine-adapters = ["dep:robin_engine", "dep:png"]
 wasm-threads = [
     "dep:rayon",
     "dep:wasm-bindgen-rayon",
-    "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
     "dep:futures-channel",
