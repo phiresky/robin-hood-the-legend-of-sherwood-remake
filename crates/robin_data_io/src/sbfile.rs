@@ -1324,22 +1324,6 @@ impl SbFile {
         global_file_system().remove_overlay(path)
     }
 
-    /// Returns all directory-overlay paths (in priority order).  Zip
-    /// overlays are intentionally excluded: this API exists for callers
-    /// that want to walk the directory tree (e.g. enumerate
-    /// `Data/Characters/*.rhs.d/`), which doesn't apply to in-memory zip
-    /// roots.
-    pub fn overlay_paths() -> Vec<String> {
-        global_file_system().overlay_paths()
-    }
-
-    /// Whether an in-memory ZIP overlay is active. Callers that require a
-    /// filesystem-verifiable content closure must fail instead of silently
-    /// omitting these roots from [`Self::overlay_paths`].
-    pub fn has_zip_overlays() -> bool {
-        global_file_system().has_zip_overlays()
-    }
-
     pub fn set_primary_path(path: &str) -> i32 {
         global_file_system().set_primary_path(path)
     }
@@ -1385,18 +1369,6 @@ impl SbFile {
             resource_locale_root,
             core_overlay_root,
         )
-    }
-
-    /// Resolve a relative datadir *directory* to every existing native
-    /// directory across the search order (overlays, selected locale, fallback
-    /// locale, primary, direct, then ordinary alternates), case-insensitively.
-    ///
-    /// Callers that stat many files under one datadir directory resolve
-    /// the layering once with this instead of paying the full per-file
-    /// search for each name. Zip overlays have no native directories and
-    /// are skipped, matching [`SbFile::overlay_paths`].
-    pub fn resolve_data_dir_layers(rel_dir: &str) -> Vec<PathBuf> {
-        global_file_system().resolve_data_dir_layers(rel_dir)
     }
 
     pub fn remove_alternate_path(path: &str) -> i32 {
