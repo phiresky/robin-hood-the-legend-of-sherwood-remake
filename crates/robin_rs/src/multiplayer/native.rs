@@ -364,7 +364,9 @@ mod tests {
     use crate::leaderboard_ranked_session::{
         OfficialRankedSessionSetupV1, RankedRunPreflightAdmissionV1,
     };
-    use crate::multiplayer::{MAX_CONTENT_FRAME_BYTES, MAX_SERVER_CONTROL_FRAME_BYTES};
+    use crate::multiplayer::{
+        MAX_CONTENT_FRAME_BYTES, MAX_SERVER_CONTROL_FRAME_BYTES, ServerConfig,
+    };
     use ed25519_dalek::{Signer, SigningKey};
     use robin_engine::multiplayer::LeaderboardCoSignResponse;
     use robin_engine::multiplayer::{NetEvent, NetOutbound};

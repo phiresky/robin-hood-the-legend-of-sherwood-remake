@@ -500,7 +500,7 @@ pub fn start_server_with_key(
 /// ticket publication is disabled; production hosting uses
 /// [`start_server_in_campaign`].
 #[cfg(test)]
-pub(super) fn start_server_with_key_and_content(
+pub(in crate::multiplayer) fn start_server_with_key_and_content(
     key: SecretKey,
     host_nickname: String,
     mission_id: String,
