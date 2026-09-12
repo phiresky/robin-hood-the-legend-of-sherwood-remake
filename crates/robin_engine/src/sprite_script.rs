@@ -949,7 +949,7 @@ mod tests {
         let mut bytes = vec![0; 5];
         bytes.extend(profile_header(&[b'x'; 32], 0));
         let mut file = super::SbFile::from_owned_bytes(bytes, "unterminated.rhs");
-        assert_eq!(file.skip(5, 0), 0);
+        file.skip(5, 0).expect("seek to the script payload");
         let error = super::ProfileHeader::read(&mut file).err().unwrap();
         for context in ["unterminated.rhs", "byte 5", "ProfileHeader.name", "NUL"] {
             assert!(error.contains(context), "{error}");
