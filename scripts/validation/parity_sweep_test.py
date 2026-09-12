@@ -61,10 +61,25 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(self.case()["classification"], "exact_eof")
         self.assertEqual(self.case(dict(executable_sha256="a"*64))["classification"], "error")
         self.assertEqual(self.case(dict(processed_frames=1))["classification"], "error")
+        # Even internally consistent EOF evidence must match the manifest extent.
+        self.assertEqual(self.case(dict(processed_frames=1, expected_frames=1))["classification"], "error")
+        self.assertEqual(self.case(dict(final_frame=6, expected_final_frame=6))["classification"], "error")
 
     def test_divergence_and_timeout_remain_distinct(self):
         self.assertEqual(self.case(dict(outcome="divergence", divergent_frames=1), status=1)["classification"], "divergence")
         self.assertEqual(self.case(timeout=True)["classification"], "timeout")
+
+    def test_early_divergence_requires_trace_and_runner_identity(self):
+        divergence = dict(outcome="divergence", divergent_frames=1,
+                          processed_frames=1, final_frame=6, terminator_validated=False)
+        self.assertEqual(self.case(divergence, status=1)["classification"], "divergence")
+        for changes in (dict(trace_path="/different/trace"),
+                        dict(native_trace_sha256="a" * 64),
+                        dict(executable_sha256="b" * 64)):
+            with self.subTest(changes=changes):
+                record = self.case(divergence | changes, status=1)
+                self.assertEqual(record["classification"], "error")
+                self.assertEqual(record["error_kind"], "evidence_or_io_error")
 
     def test_interactive_families_are_not_collapsed(self):
         self.assertEqual(sweep.identity(Path("interactive/interactive-session-003-session-0004.jsonl.zst.parity.bitcode.zst")),
@@ -106,7 +121,8 @@ class SweepTests(unittest.TestCase):
                 self.assertEqual(db.execute("SELECT count(*) FROM cases WHERE state IN ('pending','running')").fetchone()[0], 0)
             db.close()
 
-    def resumed_campaign(self, expired=False, corrupt=False, changed_core=False):
+    def resumed_campaign(self, expired=False, corrupt=False, changed_core=False,
+                         divergence_changes=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             corpus, output = root/"corpus", root/"audit"
@@ -130,6 +146,17 @@ class SweepTests(unittest.TestCase):
                     raise RuntimeError("simulated controller interruption")
                 record = dict(index=index, trace=entry["path"], classification="timeout",
                               status=124, log=str(log), log_sha256=sweep.digest(log))
+                if index == 0 and divergence_changes is not None:
+                    result = dict(result_version=1, trace_path=str(output/"traces"/entry["path"]),
+                        native_trace_sha256=entry["sha256"], executable_path=str(output/"original_parity_replay"),
+                        executable_sha256=sweep.digest(runner), expected_frames=2, processed_frames=1,
+                        expected_final_frame=7, final_frame=6, terminator_validated=False,
+                        divergent_frames=1, outcome="divergence", capabilities=dict(
+                            policy_version=1, trace_schema=16, native_version=68, exceptions=[]))
+                    result.update(divergence_changes)
+                    log.write_text("ROBIN_PARITY_RESULT " + json.dumps(result) + "\n")
+                    record.update(classification="divergence", status=1, result=result,
+                                  log_sha256=sweep.digest(log))
                 sweep.write_json(output/"results"/f"{index:04d}.json", record)
                 return record
             with patch.object(sweep, "run_case", worker), patch("builtins.print"):
@@ -152,6 +179,12 @@ class SweepTests(unittest.TestCase):
                 calls.append(arguments[1])
                 return worker(*arguments)
             with patch.object(sweep, "run_case", resumed), patch("builtins.print"):
+                if divergence_changes:
+                    with self.assertRaisesRegex(ValueError, "identity mismatch|structured result mismatch"):
+                        sweep.run(args)
+                    self.assertFalse(calls)
+                    self.assertFalse((output/"interruptions").exists())
+                    return
                 if changed_core:
                     with self.assertRaisesRegex(ValueError, "resume provenance"):
                         sweep.run(args)
@@ -170,7 +203,20 @@ class SweepTests(unittest.TestCase):
             archives = list((output/"interruptions").iterdir())
             self.assertEqual((archives[0]/"0001.log").read_text(), "partial external interruption")
             report = json.loads((output/"campaign-result.json").read_text())
-            self.assertEqual(report["counts"], dict(timeout=1, not_run_budget=2) if expired else dict(timeout=3))
+            expected = dict(timeout=1, not_run_budget=2) if expired else dict(timeout=3)
+            if divergence_changes is not None:
+                expected = dict(divergence=1, timeout=2)
+            self.assertEqual(report["counts"], expected)
+
+    def test_resume_preserves_valid_early_divergence(self):
+        self.resumed_campaign(divergence_changes={})
+
+    def test_resume_rejects_divergence_from_other_inputs(self):
+        for changes in (dict(trace_path="/different/trace"),
+                        dict(native_trace_sha256="a" * 64),
+                        dict(executable_sha256="b" * 64), dict(outcome="incomplete")):
+            with self.subTest(changes=changes):
+                self.resumed_campaign(divergence_changes=changes)
 
     def test_resume_preserves_completed_and_archives_interruption(self):
         self.resumed_campaign()

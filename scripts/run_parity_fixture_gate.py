@@ -60,6 +60,13 @@ def main() -> int:
     datadir = args.datadir.resolve(strict=True)
     core_datadir = None if args.allow_legacy_result else (
         args.core_datadir or Path(__file__).resolve().parents[1] / "assets/core-datadir").resolve(strict=True)
+    core_input = None if core_datadir is None else dict(
+        path=str(core_datadir), audio_durations_sha256=digest(core_datadir / "Data/AudioDurations.json"))
+
+    def check_core_input():
+        if core_input is not None and digest(core_datadir / "Data/AudioDurations.json") != core_input["audio_durations_sha256"]:
+            raise ValueError("core timing input changed during fixture gate")
+
     manifest = json.loads(args.manifest.read_text())
     if manifest.get("manifest_version") != 1:
         parser.error("unsupported fixture manifest version")
@@ -82,6 +89,7 @@ def main() -> int:
     for index, entry in enumerate(manifest["artifacts"]):
         if not entry.get("run"):
             continue
+        check_core_input()
         trace = output / "traces" / safe_relative(entry["path"])
         log_path = output / f"{index:02d}.log"
         env = dict(os.environ, ROBINHOOD_DATA_DIR=str(datadir))
@@ -94,6 +102,7 @@ def main() -> int:
                                         timeout=args.timeout, check=False).returncode
             except subprocess.TimeoutExpired:
                 status = 124
+        check_core_input()
         log = log_path.read_text(errors="replace")
         try:
             matched = status == 0 and exact_eof(log, allow_legacy=args.allow_legacy_result, trace=trace)
@@ -108,9 +117,11 @@ def main() -> int:
         records.append(dict(trace=entry["path"], status=status, exact_eof=matched,
                             log_sha256=digest(log_path), result=result))
         print(f"  {'exact EOF' if matched else 'FAILED'}; status={status}; log={log_path}", flush=True)
+    check_core_input()
     report = dict(gate_version=1, manifest_sha256=digest(args.manifest),
                   runner_sha256=runner_sha, runner=str(runner), source_runner=str(source_runner), datadir=str(datadir),
                   core_datadir=str(core_datadir) if core_datadir is not None else None,
+                  core_input=core_input,
                   legacy_result_allowed=args.allow_legacy_result, results=records)
     (output / "gate-result.json").write_text(json.dumps(report, indent=2) + "\n")
     return 0 if records and all(record["exact_eof"] for record in records) else 1
