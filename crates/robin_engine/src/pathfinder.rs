@@ -169,16 +169,6 @@ pub struct ParityPathRequest {
     pub use_first_point: bool,
 }
 
-/// One failed-path timeout entry retained across frame boundaries. `sector`
-/// is the original request's otherwise-unused raw sector value; `time` is
-/// the universal frame at which the request entered the timeout list.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct ParityFailedPathRequest {
-    pub request: ParityPathRequest,
-    pub sector: u16,
-    pub time: u32,
-}
-
 /// One ordered pathfinder boundary observed while parity capture is active.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub enum ParityPathEvent {

@@ -1665,28 +1665,6 @@ impl Database {
         lifecycle.ok_or(DbError::InvalidChallenge)
     }
 
-    pub async fn attach_offer(
-        &self,
-        challenge_id: &str,
-        offer_json: &str,
-        public_metadata_json: &str,
-    ) -> Result<(), DbError> {
-        let changed = sqlx::query(
-            "UPDATE upload_challenges SET offer_json = ?, public_metadata_json = ? \
-             WHERE id = ? AND purpose = 'submission' AND consumed_at_ms IS NULL \
-                 AND offer_json IS NULL AND public_metadata_json IS NULL",
-        )
-        .bind(offer_json)
-        .bind(public_metadata_json)
-        .bind(challenge_id)
-        .execute(&self.pool)
-        .await?;
-        if changed.rows_affected() != 1 {
-            return Err(DbError::InvalidChallenge);
-        }
-        Ok(())
-    }
-
     pub async fn attach_deletion_challenge(
         &self,
         challenge_id: &str,
