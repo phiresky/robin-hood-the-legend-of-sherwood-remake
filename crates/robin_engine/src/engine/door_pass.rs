@@ -1220,18 +1220,15 @@ impl EngineInner {
             (tl, ts, ti, door.door_type, is_high, pout)
         };
 
-        // Read entity's current sector and type before the change.
-        let (current_sector, is_pc) = self
+        // Read the entity's current sector before the change.
+        let current_sector = self
             .get_entity(entity_id)
             .map(|entity| {
-                (
                     entity.element_data().sector().unwrap_or_else(|| {
                         panic!(
                             "PassDoor callback for {entity_id:?}, door {door_index} has no source sector"
                         )
-                    }),
-                    entity.is_pc(),
-                )
+                    })
             })
             .unwrap_or_else(|| {
                 panic!("PassDoor callback for door {door_index} lost owner {entity_id:?}")
@@ -1642,8 +1639,6 @@ impl EngineInner {
         // machine: the state *is* the patch's applied-ness, and the
         // visual *is* the transition animation.  The Rust enum is
         // driven off the same completion signal.
-
-        let _ = is_pc;
     }
 
     /// Commit the exact endpoint when the final door-pass order completes.

@@ -4026,6 +4026,8 @@ fn sword_strike_seek_treats_two_unassigned_sectors_as_same_like_original() {
 fn cross_gate_swordfight_preserves_entity_seek_refresh_and_post_seek_entry() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 7, 0);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 8, 0);
     engine.scripts.mission = Some(minimal_script());
 
     let pc_sector = crate::position_interface::SectorHandle::new(7);
@@ -4956,6 +4958,7 @@ fn fx_target_click_commands_use_zero_tolerance_move_and_preserve_wait_time() {
     for command in commands {
         let sim = crate::sim_rng::test_context();
         let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
         engine.scripts.mission = Some(minimal_script());
         let sector = crate::position_interface::SectorHandle::new(1);
         {
@@ -5219,6 +5222,7 @@ fn recorded_fx_target_replays_authored_coordinate_seek_and_continuation() {
 fn same_command_against_human_keeps_generic_entity_seek() {
     let sim = crate::sim_rng::test_context();
     let (mut engine, assets, pc_id) = setup_pc_engine(&[]);
+    crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
     let sector = crate::position_interface::SectorHandle::new(1);
     {
         let pc = engine.get_entity_mut(pc_id).expect("test PC exists");

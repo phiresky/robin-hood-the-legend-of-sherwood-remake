@@ -2306,6 +2306,8 @@ mod tests {
     ) {
         let sim = crate::sim_rng::test_context();
         let mut engine = crate::engine::EngineInner::new();
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, 1, 0);
+        crate::engine::test_support::ensure_ordinary_sector(&mut engine, target_sector, 0);
         let mut assets = LevelAssets::new();
         std::sync::Arc::make_mut(&mut assets.profile_manager)
             .characters
