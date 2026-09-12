@@ -11556,6 +11556,7 @@ impl EngineInner {
     pub(crate) fn try_dispatch_move_path(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
@@ -11869,7 +11870,7 @@ impl EngineInner {
                 "try_dispatch_move_path: anonymous archer may not move",
             );
             self.hero_speaking(
-                _assets,
+                assets,
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );

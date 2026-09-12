@@ -278,6 +278,7 @@ impl EngineInner {
             if !forced_reset {
                 self.invalidate_paths_and_kill_crushed(
                     sim,
+                    assets,
                     ctx.pathfinder_layer,
                     ctx.pathfinder_sector,
                     &appeared,
@@ -317,6 +318,7 @@ impl EngineInner {
     fn invalidate_paths_and_kill_crushed(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
         layer: u16,
         sector: u16,
         appeared: &[crate::pathfinder::AppearedObstacle],
@@ -449,7 +451,7 @@ impl EngineInner {
                         .element_impossible(seq_id, elem_idx);
                     continue;
                 }
-                match self.try_dispatch_move_path(sim, id, seq_id, elem_idx, dest, action) {
+                match self.try_dispatch_move_path(sim, assets, id, seq_id, elem_idx, dest, action) {
                     MovePathOutcome::Success | MovePathOutcome::Pending => {
                         // Corrected original-game movement invalidation refreshes
                         // actor order from the retranslated selected element. The
@@ -870,7 +872,13 @@ mod tests {
         );
         let expected = expected_box.center();
 
-        engine.invalidate_paths_and_kill_crushed(&crate::sim_rng::test_context(), 0, 1, &[]);
+        engine.invalidate_paths_and_kill_crushed(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::default(),
+            0,
+            1,
+            &[],
+        );
 
         let corrected = engine
             .get_entity(owner)

@@ -225,7 +225,15 @@ mod suite {
         let sequence = engine.orders.sequence_manager.launch_element(movement);
         let sim = crate::sim_rng::test_context();
         assert!(matches!(
-            engine.try_dispatch_move_path(&sim, owner, sequence, 0, destination, authored_action,),
+            engine.try_dispatch_move_path(
+                &sim,
+                &LevelAssets::new(),
+                owner,
+                sequence,
+                0,
+                destination,
+                authored_action,
+            ),
             MovePathOutcome::Success
         ));
         let movement = engine
@@ -1453,6 +1461,7 @@ mod suite {
         assert!(matches!(
             engine.try_dispatch_move_path(
                 &sim,
+                &LevelAssets::new(),
                 owner,
                 sequence,
                 0,
