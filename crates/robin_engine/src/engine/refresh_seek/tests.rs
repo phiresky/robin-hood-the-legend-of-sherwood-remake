@@ -161,6 +161,80 @@ fn replay_owned_point_seek_fixture() -> (
 }
 
 #[test]
+fn seek_requests_keep_simulation_and_assets_as_explicit_borrows() {
+    type PointDispatch = fn(
+        &mut crate::engine::EngineInner,
+        &crate::sim_rng::SimulationContext,
+        &LevelAssets,
+        PointSeekRequest,
+    ) -> bool;
+    type EntityDispatch = fn(
+        &mut crate::engine::EngineInner,
+        &crate::sim_rng::SimulationContext,
+        &LevelAssets,
+        EntitySeekRequest,
+        f32,
+    ) -> bool;
+    type EntityRefresh = fn(
+        &mut crate::engine::EngineInner,
+        &crate::sim_rng::SimulationContext,
+        &LevelAssets,
+        EntitySeekRequest,
+        MapPoint,
+    );
+    let _: PointDispatch = crate::engine::EngineInner::try_dispatch_cross_sector_point_seek;
+    let _: EntityDispatch = crate::engine::EngineInner::try_dispatch_cross_sector_entity_seek;
+    let _: EntityRefresh = crate::engine::EngineInner::apply_seek_refresh;
+}
+
+#[test]
+fn same_sector_request_leaves_the_element_available_for_cross_sector_retry() {
+    let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
+    let request = |sector| PointSeekRequest {
+        owner,
+        sequence_id,
+        element_index: 0,
+        destination,
+        goal_sector: SectorHandle::new(sector),
+        goal_layer: 0,
+        action: OrderType::WalkingUpright,
+        flags: MoveFlags::SEEK,
+        seek_distance: 0.0,
+        recorded_gate_path: None,
+        route_provenance: crate::sequence::PointSeekRouteProvenance::Live,
+    };
+    let before = serde_json::to_value(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 0)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(!engine.try_dispatch_cross_sector_point_seek(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        request(133),
+    ));
+    assert_eq!(
+        before,
+        serde_json::to_value(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap(),
+        )
+        .unwrap()
+    );
+    assert!(engine.try_dispatch_cross_sector_point_seek(
+        &crate::sim_rng::test_context(),
+        &LevelAssets::new(),
+        request(22),
+    ));
+}
+
+#[test]
 #[should_panic(expected = "has no admitted RecordedDropAleRoute ExternalFact")]
 fn original_replay_point_seek_rejects_missing_recorded_outcome() {
     let (mut engine, owner, sequence_id, destination) = replay_owned_point_seek_fixture();
@@ -168,17 +242,19 @@ fn original_replay_point_seek_rejects_missing_recorded_outcome() {
     engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
-        owner,
-        sequence_id,
-        0,
-        destination,
-        SectorHandle::new(22),
-        0,
-        OrderType::WalkingUpright,
-        MoveFlags::SEEK,
-        0.0,
-        None,
-        crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        crate::engine::refresh_seek::PointSeekRequest {
+            owner,
+            sequence_id,
+            element_index: 0,
+            destination,
+            goal_sector: SectorHandle::new(22),
+            goal_layer: 0,
+            action: OrderType::WalkingUpright,
+            flags: MoveFlags::SEEK,
+            seek_distance: 0.0,
+            recorded_gate_path: None,
+            route_provenance: crate::sequence::PointSeekRouteProvenance::OriginalReplay,
+        },
     );
 }
 
@@ -189,17 +265,19 @@ fn live_point_seek_without_recorded_outcome_uses_gate_graph() {
     assert!(engine.try_dispatch_cross_sector_point_seek(
         &crate::sim_rng::test_context(),
         &LevelAssets::new(),
-        owner,
-        sequence_id,
-        0,
-        destination,
-        SectorHandle::new(22),
-        0,
-        OrderType::WalkingUpright,
-        MoveFlags::SEEK,
-        0.0,
-        None,
-        crate::sequence::PointSeekRouteProvenance::Live,
+        crate::engine::refresh_seek::PointSeekRequest {
+            owner,
+            sequence_id,
+            element_index: 0,
+            destination,
+            goal_sector: SectorHandle::new(22),
+            goal_layer: 0,
+            action: OrderType::WalkingUpright,
+            flags: MoveFlags::SEEK,
+            seek_distance: 0.0,
+            recorded_gate_path: None,
+            route_provenance: crate::sequence::PointSeekRouteProvenance::Live,
+        },
     ));
     assert!(
         engine
@@ -747,12 +825,14 @@ fn refresh_seek_recovers_moved_owner_and_target_sectors_before_indexed_route() {
     assert!(engine.try_dispatch_cross_sector_entity_seek(
         &sim,
         &LevelAssets::new(),
-        owner,
-        seek_id,
-        0,
-        target,
-        OrderType::RunningUpright,
-        MoveFlags::SEEK,
+        crate::engine::refresh_seek::EntitySeekRequest {
+            owner,
+            sequence_id: seek_id,
+            element_index: 0,
+            target,
+            action: OrderType::RunningUpright,
+            flags: MoveFlags::SEEK,
+        },
         0.0,
     ));
     let gates = engine
@@ -833,12 +913,14 @@ fn cross_sector_refresh_seek_does_not_append_pc_posture_recovery() {
     assert!(engine.try_dispatch_cross_sector_entity_seek(
         &sim,
         &LevelAssets::new(),
-        owner,
-        seek_id,
-        0,
-        target,
-        OrderType::WalkingUpright,
-        MoveFlags::SEEK,
+        crate::engine::refresh_seek::EntitySeekRequest {
+            owner,
+            sequence_id: seek_id,
+            element_index: 0,
+            target,
+            action: OrderType::WalkingUpright,
+            flags: MoveFlags::SEEK,
+        },
         10.0,
     ));
 
@@ -1053,12 +1135,14 @@ fn refresh_seek_waits_when_same_sector_actor_target_is_passing_door() {
     engine.apply_seek_refresh(
         sim,
         &assets,
-        owner,
-        seek_seq,
-        0,
-        target,
-        OrderType::WalkingUpright,
-        MoveFlags::SEEK,
+        crate::engine::refresh_seek::EntitySeekRequest {
+            owner,
+            sequence_id: seek_seq,
+            element_index: 0,
+            target,
+            action: OrderType::WalkingUpright,
+            flags: MoveFlags::SEEK,
+        },
         crate::coordinates::MapPoint { x: 90.0, y: 10.0 },
     );
 
