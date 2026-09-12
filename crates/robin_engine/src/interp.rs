@@ -422,9 +422,17 @@ pub struct VmActivationState {
 
 impl Vm {
     pub fn new() -> Self {
+        Self::with_heap_size(4096)
+    }
+
+    pub(crate) fn with_heap_size(heap_size: usize) -> Self {
+        static EMPTY_STATIC_AREA: std::sync::OnceLock<std::sync::Arc<Vec<u8>>> =
+            std::sync::OnceLock::new();
         Self {
-            static_area: std::sync::Arc::new(vec![0; 4096]),
-            heap: vec![0; 4096],
+            static_area: EMPTY_STATIC_AREA
+                .get_or_init(|| std::sync::Arc::new(vec![0; 4096]))
+                .clone(),
+            heap: vec![0; heap_size],
             frames: vec![Frame::default()],
             outgoing_params: Vec::new(),
             native_stack: NativeStack::default(),
