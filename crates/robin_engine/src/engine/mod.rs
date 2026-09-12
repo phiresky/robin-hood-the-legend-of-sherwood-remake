@@ -22,7 +22,7 @@ mod combat;
 mod commands;
 mod console_dispatch;
 mod corpse_intersection;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod display_state;
 mod tactical_control;
 pub use display_state::DrawOrder;

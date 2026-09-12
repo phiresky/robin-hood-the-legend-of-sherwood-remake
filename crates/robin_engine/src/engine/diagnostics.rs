@@ -6,6 +6,60 @@ use crate::element::EntityId;
 use serde::{Deserialize, Serialize};
 use std::{ffi::OsString, sync::OnceLock};
 
+/// A cached opt-in diagnostic with independently optional numeric filters.
+/// Callers retain their own `OnceLock`: each gate samples the environment once,
+/// without introducing simulation state or forcing unrelated gates to parse.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ParityGate<const N: usize> {
+    enabled: bool,
+    filters: Vec<Option<u32>>,
+}
+
+impl<const N: usize> ParityGate<N> {
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
+    }
+    pub(crate) fn from_env(gate: &str, names: [&str; N]) -> Self {
+        Self::parse(gate, names, |name| std::env::var_os(name))
+            .unwrap_or_else(|error| panic!("invalid parity diagnostic configuration: {error}"))
+    }
+
+    fn parse(
+        gate: &str,
+        names: [&str; N],
+        get: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, String> {
+        let enabled = get(gate).is_some();
+        let filters = names
+            .into_iter()
+            .map(|name| {
+                if !enabled {
+                    return Ok(None);
+                }
+                get(name)
+                    .map(|raw| {
+                        let raw = raw
+                            .into_string()
+                            .map_err(|_| format!("{name} must be Unicode"))?;
+                        raw.parse()
+                            .map_err(|error| format!("invalid {name}={raw:?}: {error}"))
+                    })
+                    .transpose()
+            })
+            .collect::<Result<_, String>>()?;
+        Ok(Self { enabled, filters })
+    }
+
+    /// A missing observed value is deliberately not filtered: publication
+    /// probes can run before the projectile has received its identity.
+    pub(crate) fn matches(&self, values: [Option<u32>; N]) -> bool {
+        self.enabled
+            && self.filters.iter().zip(values).all(|(filter, value)| {
+                filter.is_none_or(|expected| value.is_none_or(|actual| actual == expected))
+            })
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct ExactOwnerFrame {
     pub frame: u32,
@@ -62,12 +116,24 @@ pub(super) struct DiagnosticConfig {
     goal_owner: Option<OwnerFrames>,
     pub motion_latch: Option<ExactOwnerFrame>,
     pub attentive_owner: Option<ExactOwnerFrame>,
+    pub damage_parry: Option<ExactOwnerFrame>,
+    pub attentive_mode_caller: Option<ExactOwnerFrame>,
+    pub think_stimulus: Option<ExactOwnerFrame>,
+    pub corpse_intersection: bool,
     pub path_owner: Option<PathOwnerFilter>,
     pub path_barrier: bool,
     pub post_seek_handoff: bool,
 }
 
 impl DiagnosticConfig {
+    pub fn goal_owner_enabled(&self) -> bool {
+        self.goal_owner.is_some()
+    }
+
+    pub fn goal_owner_frame_matches(&self, frame: u32) -> bool {
+        self.goal_owner
+            .is_some_and(|filter| (filter.from..=filter.until).contains(&frame))
+    }
     pub fn drop_boundary_matches(&self, frame: u32, owner: EntityId) -> bool {
         self.drop_boundary
             .is_some_and(|filter| filter.matches(frame, owner))
@@ -182,6 +248,22 @@ impl DiagnosticConfig {
                 "PARITY_DEBUG_ATTENTIVE_OWNER_FRAME",
                 "PARITY_DEBUG_ATTENTIVE_OWNER_CREATION_ORDER",
             )?,
+            damage_parry: exact(
+                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF",
+                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_FRAME",
+                "PARITY_DEBUG_DAMAGE_PARRY_HANDOFF_CREATION_ORDER",
+            )?,
+            attentive_mode_caller: exact(
+                "PARITY_DEBUG_ATTENTIVE_MODE_CALLER",
+                "PARITY_DEBUG_ATTENTIVE_MODE_CALLER_FRAME",
+                "PARITY_DEBUG_ATTENTIVE_MODE_CALLER_CREATION_ORDER",
+            )?,
+            think_stimulus: exact(
+                "PARITY_DEBUG_THINK_STIMULUS",
+                "PARITY_DEBUG_THINK_STIMULUS_FRAME",
+                "PARITY_DEBUG_THINK_STIMULUS_CREATION_ORDER",
+            )?,
+            corpse_intersection: get("PARITY_DEBUG_CORPSE_INTERSECTION").is_some(),
             path_barrier: get("PARITY_DEBUG_PATH_BARRIER").is_some(),
             post_seek_handoff: get("PARITY_DEBUG_POST_SEEK_HANDOFF").is_some(),
         })
@@ -199,6 +281,33 @@ pub(super) fn config() -> &'static DiagnosticConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_gate_filters_preserve_publication_before_identity() {
+        let gate = ParityGate::parse("enabled", ["frame", "identity"], |name| match name {
+            "enabled" => Some("".into()),
+            "frame" => Some("5".into()),
+            "identity" => Some("9".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert!(gate.enabled());
+        assert!(gate.matches([Some(5), None]));
+        assert!(gate.matches([Some(5), Some(9)]));
+        assert!(!gate.matches([Some(6), Some(9)]));
+        assert!(!gate.matches([Some(5), Some(8)]));
+    }
+
+    #[test]
+    fn optional_gate_only_parses_enabled_filters() {
+        assert!(
+            ParityGate::parse("enabled", ["frame"], |name| {
+                (name == "frame").then(|| "invalid".into())
+            })
+            .is_ok()
+        );
+        assert!(ParityGate::parse("enabled", ["frame"], |_| Some("invalid".into())).is_err());
+    }
 
     fn parse(values: &[(&str, &str)]) -> Result<DiagnosticConfig, String> {
         DiagnosticConfig::parse(|name| {
