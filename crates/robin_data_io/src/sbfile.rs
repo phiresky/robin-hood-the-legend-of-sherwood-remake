@@ -2483,8 +2483,17 @@ mod tests {
         assert_eq!(file.skip(10, 0), SBFILE_NO_ERROR);
         assert_eq!(file.tell(), 10);
         assert_eq!(file.get_size(), 5);
-        assert_eq!(file.read(&mut [0; 1]), SBFILE_ERROR_READ);
-        assert_eq!(file.tell(), 10);
+        let mut expected = Cursor::new(b"Hello".to_vec());
+        expected.seek(SeekFrom::Start(10)).unwrap();
+        let mut actual_bytes = [0; 1];
+        let mut expected_bytes = actual_bytes;
+        assert!(expected.read_exact(&mut expected_bytes).is_err());
+        assert_eq!(file.read(&mut actual_bytes), SBFILE_ERROR_READ);
+        assert_eq!(actual_bytes, expected_bytes);
+        // A failed read past EOF can clamp the cursor to the backing length.
+        // Both the old fallible accessor and the direct accessor report it.
+        assert_eq!(expected.stream_position().unwrap(), expected.position());
+        assert_eq!(file.tell(), expected.position());
         assert_eq!(file.skip(-1, 2), SBFILE_NO_ERROR);
         let mut last = [0];
         assert_eq!(file.read(&mut last), SBFILE_NO_ERROR);
@@ -3270,8 +3279,14 @@ mod tests {
         assert_eq!(stream.read(&mut prefix), SBFILE_NO_ERROR);
         assert_eq!(prefix, *b"sh");
         assert_eq!(stream.skip(100, 0), SBFILE_NO_ERROR);
+        let mut expected = Cursor::new(source.clone());
+        expected.seek(SeekFrom::Start(100)).unwrap();
+        let mut expected_prefix = prefix;
+        assert!(expected.read_exact(&mut expected_prefix).is_err());
         assert_eq!(stream.read(&mut prefix), SBFILE_ERROR_READ);
-        assert_eq!(stream.tell(), 100);
+        assert_eq!(prefix, expected_prefix);
+        assert_eq!(expected.stream_position().unwrap(), expected.position());
+        assert_eq!(stream.tell(), expected.position());
         assert_eq!(stream.get_size(), source.len() as u64);
         let backing = stream.into_shared_bytes();
         assert_eq!(backing.as_ref(), b"shared bytes");
