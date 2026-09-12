@@ -628,7 +628,7 @@ impl SpellforgeContentSettingsState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input = ModalInputState::from_window(event_pump, transform);
+        let input = ModalInputState::from_window(event_pump, transform);
         let mut state = Self {
             page: 0,
             status: String::new(),

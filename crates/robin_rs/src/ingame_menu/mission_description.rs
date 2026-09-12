@@ -214,7 +214,7 @@ impl MissionDescriptionModalState {
                 as u32;
         let blazon_box_h =
             (layout_consts::BLAZON_BOX_BOTTOM - layout_consts::BLAZON_BOX_Y).max(0) as u32;
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             mission_index,
             screen,

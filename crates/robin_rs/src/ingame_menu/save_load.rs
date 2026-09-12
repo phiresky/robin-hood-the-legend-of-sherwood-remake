@@ -77,7 +77,7 @@ impl LoadPickerModalState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
         let row_height = if detailed_metadata {
             DETAILED_ROW_HEIGHT
         } else {

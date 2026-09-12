@@ -517,7 +517,7 @@ impl DialogueModalState {
         );
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
         let portrait_fade = PortraitFade::new(sentences[0].resolved_portrait_id());
 
         Self {

@@ -884,7 +884,7 @@ async fn prepare_direct_browser_launch(
     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
     let mut probe_events = Vec::new();
     while handle.content_offer().is_none()
-        && handle.mission_id().is_none()
+        && handle.session_metadata().is_none()
         && web_time::Instant::now() < deadline
     {
         match channels.try_recv_event() {
@@ -900,7 +900,7 @@ async fn prepare_direct_browser_launch(
             }
         }
     }
-    if handle.content_offer().is_none() && handle.mission_id().is_none() {
+    if handle.content_offer().is_none() && handle.session_metadata().is_none() {
         return Err(localized_text(
             application_context,
             PortTextKey::SpellforgeMpDirectResolveTimeout,
@@ -1077,13 +1077,13 @@ async fn preflight_host_content(
     })?;
     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
     while handle.content_offer().is_none()
-        && handle.mission_id().is_none()
+        && handle.session_metadata().is_none()
         && web_time::Instant::now() < deadline
     {
         crate::window::sleep_ms(10).await;
     }
     let offer = handle.content_offer().ok_or_else(|| {
-        if handle.mission_id().is_some() {
+        if handle.session_metadata().is_some() {
             localized_text(
                 application_context,
                 PortTextKey::SpellforgeMpOrdinaryWelcome,

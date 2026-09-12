@@ -140,7 +140,7 @@ impl BuyBlazonsModalState {
         }
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let mut input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             screen,
             frame,
