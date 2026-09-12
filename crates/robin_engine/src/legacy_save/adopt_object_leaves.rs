@@ -389,7 +389,7 @@ impl LegacyObjectLeafAdoptionPlan {
                     )?;
                     PlannedLeaf::Object {
                         entity: entity_id,
-                        state: preflight_object(&saved.object, creation_order, entities)?,
+                        state: preflight_object(&saved.object, creation_order)?,
                     }
                 }
                 LegacyElementPayload::Scroll(saved) => {
@@ -420,7 +420,7 @@ impl LegacyObjectLeafAdoptionPlan {
                         })?;
                     PlannedLeaf::Scroll {
                         entity: entity_id,
-                        state: preflight_object(&saved.object, creation_order, entities)?,
+                        state: preflight_object(&saved.object, creation_order)?,
                         status,
                         hourglass_timeout: saved.script_hourglass_timeout,
                         vm_heap,
@@ -716,7 +716,7 @@ fn preflight_object_item(
         finite(payload.movement.z, creation_order, "wasp movement z")?;
         return Ok(PlannedLeaf::Wasp {
             entity: entity_id,
-            object: preflight_object(&payload.object, creation_order, entities)?,
+            object: preflight_object(&payload.object, creation_order)?,
             nest: entities.resolve_element(payload.nest)?,
             victim: entities.resolve_element(payload.victim)?,
             stinging: payload.stinging,
@@ -805,7 +805,7 @@ fn preflight_object_item(
         }
     };
     require_kind(runtime, entity_id, creation_order, saved_kind, predicate)?;
-    let object = preflight_object(object, creation_order, entities)?;
+    let object = preflight_object(object, creation_order)?;
     if let Some(projectile) = projectile {
         let mut projectile = preflight_projectile(projectile, creation_order, entities)?;
         if let Some((falling, falling_direction, last_sector, last_azimuth, bow, flat, impact)) =
@@ -1008,11 +1008,9 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
 fn preflight_object(
     saved: &LegacyObjectPayload,
     creation_order: u32,
-    entities: &LegacyEntityFixups,
 ) -> Result<PlannedObject, LegacyObjectLeafAdoptError> {
     // Object reference/back-pointer fields are not serialized by
     // the object element. Projectile-family leaf plans own those references.
-    let _ = entities;
     Ok(PlannedObject {
         terminate: saved.terminate,
         quantity: saved.quantity,
@@ -1766,18 +1764,8 @@ mod tests {
             },
             end_offset: expected_len,
         };
-        let fixups = LegacyEntityFixups {
-            by_creation_order: Default::default(),
-            by_saved_slot: Vec::new(),
-            creation_order_by_entity: Default::default(),
-            mobile_by_creation_order: Default::default(),
-            mobile_owner_by_creation_order: Default::default(),
-        };
         let mut baseline = ObjectData::default();
-        apply_object(
-            &mut baseline,
-            preflight_object(&saved, 17, &fixups).unwrap(),
-        );
+        apply_object(&mut baseline, preflight_object(&saved, 17).unwrap());
         saved.repulsive_point.id = 123;
         saved.repulsive_point.concave = !saved.repulsive_point.concave;
         saved.repulsive_point.affects_pcs = !saved.repulsive_point.affects_pcs;
@@ -1786,7 +1774,7 @@ mod tests {
         saved.repulsive_point.affects_animals = !saved.repulsive_point.affects_animals;
         saved.repulsive_point.radius = f32::from_bits(0xffc0_5678);
         let mut varied = ObjectData::default();
-        apply_object(&mut varied, preflight_object(&saved, 17, &fixups).unwrap());
+        apply_object(&mut varied, preflight_object(&saved, 17).unwrap());
         assert_eq!(bitcode::encode(&baseline), bitcode::encode(&varied));
         for object in [baseline, varied] {
             let mut entity = Entity::Bonus(crate::element::ElementBonus {

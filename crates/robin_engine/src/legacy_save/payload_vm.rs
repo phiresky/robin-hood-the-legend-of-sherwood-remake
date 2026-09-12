@@ -7,6 +7,7 @@
 //! `Location`. Consequently an RHSG payload cannot be decoded without the
 //! exact mission SCB used to create it.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -25,7 +26,7 @@ pub struct LegacyVmDecodeLimits {
 impl Default for LegacyVmDecodeLimits {
     fn default() -> Self {
         Self {
-            members_per_class: 65_535,
+            members_per_class: DEFAULT_BULK_LIMIT,
         }
     }
 }

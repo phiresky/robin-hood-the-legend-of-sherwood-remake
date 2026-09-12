@@ -585,7 +585,7 @@ mod tests {
         });
         assert_eq!(error.offset, 10);
         assert_eq!(error.field, "elements[0].pc_description_index");
-        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile { .. }));
+        assert!(matches!(error.kind, LegacyIoErrorKind::SbFile(_)));
     }
 
     #[test]

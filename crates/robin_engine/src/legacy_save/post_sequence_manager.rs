@@ -6,6 +6,7 @@
 //! optional inline post-seek sequence. The manager then writes a queue of
 //! sequence-element IDs. These are IDs, not phase-one element references.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{hex16, reserve};
 use std::collections::HashSet;
 
@@ -35,8 +36,8 @@ pub struct LegacySequenceManagerLimits {
 impl Default for LegacySequenceManagerLimits {
     fn default() -> Self {
         Self {
-            sequences: 65_535,
-            deferred_elements: 65_535,
+            sequences: DEFAULT_BULK_LIMIT,
+            deferred_elements: DEFAULT_BULK_LIMIT,
             payload: LegacySequencePayloadLimits::default(),
         }
     }

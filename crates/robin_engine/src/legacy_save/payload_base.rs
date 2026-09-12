@@ -5,6 +5,7 @@
 //! independently callable reader. Leaf readers must invoke it at the exact
 //! point where the original-game serializer handles shared state.
 
+use super::read_helpers::{DEFAULT_BULK_LIMIT, DEFAULT_LIST_LIMIT};
 use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -46,16 +47,16 @@ pub struct LegacyPayloadLimits {
 impl Default for LegacyPayloadLimits {
     fn default() -> Self {
         Self {
-            sprite_animation_replacements: 4096,
-            actor_bypass_points: 4096,
-            human_opponents: 4096,
-            human_sword_victims: 4096,
-            human_shoots: 4096,
-            npc_detectables_per_type: 65_535,
-            mobile_sprites: 4096,
-            mobile_vibrations: 65_535,
-            mobile_alerted_animals: 65_535,
-            path_history: 65_535,
+            sprite_animation_replacements: DEFAULT_LIST_LIMIT,
+            actor_bypass_points: DEFAULT_LIST_LIMIT,
+            human_opponents: DEFAULT_LIST_LIMIT,
+            human_sword_victims: DEFAULT_LIST_LIMIT,
+            human_shoots: DEFAULT_LIST_LIMIT,
+            npc_detectables_per_type: DEFAULT_BULK_LIMIT,
+            mobile_sprites: DEFAULT_LIST_LIMIT,
+            mobile_vibrations: DEFAULT_BULK_LIMIT,
+            mobile_alerted_animals: DEFAULT_BULK_LIMIT,
+            path_history: DEFAULT_BULK_LIMIT,
         }
     }
 }

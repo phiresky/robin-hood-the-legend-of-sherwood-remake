@@ -3,6 +3,11 @@
 use super::payload_base::{LegacyBoundingBox2, LegacyPoint2, LegacyPoint3};
 use crate::legacy_io::{LegacyReader, LegacyResult};
 
+// Keep each section's independently configurable ceiling while naming the
+// two shared defaults. Deriving Default would silently replace these with zero.
+pub(super) const DEFAULT_LIST_LIMIT: usize = 4096;
+pub(super) const DEFAULT_BULK_LIMIT: usize = 65_535;
+
 pub(super) const fn hex16(value: &str) -> [u8; 16] {
     let bytes = value.as_bytes();
     let mut result = [0; 16];

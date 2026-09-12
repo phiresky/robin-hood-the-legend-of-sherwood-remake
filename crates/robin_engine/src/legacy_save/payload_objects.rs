@@ -6,6 +6,7 @@
 //! despite being projectile elements. The readers below mirror the
 //! exact `Serialize` call order.
 
+use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::{read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -44,8 +45,8 @@ pub struct LegacyObjectPayloadLimits {
 impl Default for LegacyObjectPayloadLimits {
     fn default() -> Self {
         Self {
-            trajectory_points: 65_535,
-            net_victims: 65_535,
+            trajectory_points: DEFAULT_BULK_LIMIT,
+            net_victims: DEFAULT_BULK_LIMIT,
         }
     }
 }

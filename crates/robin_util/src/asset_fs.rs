@@ -721,46 +721,21 @@ pub fn read_shared<P: AsRef<Path>>(path: P) -> Result<AssetBytes, AssetError> {
     imp::read(path).map(AssetBytes::from)
 }
 
-/// Compatibility boolean for legacy callers. New code should use
-/// [`AssetVfs::try_exists`] so non-NotFound failures remain visible.
-pub fn exists<P: AsRef<Path>>(path: P) -> bool {
+/// Probe the compatibility VFS and then the native filesystem without
+/// concealing permission, malformed bundle, or other non-NotFound failures.
+/// Owned readers should prefer [`AssetVfs::try_exists`].
+pub fn try_exists<P: AsRef<Path>>(path: P) -> Result<bool, AssetError> {
     let path = path.as_ref();
     match global().try_exists(path) {
-        Ok(true) => return true,
+        Ok(true) => return Ok(true),
         Ok(false) | Err(AssetError::InvalidPath(_)) => {}
-        Err(error) => {
-            // TODO(asset-vfs): migrate remaining boolean callers to
-            // AssetVfs::try_exists and propagate this error to their boundary.
-            tracing_compat::warn_exists(path, &error);
-            return false;
-        }
+        Err(error) => return Err(error),
     }
-    match imp::try_exists(path) {
-        Ok(exists) => exists,
-        Err(error) => {
-            // TODO(asset-vfs): migrate remaining boolean callers to
-            // AssetVfs::try_exists and propagate this error to their boundary.
-            tracing_compat::warn_exists(path, &error);
-            false
-        }
-    }
+    imp::try_exists(path)
 }
 
 pub fn absolute<P: AsRef<Path>>(path: P) -> PathBuf {
     imp::absolute(path.as_ref())
-}
-
-// robin_util intentionally has no tracing dependency. Keep the compatibility
-// warning explicit on stderr until all boolean exists callers are migrated.
-mod tracing_compat {
-    use super::*;
-
-    pub fn warn_exists(path: &Path, error: &AssetError) {
-        eprintln!(
-            "asset existence check failed for {}: {error}",
-            path.display()
-        );
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
