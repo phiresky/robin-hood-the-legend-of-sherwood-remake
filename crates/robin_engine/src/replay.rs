@@ -1931,14 +1931,20 @@ mod tests {
             .unwrap();
             for (ordinal, before, after) in [(0, 0, 0), (1, 0, 0), (2, 0, 1), (3, 1, 1), (4, 1, 2)]
             {
-                assert!(recorder.write_frame(
-                    ordinal,
-                    before,
-                    after,
-                    SimulationFrameInput::default().with_hourglass(after != before),
-                    Vec::new(),
-                    None,
-                ));
+                assert!(
+                    recorder.write_frame(
+                        ordinal,
+                        before,
+                        after,
+                        // Empty paused iterations are deliberately not persisted.
+                        // Post-initialize work supplies a meaningful skipped-hourglass transaction.
+                        SimulationFrameInput::default()
+                            .with_hourglass(after != before)
+                            .with_post_initialize(after == before),
+                        Vec::new(),
+                        None,
+                    )
+                );
             }
         }
         let data = ReplayData::from_file(&path).unwrap();
