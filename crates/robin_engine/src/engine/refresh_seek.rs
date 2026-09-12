@@ -320,7 +320,7 @@ impl crate::engine::EngineInner {
             .orders
             .sequence_manager
             .current_element_for_actor(owner)?;
-        let (action, flags, tolerance) = self
+        let (action, flags) = self
             .orders
             .sequence_manager
             .get_element(seq_id, elem_idx)
@@ -332,7 +332,6 @@ impl crate::engine::EngineInner {
                 let SequenceElementData::Movement {
                     action,
                     flags,
-                    tolerance,
                     ..
                 } = &element.data
                 else {
@@ -340,7 +339,7 @@ impl crate::engine::EngineInner {
                         "RefreshingSeek owner {owner:?} selected non-movement element {seq_id:?}/{elem_idx}"
                     )
                 };
-                Some((*action, *flags, *tolerance))
+                Some((*action, *flags))
             })?;
 
         let actor = self
@@ -376,7 +375,6 @@ impl crate::engine::EngineInner {
             target,
             action,
             flags,
-            tolerance,
             target_position,
         );
         Some(MotionState::InProgress)
@@ -388,18 +386,13 @@ impl crate::engine::EngineInner {
     /// Seeking clears the map goal. Rust queues that card and eagerly
     /// detaches active mechanics; preserve the same observable cleanup at the
     /// exact seek-refresh boundary.
-    fn stop_selected_seek_for_refresh(
-        &mut self,
-        owner: EntityId,
-        _seq_id: SequenceId,
-        _elem_idx: usize,
-    ) {
+    fn stop_selected_seek_for_refresh(&mut self, owner: EntityId) {
         // The initial Translate(SEEK) wrapper is semantically selected in
         // Original before it reaches seek refresh, but Rust deliberately
         // leaves ordered elements Todo until concrete movement dispatch.
         // Therefore manager `current_element_for_actor` cannot recognize the
-        // initial wrapper here; the explicit sequence identity supplied by
-        // every caller is the authoritative selected Seek.
+        // initial wrapper here. Callers have already identified the selected
+        // Seek; this cleanup only clears its owner's active mechanics.
         let frame = self.control.frame_counter;
         if let Some(entity) = self.get_entity_mut(owner) {
             tracing::trace!(
@@ -590,7 +583,7 @@ impl crate::engine::EngineInner {
         let Some(refresh) = self.selected_seek_refresh_decision(owner) else {
             return false;
         };
-        let (seq_id, elem_idx, target, action, flags, tolerance, new_target_pos) = refresh;
+        let (seq_id, elem_idx, target, action, flags, new_target_pos) = refresh;
         tracing::trace!(
             ?owner,
             ?target,
@@ -613,7 +606,6 @@ impl crate::engine::EngineInner {
             target,
             action,
             flags,
-            tolerance,
             new_target_pos,
         );
         true
@@ -636,7 +628,6 @@ impl crate::engine::EngineInner {
         EntityId,
         crate::order::OrderType,
         MoveFlags,
-        f32,
         crate::coordinates::MapPoint,
     )> {
         let entity = self.get_entity(owner)?;
@@ -660,13 +651,7 @@ impl crate::engine::EngineInner {
         ) {
             return None;
         }
-        let SequenceElementData::Movement {
-            flags,
-            tolerance,
-            action,
-            ..
-        } = &elem.data
-        else {
+        let SequenceElementData::Movement { flags, action, .. } = &elem.data else {
             return None;
         };
         if !flags.contains(MoveFlags::SEEK) {
@@ -714,9 +699,7 @@ impl crate::engine::EngineInner {
             return None;
         }
 
-        Some((
-            seq_id, elem_idx, target_id, *action, *flags, *tolerance, target_pos,
-        ))
+        Some((seq_id, elem_idx, target_id, *action, *flags, target_pos))
     }
 
     /// Per-entity body of `tick_refresh_seeks`: re-resolve the seek
@@ -739,7 +722,6 @@ impl crate::engine::EngineInner {
         target: EntityId,
         action: crate::order::OrderType,
         flags: MoveFlags,
-        _concrete_tolerance: f32,
         new_target_pos: crate::coordinates::MapPoint,
     ) {
         let seek_distance = self
@@ -788,7 +770,7 @@ impl crate::engine::EngineInner {
         let Some(resolved) =
             self.resolve_entity_seek(sim, assets, owner, target, flags, seek_distance)
         else {
-            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+            self.stop_selected_seek_for_refresh(owner);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -949,7 +931,7 @@ impl crate::engine::EngineInner {
             // impossible silently when position authorization fails.
             // The unable-to-do bark belongs to movement-sequence construction's
             // gate-path failure below.
-            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+            self.stop_selected_seek_for_refresh(owner);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -1002,14 +984,14 @@ impl crate::engine::EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+            self.stop_selected_seek_for_refresh(owner);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
             return true;
         };
 
-        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+        self.stop_selected_seek_for_refresh(owner);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
             elem_idx,
@@ -1189,7 +1171,7 @@ impl crate::engine::EngineInner {
                 owner,
                 crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
             );
-            self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+            self.stop_selected_seek_for_refresh(owner);
             self.orders
                 .sequence_manager
                 .element_impossible(seq_id, elem_idx);
@@ -1199,7 +1181,7 @@ impl crate::engine::EngineInner {
             return false;
         }
 
-        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+        self.stop_selected_seek_for_refresh(owner);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
             elem_idx,
@@ -1251,7 +1233,7 @@ impl crate::engine::EngineInner {
         elem_idx: usize,
         new_elem: SequenceElement,
     ) {
-        self.stop_selected_seek_for_refresh(owner, seq_id, elem_idx);
+        self.stop_selected_seek_for_refresh(owner);
         self.orders.sequence_manager.element_interrupted(
             seq_id,
             elem_idx,
@@ -2329,7 +2311,6 @@ mod tests {
             target,
             OrderType::WalkingUpright,
             MoveFlags::SEEK,
-            10.0,
             crate::coordinates::MapPoint { x: 90.0, y: 10.0 },
         );
 
@@ -2349,6 +2330,7 @@ mod tests {
         stale_sprite_motion: MotionState,
         target_sector: u16,
         expected_entry_state: SequenceState,
+        element_tolerance: f32,
     ) {
         let sim = crate::sim_rng::test_context();
         let mut engine = crate::engine::EngineInner::new();
@@ -2382,7 +2364,7 @@ mod tests {
         {
             *flags = MoveFlags::SEEK;
             *element = Some(target);
-            *tolerance = 10.0;
+            *tolerance = element_tolerance;
         }
         let seek_seq = engine.orders.sequence_manager.launch_element(seek);
         engine
@@ -2454,6 +2436,7 @@ mod tests {
                 flags,
                 element,
                 destination,
+                tolerance,
                 ..
             } = &replacement.data
             else {
@@ -2462,6 +2445,10 @@ mod tests {
             assert!(flags.contains(MoveFlags::SEEK));
             assert_eq!(*element, Some(target));
             assert_eq!(*destination, MapPoint::new(80.0, 10.0));
+            assert_eq!(
+                *tolerance, 10.0,
+                "refresh uses the actor's live seek distance"
+            );
         }
     }
 
@@ -2471,6 +2458,7 @@ mod tests {
             MotionState::Terminated,
             1,
             SequenceState::Interrupted,
+            10.0,
         );
     }
 
@@ -2480,6 +2468,7 @@ mod tests {
             MotionState::Done,
             1,
             SequenceState::Interrupted,
+            10.0,
         );
     }
 
@@ -2489,6 +2478,19 @@ mod tests {
             MotionState::Aborted,
             2,
             SequenceState::Impossible,
+            10.0,
+        );
+    }
+
+    #[test]
+    fn moved_target_refresh_ignores_stale_element_tolerance() {
+        // 999 would admit the target as already in range if substituted for
+        // the actor's live distance (10), and must not reach the replacement.
+        assert_moved_target_refresh_returns_explicit_in_progress(
+            crate::element::MotionState::Done,
+            1,
+            crate::sequence::SequenceState::Interrupted,
+            999.0,
         );
     }
 
@@ -2606,7 +2608,7 @@ mod tests {
             .selected_seek_refresh_decision(owner)
             .expect("the actor-owned target moved more than 10 units");
         assert_eq!(decision.2, actor_target);
-        assert_eq!(decision.6, MapPoint::new(60.0, 10.0));
+        assert_eq!(decision.5, MapPoint::new(60.0, 10.0));
     }
 
     /// Human-actor execution faces the opponent

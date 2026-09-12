@@ -7085,13 +7085,12 @@ impl EngineInner {
                     crate::sequence::SequenceElementData::Movement {
                         flags,
                         element,
-                        tolerance,
                         action,
                         ..
-                    } => element.map(|t| (*flags, t, *tolerance, *action)),
+                    } => element.map(|t| (*flags, t, *action)),
                     _ => None,
                 });
-            if let Some((flags, target, tolerance, action)) = snapshot {
+            if let Some((flags, target, action)) = snapshot {
                 let new_target_pos = self
                     .get_entity(target)
                     .map(|e| e.element_data().position_map())
@@ -7119,7 +7118,6 @@ impl EngineInner {
                     target,
                     action,
                     flags,
-                    tolerance,
                     new_target_pos,
                 );
                 refreshed_seek_in_progress = true;
