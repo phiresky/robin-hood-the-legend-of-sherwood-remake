@@ -18,9 +18,9 @@ use super::{
     SharedClientRankedJoinState,
 };
 use crate::leaderboard_ranked_session::{
-    CampaignContinuationReceiptSelectionRequestV1, CampaignContinuationReceiptSelectionResponseV1,
-    OfficialRankedSessionSetupV1, OfficialRankedSessionWireSetupV1, RankedSessionClientAdmissionV1,
-    RankedSessionLifecycle, SharedRankedSessionLifecycle,
+    CampaignContinuationReceiptSelectionRequestV1, OfficialRankedSessionSetupV1,
+    OfficialRankedSessionWireSetupV1, RankedSessionClientAdmissionV1, RankedSessionLifecycle,
+    SharedRankedSessionLifecycle,
 };
 use futures::future::{Either, select};
 use futures::{FutureExt as _, pin_mut};
@@ -1705,146 +1705,19 @@ async fn send_client_outgoing(
     leaderboard_cosign_state: &SharedClientLeaderboardCoSignState,
     ranked_state: &BrowserRankedTransportState,
 ) -> Result<(), String> {
-    match outgoing {
-        NetOutbound::Input {
-            origin_frame,
-            command,
-        } => {
-            write_frame(
-                send,
-                &NetMsg::Input {
-                    origin_frame,
-                    command,
-                },
-            )
-            .await?;
-        }
-        NetOutbound::StateHash { .. }
-        | NetOutbound::InitialSnapshot { .. }
-        | NetOutbound::ModalDecision { .. }
-        | NetOutbound::ReconnectForSnapshot { .. }
-        | NetOutbound::ReconnectAllForSnapshot { .. }
-        | NetOutbound::BeginSnapshotTransition { .. }
-        | NetOutbound::RankedJoinChallenge { .. }
-        | NetOutbound::RankedJoinAccepted { .. }
-        | NetOutbound::RankedParticipantRoster { .. }
-        | NetOutbound::RankedOfficialSessionSetup(_)
-        | NetOutbound::RankedBrowseOnly { .. }
-        | NetOutbound::RankedContinuationReceiptSelectionRequest(_)
-        | NetOutbound::RankedContinuationPreflightClaim { .. }
-        | NetOutbound::RankedCoSignContext { .. }
-        | NetOutbound::RankedSubmissionAccepted { .. } => {
-            return Err("browser client attempted a host-only multiplayer publication".to_string());
-        }
-        NetOutbound::ReadyToSim { frame } => {
-            write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
-        }
-        NetOutbound::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        } => {
-            write_frame(
-                send,
-                &NetMsg::ModalProposal {
-                    instance,
-                    kind,
-                    result,
-                    requested_frame,
-                },
-            )
-            .await?;
-        }
-        NetOutbound::SnapshotTransitionReady { id } => {
-            write_frame(send, &NetMsg::SnapshotTransitionReady { id }).await?;
-        }
-        NetOutbound::ArmRankedJoin { .. } => {
-            return Err(
-                "browser ranked setup must be installed on ClientHandle before admission"
-                    .to_string(),
-            );
-        }
-        NetOutbound::RankedJoinResponse(_) => {
-            return Err(
-                "browser game attempted to bypass the isolated ranked admission signer".to_string(),
-            );
-        }
-        NetOutbound::LeaderboardCoSignRequest { .. } => {
-            return Err(
-                "browser client attempted a server-only leaderboard co-sign request".to_string(),
-            );
-        }
-        NetOutbound::ArmLeaderboardCoSignRequest { request } => {
-            if !ranked_state.join.is_accepted()? {
-                return Err(
-                    "browser attempted to arm a leaderboard co-sign outside an accepted ranked session"
-                        .to_string(),
-                );
-            }
-            if let Some(request) = leaderboard_cosign_state.arm_request(request)? {
-                incoming_tx
-                    .send(NetEvent::LeaderboardCoSignRequest(request))
-                    .map_err(|_| {
-                        "browser leaderboard co-sign request channel is closed".to_string()
-                    })?;
-            }
-        }
-        NetOutbound::LeaderboardCoSignResponse(response) => {
-            if !ranked_state.join.is_accepted()? {
-                return Err(
-                    "browser attempted a leaderboard co-sign outside an accepted ranked session"
-                        .to_string(),
-                );
-            }
-            leaderboard_cosign_state.authorize_response(&response)?;
-            write_frame(send, &NetMsg::LeaderboardCoSignResponse(response)).await?;
-        }
-        NetOutbound::RankedContinuationReceiptSelection(selection) => {
-            let decoded = crate::leaderboard_ranked_session::decode_ranked_wire_document::<
-                CampaignContinuationReceiptSelectionResponseV1,
-            >(selection.as_bytes())
-            .map_err(|error| format!("invalid continuation receipt selection: {error}"))?;
-            let local_public_key = ranked_state.durable_public_key.get().ok_or_else(|| {
-                "browser continuation receipt selection has no durable identity".to_string()
-            })?;
-            if decoded.responder_public_key() != local_public_key {
-                return Err(
-                    "browser continuation receipt selection is controlled by another identity"
-                        .to_string(),
-                );
-            }
-            write_frame(send, &NetMsg::RankedContinuationReceiptSelection(selection)).await?;
-        }
-        NetOutbound::RankedContinuationPreflightSignature(signature) => {
-            let decoded =
-                crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
-                    robin_run_protocol::ParticipantSignatureV1,
-                >(signature.as_bytes())
-                .map_err(|error| format!("invalid continuation preflight signature: {error}"))?;
-            let local_public_key = ranked_state.durable_public_key.get().ok_or_else(|| {
-                "browser continuation preflight has no durable identity".to_string()
-            })?;
-            if decoded.public_key != local_public_key || decoded.signature.is_zero() {
-                return Err(
-                    "browser continuation preflight signature uses the wrong identity".to_string(),
-                );
-            }
-            write_frame(
-                send,
-                &NetMsg::RankedContinuationPreflightSignature(signature),
-            )
-            .await?;
-        }
-        NetOutbound::ContentRequest { .. }
-        | NetOutbound::ContentReject { .. }
-        | NetOutbound::ContentReady { .. }
-        | NetOutbound::ContentPrepared { .. } => {
-            return Err(
-                "browser client queued a content-admission message after gameplay began"
-                    .to_string(),
-            );
-        }
+    let requires_cosign = matches!(
+        &outgoing,
+        NetOutbound::ArmLeaderboardCoSignRequest { .. } | NetOutbound::LeaderboardCoSignResponse(_)
+    );
+    let authority = super::client_outgoing::ClientPublicationAuthority {
+        co_sign_allowed: requires_cosign && ranked_state.join.is_accepted()?,
+        durable_public_key: ranked_state.durable_public_key.get(),
+    };
+    if let Some(message) =
+        super::client_outgoing::prepare(outgoing, incoming_tx, leaderboard_cosign_state, authority)
+            .map_err(|error| error.to_string())?
+    {
+        write_frame(send, &message).await?;
     }
     Ok(())
 }

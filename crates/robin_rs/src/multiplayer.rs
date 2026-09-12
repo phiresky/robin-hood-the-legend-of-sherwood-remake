@@ -12,6 +12,8 @@ mod clock;
 #[cfg(feature = "multiplayer")]
 mod client_gameplay;
 #[cfg(feature = "multiplayer")]
+mod client_outgoing;
+#[cfg(feature = "multiplayer")]
 mod client_protocol;
 #[cfg(feature = "multiplayer")]
 pub use client_protocol::ClientSessionMetadata;

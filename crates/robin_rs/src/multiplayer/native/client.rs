@@ -1802,164 +1802,29 @@ pub(super) async fn send_client_outgoing(
     leaderboard_cosign_state: &SharedClientLeaderboardCoSignState,
     ranked_context: &ClientRankedTransportContext,
 ) -> Result<(), String> {
-    match outgoing {
-        NetOutbound::Input {
-            origin_frame,
-            command,
-        } => {
-            write_frame(
-                send,
-                &NetMsg::Input {
-                    origin_frame,
-                    command,
-                },
-            )
-            .await?;
-        }
-        NetOutbound::StateHash { .. } => {
-            return Err("native client attempted a host-only state hash publication".to_owned());
-        }
-        NetOutbound::InitialSnapshot { .. } => {
-            return Err(
-                "native client attempted a host-only initial snapshot publication".to_owned(),
-            );
-        }
-        NetOutbound::ReadyToSim { frame } => {
-            write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
-        }
-        NetOutbound::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        } => {
-            write_frame(
-                send,
-                &NetMsg::ModalProposal {
-                    instance,
-                    kind,
-                    result,
-                    requested_frame,
-                },
-            )
-            .await?;
-        }
-        NetOutbound::ModalDecision { .. } => {
-            return Err("native client attempted an authoritative modal decision".to_owned());
-        }
-        NetOutbound::ReconnectForSnapshot { reason, .. }
-        | NetOutbound::ReconnectAllForSnapshot { reason } => {
-            return Err(format!(
-                "full-snapshot resynchronization requested: {reason}"
-            ));
-        }
-        NetOutbound::BeginSnapshotTransition { .. } => {
-            return Err("native client attempted an authoritative snapshot transition".to_owned());
-        }
-        NetOutbound::SnapshotTransitionReady { id } => {
-            write_frame(send, &NetMsg::SnapshotTransitionReady { id }).await?;
-        }
-        NetOutbound::ContentRequest { .. }
-        | NetOutbound::ContentReject { .. }
-        | NetOutbound::ContentReady { .. }
-        | NetOutbound::ContentPrepared { .. } => {
-            return Err(
-                "native client queued a content-admission message after gameplay began".to_owned(),
-            );
-        }
-        NetOutbound::RankedJoinResponse(_)
-        | NetOutbound::ArmRankedJoin { .. }
-        | NetOutbound::RankedBrowseOnly { .. } => {
-            tracing::error!(
-                "native client ignored ranked admission control outside its typed setup/signer seam"
-            );
-        }
-        NetOutbound::RankedJoinChallenge { .. }
-        | NetOutbound::RankedJoinAccepted { .. }
-        | NetOutbound::RankedParticipantRoster { .. }
-        | NetOutbound::RankedOfficialSessionSetup(_)
-        | NetOutbound::RankedContinuationReceiptSelectionRequest(_)
-        | NetOutbound::RankedContinuationPreflightClaim { .. }
-        | NetOutbound::RankedCoSignContext { .. }
-        | NetOutbound::RankedSubmissionAccepted { .. } => {
-            return Err("native client attempted a server-only ranked control message".to_owned());
-        }
-        NetOutbound::LeaderboardCoSignRequest { .. } => {
-            return Err("client attempted a server-only leaderboard co-sign request".to_string());
-        }
-        NetOutbound::ArmLeaderboardCoSignRequest { request } => {
-            if ranked_lifecycle_lock(&ranked_context.lifecycle)
+    let requires_cosign = matches!(
+        &outgoing,
+        NetOutbound::ArmLeaderboardCoSignRequest { .. } | NetOutbound::LeaderboardCoSignResponse(_)
+    );
+    let authority = crate::multiplayer::client_outgoing::ClientPublicationAuthority {
+        co_sign_allowed: requires_cosign
+            && ranked_lifecycle_lock(&ranked_context.lifecycle)
                 .ranked_client()
-                .is_none()
-            {
-                tracing::warn!("ignored leaderboard co-sign arm outside ranked client session");
-                return Ok(());
-            }
-            if let Some(request) = leaderboard_cosign_state.arm_request(request)? {
-                incoming_tx
-                    .send(NetEvent::LeaderboardCoSignRequest(request))
-                    .map_err(|_| {
-                        "client leaderboard co-sign request channel is closed".to_string()
-                    })?;
-            }
-        }
-        NetOutbound::LeaderboardCoSignResponse(response) => {
-            if ranked_lifecycle_lock(&ranked_context.lifecycle)
-                .ranked_client()
-                .is_none()
-            {
-                tracing::warn!(
-                    "ignored leaderboard co-sign response outside ranked client session"
-                );
-                return Ok(());
-            }
-            leaderboard_cosign_state.authorize_response(&response)?;
-            write_frame(send, &NetMsg::LeaderboardCoSignResponse(response)).await?;
-        }
-        NetOutbound::RankedContinuationReceiptSelection(selection) => {
-            let decoded = decode_ranked_wire_document::<
-                CampaignContinuationReceiptSelectionResponseV1,
-            >(selection.as_bytes())
-            .map_err(|error| format!("invalid continuation receipt selection: {error}"))?;
-            let durable_key = ranked_context.durable_ranked_key.as_ref().ok_or_else(|| {
-                "continuation receipt selection has no durable ranked identity".to_string()
-            })?;
-            if decoded.responder_public_key()
-                != PublicKey32::from_bytes(*durable_key.public().as_bytes())
-            {
-                return Err(
-                    "continuation receipt selection is controlled by another durable identity"
-                        .to_string(),
-                );
-            }
-            write_frame(send, &NetMsg::RankedContinuationReceiptSelection(selection)).await?;
-        }
-        NetOutbound::RankedContinuationPreflightSignature(signature) => {
-            let signed =
-                crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
-                    ParticipantSignatureV1,
-                >(signature.as_bytes())
-                .map_err(|error| format!("invalid continuation preflight signature: {error}"))?;
-            if signed.public_key.is_zero() || signed.signature.is_zero() {
-                return Err(
-                    "continuation preflight signature contains zero key material".to_string(),
-                );
-            }
-            let durable_key = ranked_context.durable_ranked_key.as_ref().ok_or_else(|| {
-                "continuation preflight response has no durable ranked identity".to_string()
-            })?;
-            if signed.public_key != PublicKey32::from_bytes(*durable_key.public().as_bytes()) {
-                return Err(
-                    "continuation preflight response uses a key other than the authenticated client identity"
-                        .to_string(),
-                );
-            }
-            write_frame(
-                send,
-                &NetMsg::RankedContinuationPreflightSignature(signature),
-            )
-            .await?;
-        }
+                .is_some(),
+        durable_public_key: ranked_context
+            .durable_ranked_key
+            .as_ref()
+            .map(|key| PublicKey32::from_bytes(*key.public().as_bytes())),
+    };
+    if let Some(message) = crate::multiplayer::client_outgoing::prepare(
+        outgoing,
+        incoming_tx,
+        leaderboard_cosign_state,
+        authority,
+    )
+    .map_err(|error| error.to_string())?
+    {
+        write_frame(send, &message).await?;
     }
     Ok(())
 }
