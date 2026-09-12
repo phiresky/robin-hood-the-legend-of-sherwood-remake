@@ -14,7 +14,14 @@ impl EngineInner {
         for pc_id in pc_ids {
             self.refresh_pc_produced_noise_for(pc_id);
         }
+        let run_detection = !self.actors_frozen();
         self.tick_enemy_ai_inner(sim, assets, None);
+        // This detection-only test driver explicitly closes its synthetic
+        // frame. Production drains belong to each creation-ordered owner.
+        if run_detection {
+            self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
+            self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
+        }
     }
 
     /// Production NPC coordinator for the pre-detection portion of
@@ -163,16 +170,6 @@ impl EngineInner {
             positions_before_movement.is_some(),
             None,
         );
-
-        // Focused detection tests retain the legacy fallback drains for
-        // stimuli injected outside the production owner coordinator. Every
-        // production Think now drains its own effects/stimuli synchronously;
-        // re-running 6c/6d globally here would re-batch owner work.
-        #[cfg(test)]
-        if positions_before_movement.is_none() {
-            self.tick_enemy_ai_drain_swordfight_requests(sim, assets);
-            self.tick_enemy_ai_drain_pending_stimuli(sim, assets);
-        }
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
         // Keep this AI pass to target selection, pursuit, and swordfight
