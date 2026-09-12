@@ -272,7 +272,9 @@ mod tests {
             for layer in layers.iter().skip(1) {
                 let root = tempfile::tempdir().unwrap();
                 std::fs::write(root.path().join(PATH), layer).unwrap();
-                assert_eq!(files.add_overlay_path(root.path().to_str().unwrap()), 0);
+                files
+                    .add_overlay_path(root.path().to_str().unwrap())
+                    .unwrap();
                 roots.push(root);
             }
             (files, roots)
