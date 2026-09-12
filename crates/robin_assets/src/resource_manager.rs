@@ -1747,15 +1747,14 @@ mod tests {
     #[test]
     fn attachment_prefers_shipping_but_preserves_original_fallback_and_parse_errors() {
         let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
-        let mut original = ResourceManager::new();
-        original.data.strings.insert(7, vec!["original".into()]);
+        // Build a registered TEXT archive, not a resident-only shipping table:
+        // the resource writer intentionally emits only registered entries.
+        let mut text = vec![0, 0, 0, 0, 1, 0, 8, 0]; // flags, count, UTF-16 length
+        for unit in "original".encode_utf16() {
+            text.extend_from_slice(&unit.to_le_bytes());
+        }
         assets
-            .install_preloaded_asset(
-                "fixture.res",
-                original
-                    .write_to_res_bytes(crate::picture::SixteenPacking::None)
-                    .unwrap(),
-            )
+            .install_preloaded_asset("fixture.res", resource_file(b"TEXT", 7, &text))
             .unwrap();
         assets
             .install_preloaded_asset("broken.res", b"invalid archive".to_vec())
