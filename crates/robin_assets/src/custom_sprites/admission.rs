@@ -11,6 +11,107 @@ const DOCUMENT_BYTES: usize = 1024 * 1024 * 1024;
 const WINDOW_LOG: u32 = 27;
 const RESIDENT_BYTES: usize = 1024 * 1024 * 1024;
 
+/// Authored documents deliberately use JSON rather than packed bitcode.
+/// serde_json reads actual sequence elements without an attacker-controlled
+/// length/size_hint, so a short sequence header cannot reserve a huge typed
+/// collection before validation. Input bytes and decoded frame work have
+/// separate ceilings; these are not an exact process peak-RSS guarantee.
+/// Savegames, shipping datadirs, and replay encodings are unaffected.
+pub(super) fn decode_document<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    magic: &[u8],
+) -> Result<T> {
+    let json = bytes.strip_prefix(magic).context(
+        "unsupported authored sprite format; regenerate from the source .rhs.d directories with encode_mod_sprites SOURCE DESTINATION (robin_modding_tools package), using a fresh destination",
+    )?;
+    preflight_json(json, RESIDENT_BYTES)?;
+    serde_json::from_slice(json).context("invalid authored sprite JSON document")
+}
+
+/// Check the same JSON bytes without constructing vectors/maps. Charges are
+/// deliberately conservative for this schema: 128 bytes per container covers
+/// Vec/Arc/struct slots, 32 per scalar covers all numeric fields, and strings
+/// additionally charge their decoded contents. Nested members are charged too.
+/// This bounds typed admission work, not allocator capacity rounding or RSS.
+fn preflight_json(json: &[u8], limit: usize) -> Result<()> {
+    use serde::de::{DeserializeSeed, Error, MapAccess, SeqAccess, Visitor};
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Budget(usize);
+    impl Budget {
+        fn charge<E: Error>(&mut self, bytes: usize) -> Result<(), E> {
+            self.0 = self
+                .0
+                .checked_sub(bytes)
+                .ok_or_else(|| E::custom("authored sprite JSON exceeds object admission budget"))?;
+            Ok(())
+        }
+    }
+    impl<'de> DeserializeSeed<'de> for &mut Budget {
+        type Value = ();
+        fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+            deserializer.deserialize_any(self)
+        }
+    }
+    impl<'de> Visitor<'de> for &mut Budget {
+        type Value = ();
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("bounded sprite JSON")
+        }
+        fn visit_bool<E: Error>(self, _: bool) -> Result<(), E> {
+            self.charge(32)
+        }
+        fn visit_i64<E: Error>(self, _: i64) -> Result<(), E> {
+            self.charge(32)
+        }
+        fn visit_u64<E: Error>(self, _: u64) -> Result<(), E> {
+            self.charge(32)
+        }
+        fn visit_f64<E: Error>(self, _: f64) -> Result<(), E> {
+            self.charge(32)
+        }
+        fn visit_unit<E: Error>(self) -> Result<(), E> {
+            self.charge(32)
+        }
+        fn visit_str<E: Error>(self, value: &str) -> Result<(), E> {
+            self.charge::<E>(32)?;
+            self.charge(value.len())
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+            self.charge::<A::Error>(128)?;
+            while seq.next_element_seed(&mut *self)?.is_some() {}
+            Ok(())
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+            self.charge::<A::Error>(128)?;
+            while map.next_key_seed(&mut *self)?.is_some() {
+                map.next_value_seed(&mut *self)?;
+            }
+            Ok(())
+        }
+    }
+    let mut decoder = serde_json::Deserializer::from_slice(json);
+    (&mut Budget(limit))
+        .deserialize(&mut decoder)
+        .context("preflight authored sprite JSON")?;
+    decoder.end().context("trailing authored sprite JSON")
+}
+
+pub(super) fn encode_document<T: serde::Serialize + serde::de::DeserializeOwned>(
+    magic: &[u8],
+    document: &T,
+) -> Result<Vec<u8>> {
+    let mut bytes = magic.to_vec();
+    serde_json::to_writer(&mut bytes, document)?;
+    ensure!(
+        bytes.len() <= DOCUMENT_BYTES,
+        "authored sprite document exceeds {DOCUMENT_BYTES} bytes"
+    );
+    // In particular, serde_json writes non-finite floats as null. Reject these
+    // (and over-budget documents) before a converter publishes an output file.
+    let _: T = decode_document(&bytes, magic)?;
+    Ok(bytes)
+}
+
 fn read_limited(reader: impl Read, limit: usize) -> Result<Vec<u8>> {
     let cap = u64::try_from(limit)?
         .checked_add(1)
@@ -81,6 +182,20 @@ fn validate_frames_with_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_preflight_bounds_objects_strings_and_rejects_trailing_data() {
+        assert!(preflight_json(b"[null,null]", 192).is_ok());
+        assert!(preflight_json(b"[null,null]", 191).is_err());
+        assert!(preflight_json(b"[[],[]]", 383).is_err());
+        assert!(preflight_json(br#""abcd""#, 36).is_ok());
+        assert!(preflight_json(br#""abcd""#, 35).is_err());
+        assert!(preflight_json(b"[] []", 1024).is_err());
+        assert!(preflight_json(b"[", 1024).is_err());
+        let error = decode_document::<Vec<u8>>(b"TEST{\"length\":18446744073709551615}", b"TEST")
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("expected a sequence"));
+    }
 
     #[test]
     fn decompression_accepts_exact_limit_and_rejects_one_more() {
