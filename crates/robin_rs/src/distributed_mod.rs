@@ -46,16 +46,17 @@ pub struct DistributedModManifest {
     pub full_mod_sha256: [u8; 32],
 }
 
+/// The wire package owns Vecs; admitted runtime packages share immutable Arcs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-pub struct DistributedModPackage {
+pub struct DistributedModPackage<Bytes = Vec<u8>> {
     pub manifest: DistributedModManifest,
-    pub mission_archive: Vec<u8>,
-    pub shared_library_archive: Option<Vec<u8>>,
+    pub mission_archive: Bytes,
+    pub shared_library_archive: Option<Bytes>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedDistributedMod {
-    pub package: DistributedModPackage,
+    pub package: DistributedModPackage<std::sync::Arc<[u8]>>,
     pub spellforge_package: Option<SpellforgePackage>,
     pub strip_prefix: String,
     pub prepend_prefix: String,
@@ -198,7 +199,9 @@ impl DistributedModPackage {
         package.manifest.full_mod_sha256 = package.compute_full_mod_sha256();
         package.validate()
     }
+}
 
+impl<Bytes: std::ops::Deref<Target = [u8]> + bitcode::Encode> DistributedModPackage<Bytes> {
     pub fn encode(&self) -> Result<Vec<u8>, DistributedModError> {
         let bytes = bitcode::encode(self);
         if bytes.len() > DISTRIBUTED_MOD_ENCODED_LIMIT {
@@ -209,7 +212,9 @@ impl DistributedModPackage {
         }
         Ok(bytes)
     }
+}
 
+impl DistributedModPackage {
     pub fn decode(bytes: &[u8]) -> Result<ValidatedDistributedMod, DistributedModError> {
         if bytes.len() > DISTRIBUTED_MOD_ENCODED_LIMIT {
             return Err(DistributedModError::Manifest(format!(
@@ -285,7 +290,11 @@ impl DistributedModPackage {
             });
         }
         Ok(ValidatedDistributedMod {
-            package: self,
+            package: DistributedModPackage {
+                manifest: self.manifest,
+                mission_archive: self.mission_archive.into(),
+                shared_library_archive: self.shared_library_archive.map(Into::into),
+            },
             spellforge_package,
             strip_prefix: admitted.strip_prefix,
             prepend_prefix: admitted.prepend_prefix,
@@ -301,7 +310,9 @@ impl DistributedModPackage {
         )
         .map_err(|error| DistributedModError::Spellforge(format!("{:?}: {error}", error.kind)))
     }
+}
 
+impl<Bytes: std::ops::Deref<Target = [u8]>> DistributedModPackage<Bytes> {
     pub fn compute_full_mod_sha256(&self) -> [u8; 32] {
         let manifest = &self.manifest;
         let mut hasher = Sha256::new();
@@ -867,22 +878,69 @@ mod tests {
     }
 
     #[test]
+    fn admitted_archives_share_storage_and_preserve_wire_encoding() {
+        for shared in [
+            None,
+            Some(archive(&[("Data/Text/shared.res", b"shared".to_vec())])),
+        ] {
+            let mut wire: DistributedModPackage =
+                bitcode::decode(&vanilla().package.encode().unwrap()).unwrap();
+            wire.shared_library_archive = shared;
+            wire.manifest.shared_library_bytes = wire
+                .shared_library_archive
+                .as_ref()
+                .map(|bytes| bytes.len() as u64);
+            wire.manifest.shared_library_sha256 = wire
+                .shared_library_archive
+                .as_ref()
+                .map(|bytes| Sha256::digest(bytes).into());
+            wire.manifest.full_mod_sha256 = wire.compute_full_mod_sha256();
+            let encoded = wire.encode().unwrap();
+            let json = serde_json::to_value(&wire).unwrap();
+            let admitted = wire.validate().unwrap();
+            assert_eq!(admitted.package.encode().unwrap(), encoded);
+            assert_eq!(serde_json::to_value(&admitted.package).unwrap(), json);
+            assert_eq!(
+                admitted.package.compute_full_mod_sha256(),
+                admitted.package.manifest.full_mod_sha256
+            );
+            let cloned = admitted.clone();
+            assert!(std::sync::Arc::ptr_eq(
+                &admitted.package.mission_archive,
+                &cloned.package.mission_archive
+            ));
+            match (
+                &admitted.package.shared_library_archive,
+                &cloned.package.shared_library_archive,
+            ) {
+                (Some(original), Some(clone)) => assert!(std::sync::Arc::ptr_eq(original, clone)),
+                (None, None) => {}
+                _ => panic!("cloning changed shared archive presence"),
+            }
+            assert_eq!(DistributedModPackage::decode(&encoded).unwrap(), admitted);
+        }
+    }
+
+    #[test]
     fn archive_or_manifest_tampering_is_rejected() {
-        let mut archive_tampered = vanilla().package;
+        let mut archive_tampered =
+            bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap()).unwrap();
         archive_tampered.mission_archive.push(0);
         assert!(matches!(
             archive_tampered.validate(),
             Err(DistributedModError::Archive { .. })
         ));
 
-        let mut manifest_tampered = vanilla().package;
+        let mut manifest_tampered =
+            bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap()).unwrap();
         manifest_tampered.manifest.title = "Impostor".into();
         assert!(matches!(
             manifest_tampered.validate(),
             Err(DistributedModError::HashMismatch { .. })
         ));
 
-        let mut prompt_spoof = vanilla().package;
+        let mut prompt_spoof =
+            bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap()).unwrap();
         prompt_spoof.manifest.title = "Trusted title\nFull-mod SHA-256: fake".into();
         prompt_spoof.manifest.full_mod_sha256 = prompt_spoof.compute_full_mod_sha256();
         assert!(matches!(
@@ -891,7 +949,9 @@ mod tests {
         ));
 
         for unsafe_title in [" padded", "padded ", "Trusted\u{202e}fake"] {
-            let mut prompt_spoof = vanilla().package;
+            let mut prompt_spoof =
+                bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap())
+                    .unwrap();
             prompt_spoof.manifest.title = unsafe_title.into();
             prompt_spoof.manifest.full_mod_sha256 = prompt_spoof.compute_full_mod_sha256();
             assert!(matches!(
@@ -903,7 +963,8 @@ mod tests {
 
     #[test]
     fn exact_language_and_map_are_admission_contracts() {
-        let mut wrong_entry = vanilla().package;
+        let mut wrong_entry =
+            bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap()).unwrap();
         wrong_entry.manifest.mission_rhm_entry = "German/Data/Levels/Mission.rhm".to_owned();
         wrong_entry.manifest.full_mod_sha256 = wrong_entry.compute_full_mod_sha256();
         assert!(matches!(
@@ -911,7 +972,8 @@ mod tests {
             Err(DistributedModError::Archive { .. })
         ));
 
-        let mut wrong_map = vanilla().package;
+        let mut wrong_map =
+            bitcode::decode::<DistributedModPackage>(&vanilla().package.encode().unwrap()).unwrap();
         wrong_map.manifest.map_filename = "Different".to_owned();
         wrong_map.manifest.full_mod_sha256 = wrong_map.compute_full_mod_sha256();
         assert!(matches!(

@@ -74,12 +74,8 @@ fn mount_validated_distributed_mod_in_scope(
         "{scope}-{}",
         robin_engine::spellforge::hex_hash(&validated.package.manifest.full_mod_sha256)
     );
-    let mission = Arc::<[u8]>::from(validated.package.mission_archive.clone());
-    let shared = validated
-        .package
-        .shared_library_archive
-        .clone()
-        .map(Arc::<[u8]>::from);
+    let mission = Arc::clone(&validated.package.mission_archive);
+    let shared = validated.package.shared_library_archive.clone();
     let guard = crate::mod_pack::mount_distributed_archives(
         &namespace,
         mission,

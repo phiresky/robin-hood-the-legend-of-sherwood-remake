@@ -324,6 +324,7 @@ fn poisoned_simulation_lock_prevents_profile_callback_and_first_launch() {
     context
         .required_services()
         .unwrap()
+        .profiles
         .player_profiles
         .lock()
         .unwrap()
@@ -383,6 +384,7 @@ fn poisoned_profile_lock_prevents_callback_and_configuration_changes() {
         let _guard = context
             .required_services()
             .unwrap()
+            .profiles
             .player_profiles
             .lock()
             .unwrap();
@@ -428,6 +430,7 @@ fn concurrent_profile_transactions_publish_matching_configuration() {
                     let profiles = context
                         .required_services()
                         .unwrap()
+                        .profiles
                         .player_profiles
                         .lock()
                         .unwrap();
@@ -688,7 +691,12 @@ fn production_host_reports_service_failure_after_readiness_validation() {
     let context = context(0, DifficultyLevel::Medium, KeyCode::F2, "ready.marker");
     let ready = ReadyApplicationContext::try_from(context.clone()).unwrap();
     let services = context.required_services().unwrap();
-    services.player_profiles.lock().unwrap().active_index = None;
+    services
+        .profiles
+        .player_profiles
+        .lock()
+        .unwrap()
+        .active_index = None;
     let error = Host::new(ready, 800.0, 600.0).err().unwrap();
     assert!(error.contains("no active player profile"), "{error}");
 }
@@ -1109,6 +1117,7 @@ fn active_profile_queries_return_owned_values_and_release_the_profile_lock() {
         context
             .required_services()
             .unwrap()
+            .profiles
             .player_profiles
             .try_lock()
             .is_ok()
@@ -1133,14 +1142,19 @@ fn unavailable_or_missing_active_profiles_never_invoke_the_reader() {
     );
     let services = context.required_services().unwrap();
     for index in [None, Some(usize::MAX)] {
-        services.player_profiles.lock().unwrap().active_index = index;
+        services
+            .profiles
+            .player_profiles
+            .lock()
+            .unwrap()
+            .active_index = index;
         let error = context
             .with_active_profile(|_| called.set(true))
             .unwrap_err();
         assert_eq!(error, "ApplicationContext has no active player profile");
         assert!(!called.get());
         assert_eq!(context.active_profile_snapshot().unwrap_err(), error);
-        assert!(services.player_profiles.try_lock().is_ok());
+        assert!(services.profiles.player_profiles.try_lock().is_ok());
     }
 }
 
@@ -1153,11 +1167,11 @@ fn profile_and_key_projection_holds_both_locks_until_values_are_copied() {
             // Deterministic contention checks: neither a profile switch nor a
             // key edit can publish while the combined reader is projecting.
             assert!(matches!(
-                services.player_profiles.try_lock(),
+                services.profiles.player_profiles.try_lock(),
                 Err(std::sync::TryLockError::WouldBlock)
             ));
             assert!(matches!(
-                services.key_configs.try_lock(),
+                services.profiles.key_configs.try_lock(),
                 Err(std::sync::TryLockError::WouldBlock)
             ));
             assert_eq!(profile.id, 0);
@@ -1244,21 +1258,32 @@ fn combined_profile_reader_preserves_missing_profile_and_keys_errors() {
         "missing-keys.marker",
     );
     let services = context.required_services().unwrap();
-    services.key_configs.lock().unwrap().configs.clear();
+    services
+        .profiles
+        .key_configs
+        .lock()
+        .unwrap()
+        .configs
+        .clear();
     assert_eq!(
         context.host_snapshot().unwrap_err(),
         "ApplicationContext has no key config for active profile 0"
     );
     for index in [None, Some(usize::MAX)] {
-        services.player_profiles.lock().unwrap().active_index = index;
+        services
+            .profiles
+            .player_profiles
+            .lock()
+            .unwrap()
+            .active_index = index;
         let error = context
             .with_active_profile_and_keys(|_, _| panic!("missing profile must not invoke reader"))
             .unwrap_err();
         assert_eq!(error, "ApplicationContext has no active player profile");
         assert_eq!(context.host_snapshot().unwrap_err(), error);
     }
-    assert!(services.player_profiles.try_lock().is_ok());
-    assert!(services.key_configs.try_lock().is_ok());
+    assert!(services.profiles.player_profiles.try_lock().is_ok());
+    assert!(services.profiles.key_configs.try_lock().is_ok());
 }
 
 #[test]
@@ -1273,16 +1298,16 @@ fn combined_profile_reader_preserves_poison_errors_and_releases_other_lock() {
     );
     let services = context.required_services().unwrap();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _keys = services.key_configs.lock().unwrap();
+        let _keys = services.profiles.key_configs.lock().unwrap();
         panic!("poison key store for regression");
     }));
     assert_eq!(
         context.host_snapshot().unwrap_err(),
         "ApplicationContext key-config lock poisoned"
     );
-    assert!(services.player_profiles.try_lock().is_ok());
+    assert!(services.profiles.player_profiles.try_lock().is_ok());
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _profiles = services.player_profiles.lock().unwrap();
+        let _profiles = services.profiles.player_profiles.lock().unwrap();
         panic!("poison profiles for regression");
     }));
     assert_eq!(
@@ -1300,8 +1325,8 @@ fn context_snapshots_release_locks_before_await() {
         std::future::ready(()).await;
 
         let services = context.required_services().unwrap();
-        assert!(services.player_profiles.try_lock().is_ok());
-        assert!(services.key_configs.try_lock().is_ok());
+        assert!(services.profiles.player_profiles.try_lock().is_ok());
+        assert!(services.profiles.key_configs.try_lock().is_ok());
         assert_eq!(
             snapshot
                 .preferences

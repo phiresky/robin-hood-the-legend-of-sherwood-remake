@@ -202,12 +202,12 @@ pub fn prepare_distributed_custom_mission(
             manifest.schema_version
         ));
     }
-    let mission_archive: Arc<[u8]> = Arc::from(validated.package.mission_archive.clone());
+    let mission_archive: Arc<[u8]> = Arc::clone(&validated.package.mission_archive);
     let shared_archive = validated
         .package
         .shared_library_archive
         .as_ref()
-        .map(|bytes| Arc::<[u8]>::from(bytes.clone()));
+        .map(Arc::clone);
     prepare_archive_assets(
         &manifest.mission_basename,
         &manifest.map_filename,
@@ -924,6 +924,10 @@ mod tests {
             panic!("distributed mission must have archive descriptor")
         };
         assert!(assets.installed.is_none());
+        assert!(Arc::ptr_eq(
+            prepared.resolved.mission_archive().unwrap(),
+            &validated.package.mission_archive
+        ));
         let cache = assets.distributed_cache.unwrap();
         assert_eq!(cache.schema_version, DISTRIBUTED_MOD_SCHEMA_VERSION);
         assert_eq!(cache.full_mod_sha256, expected_hash);

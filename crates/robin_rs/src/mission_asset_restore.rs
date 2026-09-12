@@ -380,16 +380,16 @@ pub fn resolve_cached_mission_assets(
     };
     validate_proto_and_map(descriptor)?;
     validate_cache_identity(descriptor, archive, &lease)?;
-    // The cache lease owns decoded Vecs. Copy each once into immutable Arcs;
-    // then re-hash and re-admit the Arc bytes themselves. The same Arcs—not a
-    // cache/file reopen—are what SbFile mounts.
-    let mission_archive: Arc<[u8]> = Arc::from(lease.validated.package.mission_archive.clone());
+    // Share the lease's immutable archive allocations with the mount while
+    // retaining its cache pin. Re-hash and re-admit these exact bytes, never
+    // a cache/file reopen.
+    let mission_archive: Arc<[u8]> = Arc::clone(&lease.validated.package.mission_archive);
     let shared_archive: Option<Arc<[u8]>> = lease
         .validated
         .package
         .shared_library_archive
         .as_ref()
-        .map(|bytes| Arc::from(bytes.clone()));
+        .map(Arc::clone);
     verify_archive_arc_identity("mission", &mission_archive, &archive.mission_archive)?;
     if let (Some(bytes), Some(identity)) = (&shared_archive, &archive.shared_archive) {
         verify_archive_arc_identity("shared library", bytes, identity)?;
@@ -1050,6 +1050,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let selected = "Nested/German/DATA/Levels/ColdMission.rhm";
         let archive = zip(&[(selected, rhm("ColdMap", 7))]);
+        let shared = zip(&[("Data/Text/shared.res", b"shared".to_vec())]);
         let validated = crate::distributed_mod::DistributedModPackage::build(
             "cold-mod".into(),
             "Cold Mod".into(),
@@ -1062,7 +1063,7 @@ mod tests {
             "ColdMap".into(),
             false,
             archive.clone(),
-            None,
+            Some(shared.clone()),
         )
         .unwrap();
         let encoded = validated.package.encode().unwrap();
@@ -1076,11 +1077,11 @@ mod tests {
             ArchiveMissionAssets {
                 mission_archive: identity(&archive),
                 selected_rhm_entry: selected.into(),
-                shared_archive: None,
+                shared_archive: Some(identity(&shared)),
                 installed: Some(InstalledArchiveLocator {
                     root: InstalledModsRoot::ConfiguredMods,
                     mission_relative_path: "not-installed/v1.zip".into(),
-                    shared_relative_path: None,
+                    shared_relative_path: Some("not-installed/shared.zip".into()),
                 }),
                 distributed_cache: Some(DistributedCacheIdentity {
                     schema_version: DISTRIBUTED_MOD_SCHEMA_VERSION,
@@ -1103,12 +1104,30 @@ mod tests {
         )
         .unwrap();
         assert!(resolved.is_cache_backed());
+        let retained = &resolved.cache_lease.as_ref().unwrap().validated.package;
+        assert!(Arc::ptr_eq(
+            resolved.mission_archive().unwrap(),
+            &retained.mission_archive
+        ));
+        assert!(Arc::ptr_eq(
+            resolved.shared_archive().unwrap(),
+            retained.shared_library_archive.as_ref().unwrap()
+        ));
+        assert!(
+            cache.clear().is_err(),
+            "mounted mission must retain the cache pin"
+        );
         assert_eq!(
             files.read_all("Data/Levels/ColdMission.rhm").unwrap(),
             rhm("ColdMap", 7)
         );
         drop(resolved);
         assert!(files.read_all("Data/Levels/ColdMission.rhm").is_err());
+        assert_eq!(
+            cache.clear().unwrap(),
+            1,
+            "dropping the mount must release its pin"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
