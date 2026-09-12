@@ -4285,7 +4285,7 @@ impl EngineInner {
                 crate::ai::AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
                     assignment_callback,
                     owner_position_before_callback,
-                    mut owner_boundary_positions,
+                    owner_boundary_positions,
                 } => {
                     self.owner_work_change_way_assignment_think_then_explicit_tail(
                         sim,
@@ -4983,7 +4983,7 @@ impl EngineInner {
         policy: crate::engine::ai::OwnerBoundaryPolicy,
         assignment_callback: Option<crate::ai::StimulusType>,
         owner_position_before_callback: crate::ai::Position,
-        owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
+        mut owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
     ) {
         // Isolate exactly patrol-path assignment's synchronous
         // callback A. Pre-existing sibling stimuli and owner work
