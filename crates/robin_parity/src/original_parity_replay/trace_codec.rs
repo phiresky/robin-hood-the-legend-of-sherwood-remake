@@ -297,28 +297,27 @@ pub(super) fn verify_trace_line_roundtrip<T: Serialize>(
     })?;
     normalize_trace_json_for_roundtrip(&mut original);
     normalize_trace_json_for_roundtrip(&mut reserialized);
-    Ok(
-        if let Some(difference) = first_json_difference("$", &original, &reserialized) {
-            return Err(format!(
-                "trace line {line_number} does not survive the typed cache round trip: {difference}"
-            ));
-        },
-    )
+    if let Some(difference) = first_json_difference("$", &original, &reserialized) {
+        return Err(format!(
+            "trace line {line_number} does not survive the typed cache round trip: {difference}"
+        ));
+    }
+    Ok(())
 }
 
 /// Re-parse and round-trip-audit one trace line (any line after the header
 /// and RNG prefix: frames and the rng_suffix terminator).
 pub(super) fn audit_trace_line(line: &str, line_number: usize) -> TraceStorageResult<()> {
-    Ok(if let Some(frame) = parse_trace_frame(line, line_number)? {
-        verify_trace_line_roundtrip(&frame, line, line_number)?;
+    if let Some(frame) = parse_trace_frame(line, line_number)? {
+        verify_trace_line_roundtrip(&frame, line, line_number)
     } else {
         let suffix: TraceRngOnly = serde_json::from_str(line).map_err(|error| {
             format!(
                 "reparse RNG suffix on trace line {line_number} for the round-trip audit: {error}"
             )
         })?;
-        verify_trace_line_roundtrip(&suffix, line, line_number)?;
-    })
+        verify_trace_line_roundtrip(&suffix, line, line_number)
+    }
 }
 
 /// Fan trace lines out to audit workers. Drop the sender and join every worker
@@ -400,7 +399,7 @@ pub(super) fn validate_standalone_native_trace(native_path: &Path) -> TraceStora
     let mut reader = BinaryTraceReader::open(native_path)?;
     let decoded_header = reader.read_header()?;
     let mut timeline = TraceTimeline::new(decoded_header.trace.initial_frame);
-    Ok(loop {
+    loop {
         match reader.read_record()? {
             BinaryTraceRecord::Frame(frame) => timeline
                 .observe(frame.frame_before, frame.frame_after)
@@ -445,7 +444,8 @@ pub(super) fn validate_standalone_native_trace(native_path: &Path) -> TraceStora
                 break;
             }
         }
-    })
+    }
+    Ok(())
 }
 
 /// `--convert`: turn a JSONL recording into its native parity trace and
@@ -671,15 +671,15 @@ pub(super) fn verify_converted_native_trace(
                 );
                 storage_ensure!(
                     (final_frame) == (source_end.final_frame),
-                    "native trace invariant failed: assert_eq"
+                    "native final frame differs from the source recording"
                 );
                 storage_ensure!(
                     (frame_count) == (source_end.frame_count),
-                    "native trace invariant failed: assert_eq"
+                    "native frame count differs from the source recording"
                 );
                 storage_ensure!(
                     (frame_count) == (decoded_frames),
-                    "native trace invariant failed: assert_eq"
+                    "native terminator frame count disagrees with independent readback"
                 );
                 timeline
                     .validate_terminator(frame_count, final_frame)
