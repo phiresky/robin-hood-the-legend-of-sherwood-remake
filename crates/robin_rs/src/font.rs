@@ -168,9 +168,9 @@ impl TrueTypeFont {
         font
     }
 
-    /// Create from explicit parameters + raw TTF bytes (for callers that
-    /// already have the headers + TTF data in memory).
-    pub fn from_parts(
+    /// Build a test fixture from explicit descriptor fields and raw TTF bytes.
+    #[cfg(test)]
+    pub(crate) fn from_parts(
         name: &[u8; FONT_NAME_LEN],
         height: u32,
         styles: u32,
@@ -505,8 +505,9 @@ impl TrueTypeFont {
 
     // -- Serialization (write back to .tfn) ----------------------------------
 
-    /// Serialize to the Spellbound `.tfn` binary format.
-    pub fn to_sbf_bytes(&self) -> Vec<u8> {
+    /// Encode a Spellbound `.tfn` fixture for loading and round-trip tests.
+    #[cfg(test)]
+    pub(crate) fn to_sbf_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(MIN_SBF_SIZE);
         out.extend_from_slice(&self.file_tag);
         out.extend_from_slice(&self.file_version.to_le_bytes());
