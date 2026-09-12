@@ -2,6 +2,23 @@
 //! walkers deliberately retain their stronger inode/mount/ownership contracts.
 use anyhow::{Context as _, Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
+
+pub(crate) fn read_bounded(
+    reader: &mut impl std::io::Read,
+    maximum: u64,
+    expected_length: u64,
+) -> Result<Vec<u8>> {
+    ensure!(expected_length <= maximum, "file exceeds its read bound");
+    let mut bytes = Vec::with_capacity(usize::try_from(expected_length)?);
+    reader
+        .take(maximum.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 <= maximum,
+        "file grew beyond its read bound"
+    );
+    Ok(bytes)
+}
 use std::fs;
 use std::io::Read as _;
 use std::path::Path;
@@ -49,10 +66,7 @@ pub(crate) fn read_regular_file_bounded(path: &Path, maximum: u64) -> Result<Vec
             path.display()
         );
     }
-    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
-    std::io::Read::by_ref(&mut file)
-        .take(maximum.saturating_add(1))
-        .read_to_end(&mut bytes)?;
+    let bytes = read_bounded(&mut file, maximum, metadata.len())?;
     ensure!(
         bytes.len() as u64 == metadata.len() && bytes.len() as u64 <= maximum,
         "{} changed while it was read",

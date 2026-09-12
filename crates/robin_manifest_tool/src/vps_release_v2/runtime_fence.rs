@@ -55,7 +55,7 @@ pub(super) fn pin_runtime_fence_intent(
     allowed_modes: &[u32],
 ) -> Result<PinnedRuntimeFenceIntentV1> {
     use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat};
-    use std::io::Read as _;
+
     use std::os::fd::AsFd as _;
 
     let named = statat(state.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
@@ -94,8 +94,8 @@ pub(super) fn pin_runtime_fence_intent(
         "runtime-fence initializer intent changed while it was pinned"
     );
     let mut file = File::from(fd);
-    let mut bytes = Vec::with_capacity(metadata.st_size as usize);
-    file.read_to_end(&mut bytes)?;
+    let bytes =
+        crate::fs_util::read_bounded(&mut file, MAX_DOCUMENT_BYTES, metadata.st_size as u64)?;
     let after_read = rustix::fs::fstat(&file)?;
     ensure!(
         after_read.st_dev == metadata.st_dev

@@ -1782,7 +1782,7 @@ pub(super) fn pin_vps_source_document(
     allowed_modes: &[u32],
 ) -> Result<PinnedVpsSourceDocument> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
+
     use std::os::fd::AsFd as _;
 
     let fd = openat2(
@@ -1811,8 +1811,7 @@ pub(super) fn pin_vps_source_document(
         "VPS source consume journal metadata is unsafe"
     );
     let mut file = File::from(fd);
-    let mut bytes = Vec::with_capacity(metadata.st_size as usize);
-    file.read_to_end(&mut bytes)?;
+    let bytes = crate::fs_util::read_bounded(&mut file, limit, metadata.st_size as u64)?;
     let observed = rustix::fs::fstat(&file)?;
     ensure!(
         bytes.len() as u64 == metadata.st_size as u64
