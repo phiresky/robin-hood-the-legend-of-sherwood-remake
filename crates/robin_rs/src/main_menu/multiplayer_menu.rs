@@ -139,74 +139,157 @@ pub(crate) async fn show_multiplayer_menu(
     } else {
         None
     };
-    let mut prepared_host_content: Option<crate::distributed_mod::PreparedDistributedMod> = None;
-    let (mut matchmaking_client, mut matchmaking_label) =
-        match matchmaking::MatchmakingSession::open(nickname.clone()) {
-            Ok(session) => (
-                Some(session),
-                "Matchmaking: searching for players...".to_string(),
-            ),
-            Err(err) => {
-                tracing::warn!("Multiplayer matchmaking unavailable: {err}");
-                (None, err)
-            }
-        };
-    let mut games = initial_direct_invite
-        .and_then(signed_direct_listing)
-        .into_iter()
-        .collect::<Vec<_>>();
-    if let Some(listing) = direct_browser_listing()
-        && games.iter().all(|existing| existing.id != listing.id)
-    {
-        games.push(listing);
-    }
-    let mut status = initial_direct_error.unwrap_or_else(|| matchmaking_label.clone());
-    let mut mode = MenuMode::Games;
-    let mut selected: usize = 0;
-    let mut scroll_view = ScrollView::new(
-        [
-            LIST_RECT.x + 4,
-            LIST_RECT.y + 4,
-            LIST_RECT.w - 8,
-            LIST_RECT.h - 8,
-        ],
-        ROW_HEIGHT,
+    let mut state = MultiplayerMenuState::new(
+        nickname,
+        missions,
+        initial_direct_invite,
+        initial_direct_error,
         resources,
     );
-    scroll_view.set_wheel_step(1);
-    let mut input_state = ModalInputState::new();
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let btn_x = MENU_W - btn_w - 10;
-    let btn_y_base = MENU_H - btn_h - 10;
-    let mut frame = FrameWnd::interactive();
-    for (id, y) in [
-        (ID_JOIN, btn_y_base - 3 * (btn_h + 2)),
-        (ID_CREATE, btn_y_base - 2 * (btn_h + 2)),
-        (ID_START, btn_y_base - (btn_h + 2)),
-        (ID_BACK, btn_y_base),
-    ] {
-        frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            id, "", true, btn_x, y, btn_w, btn_h,
-        ));
+    loop {
+        match state
+            .tick(
+                event_pump,
+                renderer,
+                resources,
+                application_context,
+                cursor_renderer,
+            )
+            .await
+        {
+            MultiplayerMenuTick::Finished(outcome) => return outcome,
+            MultiplayerMenuTick::Refresh => continue,
+            MultiplayerMenuTick::Pending => crate::window::sleep_ui_frame().await,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum MultiplayerMenuTick {
+    Pending,
+    /// A nested dialog or admission request finished; refresh without adding
+    /// a present/sleep that the original event branch did not perform.
+    Refresh,
+    Finished(Option<MultiplayerLaunch>),
+}
+
+// Owns a live matchmaking worker and input/capture state, not serialized UI.
+// Field order preserves the old locals' reverse-drop order: in particular,
+// retire matchmaking before releasing its prepared content owner.
+struct MultiplayerMenuState {
+    frame: FrameWnd,
+    input_state: ModalInputState,
+    scroll_view: ScrollView,
+    selected: usize,
+    mode: MenuMode,
+    status: String,
+    games: Vec<GameListing>,
+    matchmaking_label: String,
+    matchmaking_client: Option<matchmaking::MatchmakingSession>,
+    prepared_host_content: Option<crate::distributed_mod::PreparedDistributedMod>,
+    missions: Vec<MissionChoice>,
+}
+
+impl MultiplayerMenuState {
+    fn new(
+        nickname: String,
+        missions: Vec<MissionChoice>,
+        initial_direct_invite: Option<&str>,
+        initial_direct_error: Option<String>,
+        resources: &IngameMenuResources,
+    ) -> Self {
+        let prepared_host_content: Option<crate::distributed_mod::PreparedDistributedMod> = None;
+        let (matchmaking_client, matchmaking_label) =
+            match matchmaking::MatchmakingSession::open(nickname.clone()) {
+                Ok(session) => (
+                    Some(session),
+                    "Matchmaking: searching for players...".to_string(),
+                ),
+                Err(err) => {
+                    tracing::warn!("Multiplayer matchmaking unavailable: {err}");
+                    (None, err)
+                }
+            };
+        let mut games = initial_direct_invite
+            .and_then(signed_direct_listing)
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(listing) = direct_browser_listing()
+            && games.iter().all(|existing| existing.id != listing.id)
+        {
+            games.push(listing);
+        }
+        let status = initial_direct_error.unwrap_or_else(|| matchmaking_label.clone());
+        let mode = MenuMode::Games;
+        let selected: usize = 0;
+        let mut scroll_view = ScrollView::new(
+            [
+                LIST_RECT.x + 4,
+                LIST_RECT.y + 4,
+                LIST_RECT.w - 8,
+                LIST_RECT.h - 8,
+            ],
+            ROW_HEIGHT,
+            resources,
+        );
+        scroll_view.set_wheel_step(1);
+        let input_state = ModalInputState::new();
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let btn_x = MENU_W - btn_w - 10;
+        let btn_y_base = MENU_H - btn_h - 10;
+        let mut frame = FrameWnd::interactive();
+        for (id, y) in [
+            (ID_JOIN, btn_y_base - 3 * (btn_h + 2)),
+            (ID_CREATE, btn_y_base - 2 * (btn_h + 2)),
+            (ID_START, btn_y_base - (btn_h + 2)),
+            (ID_BACK, btn_y_base),
+        ] {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                id, "", true, btn_x, y, btn_w, btn_h,
+            ));
+        }
+
+        Self {
+            missions,
+            prepared_host_content,
+            matchmaking_client,
+            matchmaking_label,
+            games,
+            status,
+            mode,
+            selected,
+            scroll_view,
+            input_state,
+            frame,
+        }
     }
 
-    loop {
-        let rows_len = match &mode {
-            MenuMode::Games => games.len(),
-            MenuMode::Missions => missions.len(),
+    // Await points only enter the same existing nested admission dialogs; the
+    // worker drain, event dispatch, rendering and presentation order is fixed.
+    async fn tick(
+        &mut self,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        application_context: &ApplicationContext,
+        cursor_renderer: &mut crate::cursor::CursorRenderer,
+    ) -> MultiplayerMenuTick {
+        let rows_len = match &self.mode {
+            MenuMode::Games => self.games.len(),
+            MenuMode::Missions => self.missions.len(),
             MenuMode::Hosted { .. } => 1,
             MenuMode::Joined { .. } => 1,
         };
         if rows_len == 0 {
-            selected = 0;
-            scroll_view.reset();
-        } else if selected >= rows_len {
-            selected = rows_len - 1;
+            self.selected = 0;
+            self.scroll_view.reset();
+        } else if self.selected >= rows_len {
+            self.selected = rows_len - 1;
         }
-        scroll_view.set_total(rows_len);
+        self.scroll_view.set_total(rows_len);
 
         while let Some(event) =
-            matchmaking_client
+            self.matchmaking_client
                 .as_ref()
                 .and_then(|client| match client.try_recv() {
                     Ok(event) => event,
@@ -215,17 +298,17 @@ pub(crate) async fn show_multiplayer_menu(
         {
             match event {
                 matchmaking::MatchmakingEvent::Games(next) => {
-                    games = next;
-                    status = matchmaking_label.clone();
+                    self.games = next;
+                    self.status = self.matchmaking_label.clone();
                 }
                 matchmaking::MatchmakingEvent::Created(created) => {
-                    status = "Game created. Press Start when ready.".to_string();
-                    mode = MenuMode::Hosted { game: created };
-                    selected = 0;
+                    self.status = "Game created. Press Start when ready.".to_string();
+                    self.mode = MenuMode::Hosted { game: created };
+                    self.selected = 0;
                 }
                 matchmaking::MatchmakingEvent::Joined(joined) => {
                     if joined.connect_addr.is_empty() {
-                        status = "Matchmaking did not return a host address".to_string();
+                        self.status = "Matchmaking did not return a host address".to_string();
                     } else if joined.start_at_epoch_ms.is_some() {
                         match prepare_joined_launch(
                             joined,
@@ -237,26 +320,26 @@ pub(crate) async fn show_multiplayer_menu(
                         )
                         .await
                         {
-                            Ok(launch) => return Some(launch),
-                            Err(error) => status = error,
+                            Ok(launch) => return MultiplayerMenuTick::Finished(Some(launch)),
+                            Err(error) => self.status = error,
                         }
                     } else {
-                        let listing = games.iter().find(|g| g.id == joined.game_id).cloned();
-                        status = "Joined game. Waiting for host to start...".to_string();
-                        mode = MenuMode::Joined {
+                        let listing = self.games.iter().find(|g| g.id == joined.game_id).cloned();
+                        self.status = "Joined game. Waiting for host to start...".to_string();
+                        self.mode = MenuMode::Joined {
                             game: joined,
                             listing,
                         };
-                        selected = 0;
+                        self.selected = 0;
                     }
                 }
                 matchmaking::MatchmakingEvent::Started(started) => {
-                    if let MenuMode::Hosted { game, .. } = &mode
+                    if let MenuMode::Hosted { game, .. } = &self.mode
                         && game.id == started.game_id
                     {
                         if let Some(advertised) = started.host_content.as_ref() {
-                            let Some(prepared) = prepared_host_content.as_ref() else {
-                                status = localized_text(
+                            let Some(prepared) = self.prepared_host_content.as_ref() else {
+                                self.status = localized_text(
                                     application_context,
                                     PortTextKey::SpellforgeMpPreparedContentLost,
                                 )
@@ -271,7 +354,7 @@ pub(crate) async fn show_multiplayer_menu(
                                 ) {
                                     Ok(offer) => offer,
                                     Err(error) => {
-                                        status = localized_format(
+                                        self.status = localized_format(
                                             application_context,
                                             PortTextKey::SpellforgeMpCannotVerifyPreparedContent,
                                             &[("error", &error.to_string())],
@@ -280,7 +363,7 @@ pub(crate) async fn show_multiplayer_menu(
                                     }
                                 };
                             if &local_offer != advertised {
-                                status = localized_text(
+                                self.status = localized_text(
                                     application_context,
                                     PortTextKey::SpellforgeMpPreparedContentChanged,
                                 )
@@ -288,30 +371,32 @@ pub(crate) async fn show_multiplayer_menu(
                                 continue;
                             }
                         }
-                        return Some(MultiplayerLaunch {
+                        return MultiplayerMenuTick::Finished(Some(MultiplayerLaunch {
                             mission_id: started.mission_id,
                             mission_name: application_context
                                 .localized_mission_name(started.mission_id, &started.mission_name),
                             role: MultiplayerRole::Host,
                             expected_players: started.expected_players,
                             start_at_epoch_ms: started.start_at_epoch_ms,
-                            distributed_mod: prepared_host_content
+                            distributed_mod: self
+                                .prepared_host_content
                                 .as_ref()
                                 .map(|prepared| Arc::clone(&prepared.encoded)),
-                            distributed_installed_locator: prepared_host_content
+                            distributed_installed_locator: self
+                                .prepared_host_content
                                 .as_ref()
                                 .map(|prepared| prepared.installed_locator.clone()),
-                        });
+                        }));
                     }
                 }
                 matchmaking::MatchmakingEvent::GameUpdated(updated) => {
-                    let updated = upsert_game(&mut games, updated);
-                    match &mut mode {
+                    let updated = upsert_game(&mut self.games, updated);
+                    match &mut self.mode {
                         MenuMode::Hosted { game, .. } if game.id == updated.id => {
                             let previous_players = game.players;
                             *game = updated.clone();
                             if game.players != previous_players {
-                                status = format!(
+                                self.status = format!(
                                     "{} player{} in game",
                                     game.players,
                                     if game.players == 1 { "" } else { "s" }
@@ -319,7 +404,7 @@ pub(crate) async fn show_multiplayer_menu(
                             }
                         }
                         MenuMode::Joined { game, listing } if game.game_id == updated.id => {
-                            status = format!(
+                            self.status = format!(
                                 "{} player{} in game. Waiting for host to start...",
                                 updated.players,
                                 if updated.players == 1 { "" } else { "s" }
@@ -330,11 +415,11 @@ pub(crate) async fn show_multiplayer_menu(
                     }
                 }
                 matchmaking::MatchmakingEvent::GameStarted(started) => {
-                    if let MenuMode::Joined { game, .. } = &mode
+                    if let MenuMode::Joined { game, .. } = &self.mode
                         && game.game_id == started.game_id
                     {
                         if let Err(error) = validate_started_game(game, &started) {
-                            status = localized_format(
+                            self.status = localized_format(
                                 application_context,
                                 PortTextKey::SpellforgeMpRejectedChangedStart,
                                 &[("error", &error)],
@@ -351,13 +436,13 @@ pub(crate) async fn show_multiplayer_menu(
                         )
                         .await
                         {
-                            Ok(launch) => return Some(launch),
-                            Err(error) => status = error,
+                            Ok(launch) => return MultiplayerMenuTick::Finished(Some(launch)),
+                            Err(error) => self.status = error,
                         }
                     }
                 }
                 matchmaking::MatchmakingEvent::Neighbors(count) => {
-                    matchmaking_label = if count == 0 {
+                    self.matchmaking_label = if count == 0 {
                         "Matchmaking: searching for players...".to_string()
                     } else {
                         format!(
@@ -365,58 +450,62 @@ pub(crate) async fn show_multiplayer_menu(
                             if count == 1 { "" } else { "s" }
                         )
                     };
-                    if matches!(mode, MenuMode::Games) {
-                        status = matchmaking_label.clone();
+                    if matches!(self.mode, MenuMode::Games) {
+                        self.status = self.matchmaking_label.clone();
                     }
                 }
-                matchmaking::MatchmakingEvent::Error(err) => status = err,
+                matchmaking::MatchmakingEvent::Error(err) => self.status = err,
                 matchmaking::MatchmakingEvent::Disconnected(err) => {
-                    status = err;
-                    matchmaking_client = None;
+                    self.status = err;
+                    self.matchmaking_client = None;
                     // Discovery listings and hosted/joined controls are no longer
                     // actionable. Signed direct invites use a different transport.
-                    discard_disconnected_matchmaking_state(&mut games, &mut mode);
-                    selected = 0;
-                    scroll_view.reset();
-                    prepared_host_content = None;
+                    discard_disconnected_matchmaking_state(&mut self.games, &mut self.mode);
+                    self.selected = 0;
+                    self.scroll_view.reset();
+                    self.prepared_host_content = None;
                 }
             }
         }
 
-        let matchmaking_connected = matchmaking_client.is_some();
-        let can_join = matches!(mode, MenuMode::Games)
-            && games
-                .get(selected)
+        let matchmaking_connected = self.matchmaking_client.is_some();
+        let can_join = matches!(self.mode, MenuMode::Games)
+            && self
+                .games
+                .get(self.selected)
                 .is_some_and(|game| matchmaking_connected || game.state == "direct_invite");
-        let can_start = matchmaking_connected && matches!(mode, MenuMode::Hosted { .. });
-        frame.update_widget(ID_JOIN, Some("Join"), can_join);
-        frame.update_widget(
+        let can_start = matchmaking_connected && matches!(self.mode, MenuMode::Hosted { .. });
+        self.frame.update_widget(ID_JOIN, Some("Join"), can_join);
+        self.frame.update_widget(
             ID_CREATE,
-            Some(match mode {
+            Some(match self.mode {
                 MenuMode::Missions => "Create",
                 _ => "Create Game",
             }),
-            matchmaking_connected && matches!(mode, MenuMode::Games | MenuMode::Missions),
+            matchmaking_connected && matches!(self.mode, MenuMode::Games | MenuMode::Missions),
         );
-        frame.update_widget(ID_START, Some("Start"), can_start);
-        frame.update_widget(ID_BACK, Some("Back"), true);
+        self.frame.update_widget(ID_START, Some("Start"), can_start);
+        self.frame.update_widget(ID_BACK, Some("Back"), true);
 
-        let rows_len = match &mode {
-            MenuMode::Games => games.len(),
-            MenuMode::Missions => missions.len(),
+        let rows_len = match &self.mode {
+            MenuMode::Games => self.games.len(),
+            MenuMode::Missions => self.missions.len(),
             MenuMode::Hosted { .. } | MenuMode::Joined { .. } => 1,
         };
-        scroll_view.set_total(rows_len);
-        selected = selected.min(rows_len.saturating_sub(1));
+        self.scroll_view.set_total(rows_len);
+        self.selected = self.selected.min(rows_len.saturating_sub(1));
         let mut activated: Option<u32> = None;
         let (events, transform) =
             crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input_state.update_from_event(&event, transform);
-            if scroll_view.handle_event(
+            self.input_state.update_from_event(&event, transform);
+            if self.scroll_view.handle_event(
                 &event,
                 transform,
-                (input_state.virt_x as i32, input_state.virt_y as i32),
+                (
+                    self.input_state.virt_x as i32,
+                    self.input_state.virt_y as i32,
+                ),
             ) {
                 continue;
             }
@@ -430,9 +519,9 @@ pub(crate) async fn show_multiplayer_menu(
                     keycode: Keycode::Up,
                     ..
                 } => {
-                    selected = selected.saturating_sub(1);
+                    self.selected = self.selected.saturating_sub(1);
                     if rows_len > 0 {
-                        scroll_view.reveal(selected);
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -440,18 +529,18 @@ pub(crate) async fn show_multiplayer_menu(
                     ..
                 } => {
                     if rows_len > 0 {
-                        selected = (selected + 1).min(rows_len - 1);
-                        scroll_view.reveal(selected);
+                        self.selected = (self.selected + 1).min(rows_len - 1);
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::PageUp,
                     ..
                 } => {
-                    let step = scroll_view.visible_count().saturating_sub(1).max(1);
-                    selected = selected.saturating_sub(step);
+                    let step = self.scroll_view.visible_count().saturating_sub(1).max(1);
+                    self.selected = self.selected.saturating_sub(step);
                     if rows_len > 0 {
-                        scroll_view.reveal(selected);
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -459,18 +548,18 @@ pub(crate) async fn show_multiplayer_menu(
                     ..
                 } => {
                     if rows_len > 0 {
-                        let step = scroll_view.visible_count().saturating_sub(1).max(1);
-                        selected = (selected + step).min(rows_len - 1);
-                        scroll_view.reveal(selected);
+                        let step = self.scroll_view.visible_count().saturating_sub(1).max(1);
+                        self.selected = (self.selected + step).min(rows_len - 1);
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Home,
                     ..
                 } => {
-                    selected = 0;
+                    self.selected = 0;
                     if rows_len > 0 {
-                        scroll_view.reveal(selected);
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -478,8 +567,8 @@ pub(crate) async fn show_multiplayer_menu(
                     ..
                 } => {
                     if rows_len > 0 {
-                        selected = rows_len - 1;
-                        scroll_view.reveal(selected);
+                        self.selected = rows_len - 1;
+                        self.scroll_view.reveal(self.selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -490,7 +579,7 @@ pub(crate) async fn show_multiplayer_menu(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    activated = match mode {
+                    activated = match self.mode {
                         MenuMode::Games => Some(ID_JOIN),
                         MenuMode::Missions => Some(ID_CREATE),
                         MenuMode::Hosted { .. } => Some(ID_START),
@@ -499,15 +588,15 @@ pub(crate) async fn show_multiplayer_menu(
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(row) = scroll_view.row_at(vx, vy) {
-                        selected = row;
+                    if let Some(row) = self.scroll_view.row_at(vx, vy) {
+                        self.selected = row;
                     }
                 }
                 GameEvent::MouseDown(x, y, 1, clicks) if clicks >= 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(row) = scroll_view.row_at(vx, vy) {
-                        selected = row;
-                        activated = match mode {
+                    if let Some(row) = self.scroll_view.row_at(vx, vy) {
+                        self.selected = row;
+                        activated = match self.mode {
                             MenuMode::Games => Some(ID_JOIN),
                             MenuMode::Missions => Some(ID_CREATE),
                             MenuMode::Hosted { .. } => Some(ID_START),
@@ -519,36 +608,36 @@ pub(crate) async fn show_multiplayer_menu(
             }
         }
 
-        let widget_input = input_state.as_widget_input();
-        let widget_events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let widget_events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
         if let Some(id) = widget_bridge::find_activated(&widget_events) {
             activated = Some(id);
         }
 
         if let Some(id) = activated {
             match id {
-                ID_BACK => match mode {
-                    MenuMode::Games => return None,
+                ID_BACK => match self.mode {
+                    MenuMode::Games => return MultiplayerMenuTick::Finished(None),
                     _ => {
-                        if matches!(mode, MenuMode::Hosted { .. } | MenuMode::Joined { .. })
-                            && let Some(session) = matchmaking_client.as_ref()
+                        if matches!(self.mode, MenuMode::Hosted { .. } | MenuMode::Joined { .. })
+                            && let Some(session) = self.matchmaking_client.as_ref()
                             && let Err(err) = session.leave_game()
                         {
                             tracing::warn!("matchmaking leave failed: {err}");
                         }
-                        mode = MenuMode::Games;
-                        selected = 0;
-                        scroll_view.reset();
-                        status = matchmaking_label.clone();
+                        self.mode = MenuMode::Games;
+                        self.selected = 0;
+                        self.scroll_view.reset();
+                        self.status = self.matchmaking_label.clone();
                     }
                 },
-                ID_JOIN if matches!(mode, MenuMode::Games) => {
-                    if let Some(game) = games.get(selected) {
+                ID_JOIN if matches!(self.mode, MenuMode::Games) => {
+                    if let Some(game) = self.games.get(self.selected) {
                         if game.state == "direct_invite" {
                             match prepare_direct_browser_launch(
                                 game.connect_addr(),
-                                &missions,
+                                &self.missions,
                                 application_context,
                                 event_pump,
                                 renderer,
@@ -557,35 +646,36 @@ pub(crate) async fn show_multiplayer_menu(
                             )
                             .await
                             {
-                                Ok(launch) => return Some(launch),
-                                Err(error) => status = error,
+                                Ok(launch) => return MultiplayerMenuTick::Finished(Some(launch)),
+                                Err(error) => self.status = error,
                             }
-                            continue;
+                            return MultiplayerMenuTick::Refresh;
                         }
-                        match matchmaking_client
+                        match self
+                            .matchmaking_client
                             .as_ref()
                             .map(|session| session.join_game(game.id.clone()))
                         {
                             Some(Ok(())) => {
-                                status = "Joining game...".to_string();
+                                self.status = "Joining game...".to_string();
                             }
-                            Some(Err(err)) => status = err,
-                            None => status = "Matchmaking is not connected".to_string(),
+                            Some(Err(err)) => self.status = err,
+                            None => self.status = "Matchmaking is not connected".to_string(),
                         }
                     }
                 }
-                ID_CREATE if matches!(mode, MenuMode::Games) => {
-                    if missions.is_empty() {
-                        status = "No missions are available to host".to_string();
+                ID_CREATE if matches!(self.mode, MenuMode::Games) => {
+                    if self.missions.is_empty() {
+                        self.status = "No missions are available to host".to_string();
                     } else {
-                        mode = MenuMode::Missions;
-                        selected = 0;
-                        scroll_view.reset();
-                        status = "Select a mission for the hosted game".to_string();
+                        self.mode = MenuMode::Missions;
+                        self.selected = 0;
+                        self.scroll_view.reset();
+                        self.status = "Select a mission for the hosted game".to_string();
                     }
                 }
-                ID_CREATE if matches!(mode, MenuMode::Missions) => {
-                    if let Some(mission) = missions.get(selected).cloned() {
+                ID_CREATE if matches!(self.mode, MenuMode::Missions) => {
+                    if let Some(mission) = self.missions.get(self.selected).cloned() {
                         if let Some(_custom) = mission.custom.as_ref() {
                             #[cfg(not(target_arch = "wasm32"))]
                             {
@@ -594,8 +684,8 @@ pub(crate) async fn show_multiplayer_menu(
                                     match crate::multiplayer::identity::local_endpoint_id_string() {
                                         Ok(id) => id,
                                         Err(error) => {
-                                            status = error;
-                                            continue;
+                                            self.status = error;
+                                            return MultiplayerMenuTick::Refresh;
                                         }
                                     };
                                 let attestation = crate::ingame_menu::spellforge_content::show_host_distribution_attestation(
@@ -615,21 +705,21 @@ pub(crate) async fn show_multiplayer_menu(
                                 let attestation = match attestation {
                                     Ok(attestation) => attestation,
                                     Err(error) => {
-                                        status = localized_format(
+                                        self.status = localized_format(
                                             application_context,
                                             PortTextKey::SpellforgeMpCannotReviewMetadata,
                                             &[("error", &error)],
                                         );
-                                        continue;
+                                        return MultiplayerMenuTick::Refresh;
                                     }
                                 };
                                 let Some(license) = attestation else {
-                                    status = localized_text(
+                                    self.status = localized_text(
                                         application_context,
                                         PortTextKey::SpellforgeMpHostingCancelled,
                                     )
                                     .to_owned();
-                                    continue;
+                                    return MultiplayerMenuTick::Refresh;
                                 };
                                 let prepared =
                                     match crate::distributed_mod::prepare_local_distributed_mod(
@@ -638,12 +728,12 @@ pub(crate) async fn show_multiplayer_menu(
                                     ) {
                                         Ok(prepared) => prepared,
                                         Err(error) => {
-                                            status = localized_format(
+                                            self.status = localized_format(
                                                 application_context,
                                                 PortTextKey::SpellforgeMpCannotHostMission,
                                                 &[("error", &error)],
                                             );
-                                            continue;
+                                            return MultiplayerMenuTick::Refresh;
                                         }
                                     };
                                 let offer = match crate::distributed_mod::make_distributed_mod_offer(
@@ -653,15 +743,15 @@ pub(crate) async fn show_multiplayer_menu(
                                 ) {
                                     Ok(offer) => offer,
                                     Err(error) => {
-                                        status = localized_format(
+                                        self.status = localized_format(
                                             application_context,
                                             PortTextKey::SpellforgeMpCannotAdvertiseMission,
                                             &[("error", &error.to_string())],
                                         );
-                                        continue;
+                                        return MultiplayerMenuTick::Refresh;
                                     }
                                 };
-                                match matchmaking_client.as_ref().map(|session| {
+                                match self.matchmaking_client.as_ref().map(|session| {
                                     session.create_game_with_content(
                                         mission.mission_id,
                                         mission.mission_name.clone(),
@@ -669,47 +759,48 @@ pub(crate) async fn show_multiplayer_menu(
                                     )
                                 }) {
                                     Some(Ok(())) => {
-                                        prepared_host_content = Some(prepared);
-                                        status = localized_text(
+                                        self.prepared_host_content = Some(prepared);
+                                        self.status = localized_text(
                                             application_context,
                                             PortTextKey::SpellforgeMpCreatingCustomGame,
                                         )
                                         .to_owned();
                                     }
-                                    Some(Err(error)) => status = error,
-                                    None => status = "Matchmaking is not connected".to_owned(),
+                                    Some(Err(error)) => self.status = error,
+                                    None => self.status = "Matchmaking is not connected".to_owned(),
                                 }
                             }
                             #[cfg(target_arch = "wasm32")]
                             {
-                                status = localized_text(
+                                self.status = localized_text(
                                     application_context,
                                     PortTextKey::SpellforgeMpBrowserCannotHost,
                                 )
                                 .to_owned();
                             }
                         } else {
-                            prepared_host_content = None;
-                            match matchmaking_client.as_ref().map(|session| {
+                            self.prepared_host_content = None;
+                            match self.matchmaking_client.as_ref().map(|session| {
                                 session
                                     .create_game(mission.mission_id, mission.mission_name.clone())
                             }) {
-                                Some(Ok(())) => status = "Creating game...".to_string(),
-                                Some(Err(err)) => status = err,
-                                None => status = "Matchmaking is not connected".to_string(),
+                                Some(Ok(())) => self.status = "Creating game...".to_string(),
+                                Some(Err(err)) => self.status = err,
+                                None => self.status = "Matchmaking is not connected".to_string(),
                             }
                         }
                     }
                 }
                 ID_START => {
-                    if matches!(mode, MenuMode::Hosted { .. }) {
-                        match matchmaking_client
+                    if matches!(self.mode, MenuMode::Hosted { .. }) {
+                        match self
+                            .matchmaking_client
                             .as_ref()
                             .map(|session| session.start_game())
                         {
-                            Some(Ok(())) => status = "Starting game...".to_string(),
-                            Some(Err(err)) => status = err,
-                            None => status = "Matchmaking is not connected".to_string(),
+                            Some(Ok(())) => self.status = "Starting game...".to_string(),
+                            Some(Err(err)) => self.status = err,
+                            None => self.status = "Matchmaking is not connected".to_string(),
                         }
                     }
                 }
@@ -722,9 +813,9 @@ pub(crate) async fn show_multiplayer_menu(
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
         }
-        scroll_view.set_total(match &mode {
-            MenuMode::Games => games.len(),
-            MenuMode::Missions => missions.len(),
+        self.scroll_view.set_total(match &self.mode {
+            MenuMode::Games => self.games.len(),
+            MenuMode::Missions => self.missions.len(),
             MenuMode::Hosted { .. } | MenuMode::Joined { .. } => 1,
         });
         render_menu(
@@ -732,22 +823,22 @@ pub(crate) async fn show_multiplayer_menu(
             resources,
             transform,
             application_context,
-            &mode,
-            &games,
-            &missions,
-            selected,
-            &scroll_view,
-            &status,
+            &self.mode,
+            &self.games,
+            &self.missions,
+            self.selected,
+            &self.scroll_view,
+            &self.status,
         );
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
         cursor_renderer.advance_ui_animation();
         ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
             renderer,
             transform,
-            &input_state,
+            &self.input_state,
         );
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+        MultiplayerMenuTick::Pending
     }
 }
 
