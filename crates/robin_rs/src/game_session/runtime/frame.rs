@@ -43,6 +43,82 @@ pub(in crate::game_session) struct MissionFrameSnapshot {
     pub(super) timeline_after: Option<TimelineFrame>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use robin_engine::engine::{ExternalAction, ExternalFacts, SoundBoundary};
+
+    #[test]
+    fn input_projections_preserve_journal_and_select_pending_pre_actions() {
+        let action = |name: &str| ExternalAction::Native {
+            name: name.to_owned(),
+            args: vec![1, 2],
+            this_actor: None,
+        };
+        let mut frame = MissionFrame::new(0);
+        frame.record_applied_external_action(action("already applied"));
+        frame.stage_external_actions().push(action("pending"));
+        frame.stage_post_external_actions().push(action("post"));
+        frame.commands.commands.push(
+            PlayerCommand::RegisterPeasantName {
+                name: "pre command".to_owned(),
+            }
+            .into(),
+        );
+        frame.post_commands.commands.push(
+            PlayerCommand::RegisterPeasantName {
+                name: "post command".to_owned(),
+            }
+            .into(),
+        );
+        frame.external_facts =
+            ExternalFacts::new(Vec::new(), Some(SoundBoundary::live(Vec::new())));
+        frame.execution.run_hourglass = false;
+        frame.execution.simulation_body_allowed = false;
+
+        let hourglass = frame.hourglass_input();
+        let authoritative = frame.authoritative_input();
+        let json = |value| serde_json::to_value(value).unwrap();
+        assert_eq!(
+            json(&hourglass.external_actions),
+            json(&vec![action("pending")])
+        );
+        assert_eq!(
+            json(&authoritative.external_actions),
+            json(&frame.external_actions)
+        );
+        assert_eq!(authoritative.external_actions.len(), 2);
+        assert_eq!(frame.external_actions_applied, 1);
+        assert_eq!(
+            json(&authoritative.post_external_actions),
+            json(&frame.post_external_actions)
+        );
+        assert_eq!(authoritative.post_commands.len(), 1);
+        assert_eq!(
+            serde_json::to_value(authoritative.post_player_inputs()).unwrap(),
+            serde_json::to_value(&frame.post_commands.commands).unwrap()
+        );
+        assert!(hourglass.post_external_actions.is_empty());
+        assert!(hourglass.post_commands.is_empty());
+        assert!(!hourglass.run_post_initialize);
+        assert!(authoritative.run_post_initialize);
+        for input in [&hourglass, &authoritative] {
+            assert_eq!(
+                serde_json::to_value(input.player_inputs()).unwrap(),
+                serde_json::to_value(&frame.commands.commands).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(&input.external_facts).unwrap(),
+                serde_json::to_value(&frame.external_facts).unwrap()
+            );
+            assert!(!input.run_hourglass);
+            assert!(!input.simulation_body_allowed);
+        }
+        frame.execution.post_initialize = PostInitializeAdmission::Pending(false);
+        assert!(!frame.authoritative_input().run_post_initialize);
+    }
+}
+
 impl Serialize for MissionFrame {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         MissionFrameSnapshot {
@@ -312,8 +388,7 @@ impl MissionFrame {
     pub(in crate::game_session) fn authoritative_input(
         &self,
     ) -> robin_engine::engine::SimulationFrameInput {
-        self.hourglass_input()
-            .with_external_actions(self.external_actions.clone())
+        self.pre_refresh_input(&self.external_actions)
             .with_post_external_actions(self.post_external_actions.clone())
             .with_post_commands(
                 self.post_commands
@@ -367,11 +442,18 @@ impl MissionFrame {
     pub(in crate::game_session) fn hourglass_input(
         &self,
     ) -> robin_engine::engine::SimulationFrameInput {
+        self.pre_refresh_input(self.unapplied_external_actions())
+    }
+
+    fn pre_refresh_input(
+        &self,
+        external_actions: &[robin_engine::engine::ExternalAction],
+    ) -> robin_engine::engine::SimulationFrameInput {
         robin_engine::engine::SimulationFrameInput::from_player_inputs(
             self.commands.commands.clone(),
         )
         .with_external_facts(self.external_facts.clone())
-        .with_external_actions(self.unapplied_external_actions().to_vec())
+        .with_external_actions(external_actions.to_vec())
         .with_simulation_body_allowed(self.execution.simulation_body_allowed)
         .with_hourglass(self.execution.run_hourglass)
     }
