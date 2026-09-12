@@ -134,9 +134,9 @@ pub fn profiles_from_document(
     mut document: Value,
 ) -> Result<crate::profiles::ProfileManager, String> {
     for (family, _, order_field) in NAMED_FAMILIES {
-        let mut keyed = document[family].as_object().ok_or_else(|| {
+        let mut keyed = document.get_mut(family).and_then(Value::as_object_mut).map(std::mem::take).ok_or_else(|| {
             format!("/{family} must be an object keyed by profile name; legacy array catalogs must be regenerated with convert_datadir or re-exported from the original CPF with cpf_to_json")
-        })?.clone();
+        })?;
         let order = document[order_field].as_array().ok_or_else(|| {
             format!("/{order_field} must be an array of profile keys preserving numeric slots")
         })?;
@@ -320,6 +320,75 @@ mod tests {
                 .map(|p| p.life_point)
                 .collect::<Vec<_>>(),
             vec![11, 22, 33, 99]
+        );
+    }
+
+    #[test]
+    fn owned_profile_maps_preserve_validation_precedence() {
+        for invalid in [
+            json!(null),
+            json!([]),
+            json!({}),
+            json!({"characters": [], "character_order": null}),
+        ] {
+            assert_eq!(
+                profiles_from_document(invalid).unwrap_err(),
+                "/characters must be an object keyed by profile name; legacy array catalogs must be regenerated with convert_datadir or re-exported from the original CPF with cpf_to_json"
+            );
+        }
+        for (invalid, expected) in [
+            (
+                json!({"characters": {}, "character_order": null, "soldiers": []}),
+                "/character_order must be an array of profile keys preserving numeric slots",
+            ),
+            (
+                json!({"characters": {"Hero": null}, "character_order": [0]}),
+                "/character_order entries must be strings",
+            ),
+            (
+                json!({"characters": {"Hero": null}, "character_order": ["Hero", "Hero"]}),
+                "/character_order repeats key \"Hero\"",
+            ),
+            (
+                json!({"characters": {}, "character_order": ["Absent", "Absent"]}),
+                "/character_order references missing /characters/Absent",
+            ),
+            (
+                json!({"characters": {"Hero": null}, "character_order": ["Hero"], "soldiers": []}),
+                "character must be an object",
+            ),
+            (
+                json!({"characters": {"Hero": {"index": 0}}, "character_order": ["Hero"], "soldiers": []}),
+                "character index is assigned from character_order by the loader; remove the index field",
+            ),
+        ] {
+            assert_eq!(profiles_from_document(invalid).unwrap_err(), expected);
+        }
+    }
+
+    #[test]
+    fn owned_profile_maps_append_unlisted_keys_in_sorted_order() {
+        let profiles = ProfileManager {
+            characters: vec![CharacterProfile {
+                filename: "Zulu".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut document = profile_document(&profiles).unwrap();
+        for (key, name) in [("beta", "Beta"), ("alpha", "Alpha")] {
+            let mut entry = document["characters"]["Zulu"].clone();
+            entry["filename"] = json!(name);
+            document["characters"][key] = entry;
+        }
+        let loaded = profiles_from_document(document).unwrap();
+        assert_eq!(
+            loaded
+                .characters
+                .iter()
+                .map(|profile| (profile.filename.as_str(), profile.index))
+                .collect::<Vec<_>>(),
+            [("Zulu", 0), ("Alpha", 1), ("Beta", 2)]
         );
     }
 
