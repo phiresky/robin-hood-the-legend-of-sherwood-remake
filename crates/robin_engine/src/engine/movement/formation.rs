@@ -221,7 +221,6 @@ impl EngineInner {
             .and_then(|index| self.world.fast_grid.level.sectors.get(usize::from(index)));
         let GroupMoveClick {
             is_lift_click,
-            is_door_click_sector,
             is_jump_click,
             jump_underlying_sector,
             clicked_door_index: _,
@@ -525,7 +524,6 @@ impl EngineInner {
             .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)));
         let GroupMoveClick {
             is_lift_click,
-            is_door_click_sector,
             is_jump_click,
             jump_underlying_sector,
             clicked_door_index,
@@ -1466,7 +1464,6 @@ fn recorded_qa_move_route(
 #[derive(serde::Serialize, serde::Deserialize)]
 struct GroupMoveClick {
     is_lift_click: bool,
-    is_door_click_sector: bool,
     is_jump_click: bool,
     jump_underlying_sector: Option<(
         crate::sector::SectorNumber,
@@ -1527,7 +1524,6 @@ impl EngineInner {
 
         GroupMoveClick {
             is_lift_click,
-            is_door_click_sector,
             is_jump_click,
             jump_underlying_sector,
             clicked_door_index,

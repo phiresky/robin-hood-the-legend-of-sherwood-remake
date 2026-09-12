@@ -1488,10 +1488,14 @@ impl EngineInner {
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
 
-        let Some(owner) = self.world.entities.get(npc_id) else {
-            return Vec::new();
-        };
+        let owner = self
+            .world
+            .entities
+            .get(npc_id)
+            .unwrap_or_else(|| panic!("fighter snapshot owner {npc_id:?} disappeared"));
         let Some(enemy_ai) = owner.enemy_ai() else {
+            // This registry is an enemy-brain capability. The public nearby
+            // query also accepts civilians and PCs, for whom it is inapplicable.
             return Vec::new();
         };
         let doors = self.script_domains.interactables.doors.as_slice();
@@ -1556,40 +1560,8 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .unwrap_or_else(|| panic!("active soldier {handle} has no EnemyAi brain"));
-            let soldier_profile = assets
-                .profile_manager
-                .get_soldier(s.soldier.soldier_profile_index)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "soldier {handle} requires missing soldier profile {}",
-                        u32::from(s.soldier.soldier_profile_index)
-                    )
-                });
-            let has_formation = soldier_profile.formation;
-            let fighting_ability = {
-                let base = soldier_profile.fighting;
-                if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
-                    let diff = self.control.sim_config.difficulty;
-                    diff.rules().enemy_fighting(base, 100)
-                } else {
-                    base
-                }
-            };
-            let bow_profile = if soldier_profile.shooting_weapon_id == 0 {
-                None
-            } else {
-                Some(
-                    assets
-                        .profile_manager
-                        .get_bow(soldier_profile.shooting_weapon_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "soldier {handle} requires missing bow profile {}",
-                                soldier_profile.shooting_weapon_id
-                            )
-                        }),
-                )
-            };
+            let (has_formation, fighting_ability, bow_profile) =
+                self.soldier_profile_facts(assets, s, EntityId::Soldier(SoldierId(handle)));
             let is_archer_unit = snapshots::is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
