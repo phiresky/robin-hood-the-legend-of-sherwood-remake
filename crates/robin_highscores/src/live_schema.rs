@@ -815,7 +815,7 @@ mod tests {
         let original = UnixMetadata {
             device: 1,
             inode: 2,
-            mode: libc::S_IFDIR | DATABASE_DIRECTORY_MODE,
+            mode: rustix::fs::FileType::Directory.as_raw_mode() | DATABASE_DIRECTORY_MODE,
             links: 3,
             owner: 4,
             group: 5,
@@ -988,7 +988,7 @@ mod tests {
                 let state = if path.exists() {
                     let file = std::fs::OpenOptions::new()
                         .read(true)
-                        .custom_flags(libc::O_NOATIME)
+                        .custom_flags(rustix::fs::OFlags::NOATIME.bits() as i32)
                         .open(&path)
                         .unwrap();
                     Some(capture_file_state(&file).unwrap())
@@ -1211,7 +1211,7 @@ mod tests {
                 let unblocking = std::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
-                    .custom_flags(libc::O_NONBLOCK)
+                    .custom_flags(rustix::fs::OFlags::NONBLOCK.bits() as i32)
                     .open(&special)
                     .unwrap();
                 let result = tokio::time::timeout(Duration::from_secs(1), task)

@@ -105,119 +105,77 @@ struct StatusPublicationIdentityUncertain {
     source: anyhow::Error,
 }
 
-pub(super) async fn backup_and_publish_status(
-    config: &ServerConfig,
-    release_manifest_path: &Path,
-    release_identity: &BackupReleaseIdentityV2,
-    backup_root: &Path,
-    status_path: &Path,
-    retain_complete: usize,
-    restore_sources: &BTreeMap<PathBuf, PathBuf>,
-) -> anyhow::Result<PathBuf> {
-    backup_and_publish_status_with_limit(
-        config,
-        release_manifest_path,
-        release_identity,
-        backup_root,
-        status_path,
-        retain_complete,
-        restore_sources,
-        robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-    )
-    .await
+/// Borrowed execution authority, intentionally not a serializable document.
+#[derive(Clone, Copy)]
+pub(super) struct BackupRequest<'a> {
+    pub config: &'a ServerConfig,
+    pub release_manifest_path: &'a Path,
+    pub release_identity: &'a BackupReleaseIdentityV2,
+    pub backup_root: &'a Path,
+    pub status_path: &'a Path,
+    pub retain_complete: usize,
+    pub restore_sources: &'a BTreeMap<PathBuf, PathBuf>,
+    pub maximum_status_bytes: usize,
 }
 
-async fn backup_and_publish_status_with_limit(
-    config: &ServerConfig,
-    release_manifest_path: &Path,
-    release_identity: &BackupReleaseIdentityV2,
-    backup_root: &Path,
-    status_path: &Path,
-    retain_complete: usize,
-    restore_sources: &BTreeMap<PathBuf, PathBuf>,
-    maximum_status_bytes: usize,
-) -> anyhow::Result<PathBuf> {
-    backup_and_publish_status_with_limit_and_publisher(
-        config,
-        release_manifest_path,
-        release_identity,
-        backup_root,
-        status_path,
-        retain_complete,
-        restore_sources,
-        maximum_status_bytes,
-        publish_private_atomic,
-    )
-    .await
-}
-
-async fn backup_and_publish_status_with_limit_and_publisher<F>(
-    config: &ServerConfig,
-    release_manifest_path: &Path,
-    release_identity: &BackupReleaseIdentityV2,
-    backup_root: &Path,
-    status_path: &Path,
-    retain_complete: usize,
-    restore_sources: &BTreeMap<PathBuf, PathBuf>,
-    maximum_status_bytes: usize,
-    publish_status: F,
-) -> anyhow::Result<PathBuf>
-where
-    F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome> + Send + 'static,
-{
-    backup_and_publish_status_with_limit_and_publisher_and_hooks(
-        config,
-        release_manifest_path,
-        release_identity,
-        backup_root,
-        status_path,
-        retain_complete,
-        restore_sources,
-        maximum_status_bytes,
-        publish_status,
-        || Ok(()),
-        || Ok(()),
-    )
-    .await
-}
-
-async fn backup_and_publish_status_with_limit_and_publisher_and_hooks<F, I, S>(
-    config: &ServerConfig,
-    release_manifest_path: &Path,
-    release_identity: &BackupReleaseIdentityV2,
-    backup_root: &Path,
-    status_path: &Path,
-    retain_complete: usize,
-    restore_sources: &BTreeMap<PathBuf, PathBuf>,
-    maximum_status_bytes: usize,
+/// Distinct TOCTOU boundaries remain independently injectable. Hooks never
+/// carry serialized authority and are invoked exactly once by the operation owner.
+struct BackupHooks<
+    F = fn(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome>,
+    I = fn() -> anyhow::Result<()>,
+    S = fn() -> anyhow::Result<()>,
+> {
     publish_status: F,
     before_install: I,
     before_status_publication: S,
+}
+
+impl Default for BackupHooks {
+    fn default() -> Self {
+        Self {
+            publish_status: publish_private_atomic,
+            before_install: || Ok(()),
+            before_status_publication: || Ok(()),
+        }
+    }
+}
+
+pub(super) async fn backup_and_publish_status(
+    request: BackupRequest<'_>,
+) -> anyhow::Result<PathBuf> {
+    backup_with_hooks(request, BackupHooks::default()).await
+}
+
+async fn backup_with_hooks<F, I, S>(
+    request: BackupRequest<'_>,
+    hooks: BackupHooks<F, I, S>,
 ) -> anyhow::Result<PathBuf>
 where
     F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome> + Send + 'static,
     I: FnOnce() -> anyhow::Result<()> + Send + 'static,
     S: FnOnce() -> anyhow::Result<()> + Send + 'static,
 {
-    let config = config.clone();
-    let release_manifest_path = release_manifest_path.to_owned();
-    let release_identity = release_identity.clone();
-    let backup_root = backup_root.to_owned();
-    let status_path = status_path.to_owned();
-    let restore_sources = restore_sources.clone();
+    let config = request.config.clone();
+    let release_manifest_path = request.release_manifest_path.to_owned();
+    let release_identity = request.release_identity.clone();
+    let backup_root = request.backup_root.to_owned();
+    let status_path = request.status_path.to_owned();
+    let restore_sources = request.restore_sources.clone();
+    let retain_complete = request.retain_complete;
+    let maximum_status_bytes = request.maximum_status_bytes;
     run_owned_backup(async move {
         backup_and_publish_status_owned(
-            &config,
-            &release_manifest_path,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            retain_complete,
-            &restore_sources,
-            maximum_status_bytes,
-            publish_status,
-            before_install,
-            before_status_publication,
+            BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest_path,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                restore_sources: &restore_sources,
+                retain_complete,
+                maximum_status_bytes,
+            },
+            hooks,
         )
         .await
     })
@@ -238,23 +196,29 @@ where
 }
 
 async fn backup_and_publish_status_owned<F, I, S>(
-    config: &ServerConfig,
-    release_manifest_path: &Path,
-    release_identity: &BackupReleaseIdentityV2,
-    backup_root: &Path,
-    status_path: &Path,
-    retain_complete: usize,
-    restore_sources: &BTreeMap<PathBuf, PathBuf>,
-    maximum_status_bytes: usize,
-    publish_status: F,
-    before_install: I,
-    before_status_publication: S,
+    request: BackupRequest<'_>,
+    hooks: BackupHooks<F, I, S>,
 ) -> anyhow::Result<PathBuf>
 where
     F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome>,
     I: FnOnce() -> anyhow::Result<()>,
     S: FnOnce() -> anyhow::Result<()>,
 {
+    let BackupRequest {
+        config,
+        release_manifest_path,
+        release_identity,
+        backup_root,
+        status_path,
+        retain_complete,
+        restore_sources,
+        maximum_status_bytes,
+    } = request;
+    let BackupHooks {
+        publish_status,
+        before_install,
+        before_status_publication,
+    } = hooks;
     anyhow::ensure!(
         maximum_status_bytes > 0
             && maximum_status_bytes <= robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
@@ -549,7 +513,7 @@ where
         (*verified.release_identity()) == *release_identity,
         "verified backup release identity differs from the active installed release"
     );
-    if fs2::available_space(backup_root)? < config.minimum_storage_free_bytes {
+    if robin_highscores::secure_fs::available_space(backup_root)? < config.minimum_storage_free_bytes {
         remove_owned_partial_backup(backup_root, &partial)?;
         anyhow::bail!("completed backup would violate the configured storage floor");
     }

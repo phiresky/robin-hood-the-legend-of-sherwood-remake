@@ -14,7 +14,6 @@ struct BackupAuthorityKeyHarness {
 #[cfg(target_os = "linux")]
 impl BackupAuthorityKeyHarness {
     fn new() -> Self {
-        use fs2::FileExt as _;
         use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
         let directory = tempfile::tempdir().unwrap();
@@ -35,7 +34,7 @@ impl BackupAuthorityKeyHarness {
         std::fs::set_permissions(&lock_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         activation_lock.sync_all().unwrap();
         std::fs::File::open(&opt_root).unwrap().sync_all().unwrap();
-        activation_lock.lock_exclusive().unwrap();
+        rustix::fs::flock(&activation_lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
         Self {
             _directory: directory,
             opt_root,
@@ -417,7 +416,6 @@ fn backup_authority_key_v2_completion_requires_outer_authority_and_is_resumable(
 #[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_requires_the_exact_held_lock_open_file_description() {
-    use fs2::FileExt as _;
     use std::os::fd::AsRawFd as _;
 
     let harness = BackupAuthorityKeyHarness::new();
@@ -437,7 +435,11 @@ fn backup_authority_key_v2_requires_the_exact_held_lock_open_file_description() 
 
     harness.activation_lock.unlock().unwrap();
     assert!(harness.initialize(TEST_SOURCE_COMMIT).is_err());
-    harness.activation_lock.lock_exclusive().unwrap();
+    rustix::fs::flock(
+        &harness.activation_lock,
+        rustix::fs::FlockOperation::LockExclusive,
+    )
+    .unwrap();
 
     let reopened = std::fs::OpenOptions::new()
         .read(true)

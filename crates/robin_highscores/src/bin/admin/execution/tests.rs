@@ -770,15 +770,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     Database::migrate(&config).await.unwrap();
     let restore_sources = test_restore_sources(&config, directory.path()).await;
     assert!(
-        backup_and_publish_status(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            2,
-            &restore_sources,
-        )
+        backup_and_publish_status(BackupRequest {
+            config: &config,
+            release_manifest_path: &release_manifest,
+            release_identity: &release_identity,
+            backup_root: &backup_root,
+            status_path: &status_path,
+            retain_complete: 2,
+            restore_sources: &restore_sources,
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+        })
         .await
         .is_err(),
         "backup authority must reject a missing production backup root"
@@ -792,15 +793,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     {
         std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o750)).unwrap();
         assert!(
-            backup_and_publish_status(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-            )
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
             .await
             .is_err(),
             "backup authority must reject a misprovisioned backup root"
@@ -827,15 +829,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     {
         std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o750)).unwrap();
         assert!(
-            backup_and_publish_status(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-            )
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
             .await
             .is_err(),
             "a non-0700 status authority parent must fail before cleanup"
@@ -846,15 +849,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         std::fs::write(&status_path, b"{}").unwrap();
         std::fs::set_permissions(&status_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         assert!(
-            backup_and_publish_status(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-            )
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
             .await
             .is_err(),
             "a non-0400 status authority must fail before cleanup"
@@ -1006,15 +1010,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
 
     assert!(!status_path.exists());
     assert!(
-        backup_and_publish_status(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            0,
-            &restore_sources,
-        )
+        backup_and_publish_status(BackupRequest {
+            config: &config,
+            release_manifest_path: &release_manifest,
+            release_identity: &release_identity,
+            backup_root: &backup_root,
+            status_path: &status_path,
+            retain_complete: 0,
+            restore_sources: &restore_sources,
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+        })
         .await
         .is_err()
     );
@@ -1046,26 +1051,30 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         let swap_key_path = key_path.clone();
         let swap_displaced_key = displaced_key.clone();
         assert!(
-            backup_and_publish_status_with_limit_and_publisher_and_hooks(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-                robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-                publish_private_atomic,
-                move || {
-                    std::fs::rename(&swap_key_path, &swap_displaced_key)?;
-                    std::fs::write(&swap_key_path, [0x41; 32])?;
-                    std::fs::set_permissions(
-                        &swap_key_path,
-                        std::fs::Permissions::from_mode(0o400),
-                    )?;
-                    Ok(())
+            backup_with_hooks(
+                BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
-                || Ok(()),
+                BackupHooks {
+                    publish_status: publish_private_atomic,
+                    before_install: move || {
+                        std::fs::rename(&swap_key_path, &swap_displaced_key)?;
+                        std::fs::write(&swap_key_path, [0x41; 32])?;
+                        std::fs::set_permissions(
+                            &swap_key_path,
+                            std::fs::Permissions::from_mode(0o400),
+                        )?;
+                        Ok(())
+                    },
+                    before_status_publication: || Ok(())
+                }
             )
             .await
             .is_err(),
@@ -1094,23 +1103,27 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o400)).unwrap();
         let mutation_handle = key_mutator.try_clone().unwrap();
         assert!(
-            backup_and_publish_status_with_limit_and_publisher_and_hooks(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-                robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-                publish_private_atomic,
-                || Ok(()),
-                move || {
-                    use std::os::unix::fs::FileExt as _;
-                    mutation_handle.write_all_at(&[0x42; 32], 0)?;
-                    mutation_handle.sync_all()?;
-                    Ok(())
+            backup_with_hooks(
+                BackupRequest {
+                    config: &config,
+                    release_manifest_path: &release_manifest,
+                    release_identity: &release_identity,
+                    backup_root: &backup_root,
+                    status_path: &status_path,
+                    retain_complete: 2,
+                    restore_sources: &restore_sources,
+                    maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                 },
+                BackupHooks {
+                    publish_status: publish_private_atomic,
+                    before_install: || Ok(()),
+                    before_status_publication: move || {
+                        use std::os::unix::fs::FileExt as _;
+                        mutation_handle.write_all_at(&[0x42; 32], 0)?;
+                        mutation_handle.sync_all()?;
+                        Ok(())
+                    }
+                }
             )
             .await
             .is_err(),
@@ -1134,15 +1147,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         }
     }
 
-    let first = backup_and_publish_status(
-        &config,
-        &release_manifest,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        2,
-        &restore_sources,
-    )
+    let first = backup_and_publish_status(BackupRequest {
+        config: &config,
+        release_manifest_path: &release_manifest,
+        release_identity: &release_identity,
+        backup_root: &backup_root,
+        status_path: &status_path,
+        retain_complete: 2,
+        restore_sources: &restore_sources,
+        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
+    })
     .await
     .unwrap();
     assert!(!stale_partial.exists());
@@ -1872,16 +1886,24 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         .collect::<BTreeSet<_>>();
     let status_before_publication_failure = tokio::fs::read(&status_path).await.unwrap();
     assert!(
-        backup_and_publish_status_with_limit_and_publisher(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            2,
-            &restore_sources,
-            robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-            |_, _| anyhow::bail!("injected definite pre-rename publication failure"),
+        backup_with_hooks(
+            BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            },
+            BackupHooks {
+                publish_status: |_, _| anyhow::bail!(
+                    "injected definite pre-rename publication failure"
+                ),
+                before_install: || Ok(()),
+                before_status_publication: || Ok(())
+            }
         )
         .await
         .is_err()
@@ -1904,16 +1926,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
 
     let status_before_oversize = tokio::fs::read(&status_path).await.unwrap();
     assert!(
-        backup_and_publish_status_with_limit(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            2,
-            &restore_sources,
-            1,
-        )
+        backup_and_publish_status(BackupRequest {
+            config: &config,
+            release_manifest_path: &release_manifest,
+            release_identity: &release_identity,
+            backup_root: &backup_root,
+            status_path: &status_path,
+            retain_complete: 2,
+            restore_sources: &restore_sources,
+            maximum_status_bytes: 1
+        })
         .await
         .is_err(),
         "an unpublishable envelope must fail before partial installation"
@@ -1931,15 +1953,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         "an oversized candidate must leave no partial backup"
     );
 
-    let second = backup_and_publish_status(
-        &config,
-        &release_manifest,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        2,
-        &restore_sources,
-    )
+    let second = backup_and_publish_status(BackupRequest {
+        config: &config,
+        release_manifest_path: &release_manifest,
+        release_identity: &release_identity,
+        backup_root: &backup_root,
+        status_path: &status_path,
+        retain_complete: 2,
+        restore_sources: &restore_sources,
+        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
+    })
     .await
     .unwrap();
     assert!(second.is_dir());
@@ -1954,16 +1977,24 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         .collect::<BTreeSet<_>>();
     assert_eq!(two_complete_names.len(), 2);
     assert!(
-        backup_and_publish_status_with_limit_and_publisher(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            2,
-            &restore_sources,
-            robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-            |_, _| anyhow::bail!("injected failed replacement before status publication"),
+        backup_with_hooks(
+            BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            },
+            BackupHooks {
+                publish_status: |_, _| anyhow::bail!(
+                    "injected failed replacement before status publication"
+                ),
+                before_install: || Ok(()),
+                before_status_publication: || Ok(())
+            }
         )
         .await
         .is_err()
@@ -1980,25 +2011,31 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     );
 
     assert!(
-        backup_and_publish_status_with_limit_and_publisher(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &status_path,
-            2,
-            &restore_sources,
-            robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
-            |path, bytes| match publish_private_atomic(path, bytes)? {
-                StatusPublicationOutcome::Published => {
-                    Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(
-                        anyhow::anyhow!(
-                            "injected crash after status publication and before retention"
-                        ),
-                    ))
-                }
-                uncertain => Ok(uncertain),
+        backup_with_hooks(
+            BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
             },
+            BackupHooks {
+                publish_status: |path, bytes| match publish_private_atomic(path, bytes)? {
+                    StatusPublicationOutcome::Published => {
+                        Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(
+                            anyhow::anyhow!(
+                                "injected crash after status publication and before retention"
+                            ),
+                        ))
+                    }
+                    uncertain => Ok(uncertain),
+                },
+                before_install: || Ok(()),
+                before_status_publication: || Ok(())
+            }
         )
         .await
         .is_err(),
@@ -2019,15 +2056,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         "a crash after status publication may leave exactly retain+1 generations"
     );
 
-    let third = backup_and_publish_status(
-        &config,
-        &release_manifest,
-        &release_identity,
-        &backup_root,
-        &status_path,
-        2,
-        &restore_sources,
-    )
+    let third = backup_and_publish_status(BackupRequest {
+        config: &config,
+        release_manifest_path: &release_manifest,
+        release_identity: &release_identity,
+        backup_root: &backup_root,
+        status_path: &status_path,
+        retain_complete: 2,
+        restore_sources: &restore_sources,
+        maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
+    })
     .await
     .unwrap();
     assert!(third.is_dir());
@@ -2068,15 +2106,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         let hostile_partial = backup_root.join(format!(".backup-v4-2-{}.partial", "b".repeat(32)));
         symlink(&outside, &hostile_partial).unwrap();
         assert!(
-            backup_and_publish_status(
-                &config,
-                &release_manifest,
-                &release_identity,
-                &backup_root,
-                &status_path,
-                2,
-                &restore_sources,
-            )
+            backup_and_publish_status(BackupRequest {
+                config: &config,
+                release_manifest_path: &release_manifest,
+                release_identity: &release_identity,
+                backup_root: &backup_root,
+                status_path: &status_path,
+                retain_complete: 2,
+                restore_sources: &restore_sources,
+                maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+            })
             .await
             .is_err()
         );
@@ -2090,15 +2129,16 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     let nested_status = backup_root.join("backup-status.json");
     config.backup_manifest_path = Some(nested_status.clone());
     assert!(
-        backup_and_publish_status(
-            &config,
-            &release_manifest,
-            &release_identity,
-            &backup_root,
-            &nested_status,
-            2,
-            &restore_sources,
-        )
+        backup_and_publish_status(BackupRequest {
+            config: &config,
+            release_manifest_path: &release_manifest,
+            release_identity: &release_identity,
+            backup_root: &backup_root,
+            status_path: &nested_status,
+            retain_complete: 2,
+            restore_sources: &restore_sources,
+            maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
+        })
         .await
         .is_err(),
         "backup payload roots must never double as the API-readable status authority"

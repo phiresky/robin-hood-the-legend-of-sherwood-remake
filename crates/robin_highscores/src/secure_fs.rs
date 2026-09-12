@@ -87,6 +87,51 @@ pub fn read_bounded_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<Vec<u
     read_bounded_regular_file(open_regular_no_symlinks(path)?, limit)
 }
 
+/// Lock operations retain the same open-file-description and descriptor lifetime.
+pub mod file_lock {
+    use std::fs::File;
+    use std::io;
+
+    macro_rules! operation {
+        ($name:ident, $unix:ident, $portable:ident) => {
+            pub fn $name(file: &File) -> io::Result<()> {
+                #[cfg(unix)]
+                {
+                    rustix::fs::flock(file, rustix::fs::FlockOperation::$unix)
+                        .map_err(io::Error::from)
+                }
+                #[cfg(not(unix))]
+                {
+                    fs2::FileExt::$portable(file)
+                }
+            }
+        };
+    }
+    operation!(lock_shared, LockShared, lock_shared);
+    operation!(try_lock_shared, NonBlockingLockShared, try_lock_shared);
+    operation!(
+        try_lock_exclusive,
+        NonBlockingLockExclusive,
+        try_lock_exclusive
+    );
+    operation!(unlock, Unlock, unlock);
+}
+
+pub fn available_space(path: &Path) -> std::io::Result<u64> {
+    #[cfg(unix)]
+    {
+        let filesystem = rustix::fs::statvfs(path)?;
+        filesystem
+            .f_frsize
+            .checked_mul(filesystem.f_bavail)
+            .ok_or_else(|| std::io::Error::other("available filesystem space overflows"))
+    }
+    #[cfg(not(unix))]
+    {
+        fs2::available_space(path)
+    }
+}
+
 /// Shared API/worker state is private to the deployment's dedicated data
 /// group. Setgid directories preserve that group on every descendant created
 /// by either distinct service principal.

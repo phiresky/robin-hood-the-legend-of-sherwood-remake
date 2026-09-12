@@ -349,7 +349,7 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
             "backup operation lock has the wrong owner, mode, link count, or path identity"
         );
     }
-    fs2::FileExt::try_lock_exclusive(&file)
+    robin_highscores::secure_fs::file_lock::try_lock_exclusive(&file)
         .map_err(|error| anyhow::anyhow!("another backup operation is active: {error}"))?;
     Ok(file)
 }
@@ -956,7 +956,7 @@ pub(super) async fn record_file(root: &Path, path: &Path) -> anyhow::Result<Back
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let mut file = options.open(path).await?;
     let metadata = file.metadata().await?;
     anyhow::ensure!(metadata.is_file(), "backup source is not a regular file");
@@ -1001,7 +1001,7 @@ pub(super) async fn read_bounded_regular_nofollow(
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NOFOLLOW);
+    options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path).await?;
     let metadata = file.metadata().await?;
     anyhow::ensure!(
@@ -1146,7 +1146,10 @@ pub(super) fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::Fi
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
-        options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+        options.custom_flags(
+            rustix::fs::OFlags::DIRECTORY.bits() as i32
+                | rustix::fs::OFlags::NOFOLLOW.bits() as i32,
+        );
         let file = options.open(path)?;
         anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
         Ok(file)
@@ -1172,7 +1175,7 @@ pub(super) fn open_regular_nofollow(path: &Path) -> anyhow::Result<std::fs::File
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
-        options.custom_flags(libc::O_NOFOLLOW);
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
         let file = options.open(path)?;
         let metadata = file.metadata()?;
         anyhow::ensure!(metadata.is_file(), "path is not a regular file");

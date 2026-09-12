@@ -11,7 +11,10 @@ thiserror.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 robin_run_protocol.workspace = true
-wasm-bindgen = "0.2"
+wasm-bindgen.workspace = true
+# Async extern bindings expand to wasm_bindgen_futures::JsFuture.
+# This dependency is used by generated code even without a source-level path.
+wasm-bindgen-futures.workspace = true
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["Window", "Location"] }
 

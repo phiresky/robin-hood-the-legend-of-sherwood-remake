@@ -11,15 +11,11 @@ pub fn validate_username(value: &str) -> Result<String, &'static str> {
     if !(1..=MAX_USERNAME_CHARS).contains(&chars) {
         return Err("username must contain between 1 and 32 characters");
     }
-    if normalized.chars().any(|character| {
-        character.is_control()
-            || matches!(
-                character,
-                '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-            )
-    })
+    if normalized
+        .chars()
+        .any(robin_util::display_text::is_unsafe_display_character)
     {
-        return Err("username contains a control or bidirectional override character");
+        return Err("username contains an unsafe display character");
     }
     let search_key = normalized_username(&normalized);
     if search_key.is_empty() || search_key.chars().count() > 48 {
@@ -73,5 +69,9 @@ mod tests {
             assert!(validate_username(&format!("x{bidi}y")).is_err());
         }
         assert!(validate_username(&"\u{fdfa}".repeat(3)).is_err());
+        // Reject invisible impersonation characters without rewriting signed bytes.
+        for invisible in ['\u{00ad}', '\u{200b}', '\u{2060}', '\u{2800}', '\u{feff}'] {
+            assert!(validate_username(&format!("Robin{invisible}")).is_err());
+        }
     }
 }

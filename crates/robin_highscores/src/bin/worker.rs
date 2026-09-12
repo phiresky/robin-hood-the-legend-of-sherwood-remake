@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use clap::Parser;
 use robin_highscores::verifier::{
     DirectVerifierLauncherConfig, ProcessError, VerifierProcessConfig, build_verification_request,
