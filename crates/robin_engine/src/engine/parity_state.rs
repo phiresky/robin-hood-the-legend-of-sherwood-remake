@@ -91,6 +91,19 @@ fn typed_float(value: f32) -> ParityFloat {
     }
 }
 
+fn typed_seek_point(
+    point: &crate::ai::SeekPoint,
+    position: projections::AiPosition,
+) -> projections::SeekPoint<'_> {
+    projections::SeekPoint {
+        position,
+        frame_when_full_interest: point.frame_when_full_interest,
+        directions: std::borrow::Cow::Borrowed(&point.directions),
+        last_calculated_interest: point.last_calculated_interest,
+        locked: point.locked,
+    }
+}
+
 #[cfg(test)]
 fn into_projection_fields(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
     let serde_json::Value::Object(fields) = value else {
@@ -136,10 +149,8 @@ impl Engine {
             y: float(y),
             z: float(z),
         };
-        let jump_line = |index: Option<u32>| -> Value {
-            let Some(index) = index else {
-                return Value::Null;
-            };
+        let jump_line = |index: Option<u32>| {
+            let index = index?;
             let line = self
                 .inner
                 .world
@@ -148,9 +159,9 @@ impl Engine {
                 .jump_lines
                 .get(usize::try_from(index).expect("parity enemy jump-line index exceeds usize"))
                 .unwrap_or_else(|| panic!("parity enemy references missing jump line {index}"));
-            json!({
-                "a": point2(line.point_a.x, line.point_a.y),
-                "b": point2(line.point_b.x, line.point_b.y),
+            Some(projections::Line {
+                a: point2(line.point_a.x, line.point_a.y),
+                b: point2(line.point_b.x, line.point_b.y),
             })
         };
         let bbox = |bbox: crate::coordinates::MapBBox| {
@@ -404,15 +415,6 @@ impl Engine {
             sector: sector(position.sector),
             layer: position.level,
         };
-        let seek_point = |point: &crate::ai::SeekPoint| {
-            json!({
-                "position": ai_position(point.position),
-                "frame_when_full_interest": point.frame_when_full_interest,
-                "directions": &point.directions,
-                "last_calculated_interest": point.last_calculated_interest,
-                "locked": point.locked,
-            })
-        };
         let known_strike_command = |strike: Option<crate::weapons::SwordStrike>| -> i32 {
             use crate::{element::Command, weapons::SwordStrike};
             match strike {
@@ -431,7 +433,7 @@ impl Engine {
                 }
             }
         };
-        let stimulus_state = |stimulus: &crate::ai::Stimulus| -> Value {
+        let stimulus_state = |stimulus: &crate::ai::Stimulus| -> projections::Stimulus {
             use crate::ai::{StimulusInfo, StimulusType};
             assert_ne!(
                 stimulus.stimulus_type,
@@ -439,85 +441,90 @@ impl Engine {
                 "parity local-AI stimulus contains Rust-only non-serializable type",
             );
             let (info_type, info) = match stimulus.info {
-                StimulusInfo::None => (0, json!({ "kind": "none" })),
+                StimulusInfo::None => (0, projections::StimulusInfo::None),
                 StimulusInfo::Noise(noise) => (
                     1,
-                    json!({
-                        "kind": "noise",
-                        "origin": {
-                            "map": point2(noise.origin.x, noise.origin.y),
-                            "sector": sector(noise.origin.sector),
-                            "layer": noise.origin.layer.map(crate::position_interface::Layer::get),
+                    projections::StimulusInfo::Noise {
+                        origin: projections::NoiseOrigin {
+                            map: point2(noise.origin.x, noise.origin.y),
+                            sector: sector(noise.origin.sector),
+                            layer: noise
+                                .origin
+                                .layer
+                                .map(crate::position_interface::Layer::get),
                         },
-                        "noise_type": noise.noise_type as u32,
-                        "volume": noise.volume, "elevation": noise.elevation,
-                    }),
+                        noise_type: noise.noise_type as u32,
+                        volume: noise.volume,
+                        elevation: noise.elevation,
+                    },
                 ),
                 StimulusInfo::Position(position) => (
                     2,
-                    json!({
-                        "kind": "position", "position": ai_position(position),
-                    }),
+                    projections::StimulusInfo::Position {
+                        position: ai_position(position),
+                    },
                 ),
                 StimulusInfo::Human(entity) => (
                     3,
-                    json!({
-                        "kind": "human", "entity": resolve_ai_handle(entity.get()),
-                    }),
+                    projections::StimulusInfo::Human {
+                        entity: resolve_ai_handle(entity.get()),
+                    },
                 ),
                 StimulusInfo::Hint(hint) => (
                     4,
-                    json!({
-                        "kind": "hint", "position": ai_position(hint.seek_point),
-                        "teller": resolve_ai_handle(hint.who_tells_me.get()), "seek_flags": hint.seek_flags,
-                    }),
+                    projections::StimulusInfo::Hint {
+                        position: ai_position(hint.seek_point),
+                        teller: resolve_ai_handle(hint.who_tells_me.get()),
+                        seek_flags: hint.seek_flags,
+                    },
                 ),
                 StimulusInfo::Object(entity) => (
                     5,
-                    json!({
-                        "kind": "object", "entity": resolve_ai_handle(entity.get()),
-                    }),
+                    projections::StimulusInfo::Object {
+                        entity: resolve_ai_handle(entity.get()),
+                    },
                 ),
                 StimulusInfo::Stolen(stolen) => (
                     6,
-                    json!({
-                        "kind": "stolen", "object": resolve_ai_handle(stolen.object.get()),
-                        "thief": resolve_ai_handle(stolen.thief.get()),
-                    }),
+                    projections::StimulusInfo::Stolen {
+                        object: resolve_ai_handle(stolen.object.get()),
+                        thief: resolve_ai_handle(stolen.thief.get()),
+                    },
                 ),
                 StimulusInfo::Combat(combat) => (
                     7,
-                    json!({
-                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc.get()),
-                        "enemy_position": ai_position(combat.enemy_position),
-                    }),
+                    projections::StimulusInfo::Combat {
+                        actor: resolve_ai_handle(combat.actor_npc.get()),
+                        enemy_position: ai_position(combat.enemy_position),
+                    },
                 ),
                 StimulusInfo::DoorCombat(combat) => (
                     8,
-                    json!({
-                        "kind": "door_combat", "delay": combat.delay, "direction": combat.direction,
-                        "goal": ai_position(combat.goal),
-                        "adversary": resolve_optional_ai_handle(combat.adversary),
-                    }),
+                    projections::StimulusInfo::DoorCombat {
+                        delay: combat.delay,
+                        direction: combat.direction,
+                        goal: ai_position(combat.goal),
+                        adversary: resolve_optional_ai_handle(combat.adversary),
+                    },
                 ),
-                StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
+                StimulusInfo::Index(value) => {
+                    (9, projections::StimulusInfo::Index { value: value })
+                }
                 StimulusInfo::LegacyInvalidType(raw) => {
                     panic!("parity local-AI stimulus retains active invalid type word {raw}")
                 }
             };
-            json!({
-                "stimulus_type": stimulus.stimulus_type as u32,
-                "info_type": info_type,
-                "owner": resolve_optional_ai_handle(stimulus.owner),
-                "to_whole_patrol": stimulus.to_whole_patrol,
-                "info": info,
-            })
+            projections::Stimulus {
+                stimulus_type: stimulus.stimulus_type as u32,
+                info_type: info_type,
+                owner: resolve_optional_ai_handle(stimulus.owner),
+                to_whole_patrol: stimulus.to_whole_patrol,
+                info: info,
+            }
         };
         let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
             use crate::ai::{StimulusInfo, StimulusType};
-            let Some(stimulus) = stimulus else {
-                return Value::Null;
-            };
+            let stimulus = stimulus?;
             let is_default = stimulus.stimulus_type == StimulusType::NoEvent
                 && matches!(
                     stimulus.info,
@@ -526,9 +533,9 @@ impl Engine {
                 && stimulus.owner.is_none()
                 && !stimulus.to_whole_patrol;
             if is_default {
-                Value::Null
+                None
             } else {
-                stimulus_state(stimulus)
+                Some(stimulus_state(stimulus))
             }
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
@@ -797,8 +804,11 @@ impl Engine {
                         personal_seek_point_1: enemy
                             .personal_seek_point_1
                             .as_ref()
-                            .map(&seek_point),
-                        personal_seek_point_2: enemy.personal_seek_point_2.as_ref().map(seek_point),
+                            .map(|point| typed_seek_point(point, ai_position(point.position))),
+                        personal_seek_point_2: enemy
+                            .personal_seek_point_2
+                            .as_ref()
+                            .map(|point| typed_seek_point(point, ai_position(point.position))),
                         seek_center: ai_position(enemy.seek_center),
                         actual_seek_point: enemy.actual_seek_point,
                         seek_point_view_directions: std::borrow::Cow::Borrowed(

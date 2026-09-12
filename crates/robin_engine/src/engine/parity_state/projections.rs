@@ -228,6 +228,80 @@ pub(super) struct AiPosition {
 }
 
 #[derive(Serialize, Deserialize)]
+pub(super) struct NoiseOrigin {
+    pub map: Point2,
+    pub sector: Option<i16>,
+    pub layer: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum StimulusInfo {
+    None,
+    Noise {
+        origin: NoiseOrigin,
+        noise_type: u32,
+        volume: u16,
+        elevation: u16,
+    },
+    Position {
+        position: AiPosition,
+    },
+    Human {
+        entity: ParityEntityReference,
+    },
+    Hint {
+        position: AiPosition,
+        teller: ParityEntityReference,
+        seek_flags: u16,
+    },
+    Object {
+        entity: ParityEntityReference,
+    },
+    Stolen {
+        object: ParityEntityReference,
+        thief: ParityEntityReference,
+    },
+    Combat {
+        actor: ParityEntityReference,
+        enemy_position: AiPosition,
+    },
+    DoorCombat {
+        delay: u16,
+        direction: u16,
+        goal: AiPosition,
+        adversary: Option<ParityEntityReference>,
+    },
+    Index {
+        value: u16,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct Stimulus {
+    pub stimulus_type: u32,
+    pub info_type: u8,
+    pub owner: Option<ParityEntityReference>,
+    pub to_whole_patrol: bool,
+    pub info: StimulusInfo,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct Line {
+    pub a: Point2,
+    pub b: Point2,
+}
+
+#[derive(Serialize, Deserialize)]
+pub(super) struct SeekPoint<'a> {
+    pub position: AiPosition,
+    pub frame_when_full_interest: u32,
+    pub directions: std::borrow::Cow<'a, [u16]>,
+    pub last_calculated_interest: u8,
+    pub locked: bool,
+}
+
+#[derive(Serialize, Deserialize)]
 pub(super) struct PathHistory {
     pub position: AiPosition,
     pub direction: u8,
@@ -414,7 +488,7 @@ pub(super) struct NpcAi<'a> {
     pub stay_at_home: bool,
     pub locks: u8,
     pub was_busy: bool,
-    pub stimulus_queue: Vec<serde_json::Value>,
+    pub stimulus_queue: Vec<Stimulus>,
     pub script_locked: bool,
     pub remember_events: bool,
     pub leave_house_number: u16,
@@ -468,8 +542,8 @@ pub(super) struct EnemyAi<'a> {
     pub ambush_point_array_reset: bool,
     pub ambush_point_status: Vec<u32>,
     pub my_seek_points: std::borrow::Cow<'a, [u16]>,
-    pub personal_seek_point_1: Option<serde_json::Value>,
-    pub personal_seek_point_2: Option<serde_json::Value>,
+    pub personal_seek_point_1: Option<SeekPoint<'a>>,
+    pub personal_seek_point_2: Option<SeekPoint<'a>>,
     pub seek_center: AiPosition,
     pub actual_seek_point: Option<u16>,
     pub seek_point_view_directions: std::borrow::Cow<'a, [u16]>,
@@ -505,7 +579,7 @@ pub(super) struct EnemyAi<'a> {
     pub archer_behind_me: Option<ParityEntityReference>,
     pub shield_bearer_before_me: Option<ParityEntityReference>,
     pub already_seen_bodies: Vec<ParityEntityReference>,
-    pub my_line_jump: serde_json::Value,
+    pub my_line_jump: Option<Line>,
     pub shield_bearer_direction: u16,
     pub phalanx_aborted: bool,
     pub changed_to_alert_path: bool,
@@ -517,5 +591,5 @@ pub(super) struct EnemyAi<'a> {
     pub enemy_seen_below: bool,
     pub enemy_had_this_elevation: u16,
     pub known_enemy_strike_commands: [i32; 3],
-    pub last_stimulus_dispatched_to_patrol: serde_json::Value,
+    pub last_stimulus_dispatched_to_patrol: Option<Stimulus>,
 }
