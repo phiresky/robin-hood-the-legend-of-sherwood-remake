@@ -2022,251 +2022,18 @@ impl EnemyAi {
 
         let mut b_reconsider = false;
 
-        // Target on another entity's shoulders: re-point `primary_target`
-        // to the carrier so every downstream read (friend-swap
-        // comparison, focusing, swordfight entry's
-        // `pending_enter_swordfight`) sees the carrier rather than the
-        // carried entity. The original game does
-        // replacement of the primary target by its carrier, persisting
-        // across ticks because `primary_target` is a member.
-        let target_snapshot_is_current =
-            tick.primary_target_snapshot_handle == self.base.primary_target;
-        let target_on_shoulders = if target_snapshot_is_current {
-            matches!(
-                tick.primary_target_posture,
-                Some(crate::element::Posture::OnShoulders)
-            )
-        } else {
-            ctx.entity_view(self.base.primary_target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
-                        self.base.primary_target
-                    )
-                })
-                .posture
-                == crate::element::Posture::OnShoulders
-        };
-        if target_on_shoulders {
-            if !target_snapshot_is_current {
-                // TODO: expose the carrier handle in AiEntityView so a target
-                // changed synchronously to a carried human can be resolved
-                // here without rebuilding the whole tick snapshot.
-                panic!(
-                    "enemy-approach reconsideration synchronously retargeted to carried human {:?}; carrier identity is unavailable",
-                    self.base.primary_target
-                );
-            }
-            let carrier_handle = tick.primary_target_carrier_handle.unwrap_or_else(|| {
-                panic!(
-                    "enemy-approach reconsideration target {:?} is on shoulders without a carrier snapshot",
-                    self.base.primary_target
-                )
-            });
-            self.base.primary_target = Some(carrier_handle);
-        }
+        let ApproachTargetSnapshot {
+            position: live_target_pos,
+            distance,
+            jump_line: my_line_jump,
+            animation: target_animation,
+        } = self.prepare_approach_target(ctx, tick, grid);
 
-        // Position(primary_target) after the substitution resolves to
-        // the carrier's position when the carry path fired.
-        let live_target_pos = if target_snapshot_is_current {
-            if target_on_shoulders && let Some(carrier) = tick.primary_target_carrier_position {
-                carrier
-            } else {
-                tick.primary_target_position.unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} has no position snapshot",
-                        self.base.primary_target
-                    )
-                })
-            }
-        } else {
-            // The original game reads the primary target position after the timer/event
-            // callback has synchronously changed that pointer. Resolve the
-            // replacement handle through the shared per-frame entity view;
-            // using `tick.primary_target_position` here couples the new
-            // identity to the old target's coordinates.
-            ctx.entity_view(self.base.primary_target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
-                        self.base.primary_target
-                    )
-                })
-                .position
-        };
-
-        // This original-game behavior uses the raw map-coordinate norm and
-        // truncates it to an unsigned 16-bit value. Do not use the usual
-        // isometric Y stretch.
-        let distance = reconsider_approach_distance(live_target_pos, ctx.position);
-
-        // The table-swordfight check runs live against the
-        // primary target as it stands on entry — after any synchronous
-        // retarget by the calling decision, and before the friend-swap loop
-        // below can change the target again.
-        //
-        // The per-tick snapshot answers exactly that question while it still
-        // describes the same target. After a synchronous retarget it belongs
-        // to the previous target, so recompute the pair for the replacement
-        // instead of dropping the line: the original game keeps the jump-line
-        // reference available when the target changes, and a dropped line sends the
-        // approach at the victim's own sector across the level topology.
-        let my_line_jump = if target_snapshot_is_current {
-            tick.primary_target_jump_line
-        } else {
-            // Table-swordfight eligibility measures with the aggressor's maximal
-            // hand-to-hand weapon range (`weapon.distance[Maximal]`), which the
-            // fighter snapshot carries as `sword_range_maximal`.
-            let my_max_range = self
-                .find_fighter(self.base.me, tick)
-                .map(|f| f.sword_range_maximal)
-                .unwrap_or(self.sword_range);
-            grid.and_then(|g| {
-                crate::engine::melee::table_swordfight_jump_line(
-                    g,
-                    ctx.position.sector.map(i16::from).unwrap_or(-1),
-                    live_target_pos.sector.map(i16::from).unwrap_or(-1),
-                    crate::coordinates::MapPoint::new(live_target_pos.x, live_target_pos.y),
-                    my_max_range as f32,
-                )
-            })
-        };
-        // The jump-line reference receives the live table-swordfight result
-        // in the original game writes the AI
-        // MEMBER, not a local: the answer persists after this decision
-        // returns and is read again by swordfight entry
-        // during target reconsideration, by the "too far to adversary" gate
-        // in swordfight reconsideration and — the case that matters
-        // here — by surrounding combat-position generation's
-        // position proposals depend on the jump-line reference being absent, while
-        // the scotched branch requires that reference to be present.
-        // Rust only computed a local, so a fighter standing on a jump
-        // line still looked line-less once the fight started and fell
-        // through to the 16-direction surround ring the Original never
-        // generates.
-        self.my_line_jump = my_line_jump;
-        let target_animation = if target_snapshot_is_current {
-            tick.primary_target_animation
-        } else {
-            Some(
-                ctx.entity_view(self.base.primary_target)
-                    .expect("replacement primary target view was resolved above")
-                    .current_animation,
-            )
-        };
-
-        // Target-swap with a same-camp friend if the swap shortens the
-        // total travel distance. `friend_swap_candidates` is the
-        // engine's enumeration of same-camp soldiers currently
-        // approaching an enemy; we walk them in enumeration order and
-        // commit the first strict improvement.
-        let mut working_target = self.base.primary_target;
-        let mut working_target_pos = live_target_pos;
-        let mut working_distance = distance;
-        let debug_primary_swap = super::primary_swap_debug_enabled()
-            && super::primary_swap_debug_matches(ctx.frame, self.base.me);
-        // Iterate friends only when we have our own target —
-        // Reading the primary target position would crash when absent. Skip
-        // the swap heuristic if our primary_target is unset so we never
-        // hand 0 to a friend via `friend_primary_target_swaps`.
-        for cand in &tick.friend_swap_candidates {
-            if working_target.is_none() {
-                if debug_primary_swap {
-                    eprintln!(
-                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_stop_zero friend={:?}]",
-                        ctx.frame, ctx.original_creation_order, self.base.me, cand.friend_id,
-                    );
-                }
-                break;
-            }
-            if cand.friend_primary_target == working_target {
-                if debug_primary_swap {
-                    eprintln!(
-                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_skip_same friend={:?} owner_target={:?} friend_target={:?}]",
-                        ctx.frame,
-                        ctx.original_creation_order,
-                        self.base.me,
-                        cand.friend_id,
-                        working_target,
-                        cand.friend_primary_target,
-                    );
-                }
-                continue;
-            }
-            let me_to_friend_target = {
-                let dx = ctx.position.x - cand.friend_primary_target_position.x;
-                let dy = ctx.position.y - cand.friend_primary_target_position.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let friend_to_my_target = {
-                let dx = cand.friend_position.x - working_target_pos.x;
-                let dy = cand.friend_position.y - working_target_pos.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let friend_to_friend_target = {
-                let dx = cand.friend_position.x - cand.friend_primary_target_position.x;
-                let dy = cand.friend_position.y - cand.friend_primary_target_position.y;
-                (dx * dx + dy * dy).sqrt()
-            };
-            let left = me_to_friend_target + friend_to_my_target;
-            let right = working_distance + friend_to_friend_target;
-            let swap = left < right;
-            if debug_primary_swap {
-                eprintln!(
-                    "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_test friend={:?} owner_target={:?} friend_target={:?} owner_pos=({:08x},{:08x}) owner_target_pos=({:08x},{:08x}) friend_pos=({:08x},{:08x}) friend_target_pos=({:08x},{:08x}) working_distance={:08x} me_to_friend_target={:08x} friend_to_my_target={:08x} friend_to_friend_target={:08x} left={:08x} right={:08x} swap={}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    cand.friend_id,
-                    working_target,
-                    cand.friend_primary_target,
-                    ctx.position.x.to_bits(),
-                    ctx.position.y.to_bits(),
-                    working_target_pos.x.to_bits(),
-                    working_target_pos.y.to_bits(),
-                    cand.friend_position.x.to_bits(),
-                    cand.friend_position.y.to_bits(),
-                    cand.friend_primary_target_position.x.to_bits(),
-                    cand.friend_primary_target_position.y.to_bits(),
-                    working_distance.to_bits(),
-                    me_to_friend_target.to_bits(),
-                    friend_to_my_target.to_bits(),
-                    friend_to_friend_target.to_bits(),
-                    left.to_bits(),
-                    right.to_bits(),
-                    swap,
-                );
-            }
-            if swap {
-                // Each improving friend is retargeted immediately: the
-                // original game writes the friend's new primary target on the
-                // spot, so several friends can be swapped in a single
-                // reconsider pass. Each friend is visited once, so the
-                // handed-off target is always the pre-swap working target.
-                self.base.outbox.actor.friend_primary_target_swaps.push((
-                    cand.friend_id,
-                    working_target.expect("friend swap requires current primary target"),
-                ));
-                working_target = cand.friend_primary_target;
-                working_target_pos = cand.friend_primary_target_position;
-                working_distance =
-                    reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
-                self.base.primary_target = working_target;
-            }
-        }
-        if debug_primary_swap {
-            eprintln!(
-                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_final target={:?} target_pos=({:08x},{:08x}) distance={:08x} queued_swaps={:?}]",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.base.me,
-                working_target,
-                working_target_pos.x.to_bits(),
-                working_target_pos.y.to_bits(),
-                working_distance.to_bits(),
-                self.base.outbox.actor.friend_primary_target_swaps,
-            );
-        }
+        let SwappedApproachTarget {
+            handle: working_target,
+            position: working_target_pos,
+            distance: working_distance,
+        } = self.swap_approach_target_with_friends(live_target_pos, distance, ctx, tick);
 
         // The original game tests the primary-target position that remains after every
         // synchronous target substitution and friend swap. Resolve lift
@@ -4725,6 +4492,299 @@ impl EnemyAi {
             friends_lower_company,
             soldiers_lower_pride,
             simple_soldiers_near,
+        }
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ApproachTargetSnapshot {
+    position: Position,
+    distance: f32,
+    jump_line: Option<u32>,
+    animation: Option<crate::order::OrderType>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SwappedApproachTarget {
+    handle: Option<AiEntityHandle>,
+    position: Position,
+    distance: f32,
+}
+
+impl EnemyAi {
+    /// Resolve carry substitution and target geometry before friend swaps.
+    fn prepare_approach_target(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+    ) -> ApproachTargetSnapshot {
+        // Target on another entity's shoulders: re-point `primary_target`
+        // to the carrier so every downstream read (friend-swap
+        // comparison, focusing, swordfight entry's
+        // `pending_enter_swordfight`) sees the carrier rather than the
+        // carried entity. The original game does
+        // replacement of the primary target by its carrier, persisting
+        // across ticks because `primary_target` is a member.
+        let target_snapshot_is_current =
+            tick.primary_target_snapshot_handle == self.base.primary_target;
+        let target_on_shoulders = if target_snapshot_is_current {
+            matches!(
+                tick.primary_target_posture,
+                Some(crate::element::Posture::OnShoulders)
+            )
+        } else {
+            ctx.entity_view(self.base.primary_target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
+                        self.base.primary_target
+                    )
+                })
+                .posture
+                == crate::element::Posture::OnShoulders
+        };
+        if target_on_shoulders {
+            if !target_snapshot_is_current {
+                // TODO: expose the carrier handle in AiEntityView so a target
+                // changed synchronously to a carried human can be resolved
+                // here without rebuilding the whole tick snapshot.
+                panic!(
+                    "enemy-approach reconsideration synchronously retargeted to carried human {:?}; carrier identity is unavailable",
+                    self.base.primary_target
+                );
+            }
+            let carrier_handle = tick.primary_target_carrier_handle.unwrap_or_else(|| {
+                panic!(
+                    "enemy-approach reconsideration target {:?} is on shoulders without a carrier snapshot",
+                    self.base.primary_target
+                )
+            });
+            self.base.primary_target = Some(carrier_handle);
+        }
+
+        // Position(primary_target) after the substitution resolves to
+        // the carrier's position when the carry path fired.
+        let live_target_pos = if target_snapshot_is_current {
+            if target_on_shoulders && let Some(carrier) = tick.primary_target_carrier_position {
+                carrier
+            } else {
+                tick.primary_target_position.unwrap_or_else(|| {
+                    panic!(
+                        "enemy-approach reconsideration target {:?} has no position snapshot",
+                        self.base.primary_target
+                    )
+                })
+            }
+        } else {
+            // The original game reads the primary target position after the timer/event
+            // callback has synchronously changed that pointer. Resolve the
+            // replacement handle through the shared per-frame entity view;
+            // using `tick.primary_target_position` here couples the new
+            // identity to the old target's coordinates.
+            ctx.entity_view(self.base.primary_target)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "enemy-approach reconsideration target {:?} disappeared after synchronous retarget",
+                        self.base.primary_target
+                    )
+                })
+                .position
+        };
+
+        // This original-game behavior uses the raw map-coordinate norm and
+        // truncates it to an unsigned 16-bit value. Do not use the usual
+        // isometric Y stretch.
+        let distance = reconsider_approach_distance(live_target_pos, ctx.position);
+
+        // The table-swordfight check runs live against the
+        // primary target as it stands on entry — after any synchronous
+        // retarget by the calling decision, and before the friend-swap loop
+        // below can change the target again.
+        //
+        // The per-tick snapshot answers exactly that question while it still
+        // describes the same target. After a synchronous retarget it belongs
+        // to the previous target, so recompute the pair for the replacement
+        // instead of dropping the line: the original game keeps the jump-line
+        // reference available when the target changes, and a dropped line sends the
+        // approach at the victim's own sector across the level topology.
+        let my_line_jump = if target_snapshot_is_current {
+            tick.primary_target_jump_line
+        } else {
+            // Table-swordfight eligibility measures with the aggressor's maximal
+            // hand-to-hand weapon range (`weapon.distance[Maximal]`), which the
+            // fighter snapshot carries as `sword_range_maximal`.
+            let my_max_range = self
+                .find_fighter(self.base.me, tick)
+                .map(|f| f.sword_range_maximal)
+                .unwrap_or(self.sword_range);
+            grid.and_then(|g| {
+                crate::engine::melee::table_swordfight_jump_line(
+                    g,
+                    ctx.position.sector.map(i16::from).unwrap_or(-1),
+                    live_target_pos.sector.map(i16::from).unwrap_or(-1),
+                    crate::coordinates::MapPoint::new(live_target_pos.x, live_target_pos.y),
+                    my_max_range as f32,
+                )
+            })
+        };
+        // The jump-line reference receives the live table-swordfight result
+        // in the original game writes the AI
+        // MEMBER, not a local: the answer persists after this decision
+        // returns and is read again by swordfight entry
+        // during target reconsideration, by the "too far to adversary" gate
+        // in swordfight reconsideration and — the case that matters
+        // here — by surrounding combat-position generation's
+        // position proposals depend on the jump-line reference being absent, while
+        // the scotched branch requires that reference to be present.
+        // Rust only computed a local, so a fighter standing on a jump
+        // line still looked line-less once the fight started and fell
+        // through to the 16-direction surround ring the Original never
+        // generates.
+        self.my_line_jump = my_line_jump;
+        let target_animation = if target_snapshot_is_current {
+            tick.primary_target_animation
+        } else {
+            Some(
+                ctx.entity_view(self.base.primary_target)
+                    .expect("replacement primary target view was resolved above")
+                    .current_animation,
+            )
+        };
+
+        ApproachTargetSnapshot {
+            position: live_target_pos,
+            distance,
+            jump_line: my_line_jump,
+            animation: target_animation,
+        }
+    }
+
+    /// Visit every friend once, publishing each strictly improving swap in order.
+    fn swap_approach_target_with_friends(
+        &mut self,
+        live_target_pos: Position,
+        distance: f32,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+    ) -> SwappedApproachTarget {
+        // Target-swap with a same-camp friend if the swap shortens the
+        // total travel distance. `friend_swap_candidates` is the
+        // engine's enumeration of same-camp soldiers currently
+        // approaching an enemy; we walk them in enumeration order and
+        // commit the first strict improvement.
+        let mut working_target = self.base.primary_target;
+        let mut working_target_pos = live_target_pos;
+        let mut working_distance = distance;
+        let debug_primary_swap = super::primary_swap_debug_enabled()
+            && super::primary_swap_debug_matches(ctx.frame, self.base.me);
+        // Iterate friends only when we have our own target —
+        // Reading the primary target position would crash when absent. Skip
+        // the swap heuristic if our primary_target is unset so we never
+        // hand 0 to a friend via `friend_primary_target_swaps`.
+        for cand in &tick.friend_swap_candidates {
+            if working_target.is_none() {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_stop_zero friend={:?}]",
+                        ctx.frame, ctx.original_creation_order, self.base.me, cand.friend_id,
+                    );
+                }
+                break;
+            }
+            if cand.friend_primary_target == working_target {
+                if debug_primary_swap {
+                    eprintln!(
+                        "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_skip_same friend={:?} owner_target={:?} friend_target={:?}]",
+                        ctx.frame,
+                        ctx.original_creation_order,
+                        self.base.me,
+                        cand.friend_id,
+                        working_target,
+                        cand.friend_primary_target,
+                    );
+                }
+                continue;
+            }
+            let me_to_friend_target = {
+                let dx = ctx.position.x - cand.friend_primary_target_position.x;
+                let dy = ctx.position.y - cand.friend_primary_target_position.y;
+                (dx * dx + dy * dy).sqrt()
+            };
+            let friend_to_my_target = {
+                let dx = cand.friend_position.x - working_target_pos.x;
+                let dy = cand.friend_position.y - working_target_pos.y;
+                (dx * dx + dy * dy).sqrt()
+            };
+            let friend_to_friend_target = {
+                let dx = cand.friend_position.x - cand.friend_primary_target_position.x;
+                let dy = cand.friend_position.y - cand.friend_primary_target_position.y;
+                (dx * dx + dy * dy).sqrt()
+            };
+            let left = me_to_friend_target + friend_to_my_target;
+            let right = working_distance + friend_to_friend_target;
+            let swap = left < right;
+            if debug_primary_swap {
+                eprintln!(
+                    "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_test friend={:?} owner_target={:?} friend_target={:?} owner_pos=({:08x},{:08x}) owner_target_pos=({:08x},{:08x}) friend_pos=({:08x},{:08x}) friend_target_pos=({:08x},{:08x}) working_distance={:08x} me_to_friend_target={:08x} friend_to_my_target={:08x} friend_to_friend_target={:08x} left={:08x} right={:08x} swap={}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    cand.friend_id,
+                    working_target,
+                    cand.friend_primary_target,
+                    ctx.position.x.to_bits(),
+                    ctx.position.y.to_bits(),
+                    working_target_pos.x.to_bits(),
+                    working_target_pos.y.to_bits(),
+                    cand.friend_position.x.to_bits(),
+                    cand.friend_position.y.to_bits(),
+                    cand.friend_primary_target_position.x.to_bits(),
+                    cand.friend_primary_target_position.y.to_bits(),
+                    working_distance.to_bits(),
+                    me_to_friend_target.to_bits(),
+                    friend_to_my_target.to_bits(),
+                    friend_to_friend_target.to_bits(),
+                    left.to_bits(),
+                    right.to_bits(),
+                    swap,
+                );
+            }
+            if swap {
+                // Each improving friend is retargeted immediately: the
+                // original game writes the friend's new primary target on the
+                // spot, so several friends can be swapped in a single
+                // reconsider pass. Each friend is visited once, so the
+                // handed-off target is always the pre-swap working target.
+                self.base.outbox.actor.friend_primary_target_swaps.push((
+                    cand.friend_id,
+                    working_target.expect("friend swap requires current primary target"),
+                ));
+                working_target = cand.friend_primary_target;
+                working_target_pos = cand.friend_primary_target_position;
+                working_distance =
+                    reconsider_approach_distance(ctx.position, cand.friend_primary_target_position);
+                self.base.primary_target = working_target;
+            }
+        }
+        if debug_primary_swap {
+            eprintln!(
+                "[PRIMARY_SWAP frame={} co={:?} owner={} phase=swap_final target={:?} target_pos=({:08x},{:08x}) distance={:08x} queued_swaps={:?}]",
+                ctx.frame,
+                ctx.original_creation_order,
+                self.base.me,
+                working_target,
+                working_target_pos.x.to_bits(),
+                working_target_pos.y.to_bits(),
+                working_distance.to_bits(),
+                self.base.outbox.actor.friend_primary_target_swaps,
+            );
+        }
+
+        SwappedApproachTarget {
+            handle: working_target,
+            position: working_target_pos,
+            distance: working_distance,
         }
     }
 }
