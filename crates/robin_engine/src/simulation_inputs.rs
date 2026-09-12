@@ -267,7 +267,255 @@ pub const SIMULATION_CONTENT_COMPONENT_ORDER_V1: [SimulationContentComponentKind
 fn canonical_from_serializable(
     value: &(impl Serialize + ?Sized),
 ) -> Result<CanonicalSimulationValue, ProjectionError> {
-    canonicalize_serde_value(serde_value::to_value(value)?)
+    value.serialize(projection_serializer::Serializer)
+}
+
+// This serializer writes the public diagnostic representation directly. Only
+// map keys use serde_value: their original Serde shape (notably string versus
+// newtype-wrapped string) is part of the established projection contract.
+mod projection_serializer {
+    use super::*;
+    use serde::ser::{self, SerializeMap, SerializeSeq};
+
+    pub(super) struct Serializer;
+    pub(super) struct Sequence {
+        values: Vec<CanonicalSimulationValue>,
+        variant: Option<&'static str>,
+    }
+    pub(super) struct Map {
+        values: BTreeMap<serde_value::Value, CanonicalSimulationValue>,
+        key: Option<serde_value::Value>,
+        variant: Option<&'static str>,
+    }
+
+    fn wrap_variant(
+        value: CanonicalSimulationValue,
+        variant: Option<&str>,
+    ) -> CanonicalSimulationValue {
+        match variant {
+            None => value,
+            Some(name) => CanonicalSimulationValue::Object(BTreeMap::from([(name.into(), value)])),
+        }
+    }
+
+    macro_rules! integer {
+        ($method:ident, $ty:ty, $variant:ident) => {
+            fn $method(self, value: $ty) -> Result<Self::Ok, Self::Error> {
+                Ok(CanonicalSimulationValue::$variant(value.into()))
+            }
+        };
+    }
+
+    impl ser::Serializer for Serializer {
+        type Ok = CanonicalSimulationValue;
+        type Error = ProjectionError;
+        type SerializeSeq = Sequence;
+        type SerializeTuple = Sequence;
+        type SerializeTupleStruct = Sequence;
+        type SerializeTupleVariant = Sequence;
+        type SerializeMap = Map;
+        type SerializeStruct = Map;
+        type SerializeStructVariant = Map;
+
+        integer!(serialize_bool, bool, Bool);
+        integer!(serialize_i8, i8, Signed);
+        integer!(serialize_i16, i16, Signed);
+        integer!(serialize_i32, i32, Signed);
+        integer!(serialize_i64, i64, Signed);
+        integer!(serialize_u8, u8, Unsigned);
+        integer!(serialize_u16, u16, Unsigned);
+        integer!(serialize_u32, u32, Unsigned);
+        integer!(serialize_u64, u64, Unsigned);
+        fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
+            Ok(float_bits("ieee754_f32_bits", v.to_bits().into()))
+        }
+        fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
+            Ok(float_bits("ieee754_f64_bits", v.to_bits()))
+        }
+        fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
+            self.serialize_str(&v.to_string())
+        }
+        fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
+            Ok(CanonicalSimulationValue::String(v.into()))
+        }
+        fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
+            Ok(CanonicalSimulationValue::Object(BTreeMap::from([(
+                "bytes_hex".into(),
+                CanonicalSimulationValue::String(hex_bytes(v)),
+            )])))
+        }
+        fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+            self.serialize_unit()
+        }
+        fn serialize_some<T: Serialize + ?Sized>(self, v: &T) -> Result<Self::Ok, Self::Error> {
+            v.serialize(self)
+        }
+        fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+            Ok(CanonicalSimulationValue::Null)
+        }
+        fn serialize_unit_struct(self, _: &'static str) -> Result<Self::Ok, Self::Error> {
+            self.serialize_unit()
+        }
+        fn serialize_unit_variant(
+            self,
+            _: &'static str,
+            _: u32,
+            variant: &'static str,
+        ) -> Result<Self::Ok, Self::Error> {
+            self.serialize_str(variant)
+        }
+        fn serialize_newtype_struct<T: Serialize + ?Sized>(
+            self,
+            _: &'static str,
+            v: &T,
+        ) -> Result<Self::Ok, Self::Error> {
+            v.serialize(self)
+        }
+        fn serialize_newtype_variant<T: Serialize + ?Sized>(
+            self,
+            _: &'static str,
+            _: u32,
+            variant: &'static str,
+            v: &T,
+        ) -> Result<Self::Ok, Self::Error> {
+            Ok(wrap_variant(v.serialize(self)?, Some(variant)))
+        }
+        fn serialize_seq(self, len: Option<usize>) -> Result<Sequence, Self::Error> {
+            Ok(Sequence {
+                values: Vec::with_capacity(len.unwrap_or(0)),
+                variant: None,
+            })
+        }
+        fn serialize_tuple(self, len: usize) -> Result<Sequence, Self::Error> {
+            self.serialize_seq(Some(len))
+        }
+        fn serialize_tuple_struct(
+            self,
+            _: &'static str,
+            len: usize,
+        ) -> Result<Sequence, Self::Error> {
+            self.serialize_seq(Some(len))
+        }
+        fn serialize_tuple_variant(
+            self,
+            _: &'static str,
+            _: u32,
+            variant: &'static str,
+            len: usize,
+        ) -> Result<Sequence, Self::Error> {
+            Ok(Sequence {
+                values: Vec::with_capacity(len),
+                variant: Some(variant),
+            })
+        }
+        fn serialize_map(self, _: Option<usize>) -> Result<Map, Self::Error> {
+            Ok(Map {
+                values: BTreeMap::new(),
+                key: None,
+                variant: None,
+            })
+        }
+        fn serialize_struct(self, _: &'static str, len: usize) -> Result<Map, Self::Error> {
+            self.serialize_map(Some(len))
+        }
+        fn serialize_struct_variant(
+            self,
+            _: &'static str,
+            _: u32,
+            variant: &'static str,
+            _: usize,
+        ) -> Result<Map, Self::Error> {
+            Ok(Map {
+                values: BTreeMap::new(),
+                key: None,
+                variant: Some(variant),
+            })
+        }
+    }
+
+    impl SerializeSeq for Sequence {
+        type Ok = CanonicalSimulationValue;
+        type Error = ProjectionError;
+        fn serialize_element<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), Self::Error> {
+            self.values.push(v.serialize(Serializer)?);
+            Ok(())
+        }
+        fn end(self) -> Result<Self::Ok, Self::Error> {
+            Ok(wrap_variant(
+                CanonicalSimulationValue::Array(self.values),
+                self.variant,
+            ))
+        }
+    }
+    macro_rules! sequence_impl {
+        ($trait:ident, $method:ident) => {
+            impl ser::$trait for Sequence {
+                type Ok = CanonicalSimulationValue;
+                type Error = ProjectionError;
+                fn $method<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), Self::Error> {
+                    SerializeSeq::serialize_element(self, v)
+                }
+                fn end(self) -> Result<Self::Ok, Self::Error> {
+                    SerializeSeq::end(self)
+                }
+            }
+        };
+    }
+    sequence_impl!(SerializeTuple, serialize_element);
+    sequence_impl!(SerializeTupleStruct, serialize_field);
+    sequence_impl!(SerializeTupleVariant, serialize_field);
+
+    impl SerializeMap for Map {
+        type Ok = CanonicalSimulationValue;
+        type Error = ProjectionError;
+        fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Self::Error> {
+            if self.key.is_some() {
+                return Err(ser::Error::custom("map key without preceding value"));
+            }
+            self.key = Some(serde_value::to_value(key)?);
+            Ok(())
+        }
+        fn serialize_value<T: Serialize + ?Sized>(&mut self, v: &T) -> Result<(), Self::Error> {
+            let key = self
+                .key
+                .take()
+                .ok_or_else(|| <ProjectionError as ser::Error>::custom("map value without key"))?;
+            // Match serde_value's last-writer behavior for identical Serde keys.
+            // Fail closed on an invalid value immediately, even if a custom
+            // Serialize implementation would later overwrite the same key.
+            self.values.insert(key, v.serialize(Serializer)?);
+            Ok(())
+        }
+        fn end(self) -> Result<Self::Ok, Self::Error> {
+            if self.key.is_some() {
+                return Err(ser::Error::custom("map key without value"));
+            }
+            Ok(wrap_variant(
+                canonicalize_projected_map(self.values)?,
+                self.variant,
+            ))
+        }
+    }
+    macro_rules! struct_impl {
+        ($trait:ident) => {
+            impl ser::$trait for Map {
+                type Ok = CanonicalSimulationValue;
+                type Error = ProjectionError;
+                fn serialize_field<T: Serialize + ?Sized>(
+                    &mut self,
+                    key: &'static str,
+                    v: &T,
+                ) -> Result<(), Self::Error> {
+                    self.serialize_entry(key, v)
+                }
+                fn end(self) -> Result<Self::Ok, Self::Error> {
+                    SerializeMap::end(self)
+                }
+            }
+        };
+    }
+    struct_impl!(SerializeStruct);
+    struct_impl!(SerializeStructVariant);
 }
 
 fn component_document(
@@ -730,9 +978,7 @@ impl PreparedMissionRunProjectionV1 {
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, ProjectionError> {
-        use robin_run_protocol::bitcode_value::BitcodeValue;
-        // TODO: project typed inputs directly into ordered native fields to
-        // eliminate the remaining serde_value tree during ranked preparation.
+        use robin_run_protocol::bitcode_value::BitcodeValueRef;
         let static_components = self
             .static_components
             .iter()
@@ -748,17 +994,17 @@ impl PreparedMissionRunProjectionV1 {
             *b"RHRP0002",
             self.schema_version,
             static_components,
-            BitcodeValue::from_value(&self.starting_campaign)?,
+            BitcodeValueRef::from_value(&self.starting_campaign)?,
             self.starting_campaign_sha256,
             self.starting_campaign_byte_length,
             self.simulation_seed.get(),
-            BitcodeValue::from_value(&self.sim_config)?,
+            BitcodeValueRef::from_value(&self.sim_config)?,
             self.original_rng_replay
                 .as_ref()
-                .map(BitcodeValue::from_value)
+                .map(BitcodeValueRef::from_value)
                 .transpose()?,
             self.original_rng_replay_sha256,
-            BitcodeValue::from_value(&self.resolved_runtime_assets)?,
+            BitcodeValueRef::from_value(&self.resolved_runtime_assets)?,
             self.sprite_opacity_sha256,
         )))
     }
@@ -1055,6 +1301,8 @@ impl RankedPreparedMissionInputs {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectionError {
+    #[error("serialize simulation projection: {0}")]
+    Serialize(String),
     #[error(transparent)]
     Bitcode(#[from] robin_run_protocol::bitcode_value::ProjectionBitcodeError),
     #[error("serialize deterministic input projection: {0}")]
@@ -1233,6 +1481,15 @@ fn decode_lower_hex(value: &str) -> Result<Vec<u8>, ProjectionError> {
         .collect()
 }
 
+impl serde::ser::Error for ProjectionError {
+    fn custom<T: std::fmt::Display>(message: T) -> Self {
+        Self::Serialize(message.to_string())
+    }
+}
+
+// Map keys retain their original Serde shape until map classification. This
+// converter is also the old whole-document path used by differential tests;
+// production values themselves are projected directly by the serializer.
 fn canonicalize_serde_value(
     value: serde_value::Value,
 ) -> Result<CanonicalSimulationValue, ProjectionError> {
@@ -1283,6 +1540,17 @@ fn float_bits(name: &str, bits: u64) -> CanonicalSimulationValue {
 fn canonicalize_map(
     values: BTreeMap<serde_value::Value, serde_value::Value>,
 ) -> Result<CanonicalSimulationValue, ProjectionError> {
+    canonicalize_projected_map(
+        values
+            .into_iter()
+            .map(|(key, value)| Ok((key, canonicalize_serde_value(value)?)))
+            .collect::<Result<_, ProjectionError>>()?,
+    )
+}
+
+fn canonicalize_projected_map(
+    values: BTreeMap<serde_value::Value, CanonicalSimulationValue>,
+) -> Result<CanonicalSimulationValue, ProjectionError> {
     if values
         .keys()
         .all(|key| matches!(key, serde_value::Value::String(_)))
@@ -1292,10 +1560,7 @@ fn canonicalize_map(
             let serde_value::Value::String(key) = key else {
                 unreachable!("map key shape checked above")
             };
-            if object
-                .insert(key, canonicalize_serde_value(value)?)
-                .is_some()
-            {
+            if object.insert(key, value).is_some() {
                 return Err(ProjectionError::DuplicateCanonicalMapKey);
             }
         }
@@ -1305,9 +1570,8 @@ fn canonicalize_map(
     let mut entries = Vec::with_capacity(values.len());
     for (key, value) in values {
         let key = canonicalize_serde_value(key)?;
-        let value = canonicalize_serde_value(value)?;
         let sort_key =
-            bitcode::encode(&robin_run_protocol::bitcode_value::BitcodeValue::from_value(&key)?);
+            bitcode::encode(&robin_run_protocol::bitcode_value::BitcodeValueRef::from_value(&key)?);
         entries.push((sort_key, key, value));
     }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1342,6 +1606,204 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_reference_projection(value: &(impl Serialize + ?Sized)) -> CanonicalSimulationValue {
+        use robin_run_protocol::bitcode_value::{BitcodeValue, BitcodeValueRef};
+        let reference = canonicalize_serde_value(serde_value::to_value(value).unwrap()).unwrap();
+        let projected = canonical_from_serializable(value).unwrap();
+        assert_eq!(projected, reference, "public diagnostic representation");
+        assert_eq!(
+            bitcode::encode(&BitcodeValueRef::from_value(&projected).unwrap()),
+            bitcode::encode(&BitcodeValue::from_value(&reference).unwrap()),
+            "canonical native bytes"
+        );
+        projected
+    }
+
+    #[test]
+    fn direct_projection_matches_reference_for_all_serde_shapes() {
+        use serde_value::Value;
+        #[derive(Serialize)]
+        enum Variants {
+            Unit,
+            Newtype(i64),
+            Tuple(u32, String),
+            Struct { z: f64, a: Option<u8> },
+        }
+        for variant in [
+            Variants::Unit,
+            Variants::Newtype(-3),
+            Variants::Tuple(4, "雪".into()),
+            Variants::Struct {
+                z: f64::from_bits(0x7ff8_0000_0000_1234),
+                a: Some(7),
+            },
+        ] {
+            assert_reference_projection(&variant);
+        }
+        let values = vec![
+            Value::Bool(true),
+            Value::I8(-8),
+            Value::I16(-16),
+            Value::I32(-32),
+            Value::I64(i64::MIN),
+            Value::U8(8),
+            Value::U16(16),
+            Value::U32(32),
+            Value::U64(u64::MAX),
+            Value::F32(-0.0),
+            Value::F32(f32::INFINITY),
+            Value::F64(-0.0),
+            Value::Char('雪'),
+            Value::String("text".into()),
+            Value::Bytes(vec![0, 255, 128]),
+            Value::Unit,
+            Value::Option(None),
+            Value::Option(Some(Box::new(Value::U32(7)))),
+            Value::Newtype(Box::new(Value::String("wrapped".into()))),
+            Value::Seq(vec![Value::I8(-1), Value::Bool(false)]),
+            Value::Map(BTreeMap::from([
+                (Value::String("z".into()), Value::U8(1)),
+                (Value::String("a".into()), Value::U8(2)),
+            ])),
+            Value::Map(BTreeMap::from([(
+                Value::Newtype(Box::new(Value::String("key".into()))),
+                Value::Unit,
+            )])),
+            Value::Map(BTreeMap::from([(
+                Value::Option(Some(Box::new(Value::U8(7)))),
+                Value::Unit,
+            )])),
+            Value::Map(BTreeMap::from([(
+                Value::Seq(vec![Value::U8(1), Value::String("k".into())]),
+                Value::Bool(true),
+            )])),
+        ];
+        assert_reference_projection(&values);
+        assert_reference_projection(&Campaign::default());
+        assert_reference_projection(&SimConfig::default());
+        assert_reference_projection(&projection_profiles());
+    }
+
+    #[test]
+    fn direct_projection_preserves_map_order_and_duplicate_key_contract() {
+        struct Entries(Vec<(serde_value::Value, u32)>);
+        impl Serialize for Entries {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(self.0.len()))?;
+                for (key, value) in &self.0 {
+                    map.serialize_entry(key, value)?;
+                }
+                map.end()
+            }
+        }
+        use serde_value::Value;
+        let mut source = Entries(vec![
+            (Value::U32(255), 1),
+            (Value::U32(1), 2),
+            (Value::U32(256), 3),
+        ]);
+        let expected = assert_reference_projection(&source);
+        source.0.reverse();
+        assert_eq!(assert_reference_projection(&source), expected);
+        assert_reference_projection(&Entries(vec![
+            (Value::String("same".into()), 1),
+            (Value::String("same".into()), 2),
+        ]));
+        let collision = Entries(vec![(Value::U32(1), 1), (Value::I32(1), 2)]);
+        assert!(matches!(
+            canonical_from_serializable(&collision),
+            Err(ProjectionError::DuplicateCanonicalMapKey)
+        ));
+        assert!(matches!(
+            canonicalize_serde_value(serde_value::to_value(&collision).unwrap()),
+            Err(ProjectionError::DuplicateCanonicalMapKey)
+        ));
+    }
+
+    #[test]
+    fn direct_projection_rejects_invalid_overwritten_custom_map_values() {
+        struct InvalidThenValid;
+        impl Serialize for InvalidThenValid {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeMap;
+                use serde_value::Value;
+                let invalid = BTreeMap::from([(Value::I32(1), 0), (Value::U32(1), 0)]);
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("same", &invalid)?;
+                map.serialize_entry("same", &0)?;
+                map.end()
+            }
+        }
+        // The old staging tree discarded the invalid first value before its
+        // canonicalization. Direct projection deliberately rejects it rather
+        // than retaining deferred errors solely for malformed custom maps.
+        assert!(
+            canonicalize_serde_value(serde_value::to_value(&InvalidThenValid).unwrap()).is_ok()
+        );
+        assert!(matches!(
+            canonical_from_serializable(&InvalidThenValid),
+            Err(ProjectionError::DuplicateCanonicalMapKey)
+        ));
+    }
+
+    #[test]
+    fn borrowed_run_projection_matches_owned_reference_bytes_and_hash() {
+        use robin_run_protocol::bitcode_value::BitcodeValue;
+        let campaign = assert_reference_projection(&Campaign::default());
+        let config = assert_reference_projection(&SimConfig::default());
+        let assets = assert_reference_projection(&projection_profiles());
+        for rng in [None, Some(vec![]), Some(vec![0_u32, u32::MAX, 7])] {
+            let projection = PreparedMissionRunProjectionV1 {
+                schema_version: PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1,
+                static_components: vec![PreparedStaticComponentIdentityV1 {
+                    kind: SimulationContentComponentKindV1::Profiles,
+                    component_schema_version: 1,
+                    sha256: Digest32::digest_bytes(b"profiles"),
+                }],
+                starting_campaign: campaign.clone(),
+                starting_campaign_sha256: Digest32::digest_bytes(b"campaign"),
+                starting_campaign_byte_length: 123,
+                simulation_seed: SimulationSeed64::new(u64::MAX),
+                sim_config: config.clone(),
+                original_rng_replay: rng.as_ref().map(assert_reference_projection),
+                original_rng_replay_sha256: rng
+                    .as_ref()
+                    .map(bitcode::encode)
+                    .map(Digest32::digest_bytes),
+                resolved_runtime_assets: assets.clone(),
+                sprite_opacity_sha256: Some(Digest32::digest_bytes(b"opacity")),
+            };
+            let p = &projection;
+            let reference = bitcode::encode(&(
+                *b"RHRP0002",
+                p.schema_version,
+                p.static_components
+                    .iter()
+                    .map(|c| (c.kind, c.component_schema_version, c.sha256))
+                    .collect::<Vec<_>>(),
+                BitcodeValue::from_value(&p.starting_campaign).unwrap(),
+                p.starting_campaign_sha256,
+                p.starting_campaign_byte_length,
+                p.simulation_seed.get(),
+                BitcodeValue::from_value(&p.sim_config).unwrap(),
+                p.original_rng_replay
+                    .as_ref()
+                    .map(BitcodeValue::from_value)
+                    .transpose()
+                    .unwrap(),
+                p.original_rng_replay_sha256,
+                BitcodeValue::from_value(&p.resolved_runtime_assets).unwrap(),
+                p.sprite_opacity_sha256,
+            ));
+            assert_eq!(p.canonical_bytes().unwrap(), reference);
+            assert_eq!(p.sha256().unwrap(), Digest32::digest_bytes(&reference));
+            let restored: PreparedMissionRunProjectionV1 =
+                serde_json::from_slice(&serde_json::to_vec(p).unwrap()).unwrap();
+            assert_eq!(restored.canonical_bytes().unwrap(), reference);
+        }
+    }
 
     fn projection_profiles() -> crate::profiles::ProfileManager {
         use crate::coordinates::{MoveBox, SpriteAnchor};
