@@ -20,7 +20,9 @@ use crate::db::{BoardComposition, BoardCursor, BoardRow};
 #[cfg(test)]
 use crate::db::{SubmissionUploadIntent, SubmissionUploadReservation};
 use crate::error::ApiError;
-use crate::identity::{validate_username, verify_signature};
+use crate::identity::validate_username;
+#[cfg(test)]
+use crate::identity::verify_signature;
 #[cfg(test)]
 use crate::model::NewSubmission;
 use crate::model::{ChallengePurpose, ParticipantClaim};
@@ -72,7 +74,7 @@ use robin_run_protocol::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -1070,7 +1072,7 @@ async fn leaderboard_metadata(
         earlier.categories.dedup();
         true
     });
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+    let now = crate::model::now_unix_ms()?;
     let mut competitions = state
         .config
         .competitions
@@ -1113,17 +1115,12 @@ async fn fresh_run_preflight_grant(
     Json(request): Json<FreshRunPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<FreshRunPreflightGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.signing_bytes()?,
+    )?;
     if !state
         .database
         .identity_exists(request.claim.host_public_key.as_bytes())
@@ -1168,9 +1165,7 @@ async fn fresh_run_preflight_grant(
         return Err(ApiError::Internal);
     }
 
-    let admitted_at_unix_ms =
-        u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+    let admitted_at_unix_ms = crate::model::now_unix_ms()?;
     let expires_at_unix_ms = admitted_at_unix_ms
         .checked_add(
             state
@@ -1202,11 +1197,7 @@ async fn fresh_run_preflight_grant(
         admitted_at_unix_ms,
         expires_at_unix_ms,
     };
-    let authority_signature = signing_key.sign(
-        &claim
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    );
+    let authority_signature = signing_key.sign(&claim.signing_bytes()?);
     let grant = FreshRunPreflightGrantV1 {
         claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
@@ -1230,27 +1221,17 @@ async fn campaign_continuation_preflight_grant(
     Json(request): Json<CampaignContinuationPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<CampaignContinuationPreflightGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .claim
-            .host_signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
-    verify_signature(
+        &request.claim.host_signing_bytes()?,
+    )?;
+    verify_request_signature(
         request.claim.campaign_controller_public_key.as_bytes(),
         request.controller_signature.as_bytes(),
-        &request
-            .claim
-            .controller_signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.claim.controller_signing_bytes()?,
+    )?;
     for public_key in &request.claim.participant_public_keys {
         if !state
             .database
@@ -1329,9 +1310,7 @@ async fn campaign_continuation_preflight_grant(
     if authority_public_key != published.manifest.run_preflight_grant_public_key {
         return Err(ApiError::Internal);
     }
-    let admitted_at_unix_ms =
-        u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+    let admitted_at_unix_ms = crate::model::now_unix_ms()?;
     let expires_at_unix_ms = admitted_at_unix_ms
         .checked_add(
             state
@@ -1368,11 +1347,7 @@ async fn campaign_continuation_preflight_grant(
         admitted_at_unix_ms,
         expires_at_unix_ms,
     };
-    let authority_signature = signing_key.sign(
-        &claim
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    );
+    let authority_signature = signing_key.sign(&claim.signing_bytes()?);
     let grant = CampaignContinuationPreflightGrantV1 {
         claim,
         algorithm: SignatureAlgorithmV1::Ed25519,
@@ -1392,17 +1367,12 @@ async fn competition_run_grant(
     Json(request): Json<CompetitionRunGrantRequestV1>,
 ) -> Result<(StatusCode, Json<CompetitionRunGrantV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.claim.host_public_key.as_bytes(),
         request.host_signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &request.signing_bytes()?,
+    )?;
     if !state
         .database
         .identity_exists(request.claim.host_public_key.as_bytes())
@@ -1516,9 +1486,7 @@ async fn submission_offer(
     Json(request): Json<SubmissionOfferRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOfferV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     if usize::from(request.participant_instance_count) != request.participant_claims.len() {
         return Err(ApiError::BadRequest(
             "every ranked participant instance must have a distinct authenticated key and attestation"
@@ -1578,16 +1546,12 @@ async fn submission_offer(
                 "fresh-run preflight authority does not match the current ruleset".to_owned(),
             ));
         }
-        verify_signature(
+        verify_request_signature(
             grant.claim.grant_authority_public_key.as_bytes(),
             grant.authority_signature.as_bytes(),
-            &grant
-                .signing_bytes()
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
-        let now = u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+            &grant.signing_bytes()?,
+        )?;
+        let now = crate::model::now_unix_ms()?;
         if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
             return Err(ApiError::Conflict(
                 "fresh-run preflight grant is not active under server time".to_owned(),
@@ -1612,16 +1576,12 @@ async fn submission_offer(
                 "continuation preflight authority does not match the current ruleset".to_owned(),
             ));
         }
-        verify_signature(
+        verify_request_signature(
             grant.claim.grant_authority_public_key.as_bytes(),
             grant.authority_signature.as_bytes(),
-            &grant
-                .signing_bytes()
-                .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
-        let now = u64::try_from(crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)?)
-            .map_err(|_| ApiError::Internal)?;
+            &grant.signing_bytes()?,
+        )?;
+        let now = crate::model::now_unix_ms()?;
         if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
             return Err(ApiError::Conflict(
                 "campaign continuation preflight grant is not active under server time".to_owned(),
@@ -1639,15 +1599,12 @@ async fn submission_offer(
             competition
                 .validate_run_grant(grant)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            verify_signature(
+            verify_request_signature(
                 grant.claim.grant_authority_public_key.as_bytes(),
                 grant.authority_signature.as_bytes(),
-                &grant
-                    .signing_bytes()
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-            )
-            .map_err(|_| ApiError::Unauthorized)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+                &grant.signing_bytes()?,
+            )?;
+            let now = crate::model::now_unix_ms()?;
             if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
                 return Err(ApiError::Conflict(
                     "competition run grant is not active under server time".to_owned(),
@@ -1777,16 +1734,14 @@ async fn submit(
     let metadata_bytes = read_bounded_field(metadata, state.config.max_metadata_bytes).await?;
     let signed: SignedSubmissionV1 = serde_json::from_slice(&metadata_bytes)
         .map_err(|error| ApiError::BadRequest(format!("invalid submission JSON: {error}")))?;
-    signed
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    signed.validate()?;
     let artifacts = &signed.submission.artifacts;
     if artifacts.replay.replay_schema_version != RANKED_REPLAY_SCHEMA_VERSION {
         return Err(ApiError::BadRequest(format!(
             "ranked submissions require replay schema {RANKED_REPLAY_SCHEMA_VERSION}"
         )));
     }
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+    let now = crate::model::now_unix_ms()?;
     if signed.submission.offer.expires_at_unix_ms < now {
         return Err(ApiError::Conflict(
             "submission offer has expired".to_owned(),
@@ -2043,9 +1998,7 @@ async fn submission_owner_status_challenge(
     Json(request): Json<SubmissionOwnerStatusChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOwnerStatusChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::OwnerStatus).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     let issued = state
         .database
         .issue_owner_status_challenge(
@@ -2073,21 +2026,16 @@ async fn submission_private_status(
     Path(submission_id): Path<String>,
     Json(envelope): Json<SubmissionOwnerStatusEnvelopeV1>,
 ) -> Result<Json<SubmissionOwnerStatusResponseV1>, ApiError> {
-    envelope
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    envelope.validate()?;
     if envelope.challenge.submission_id.as_str() != submission_id {
         return Err(ApiError::Unauthorized);
     }
-    let signing_bytes = envelope
-        .signing_bytes()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    let signing_bytes = envelope.signing_bytes()?;
+    verify_request_signature(
         envelope.challenge.controller_public_key.as_bytes(),
         envelope.signature.as_bytes(),
         &signing_bytes,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+    )?;
     let lifecycle = state
         .database
         .consume_owner_status_challenge(
@@ -2150,30 +2098,14 @@ async fn content_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .content_manifests
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.content_manifests)
 }
 
 async fn campaign_content_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .campaign_content_manifests
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.campaign_content_manifests)
 }
 
 async fn rules_config(
@@ -2241,30 +2173,22 @@ async fn competition_manifest_route(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .competitions
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.competitions)
 }
 
 async fn policy_manifest(
     State(state): State<AppState>,
     Path(value): Path<String>,
 ) -> Result<Response, ApiError> {
-    let digest = digest(&value).map_err(|_| ApiError::NotFound)?;
-    immutable_json(
-        state
-            .config
-            .manifests
-            .policies
-            .get(&digest)
-            .ok_or(ApiError::NotFound)?,
-    )
+    registry_document(&value, &state.config.manifests.policies)
+}
+
+fn registry_document<T: CanonicalDocument>(
+    value: &str,
+    documents: &BTreeMap<Digest32, T>,
+) -> Result<Response, ApiError> {
+    let key = digest(value).map_err(|_| ApiError::NotFound)?;
+    immutable_json(documents.get(&key).ok_or(ApiError::NotFound)?)
 }
 
 fn immutable_json<T: CanonicalDocument>(document: &T) -> Result<Response, ApiError> {
@@ -2294,9 +2218,7 @@ async fn leaderboard(
     State(state): State<AppState>,
     Query(query): Query<LeaderboardQueryV1>,
 ) -> Result<Json<LeaderboardPageV1>, ApiError> {
-    query
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    query.validate()?;
     if u32::from(query.limit) > state.config.max_page_size {
         return Err(ApiError::BadRequest(format!(
             "limit exceeds server maximum {}",
@@ -3011,9 +2933,7 @@ async fn username_challenge(
     Json(request): Json<UsernameChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<UsernameChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::UsernameUpdate).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     let challenge = state
         .database
         .issue_challenge(
@@ -3040,9 +2960,7 @@ async fn update_username(
     Path(public_key): Path<String>,
     Json(update): Json<UsernameUpdateEnvelopeV1>,
 ) -> Result<Json<PlayerProfileV1>, ApiError> {
-    update
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    update.validate()?;
     let path_key = PublicKey32::from_str(&public_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if path_key != update.public_key {
@@ -3052,14 +2970,11 @@ async fn update_username(
     }
     let username = validate_username(&update.username)
         .map_err(|message| ApiError::BadRequest(message.to_owned()))?;
-    verify_signature(
+    verify_request_signature(
         update.public_key.as_bytes(),
         update.signature.as_bytes(),
-        &update
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+        &update.signing_bytes()?,
+    )?;
     state
         .database
         .apply_username_update(
@@ -3087,9 +3002,7 @@ async fn player_run_history(
     Path(public_key): Path<String>,
     Query(query): Query<PlayerRunHistoryQueryV1>,
 ) -> Result<Json<PlayerRunHistoryPageV1>, ApiError> {
-    query
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    query.validate()?;
     if u32::from(query.limit) > state.config.max_page_size {
         return Err(ApiError::BadRequest(format!(
             "limit exceeds server maximum {}",
@@ -3283,9 +3196,7 @@ async fn deletion_challenge(
     Json(request): Json<DeletionChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<DeletionChallengeV1>), ApiError> {
     rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Deletion).await?;
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    request.validate()?;
     // Do not check target ownership before authentication. A check here would
     // let anyone submit candidate public keys and link an anonymous run to its
     // durable owner. The exact target and key are signed into the returned
@@ -3326,18 +3237,13 @@ async fn deletion_request(
     State(state): State<AppState>,
     Json(request): Json<DeletionRequestEnvelopeV1>,
 ) -> Result<Json<DeletionReceiptV1>, ApiError> {
-    request
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    request.validate()?;
+    verify_request_signature(
         request.challenge.public_key.as_bytes(),
         request.signature.as_bytes(),
-        &request
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
-    let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
+        &request.signing_bytes()?,
+    )?;
+    let now = crate::model::now_unix_ms()?;
     if request.challenge.expires_at_unix_ms < now {
         return Err(ApiError::Conflict(
             "deletion challenge has expired".to_owned(),
@@ -3383,9 +3289,7 @@ async fn abuse_report(
     headers: HeaderMap,
     Json(report): Json<AbuseReportV1>,
 ) -> Result<(StatusCode, Json<AbuseReportAcceptedV1>), ApiError> {
-    report
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    report.validate()?;
     let (target_kind, target_id) = match &report.target {
         AbuseReportTargetV1::Run { run_id } => ("run", run_id.as_str().to_owned()),
         AbuseReportTargetV1::Player { public_key } => ("player", public_key.to_string()),
@@ -3788,9 +3692,7 @@ fn profile_with_session_config(
     profile: &AdmissionProfile,
     ranked: &robin_run_protocol::RankedSessionConfigV1,
 ) -> Result<AdmissionProfile, ApiError> {
-    ranked
-        .validate()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    ranked.validate()?;
     let published = config
         .manifests
         .rulesets
@@ -3841,6 +3743,43 @@ fn profile_with_session_config(
     Ok(derived)
 }
 
+fn matching_admission_profiles<'a>(
+    config: &'a ServerConfig,
+    mission_id: &str,
+    subject: &robin_run_protocol::OfficialContentSubjectV1,
+    ruleset: Digest32,
+    scope: &str,
+    required_profile: Option<&str>,
+) -> Vec<&'a AdmissionProfile> {
+    let ruleset = ruleset.to_string();
+    config
+        .admission_profiles
+        .iter()
+        .filter(|profile| {
+            profile.mission_id() == mission_id
+                && &profile.content_subject == subject
+                && profile.ruleset_id == ruleset
+                && profile
+                    .allowed_scopes
+                    .iter()
+                    .any(|allowed| allowed == scope)
+                && required_profile.is_none_or(|required| profile.id == required)
+        })
+        .collect()
+}
+
+fn active_competition_by_digest(
+    config: &ServerConfig,
+    requested: Digest32,
+) -> Result<(&CompetitionConfig, CompetitionManifestV1), ApiError> {
+    let (competition, manifest) = competition_by_digest(config, requested)?;
+    let now = crate::model::now_unix_ms()?;
+    if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
+        return Err(ApiError::Conflict("competition is not active".to_owned()));
+    }
+    Ok((competition, manifest))
+}
+
 fn select_fresh_run_profile<'a>(
     config: &'a ServerConfig,
     request: &FreshRunPreflightRequestV1,
@@ -3853,31 +3792,24 @@ fn select_fresh_run_profile<'a>(
     let competition_profile = ranked
         .competition_manifest_sha256
         .map(|digest| {
-            let (competition, manifest) = competition_by_digest(config, digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, digest)?;
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let profile = config
-        .admission_profiles
-        .iter()
-        .find(|profile| {
-            profile.mission_id() == ranked.mission_id
-                && profile.content_subject == ranked.content_subject
-                && profile.ruleset_id == ranked.ruleset_manifest_sha256.to_string()
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == scope)
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .ok_or(ApiError::NotFound)?;
+    let profile = matching_admission_profiles(
+        config,
+        ranked.mission_id.as_str(),
+        &ranked.content_subject,
+        ranked.ruleset_manifest_sha256,
+        scope,
+        competition_profile,
+    )
+    .into_iter()
+    .next()
+    .ok_or(ApiError::NotFound)?;
     let published = config
         .manifests
         .rulesets
@@ -3966,31 +3898,24 @@ fn select_continuation_preflight_profile<'a>(
     let competition_profile = ranked
         .competition_manifest_sha256
         .map(|digest| {
-            let (competition, manifest) = competition_by_digest(config, digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, digest)?;
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let profile = config
-        .admission_profiles
-        .iter()
-        .find(|profile| {
-            profile.mission_id() == ranked.mission_id
-                && profile.content_subject == ranked.content_subject
-                && profile.ruleset_id == ranked.ruleset_manifest_sha256.to_string()
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == "campaign_continuation")
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .ok_or(ApiError::NotFound)?;
+    let profile = matching_admission_profiles(
+        config,
+        ranked.mission_id.as_str(),
+        &ranked.content_subject,
+        ranked.ruleset_manifest_sha256,
+        "campaign_continuation",
+        competition_profile,
+    )
+    .into_iter()
+    .next()
+    .ok_or(ApiError::NotFound)?;
     let published = config
         .manifests
         .rulesets
@@ -4059,16 +3984,11 @@ fn select_profile<'a>(
     request: &SubmissionOfferRequestV1,
     scope: &str,
 ) -> Result<&'a AdmissionProfile, ApiError> {
-    let requested_ruleset = request.ruleset_manifest_sha256.to_string();
     let competition_profile = request
         .competition_manifest_sha256
         .as_ref()
         .map(|requested_digest| {
-            let (competition, manifest) = competition_by_digest(config, *requested_digest)?;
-            let now = crate::model::now_epoch_ms().map_err(|_| ApiError::Internal)? as u64;
-            if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
-                return Err(ApiError::Conflict("competition is not active".to_owned()));
-            }
+            let (competition, manifest) = active_competition_by_digest(config, *requested_digest)?;
             let category_matches = matches!(
                 (scope, &manifest.subject),
                 (
@@ -4093,21 +4013,14 @@ fn select_profile<'a>(
             Ok(competition.admission_profile_id.as_str())
         })
         .transpose()?;
-    let matches = config
-        .admission_profiles
-        .iter()
-        .filter(|profile| {
-            profile.mission_id() == request.mission_id
-                && profile.content_subject
-                    == request.session_genesis.claim.ranked_session.content_subject
-                && profile.ruleset_id == requested_ruleset
-                && profile
-                    .allowed_scopes
-                    .iter()
-                    .any(|allowed| allowed == scope)
-                && competition_profile.is_none_or(|required| profile.id == required)
-        })
-        .collect::<Vec<_>>();
+    let matches = matching_admission_profiles(
+        config,
+        request.mission_id.as_str(),
+        &request.session_genesis.claim.ranked_session.content_subject,
+        request.ruleset_manifest_sha256,
+        scope,
+        competition_profile,
+    );
     let profile = match matches.as_slice() {
         [profile] => *profile,
         [] => Err(ApiError::BadRequest(
@@ -4493,31 +4406,33 @@ fn aggregate_public_participants(
         .collect()
 }
 
+fn verify_request_signature(
+    public_key: &[u8; 32],
+    signature: &[u8; 64],
+    signing_bytes: &[u8],
+) -> Result<(), ApiError> {
+    crate::identity::verify_signature(public_key, signature, signing_bytes)
+        .map_err(|_| ApiError::Unauthorized)
+}
+
 fn verify_session_attestations(request: &SubmissionOfferRequestV1) -> Result<(), ApiError> {
-    let genesis_bytes = request
-        .session_genesis
-        .signing_bytes()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-    verify_signature(
+    let genesis_bytes = request.session_genesis.signing_bytes()?;
+    verify_request_signature(
         request.session_genesis.claim.host_public_key.as_bytes(),
         request.session_genesis.host_signature.as_bytes(),
         &genesis_bytes,
-    )
-    .map_err(|_| ApiError::Unauthorized)?;
+    )?;
 
     for claim in request.participant_claims.iter().skip(1) {
         let attestation = claim.join_attestation.as_ref().ok_or_else(|| {
             ApiError::BadRequest("authenticated guest has no join attestation".to_owned())
         })?;
-        let bytes = attestation
-            .signing_bytes()
-            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
-        verify_signature(
+        let bytes = attestation.signing_bytes()?;
+        verify_request_signature(
             attestation.claim.public_key.as_bytes(),
             attestation.signature.as_bytes(),
             &bytes,
-        )
-        .map_err(|_| ApiError::Unauthorized)?;
+        )?;
     }
     Ok(())
 }

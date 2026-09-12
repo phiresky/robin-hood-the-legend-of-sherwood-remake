@@ -429,6 +429,24 @@ impl ServerConfig {
         scope: ConfigSecretScope,
         candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
     ) -> anyhow::Result<()> {
+        self.validate_limits_and_backup_paths()?;
+        self.validate_paths_and_secrets(scope)?;
+        self.validate_cors_origins()?;
+        self.validate_network_limits()?;
+        self.validate_build_and_campaign_registries()?;
+        let mut profile_ids = std::collections::HashSet::new();
+        for profile in &self.admission_profiles {
+            anyhow::ensure!(
+                profile_ids.insert(&profile.id),
+                "duplicate admission profile ID: {}",
+                profile.id
+            );
+            self.validate_profile(profile, candidate)?;
+        }
+        self.validate_competitions(&profile_ids)
+    }
+
+    fn validate_limits_and_backup_paths(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.max_replay_bytes > 0,
             "max_replay_bytes must be positive"
@@ -532,6 +550,10 @@ impl ServerConfig {
             (60..=7 * 24 * 60 * 60).contains(&self.run_preflight_ttl_seconds),
             "run preflight TTL must be between one minute and seven days"
         );
+        Ok(())
+    }
+
+    fn validate_paths_and_secrets(&self, scope: ConfigSecretScope) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.database_path.file_name().is_some(),
             "database_path must name a file"
@@ -598,6 +620,10 @@ impl ServerConfig {
                 "worker configuration must not contain an API moderation credential"
             ),
         }
+        Ok(())
+    }
+
+    fn validate_cors_origins(&self) -> anyhow::Result<()> {
         for origin in &self.allowed_origins {
             let parsed = url::Url::parse(origin)
                 .map_err(|error| anyhow::anyhow!("invalid CORS origin {origin}: {error}"))?;
@@ -623,6 +649,10 @@ impl ServerConfig {
                 "CORS entries must be exact origins without credentials, paths, queries, or fragments"
             );
         }
+        Ok(())
+    }
+
+    fn validate_network_limits(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             (1..=10_000).contains(&self.challenge_requests_per_minute_per_ip),
             "challenge_requests_per_minute_per_ip must be in 1..=10000"
@@ -648,7 +678,10 @@ impl ServerConfig {
                 anyhow::anyhow!("invalid trusted proxy CIDR {network}: {error}")
             })?;
         }
-        let mut profile_ids = std::collections::HashSet::new();
+        Ok(())
+    }
+
+    fn validate_build_and_campaign_registries(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.admission_profiles.is_empty() || self.manifest_directory.is_some(),
             "manifest_directory is required when admission profiles are configured"
@@ -688,356 +721,13 @@ impl ServerConfig {
                 );
             }
         }
-        for profile in &self.admission_profiles {
-            anyhow::ensure!(
-                profile_ids.insert(&profile.id),
-                "duplicate admission profile ID: {}",
-                profile.id
-            );
-            profile.content_subject.validate().map_err(|error| {
-                anyhow::anyhow!(
-                    "invalid content subject in admission profile {}: {error}",
-                    profile.id
-                )
-            })?;
-            OpaqueId::new(profile.template_id.clone()).map_err(|error| {
-                anyhow::anyhow!(
-                    "invalid template ID in admission profile {}: {error}",
-                    profile.id
-                )
-            })?;
-            anyhow::ensure!(
-                !profile.allowed_scopes.is_empty()
-                    && profile.allowed_scopes.iter().all(|scope| matches!(
-                        scope.as_str(),
-                        "individual_level" | "campaign_genesis" | "campaign_continuation"
-                    )),
-                "invalid allowed_scopes in admission profile {}",
-                profile.id
-            );
-            anyhow::ensure!(
-                !profile.allowed_metrics.is_empty()
-                    && profile.allowed_metrics.iter().all(|metric| matches!(
-                        metric.as_str(),
-                        "original_score" | "fastest_success"
-                    )),
-                "invalid allowed_metrics in admission profile {}",
-                profile.id
-            );
-            for (kind, value) in [
-                ("build manifest", &profile.build_manifest_id),
-                ("content manifest", &profile.content_manifest_id),
-                ("config", &profile.config_id),
-                ("ruleset", &profile.ruleset_id),
-            ] {
-                anyhow::ensure!(
-                    value.len() == 64
-                        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        && value == &value.to_ascii_lowercase(),
-                    "{kind} ID in profile {} must be 64 lowercase hexadecimal digits",
-                    profile.id
-                );
-            }
-            let build = digest32(&profile.build_manifest_id, "build manifest")?;
-            let content = digest32(&profile.content_manifest_id, "content manifest")?;
-            let rules_config = digest32(&profile.config_id, "rules config")?;
-            let ruleset = digest32(&profile.ruleset_id, "ruleset manifest")?;
-            let loaded_build = self.manifests.builds.get(&build).ok_or_else(|| {
-                anyhow::anyhow!("profile {} references a missing build manifest", profile.id)
-            })?;
-            anyhow::ensure!(
-                loaded_build.public_digest() == build,
-                "profile {} resolved a build registry entry under the wrong public digest",
-                profile.id
-            );
-            let build_doc = loaded_build.semantics();
-            let content_doc = self
-                .manifests
-                .content_manifests
-                .get(&content)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "profile {} references a missing content manifest",
-                        profile.id
-                    )
-                })?;
-            let rules_config_doc =
-                self.manifests
-                    .rules_configs
-                    .get(&rules_config)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("profile {} references a missing rules config", profile.id)
-                    })?;
-            let published = self.manifests.rulesets.get(&ruleset).ok_or_else(|| {
-                anyhow::anyhow!("profile {} references a missing ruleset", profile.id)
-            })?;
-            validate_current_sim_config(rules_config_doc).map_err(|error| {
-                anyhow::anyhow!(
-                    "profile {} references an invalid current SimConfig: {error}",
-                    profile.id
-                )
-            })?;
-            published
-                .manifest
-                .validate_ranked_simulation_policy(rules_config_doc)
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "profile {} ruleset simulation-policy identity mismatch: {error}",
-                        profile.id
-                    )
-                })?;
-            validate_current_ranked_build(loaded_build, published)?;
-            let has_individual = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "individual_level");
-            let has_campaign_genesis = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "campaign_genesis");
-            let has_campaign_continuation = profile
-                .allowed_scopes
-                .iter()
-                .any(|scope| scope == "campaign_continuation");
-            let expected_scopes = expected_admission_scopes(
-                profile.canonical_campaign_state.requirement.edition,
-                &profile.content_subject,
-            );
-            anyhow::ensure!(
-                profile
-                    .allowed_scopes
-                    .iter()
-                    .map(String::as_str)
-                    .eq(expected_scopes.iter().copied())
-                    && (!has_individual
-                        || published
-                            .manifest
-                            .board_scopes
-                            .binary_search(&RulesetBoardScopeV1::IndividualLevel)
-                            .is_ok())
-                    && (!(has_campaign_genesis || has_campaign_continuation)
-                        || (published
-                            .manifest
-                            .board_scopes
-                            .binary_search(&RulesetBoardScopeV1::CampaignMission)
-                            .is_ok()
-                            && published
-                                .manifest
-                                .board_scopes
-                                .binary_search(&RulesetBoardScopeV1::FullCampaign)
-                                .is_ok())),
-                "profile {} scopes do not match its exact edition/subject and immutable ruleset boards",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.allowed_metrics.iter().all(|metric| {
-                    let metric = match metric.as_str() {
-                        "original_score" => BoardMetricV1::OriginalScore,
-                        "fastest_success" => BoardMetricV1::FastestSuccess,
-                        _ => return false,
-                    };
-                    published.manifest.metrics.binary_search(&metric).is_ok()
-                }),
-                "profile {} metrics do not match its immutable ruleset",
-                profile.id
-            );
-            anyhow::ensure!(
-                published.manifest.rules_config_sha256 == rules_config
-                    && published.manifest.canonical_campaign_state
-                        == profile.canonical_campaign_state.requirement
-                    && published
-                        .manifest
-                        .allowed_build_manifest_sha256
-                        .binary_search(&build)
-                        .is_ok()
-                    && published
-                        .manifest
-                        .allowed_content_manifest_sha256
-                        .binary_search(&content)
-                        .is_ok()
-                    && rules_config_doc.replay_schema_version == build_doc.replay_schema_version,
-                "profile {} does not match its immutable manifest tuple",
-                profile.id
-            );
-            profile
-                .canonical_campaign_state
-                .validate()
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "profile {} has an invalid canonical campaign-state pin: {error}",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                profile
-                    .canonical_campaign_state
-                    .requirement
-                    .rules_config_sha256
-                    == rules_config
-                    && profile.canonical_campaign_state.requirement.edition == content_doc.edition,
-                "profile {} campaign-state authority differs from its config or edition",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.ruleset_display_name == published.manifest.display_name
-                    && profile.preset_id == published.manifest.preset_id.as_str()
-                    && profile.preset_name == published.manifest.preset_name
-                    && profile.difficulty_id == published.manifest.difficulty_id.as_str()
-                    && profile.difficulty_name == published.manifest.difficulty_name,
-                "profile {} labels do not match its digest-bound ruleset manifest",
-                profile.id
-            );
-            anyhow::ensure!(
-                content_doc.subject == profile.content_subject,
-                "profile {} does not bind its exact typed content subject",
-                profile.id
-            );
-            let offers_campaign = has_campaign_genesis || has_campaign_continuation;
-            let campaign_content = profile
-                .campaign_content_manifest_id
-                .as_deref()
-                .map(|value| digest32(value, "campaign content manifest"))
-                .transpose()?;
-            anyhow::ensure!(
-                offers_campaign == campaign_content.is_some(),
-                "profile {} must configure a campaign content manifest exactly for campaign scopes",
-                profile.id
-            );
-            if let Some(campaign_content) = campaign_content {
-                let catalog = self
-                    .manifests
-                    .campaign_content_manifests
-                    .get(&campaign_content)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "profile {} campaign content manifest is missing",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    catalog.edition == content_doc.edition
-                        && catalog.content_for(&content_doc.subject) == Some(content),
-                    "profile {} campaign catalog does not contain its exact edition/subject content",
-                    profile.id
-                );
-                anyhow::ensure!(
-                    published
-                        .manifest
-                        .allowed_campaign_content_manifest_sha256
-                        .binary_search(&campaign_content)
-                        .is_ok(),
-                    "profile {} campaign catalog is not allowlisted by its ruleset",
-                    profile.id
-                );
-                published
-                    .manifest
-                    .validate_campaign_completion_catalog(catalog)
-                    .map_err(|error| {
-                        anyhow::anyhow!(
-                            "profile {} campaign completion catalog is invalid: {error}",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    published.manifest.campaign_completion_policy.required()
-                        == Some(&official_full_campaign_completion_policy_v1()),
-                    "profile {} does not publish the exact official H12 completion predicate",
-                    profile.id
-                );
-            }
-            for policy in [
-                &published.manifest.input_provenance_policy,
-                &published.manifest.command_admission_policy,
-                &published.manifest.submission_admission_policy,
-                &published.manifest.verifier_policy,
-            ] {
-                let document = self
-                    .manifests
-                    .policies
-                    .get(&policy.manifest_sha256)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "profile {} references a missing immutable policy",
-                            profile.id
-                        )
-                    })?;
-                anyhow::ensure!(
-                    document.kind == policy.kind && document.version == policy.version,
-                    "profile {} policy identity does not match its document",
-                    profile.id
-                );
-            }
-            anyhow::ensure!(
-                profile.canonical_campaign_state.artifact.byte_length <= self.max_campaign_bytes,
-                "canonical campaign state in profile {} exceeds the server limit",
-                profile.id
-            );
-            let campaign_state_path = profile
-                .canonical_campaign_state_path
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "installed profile {} is missing its canonical campaign-state path",
-                        profile.id
-                    )
-                })?;
-            anyhow::ensure!(
-                campaign_state_path.is_absolute(),
-                "canonical campaign-state path in profile {} must be absolute",
-                profile.id
-            );
-            let (actual_digest, actual_byte_length) =
-                if let Some((authenticated_candidate_files, source_commit)) = candidate {
-                    let expected_parent =
-                        Path::new("/home/robinhood/.local/opt/robin-highscores/releases")
-                            .join(source_commit)
-                            .join("private/campaign-states");
-                    hash_authenticated_candidate_campaign_state(
-                        authenticated_candidate_files,
-                        campaign_state_path,
-                        &expected_parent,
-                        HARD_MAX_CAMPAIGN_BYTES,
-                    )?
-                } else {
-                    let path = campaign_state_path;
-                    hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(
-                        |error| {
-                            anyhow::anyhow!(
-                                "canonical campaign-state path in profile {} is unsafe: {error}",
-                                profile.id
-                            )
-                        },
-                    )?
-                };
-            anyhow::ensure!(
-                actual_digest
-                    == profile
-                        .canonical_campaign_state
-                        .artifact
-                        .sha256
-                        .into_bytes()
-                    && actual_byte_length == profile.canonical_campaign_state.artifact.byte_length,
-                "canonical campaign-state file in profile {} differs from its exact pin",
-                profile.id
-            );
-            anyhow::ensure!(
-                profile.viewer_available == profile.viewer_unavailable_reason.is_none(),
-                "profile {} viewer availability and reason disagree",
-                profile.id
-            );
-            anyhow::ensure!(
-                (profile.viewer_available
-                    && profile
-                        .viewer_content_requirement
-                        .is_some_and(|requirement| {
-                            requirement.matches_edition(content_doc.edition)
-                        }))
-                    || (!profile.viewer_available && profile.viewer_content_requirement.is_none()),
-                "profile {} viewer content requirement does not match its {:?} content edition",
-                profile.id,
-                content_doc.edition
-            );
-        }
+        Ok(())
+    }
+
+    fn validate_competitions(
+        &self,
+        profile_ids: &std::collections::HashSet<&String>,
+    ) -> anyhow::Result<()> {
         let mut competition_ids = std::collections::HashSet::new();
         for competition in &self.competitions {
             let manifest_sha256 = digest32(&competition.manifest_sha256, "competition manifest")?;
@@ -1109,6 +799,354 @@ impl ServerConfig {
                 manifest.competition_id.as_str()
             );
         }
+        Ok(())
+    }
+
+    fn validate_profile(
+        &self,
+        profile: &AdmissionProfile,
+        candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
+    ) -> anyhow::Result<()> {
+        profile.content_subject.validate().map_err(|error| {
+            anyhow::anyhow!(
+                "invalid content subject in admission profile {}: {error}",
+                profile.id
+            )
+        })?;
+        OpaqueId::new(profile.template_id.clone()).map_err(|error| {
+            anyhow::anyhow!(
+                "invalid template ID in admission profile {}: {error}",
+                profile.id
+            )
+        })?;
+        anyhow::ensure!(
+            !profile.allowed_scopes.is_empty()
+                && profile.allowed_scopes.iter().all(|scope| matches!(
+                    scope.as_str(),
+                    "individual_level" | "campaign_genesis" | "campaign_continuation"
+                )),
+            "invalid allowed_scopes in admission profile {}",
+            profile.id
+        );
+        anyhow::ensure!(
+            !profile.allowed_metrics.is_empty()
+                && profile
+                    .allowed_metrics
+                    .iter()
+                    .all(|metric| matches!(metric.as_str(), "original_score" | "fastest_success")),
+            "invalid allowed_metrics in admission profile {}",
+            profile.id
+        );
+        for (kind, value) in [
+            ("build manifest", &profile.build_manifest_id),
+            ("content manifest", &profile.content_manifest_id),
+            ("config", &profile.config_id),
+            ("ruleset", &profile.ruleset_id),
+        ] {
+            anyhow::ensure!(
+                value.len() == 64
+                    && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    && value == &value.to_ascii_lowercase(),
+                "{kind} ID in profile {} must be 64 lowercase hexadecimal digits",
+                profile.id
+            );
+        }
+        let build = digest32(&profile.build_manifest_id, "build manifest")?;
+        let content = digest32(&profile.content_manifest_id, "content manifest")?;
+        let rules_config = digest32(&profile.config_id, "rules config")?;
+        let ruleset = digest32(&profile.ruleset_id, "ruleset manifest")?;
+        let loaded_build = self.manifests.builds.get(&build).ok_or_else(|| {
+            anyhow::anyhow!("profile {} references a missing build manifest", profile.id)
+        })?;
+        anyhow::ensure!(
+            loaded_build.public_digest() == build,
+            "profile {} resolved a build registry entry under the wrong public digest",
+            profile.id
+        );
+        let build_doc = loaded_build.semantics();
+        let content_doc = self
+            .manifests
+            .content_manifests
+            .get(&content)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "profile {} references a missing content manifest",
+                    profile.id
+                )
+            })?;
+        let rules_config_doc =
+            self.manifests
+                .rules_configs
+                .get(&rules_config)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("profile {} references a missing rules config", profile.id)
+                })?;
+        let published = self.manifests.rulesets.get(&ruleset).ok_or_else(|| {
+            anyhow::anyhow!("profile {} references a missing ruleset", profile.id)
+        })?;
+        validate_current_sim_config(rules_config_doc).map_err(|error| {
+            anyhow::anyhow!(
+                "profile {} references an invalid current SimConfig: {error}",
+                profile.id
+            )
+        })?;
+        published
+            .manifest
+            .validate_ranked_simulation_policy(rules_config_doc)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "profile {} ruleset simulation-policy identity mismatch: {error}",
+                    profile.id
+                )
+            })?;
+        validate_current_ranked_build(loaded_build, published)?;
+        let has_individual = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "individual_level");
+        let has_campaign_genesis = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "campaign_genesis");
+        let has_campaign_continuation = profile
+            .allowed_scopes
+            .iter()
+            .any(|scope| scope == "campaign_continuation");
+        let expected_scopes = expected_admission_scopes(
+            profile.canonical_campaign_state.requirement.edition,
+            &profile.content_subject,
+        );
+        anyhow::ensure!(
+            profile
+                .allowed_scopes
+                .iter()
+                .map(String::as_str)
+                .eq(expected_scopes.iter().copied())
+                && (!has_individual
+                    || published
+                        .manifest
+                        .board_scopes
+                        .binary_search(&RulesetBoardScopeV1::IndividualLevel)
+                        .is_ok())
+                && (!(has_campaign_genesis || has_campaign_continuation)
+                    || (published
+                        .manifest
+                        .board_scopes
+                        .binary_search(&RulesetBoardScopeV1::CampaignMission)
+                        .is_ok()
+                        && published
+                            .manifest
+                            .board_scopes
+                            .binary_search(&RulesetBoardScopeV1::FullCampaign)
+                            .is_ok())),
+            "profile {} scopes do not match its exact edition/subject and immutable ruleset boards",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.allowed_metrics.iter().all(|metric| {
+                let metric = match metric.as_str() {
+                    "original_score" => BoardMetricV1::OriginalScore,
+                    "fastest_success" => BoardMetricV1::FastestSuccess,
+                    _ => return false,
+                };
+                published.manifest.metrics.binary_search(&metric).is_ok()
+            }),
+            "profile {} metrics do not match its immutable ruleset",
+            profile.id
+        );
+        anyhow::ensure!(
+            published.manifest.rules_config_sha256 == rules_config
+                && published.manifest.canonical_campaign_state
+                    == profile.canonical_campaign_state.requirement
+                && published
+                    .manifest
+                    .allowed_build_manifest_sha256
+                    .binary_search(&build)
+                    .is_ok()
+                && published
+                    .manifest
+                    .allowed_content_manifest_sha256
+                    .binary_search(&content)
+                    .is_ok()
+                && rules_config_doc.replay_schema_version == build_doc.replay_schema_version,
+            "profile {} does not match its immutable manifest tuple",
+            profile.id
+        );
+        profile
+            .canonical_campaign_state
+            .validate()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "profile {} has an invalid canonical campaign-state pin: {error}",
+                    profile.id
+                )
+            })?;
+        anyhow::ensure!(
+            profile
+                .canonical_campaign_state
+                .requirement
+                .rules_config_sha256
+                == rules_config
+                && profile.canonical_campaign_state.requirement.edition == content_doc.edition,
+            "profile {} campaign-state authority differs from its config or edition",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.ruleset_display_name == published.manifest.display_name
+                && profile.preset_id == published.manifest.preset_id.as_str()
+                && profile.preset_name == published.manifest.preset_name
+                && profile.difficulty_id == published.manifest.difficulty_id.as_str()
+                && profile.difficulty_name == published.manifest.difficulty_name,
+            "profile {} labels do not match its digest-bound ruleset manifest",
+            profile.id
+        );
+        anyhow::ensure!(
+            content_doc.subject == profile.content_subject,
+            "profile {} does not bind its exact typed content subject",
+            profile.id
+        );
+        let offers_campaign = has_campaign_genesis || has_campaign_continuation;
+        let campaign_content = profile
+            .campaign_content_manifest_id
+            .as_deref()
+            .map(|value| digest32(value, "campaign content manifest"))
+            .transpose()?;
+        anyhow::ensure!(
+            offers_campaign == campaign_content.is_some(),
+            "profile {} must configure a campaign content manifest exactly for campaign scopes",
+            profile.id
+        );
+        if let Some(campaign_content) = campaign_content {
+            let catalog = self
+                .manifests
+                .campaign_content_manifests
+                .get(&campaign_content)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "profile {} campaign content manifest is missing",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                catalog.edition == content_doc.edition
+                    && catalog.content_for(&content_doc.subject) == Some(content),
+                "profile {} campaign catalog does not contain its exact edition/subject content",
+                profile.id
+            );
+            anyhow::ensure!(
+                published
+                    .manifest
+                    .allowed_campaign_content_manifest_sha256
+                    .binary_search(&campaign_content)
+                    .is_ok(),
+                "profile {} campaign catalog is not allowlisted by its ruleset",
+                profile.id
+            );
+            published
+                .manifest
+                .validate_campaign_completion_catalog(catalog)
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "profile {} campaign completion catalog is invalid: {error}",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                published.manifest.campaign_completion_policy.required()
+                    == Some(&official_full_campaign_completion_policy_v1()),
+                "profile {} does not publish the exact official H12 completion predicate",
+                profile.id
+            );
+        }
+        for policy in [
+            &published.manifest.input_provenance_policy,
+            &published.manifest.command_admission_policy,
+            &published.manifest.submission_admission_policy,
+            &published.manifest.verifier_policy,
+        ] {
+            let document = self
+                .manifests
+                .policies
+                .get(&policy.manifest_sha256)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "profile {} references a missing immutable policy",
+                        profile.id
+                    )
+                })?;
+            anyhow::ensure!(
+                document.kind == policy.kind && document.version == policy.version,
+                "profile {} policy identity does not match its document",
+                profile.id
+            );
+        }
+        anyhow::ensure!(
+            profile.canonical_campaign_state.artifact.byte_length <= self.max_campaign_bytes,
+            "canonical campaign state in profile {} exceeds the server limit",
+            profile.id
+        );
+        let campaign_state_path = profile
+            .canonical_campaign_state_path
+            .as_deref()
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "installed profile {} is missing its canonical campaign-state path",
+                    profile.id
+                )
+            })?;
+        anyhow::ensure!(
+            campaign_state_path.is_absolute(),
+            "canonical campaign-state path in profile {} must be absolute",
+            profile.id
+        );
+        let (actual_digest, actual_byte_length) =
+            if let Some((authenticated_candidate_files, source_commit)) = candidate {
+                let expected_parent = Path::new(crate::deployment::paths::INSTALLED_RELEASE_ROOT)
+                    .join(source_commit)
+                    .join("private/campaign-states");
+                hash_authenticated_candidate_campaign_state(
+                    authenticated_candidate_files,
+                    campaign_state_path,
+                    &expected_parent,
+                    HARD_MAX_CAMPAIGN_BYTES,
+                )?
+            } else {
+                let path = campaign_state_path;
+                hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(|error| {
+                    anyhow::anyhow!(
+                        "canonical campaign-state path in profile {} is unsafe: {error}",
+                        profile.id
+                    )
+                })?
+            };
+        anyhow::ensure!(
+            actual_digest
+                == profile
+                    .canonical_campaign_state
+                    .artifact
+                    .sha256
+                    .into_bytes()
+                && actual_byte_length == profile.canonical_campaign_state.artifact.byte_length,
+            "canonical campaign-state file in profile {} differs from its exact pin",
+            profile.id
+        );
+        anyhow::ensure!(
+            profile.viewer_available == profile.viewer_unavailable_reason.is_none(),
+            "profile {} viewer availability and reason disagree",
+            profile.id
+        );
+        anyhow::ensure!(
+            (profile.viewer_available
+                && profile
+                    .viewer_content_requirement
+                    .is_some_and(|requirement| {
+                        requirement.matches_edition(content_doc.edition)
+                    }))
+                || (!profile.viewer_available && profile.viewer_content_requirement.is_none()),
+            "profile {} viewer content requirement does not match its {:?} content edition",
+            profile.id,
+            content_doc.edition
+        );
         Ok(())
     }
 

@@ -5,6 +5,8 @@
 //! and Full raw roots are installed independently by the operator. The worker
 //! checks this split before leasing any submission.
 
+pub mod paths;
+
 use crate::ServerConfig;
 use robin_run_protocol::{
     CanonicalDocument as _, Digest32, OfficialContentEditionV1, OfficialSourceTreeManifestV2,
@@ -15,11 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 
-pub const RELEASES_ROOT: &str = "/home/robinhood/.local/opt/robin-highscores/releases";
-pub const DEMO_RAW_CONTENT_ROOT: &str =
-    "/home/robinhood/.local/share/robin-highscores/raw-content/demo";
-pub const FULL_RAW_CONTENT_ROOT: &str =
-    "/home/robinhood/.local/share/robin-highscores/raw-content/full";
+pub use paths::{
+    DEMO_RAW_CONTENT_ROOT, FULL_RAW_CONTENT_ROOT, INSTALLED_RELEASE_ROOT as RELEASES_ROOT,
+};
 const VERIFIER_BUNDLES_RELATIVE: &str = "private/verifier-bundles";
 const OPERATOR_CONFIG_RELATIVE: &str = "private/verifier/operator-config";
 const CAMPAIGN_STATES_RELATIVE: &str = "private/campaign-states";

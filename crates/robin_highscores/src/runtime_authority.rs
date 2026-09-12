@@ -32,10 +32,10 @@ const MAX_AUTHORITY_RELATIVE_PATH_BYTES: usize = 4_096;
 const MAX_AUTHORITY_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_AUTHORITY_AGGREGATE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAX_AUTHENTICATED_SEMANTIC_BYTES: u64 = 512 * 1024 * 1024;
-const STATE_ROOT: &str = "/home/robinhood/.local/share/robin-highscores";
-const RELEASES_ROOT: &str = "/home/robinhood/.local/opt/robin-highscores/releases";
-const DEMO_RAW_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/raw-content/demo";
-const FULL_RAW_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/raw-content/full";
+use crate::deployment::paths::{
+    DEMO_RAW_CONTENT_ROOT as DEMO_RAW_ROOT, FULL_RAW_CONTENT_ROOT as FULL_RAW_ROOT,
+    INSTALLED_RELEASE_ROOT as RELEASES_ROOT, STATE_ROOT,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
