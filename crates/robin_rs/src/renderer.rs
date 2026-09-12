@@ -1532,96 +1532,6 @@ impl Renderer {
         self.frame.enter_gpu_phase();
     }
 
-    /// Blit a sprite from a managed RGB565 surface to the screen,
-    /// multiply-darkening pixels matching `SHADOW_KEY` by
-    /// `(100 - shadow_level) / 100`. Routes the MMX-style alpha-keying
-    /// shadow blit through the GPU overlay queue.
-    #[allow(clippy::too_many_arguments)]
-    fn blit_with_shadow(
-        &mut self,
-        src_id: u32,
-        src_rect: Option<&BBox>,
-        dst_id: u32,
-        dst_rect: Option<&BBox>,
-        _shadow_color: u16,
-        shadow_level: u16,
-        flags: u32,
-    ) -> bool {
-        let src_id = self.resolve_id(src_id);
-        let dst_id = self.resolve_id(dst_id);
-        if dst_id != 0 {
-            tracing::warn!("blit_with_shadow: GPU path requires screen destination");
-            return false;
-        }
-        self.frame.enter_gpu_phase();
-
-        // Snapshot src-side data with a single immutable borrow.
-        let (blit_w, blit_h, src_x, src_y) = {
-            let src_info = match self.resources.managed_surfaces.get(&src_id) {
-                Some(i) => i,
-                None => return false,
-            };
-            let (sx, sy, w, h) = if let Some(r) = src_rect {
-                (
-                    r.min.x as usize,
-                    r.min.y as usize,
-                    (r.max.x - r.min.x) as usize,
-                    (r.max.y - r.min.y) as usize,
-                )
-            } else {
-                (0, 0, src_info.width as usize, src_info.height as usize)
-            };
-            (w, h, sx, sy)
-        };
-        if blit_w == 0 || blit_h == 0 {
-            return false;
-        }
-        // shadow_alpha = shadow_level * 255 / 100 → multiply-darken at
-        // (1 - shadow_alpha/255) under standard alpha blending.
-        let shadow_alpha = (shadow_level.min(100) as u32 * 255 / 100) as u8;
-
-        // Determine the dst rect (default = source size at origin 0).
-        let dst = match dst_rect {
-            Some(r) => Rect {
-                x: r.min.x as i32,
-                y: r.min.y as i32,
-                w: (r.max.x - r.min.x) as i32,
-                h: (r.max.y - r.min.y) as i32,
-            },
-            None => Rect {
-                x: 0,
-                y: 0,
-                w: blit_w as i32,
-                h: blit_h as i32,
-            },
-        };
-
-        if flags & BLIT_SOURCE_TRANSPARENT == 0 {
-            return self.blit_to_screen(src_id, src_rect, dst_rect, flags);
-        }
-        self.ensure_managed_surface_resident(src_id);
-        let Some(src_surface) = self.resources.managed_surfaces.get(&src_id) else {
-            return false;
-        };
-        let sw = src_surface.width as f32;
-        let sh = src_surface.height as f32;
-        let uv = [
-            src_x as f32 / sw,
-            src_y as f32 / sh,
-            (src_x + blit_w) as f32 / sw,
-            (src_y + blit_h) as f32 / sh,
-        ];
-        self.queue_transparent_managed_bgs(
-            src_surface.textures().color_bg.clone(),
-            src_surface.textures().shadow_bg.clone(),
-            shadow_alpha,
-            dst,
-            uv,
-            1.0,
-        );
-        true
-    }
-
     /// Queue a borrowed upload only after checking its renderer and lifetime.
     pub fn draw_surface(
         &mut self,
@@ -1630,9 +1540,7 @@ impl Renderer {
         dst_rect: Option<&BBox>,
         flags: u32,
     ) -> Result<(), MissingSurface> {
-        self.surface_dimensions(handle)?;
-        assert!(self.blit_to_screen(handle.id, src_rect, dst_rect, flags));
-        Ok(())
+        self.queue_managed_surface(handle, src_rect, dst_rect, flags, 1.0, None)
     }
 
     /// Rotate a borrowed UI surface counterclockwise inside its destination.
@@ -1663,122 +1571,74 @@ impl Renderer {
         alpha_level: u16,
         flags: u32,
     ) -> Result<(), MissingSurface> {
-        self.surface_dimensions(handle)?;
-        assert!(self.blit_to_screen_alpha(handle.id, src_rect, dst_rect, alpha_level, flags));
-        Ok(())
+        // alpha_level: 0 = fully opaque, 100 = fully transparent.
+        let opacity = 100u16.saturating_sub(alpha_level) as f32 / 100.0;
+        self.queue_managed_surface(handle, src_rect, dst_rect, flags, opacity, None)
     }
 
     /// Shadow draw for a borrowed upload, always targeting this renderer's screen.
+    /// Shadow-key pixels darken the destination; their original color is ignored.
     pub fn draw_surface_with_shadow(
         &mut self,
         handle: SurfaceHandle,
         src_rect: Option<&BBox>,
         dst_rect: Option<&BBox>,
-        shadow_color: u16,
         shadow_level: u16,
         flags: u32,
     ) -> Result<(), MissingSurface> {
-        self.surface_dimensions(handle)?;
-        assert!(self.blit_with_shadow(
-            handle.id,
-            src_rect,
-            0,
-            dst_rect,
-            shadow_color,
-            shadow_level,
-            flags
-        ));
+        let shadow_alpha = (u32::from(shadow_level.min(100)) * 255 / 100) as u8;
+        self.queue_managed_surface(handle, src_rect, dst_rect, flags, 1.0, Some(shadow_alpha))
+    }
+
+    /// Validate the borrowed upload before resolving geometry or realizing its texture.
+    /// Empty/inverted rectangles are no-ops, including destinations truncated below
+    /// one pixel. Source UVs retain fractional coordinates for every draw variant.
+    fn queue_managed_surface(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        flags: u32,
+        opacity: f32,
+        shadow_alpha: Option<u8>,
+    ) -> Result<(), MissingSurface> {
+        let (width, height) = self.surface_dimensions(handle)?;
+        let (dst, uv) = src_dst_uv(src_rect, dst_rect, width as f32, height as f32);
+        if dst.w <= 0 || dst.h <= 0 || uv[0] >= uv[2] || uv[1] >= uv[3] {
+            return Ok(());
+        }
+        if shadow_alpha.is_some() {
+            self.frame.enter_gpu_phase();
+        }
+        self.ensure_managed_surface_resident(handle.id);
+        let surface = self
+            .resources
+            .managed_surfaces
+            .get(&handle.id)
+            .expect("validated surface remains registered during upload");
+        if flags & BLIT_SOURCE_TRANSPARENT != 0 {
+            self.queue_transparent_managed_bgs(
+                surface.textures().color_bg.clone(),
+                surface.textures().shadow_bg.clone(),
+                shadow_alpha.unwrap_or(surface.shadow_alpha),
+                dst,
+                uv,
+                opacity,
+            );
+        } else {
+            let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
+            self.frame.queued.push(QueuedDraw {
+                dst,
+                corners: None,
+                uv,
+                tint: [1.0, 1.0, 1.0, opacity],
+                operation: DrawOperation::Quad {
+                    texture: QuadTexture::Frame(tex_idx),
+                    blend: BlendMode::Blend,
+                },
+            });
+        }
         Ok(())
-    }
-
-    /// Legacy compatibility entry point; new resource owners should retain typed handles.
-    /// Submit a managed surface as a GPU overlay quad. Lazy-uploads
-    /// the surface to a wgpu texture (cached, invalidated on surface
-    /// mutation) and queues a textured-quad draw at `dst_rect`.
-    fn blit_to_screen(
-        &mut self,
-        src_id: u32,
-        src_rect: Option<&BBox>,
-        dst_rect: Option<&BBox>,
-        flags: u32,
-    ) -> bool {
-        let id = self.resolve_id(src_id);
-        let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
-        self.ensure_managed_surface_resident(id);
-        let Some(surface) = self.resources.managed_surfaces.get(&id) else {
-            return false;
-        };
-        let (sw, sh) = (surface.width as f32, surface.height as f32);
-        let (sub_dst, sub_uv) = src_dst_uv(src_rect, dst_rect, sw, sh);
-        if transparent {
-            self.queue_transparent_managed_bgs(
-                surface.textures().color_bg.clone(),
-                surface.textures().shadow_bg.clone(),
-                surface.shadow_alpha,
-                sub_dst,
-                sub_uv,
-                1.0,
-            );
-        } else {
-            let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
-            self.frame.queued.push(QueuedDraw {
-                dst: sub_dst,
-                corners: None,
-                uv: sub_uv,
-                tint: [1.0, 1.0, 1.0, 1.0],
-                operation: DrawOperation::Quad {
-                    texture: QuadTexture::Frame(tex_idx),
-                    blend: BlendMode::Blend,
-                },
-            });
-        }
-        true
-    }
-
-    /// `blit_to_screen` with a per-frame alpha applied to the whole
-    /// quad (used by the fade-in / fade-out transitions).
-    fn blit_to_screen_alpha(
-        &mut self,
-        src_id: u32,
-        src_rect: Option<&BBox>,
-        dst_rect: Option<&BBox>,
-        alpha_level: u16,
-        flags: u32,
-    ) -> bool {
-        let id = self.resolve_id(src_id);
-        let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
-        self.ensure_managed_surface_resident(id);
-        let Some(surface) = self.resources.managed_surfaces.get(&id) else {
-            return false;
-        };
-        let (sw, sh) = (surface.width as f32, surface.height as f32);
-        let (sub_dst, sub_uv) = src_dst_uv(src_rect, dst_rect, sw, sh);
-        // alpha_level: 0 = fully opaque, 100 = fully transparent.
-        // Convert to a 0..1 multiplier.
-        let alpha = ((100u16.saturating_sub(alpha_level)) as f32 / 100.0).clamp(0.0, 1.0);
-        if transparent {
-            self.queue_transparent_managed_bgs(
-                surface.textures().color_bg.clone(),
-                surface.textures().shadow_bg.clone(),
-                surface.shadow_alpha,
-                sub_dst,
-                sub_uv,
-                alpha,
-            );
-        } else {
-            let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
-            self.frame.queued.push(QueuedDraw {
-                dst: sub_dst,
-                corners: None,
-                uv: sub_uv,
-                tint: [1.0, 1.0, 1.0, alpha],
-                operation: DrawOperation::Quad {
-                    texture: QuadTexture::Frame(tex_idx),
-                    blend: BlendMode::Blend,
-                },
-            });
-        }
-        true
     }
 
     fn queue_transparent_managed_bgs(
@@ -3096,7 +2956,7 @@ pub(crate) fn upload_rgba_texture(
     (tex, view)
 }
 
-/// Resolve the dst+src rect pair from `blit_to_screen`'s optional
+/// Resolve the dst+src rect pair from a textured draw's optional
 /// arguments. `src_rect=None` means full source; `dst_rect=None` means
 /// the source is positioned at `(0,0)` on the screen.
 fn src_dst_uv(
@@ -3472,7 +3332,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     );
     assert!(
         other_renderer
-            .draw_surface_with_shadow(owned.handle(), None, None, 0, 40, BLIT_SOURCE_TRANSPARENT)
+            .draw_surface_with_shadow(owned.handle(), None, None, 40, BLIT_SOURCE_TRANSPARENT)
             .is_err()
     );
     assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
@@ -3706,6 +3566,68 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     );
     crate::ingame_menu::resources::verify_menu_gpu_ownership(&mut menu_renderer, &mut menu_peer);
     verify_deferred_menu_surfaces(&mut renderer);
+    verify_managed_surface_rectangles(&mut renderer);
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_managed_surface_rectangles(renderer: &mut Renderer) {
+    let upload = renderer.upload_rgb565(3, 2, &[0xffff; 6]).unwrap();
+    let handle = upload.handle();
+    let empty = BBox::from_coords(1.0, 0.0, 1.0, 2.0);
+    let inverted = BBox::from_coords(2.0, 2.0, 1.0, 0.0);
+    let subpixel = BBox::from_coords(0.0, 0.0, 0.5, 0.5);
+    let full = BBox::from_coords(0.0, 0.0, 3.0, 2.0);
+    let fractional_src = BBox::from_coords(-0.5, 0.25, 2.5, 1.75);
+    let fractional_dst = BBox::from_coords(-0.75, 0.5, 2.75, 2.5);
+    for mode in 0..3 {
+        let draw = |renderer: &mut Renderer, src, dst| match mode {
+            0 => renderer.draw_surface(handle, src, dst, BLIT_SOURCE_TRANSPARENT),
+            1 => renderer.draw_surface_alpha(handle, src, dst, 0, BLIT_SOURCE_TRANSPARENT),
+            2 => renderer.draw_surface_with_shadow(handle, src, dst, 50, BLIT_SOURCE_TRANSPARENT),
+            _ => unreachable!(),
+        };
+        for (src, dst) in [
+            (Some(&empty), None),
+            (Some(&inverted), Some(&full)),
+            (None, Some(&empty)),
+            (None, Some(&inverted)),
+            (Some(&subpixel), None),
+            (None, Some(&subpixel)),
+        ] {
+            let queued = renderer.draw_queue_checkpoint();
+            draw(renderer, src, dst).unwrap();
+            assert_eq!(renderer.draw_queue_checkpoint(), queued, "mode {mode}");
+        }
+        // Fractional (including negative) source coordinates survive in UVs;
+        // only screen geometry truncates to integer pixels.
+        draw(renderer, Some(&fractional_src), Some(&fractional_dst)).unwrap();
+        let quad = renderer.frame.queued.last().unwrap();
+        assert_eq!(quad.dst, Rect::new(0, 0, 3, 2));
+        assert_eq!(quad.uv, [-0.5 / 3.0, 0.125, 2.5 / 3.0, 0.875]);
+        renderer.try_capture_frame_rgba().unwrap();
+        // A subpixel source remains drawable when explicitly stretched.
+        let queued = renderer.draw_queue_checkpoint();
+        draw(renderer, Some(&subpixel), Some(&full)).unwrap();
+        assert_eq!(renderer.draw_queue_checkpoint(), queued + 1);
+        renderer.try_capture_frame_rgba().unwrap();
+    }
+    renderer.retire_surface(upload);
+    // Empty geometry never hides a stale ownership error.
+    assert!(
+        renderer
+            .draw_surface(handle, Some(&empty), None, 0)
+            .is_err()
+    );
+    assert!(
+        renderer
+            .draw_surface_alpha(handle, Some(&empty), None, 0, 0)
+            .is_err()
+    );
+    assert!(
+        renderer
+            .draw_surface_with_shadow(handle, Some(&empty), None, 50, 0)
+            .is_err()
+    );
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -3742,15 +3664,28 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
         for id in [eager, deferred, deferred] {
             renderer.finish_loading_screen();
             renderer.render_gpu_rect(0, 0, 3, 2, 255, 255, 255, 255);
+            let draw_handle = renderer.surface_handle(id).unwrap();
             let drawn = match mode {
-                0 => renderer.blit_to_screen(id, None, None, 0),
-                1 => renderer.blit_to_screen(id, None, None, BLIT_SOURCE_TRANSPARENT),
-                2 => renderer.blit_to_screen_alpha(id, None, None, 35, 0),
-                3 => renderer.blit_to_screen_alpha(id, None, None, 35, BLIT_SOURCE_TRANSPARENT),
-                4 => renderer.blit_with_shadow(id, None, 0, None, 0, 50, BLIT_SOURCE_TRANSPARENT),
+                0 => renderer.draw_surface(draw_handle, None, None, 0),
+                1 => renderer.draw_surface(draw_handle, None, None, BLIT_SOURCE_TRANSPARENT),
+                2 => renderer.draw_surface_alpha(draw_handle, None, None, 35, 0),
+                3 => renderer.draw_surface_alpha(
+                    draw_handle,
+                    None,
+                    None,
+                    35,
+                    BLIT_SOURCE_TRANSPARENT,
+                ),
+                4 => renderer.draw_surface_with_shadow(
+                    draw_handle,
+                    None,
+                    None,
+                    50,
+                    BLIT_SOURCE_TRANSPARENT,
+                ),
                 _ => unreachable!(),
             };
-            assert!(drawn);
+            drawn.unwrap();
             captured.push(renderer.try_capture_frame_rgba().unwrap());
         }
         assert_eq!(

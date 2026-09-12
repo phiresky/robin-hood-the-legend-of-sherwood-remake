@@ -139,7 +139,6 @@ pub(crate) async fn show_credits(
                     credits_surface.handle(),
                     Some(&src),
                     Some(&dst),
-                    0x1f,
                     50,
                     BLIT_SOURCE_TRANSPARENT,
                 )
@@ -253,7 +252,7 @@ pub(crate) fn verify_gpu_retirement(renderer: &mut Renderer) {
         let background = with_background.then(|| renderer.upload_rgb565(1, 1, &[0xffff]).unwrap());
         let background_handle = background.as_ref().map(|upload| upload.handle());
         renderer
-            .draw_surface_with_shadow(handle, None, None, 0x1f, 50, BLIT_SOURCE_TRANSPARENT)
+            .draw_surface_with_shadow(handle, None, None, 50, BLIT_SOURCE_TRANSPARENT)
             .unwrap();
         retire_uploads(renderer, credits, background);
         assert!(renderer.surface_dimensions(handle).is_err());

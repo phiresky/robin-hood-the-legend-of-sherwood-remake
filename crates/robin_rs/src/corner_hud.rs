@@ -394,7 +394,6 @@ pub fn draw_with_sprites(
                         sid,
                         None,
                         Some(&dst),
-                        0,  // shadow_color unused
                         50, // Default shadow intensity.
                         BLIT_SOURCE_TRANSPARENT,
                     )

@@ -328,7 +328,6 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
             borrowed_dot,
             None,
             None,
-            0,
             40,
             crate::renderer::BLIT_SOURCE_TRANSPARENT,
         )
