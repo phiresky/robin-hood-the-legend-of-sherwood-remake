@@ -106,33 +106,32 @@ struct TaggedAiEntityHandle {
 /// Encode nullable runtime handles without reintroducing the historical
 /// zero-as-missing ambiguity. A tagged value can represent live arena slot zero;
 /// `null` remains absence.
-pub(crate) fn serialize_optional_ai_handle<S>(
-    handle: &Option<AiEntityHandle>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match handle {
-        Some(handle) => serializer.serialize_some(&TaggedAiEntityHandle {
-            entity: handle.get(),
-        }),
-        None => serializer.serialize_none(),
-    }
-}
+pub(crate) mod optional_ai_handle {
+    use super::*;
 
-/// Decode the tagged current representation. Historical Rust JSON is not
-/// accepted here: schema-version gates reject it before runtime state is
-/// decoded, while original-game missing-reference sentinels are handled exclusively by
-/// `legacy_save`.
-pub(crate) fn deserialize_optional_ai_handle<'de, D>(
-    deserializer: D,
-) -> Result<Option<AiEntityHandle>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<TaggedAiEntityHandle>::deserialize(deserializer)?
-        .map(|tagged| AiEntityHandle::new(tagged.entity)))
+    pub fn serialize<S>(handle: &Option<AiEntityHandle>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match handle {
+            Some(handle) => serializer.serialize_some(&TaggedAiEntityHandle {
+                entity: handle.get(),
+            }),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Decode the tagged current representation. Historical Rust JSON is not
+    /// accepted here: schema-version gates reject it before runtime state is
+    /// decoded, while original-game missing-reference sentinels are handled exclusively by
+    /// `legacy_save`.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<AiEntityHandle>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Option::<TaggedAiEntityHandle>::deserialize(deserializer)?
+            .map(|tagged| AiEntityHandle::new(tagged.entity)))
+    }
 }
 
 #[cfg(test)]
@@ -141,10 +140,7 @@ mod optional_ai_handle_serde_tests {
 
     #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
     struct Fixture {
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         handle: Option<AiEntityHandle>,
     }
 

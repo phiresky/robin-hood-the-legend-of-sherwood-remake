@@ -472,7 +472,14 @@ fn single_owner_tick_preserves_replaced_other_actor_shot() {
         .2
         .order_id;
 
-    CROSS_ACTOR_SHOT_REPLACEMENT.set(Some((other, replacement)));
+    // A synchronous operation has replaced another actor's shot before this
+    // owner resumes. The production owner-only tick must not overwrite it.
+    entities
+        .get_mut(other)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .active_shot = replacement;
 
     tick_bow_shot_for_owner(
         &sim_context,

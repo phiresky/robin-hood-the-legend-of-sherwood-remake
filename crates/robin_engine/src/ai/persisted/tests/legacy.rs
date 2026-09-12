@@ -51,30 +51,15 @@ struct LegacyAiController {
     number_of_remaining_macro_bytes: u16,
     macro_in_progress: bool,
     macro_started_in_this_frame: bool,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     primary_target: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     friend_in_trouble: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     detected_body: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     interesting_object: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     antagonist: Option<AiEntityHandle>,
     last_stimulus_actor: Option<AiEntityHandle>,
     timer_is_running: bool,
@@ -86,10 +71,7 @@ struct LegacyAiController {
     last_stimulus: [StimulusType; 5],
     last_stimulus_multiplicity: [u16; 5],
     is_master: bool,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     master: Option<AiEntityHandle>,
     seek_position: Position,
     alert_soldiers_point: Position,
@@ -121,20 +103,11 @@ struct LegacyAiController {
     my_door_index: Option<crate::gate::DoorIndex>,
     looking_for_help_because_enemy_seen: bool,
     forgotten_objects: Vec<ObjectHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     object_of_desire: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     checkpoint_charly: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     synchronize_charly: Option<AiEntityHandle>,
     synchronize_index: u16,
     delta_sorrow_level: u16,
@@ -458,10 +431,7 @@ impl LegacyWire for QueuedSelfStimulus {
 struct LegacyStimulus {
     stimulus_type: StimulusType,
     info: StimulusInfo,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     owner: Option<AiEntityHandle>,
     to_whole_patrol: bool,
     #[serde(skip)]
@@ -654,11 +624,7 @@ struct LegacyEnemyAi {
     pending_sword_strike_consideration: bool,
     #[serde(default)]
     pending_combat_insult_after_strike_consideration: bool,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     missed_pc: Option<AiEntityHandle>,
     pc_missed: bool,
     pc_gone_away_in_this_direction: u16,
@@ -668,11 +634,7 @@ struct LegacyEnemyAi {
     #[serde(default)]
     investigating_distraction: bool,
     last_seek_direction_index: u8,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     beggar_to_examine: Option<AiEntityHandle>,
     beggar_is_npc: bool,
     current_task_priority: u16,
@@ -708,17 +670,9 @@ struct LegacyEnemyAi {
     other_seen_ale: Vec<ObjectHandle>,
     money_fight_enemies: Vec<NpcHandle>,
     money_fight_victims: Vec<NpcHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     archer_behind_me: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     shield_bearer_before_me: Option<AiEntityHandle>,
     shield_bearer_direction: u16,
     phalanx_aborted: bool,
@@ -776,17 +730,9 @@ struct LegacyEnemyAi {
     sword_is_charge_weapon: bool,
     next_sword_strike_frame: u32,
     company_number: u16,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     left_combat_neighbour: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     right_combat_neighbour: Option<AiEntityHandle>,
     attentive: bool,
     will_be_attentive: bool,

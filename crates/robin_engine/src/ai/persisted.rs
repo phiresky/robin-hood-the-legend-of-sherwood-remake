@@ -10,115 +10,32 @@ use crate::ai_enemy::{AmbushPointStatus, EnemyAi, ProfileRank, SeekFlags};
 use crate::ai_friendly::FriendlyAi;
 use crate::entity_id::PcId;
 
-impl Serialize for AiController {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedAiController::capture(self).serialize(serializer)
-    }
+macro_rules! persisted_serde {
+    ($($runtime:ty => $persisted:ty),+ $(,)?) => {$(
+        impl Serialize for $runtime {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                <$persisted>::capture(self).serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $runtime {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                <$persisted>::deserialize(deserializer).map(<$persisted>::into_runtime)
+            }
+        }
+    )+};
 }
 
-impl<'de> Deserialize<'de> for AiController {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedAiController::deserialize(deserializer).map(PersistedAiController::into_runtime)
-    }
-}
-
-impl Serialize for AiGlobalState {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedAiGlobalState::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for AiGlobalState {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedAiGlobalState::deserialize(deserializer).map(PersistedAiGlobalState::into_runtime)
-    }
-}
-
-impl Serialize for QueuedSelfStimulus {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedQueuedSelfStimulus::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for QueuedSelfStimulus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedQueuedSelfStimulus::deserialize(deserializer)
-            .map(PersistedQueuedSelfStimulus::into_runtime)
-    }
-}
-
-impl Serialize for Stimulus {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedStimulus::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Stimulus {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedStimulus::deserialize(deserializer).map(PersistedStimulus::into_runtime)
-    }
-}
-
-impl Serialize for AiOutbox {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedAiOutbox::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for AiOutbox {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedAiOutbox::deserialize(deserializer).map(PersistedAiOutbox::into_runtime)
-    }
-}
-
-impl Serialize for AiDetectionOutbox {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedAiDetectionOutbox::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for AiDetectionOutbox {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedAiDetectionOutbox::deserialize(deserializer)
-            .map(PersistedAiDetectionOutbox::into_runtime)
-    }
-}
-
-impl Serialize for AiReentrantOutbox {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedAiReentrantOutbox::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for AiReentrantOutbox {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedAiReentrantOutbox::deserialize(deserializer)
-            .map(PersistedAiReentrantOutbox::into_runtime)
-    }
-}
-
-impl Serialize for EnemyAi {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedEnemyAi::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for EnemyAi {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedEnemyAi::deserialize(deserializer).map(PersistedEnemyAi::into_runtime)
-    }
-}
-
-impl Serialize for FriendlyAi {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        PersistedFriendlyAi::capture(self).serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for FriendlyAi {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        PersistedFriendlyAi::deserialize(deserializer).map(PersistedFriendlyAi::into_runtime)
-    }
+persisted_serde! {
+    AiController => PersistedAiController,
+    AiGlobalState => PersistedAiGlobalState,
+    QueuedSelfStimulus => PersistedQueuedSelfStimulus,
+    Stimulus => PersistedStimulus,
+    AiOutbox => PersistedAiOutbox,
+    AiDetectionOutbox => PersistedAiDetectionOutbox,
+    AiReentrantOutbox => PersistedAiReentrantOutbox,
+    EnemyAi => PersistedEnemyAi,
+    FriendlyAi => PersistedFriendlyAi,
 }
 
 #[cfg(test)]
@@ -155,30 +72,15 @@ pub struct PersistedAiController {
     number_of_remaining_macro_bytes: u16,
     macro_in_progress: bool,
     macro_started_in_this_frame: bool,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     primary_target: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     friend_in_trouble: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     detected_body: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     interesting_object: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     antagonist: Option<AiEntityHandle>,
     last_stimulus_actor: Option<AiEntityHandle>,
     timer_is_running: bool,
@@ -190,10 +92,7 @@ pub struct PersistedAiController {
     last_stimulus: [StimulusType; 5],
     last_stimulus_multiplicity: [u16; 5],
     is_master: bool,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     master: Option<AiEntityHandle>,
     seek_position: Position,
     alert_soldiers_point: Position,
@@ -225,20 +124,11 @@ pub struct PersistedAiController {
     my_door_index: Option<crate::gate::DoorIndex>,
     looking_for_help_because_enemy_seen: bool,
     forgotten_objects: Vec<ObjectHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     object_of_desire: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     checkpoint_charly: Option<AiEntityHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     synchronize_charly: Option<AiEntityHandle>,
     synchronize_index: u16,
     delta_sorrow_level: u16,
@@ -822,10 +712,7 @@ impl PersistedQueuedSelfStimulus {
 pub struct PersistedStimulus {
     stimulus_type: StimulusType,
     info: StimulusInfo,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     owner: Option<AiEntityHandle>,
     to_whole_patrol: bool,
 }
@@ -1036,11 +923,7 @@ pub struct PersistedEnemyAi {
     pending_sword_strike_consideration: bool,
     #[serde(default)]
     pending_combat_insult_after_strike_consideration: bool,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     missed_pc: Option<AiEntityHandle>,
     pc_missed: bool,
     pc_gone_away_in_this_direction: u16,
@@ -1050,11 +933,7 @@ pub struct PersistedEnemyAi {
     #[serde(default)]
     investigating_distraction: bool,
     last_seek_direction_index: u8,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     beggar_to_examine: Option<AiEntityHandle>,
     beggar_is_npc: bool,
     current_task_priority: u16,
@@ -1090,17 +969,9 @@ pub struct PersistedEnemyAi {
     other_seen_ale: Vec<ObjectHandle>,
     money_fight_enemies: Vec<NpcHandle>,
     money_fight_victims: Vec<NpcHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     archer_behind_me: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     shield_bearer_before_me: Option<AiEntityHandle>,
     shield_bearer_direction: u16,
     phalanx_aborted: bool,
@@ -1158,17 +1029,9 @@ pub struct PersistedEnemyAi {
     sword_is_charge_weapon: bool,
     next_sword_strike_frame: u32,
     company_number: u16,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     left_combat_neighbour: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "optional_ai_handle")]
     right_combat_neighbour: Option<AiEntityHandle>,
     attentive: bool,
     will_be_attentive: bool,
