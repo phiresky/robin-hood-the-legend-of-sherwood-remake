@@ -7,9 +7,9 @@ pub mod disasm;
 
 #[cfg(test)]
 mod original_data {
-    use robin_test_support::original_data::data_directory;
+    use robin_test_support::original_data::data_file;
 
     pub fn demo_scb_path() -> std::path::PathBuf {
-        data_directory(".").join("Data/Levels/Dem_Lei_MP.scb")
+        data_file("Data/Levels/Dem_Lei_MP.scb")
     }
 }

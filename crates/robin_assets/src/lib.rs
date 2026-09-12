@@ -13,9 +13,7 @@ mod original_data {
 
     #[cfg(feature = "engine-adapters")]
     pub fn demo_scb_path() -> std::path::PathBuf {
-        // scb::parse_file resolves case-insensitive original asset paths;
-        // extracted demo data can use DATA rather than Data.
-        data_directory(".").join("Data/Levels/Dem_Lei_MP.scb")
+        data_file("Data/Levels/Dem_Lei_MP.scb")
     }
 }
 
