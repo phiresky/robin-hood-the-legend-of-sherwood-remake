@@ -36,6 +36,44 @@ include!("resource_wire_contract.rs");
 /// Resource identifier (signed 32-bit; `-1` is the "no resource" sentinel).
 pub type ResourceId = i32;
 
+/// Failure classified where archive bytes are acquired or decoded, without
+/// reopening a potentially changed filesystem to infer what went wrong.
+#[derive(Debug)]
+pub enum ResourceAttachmentError {
+    Unavailable(anyhow::Error),
+    Malformed(anyhow::Error),
+}
+
+impl std::fmt::Display for ResourceAttachmentError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(error) => write!(formatter, "archive unavailable: {error:#}"),
+            Self::Malformed(error) => write!(formatter, "malformed archive: {error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for ResourceAttachmentError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unavailable(error) | Self::Malformed(error) => Some(error.as_ref()),
+        }
+    }
+}
+
+fn acquire_resource_bytes(
+    path: &str,
+    read: impl FnOnce() -> std::result::Result<robin_util::asset_fs::AssetBytes, i32>,
+) -> std::result::Result<Option<robin_util::asset_fs::AssetBytes>, ResourceAttachmentError> {
+    match read() {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(robin_data_io::sbfile::SBFILE_ERROR_FILE_NOT_FOUND) => Ok(None),
+        Err(error) => Err(ResourceAttachmentError::Unavailable(anyhow!(
+            "read resource file '{path}': error {error}"
+        ))),
+    }
+}
+
 /// Mouse-cursor metadata stored alongside cursor picture resources.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct MouseEntry {
@@ -577,19 +615,38 @@ impl ResourceManager {
         path: &str,
         shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
     ) -> Result<()> {
+        self.try_attach_or_from_shipping(path, shipping)?
+            .with_context(|| format!("read resource file '{path}': file not found"))
+    }
+
+    /// Attach an optional archive. Only genuine acquisition absence is `None`;
+    /// unavailable readers and malformed present archives remain errors.
+    pub fn try_attach_or_from_shipping(
+        &mut self,
+        path: &str,
+        shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
+    ) -> std::result::Result<Option<()>, ResourceAttachmentError> {
         if let Some(dd) = shipping {
-            if let Some(src) = dd.active_resource(path) {
+            let locale = dd.active_locale_name();
+            if crate::shipping_datadir::is_locale_overlay_key(path)
+                && let Some(locale) = locale.as_deref()
+                && let Some(src) = dd
+                    .locale_resource(locale, path)
+                    .map_err(ResourceAttachmentError::Unavailable)?
+            {
                 let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
                 tracing::info!(
-                    locale = dd.active_locale_name().as_deref().unwrap_or("base"),
+                    locale,
                     "Resource file {rel}: loaded from active shipping locale"
                 );
                 self.extend_from(src);
-                return Ok(());
+                return Ok(Some(()));
             }
-            if let Some(locale) = dd.active_locale_name()
+            if let Some(locale) = locale.as_deref()
                 && crate::shipping_datadir::is_optional_english_fallback_key(path)
-                && let Ok(Some(src)) = dd.locale_resource("en-US", path)
+                && let Some(src) = dd
+                    .locale_resource("en-US", path)
+                    .map_err(ResourceAttachmentError::Unavailable)?
             {
                 let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
                 tracing::info!(
@@ -597,35 +654,50 @@ impl ResourceManager {
                     "Resource file {rel}: using optional English fallback"
                 );
                 self.extend_from(src);
-                return Ok(());
+                return Ok(Some(()));
             }
-            if dd.active_locale_name().is_some()
-                && crate::shipping_datadir::is_required_locale_key(path)
-            {
+            if locale.is_some() && crate::shipping_datadir::is_required_locale_key(path) {
                 // The active raw locale bundle is authoritative here. This
                 // deliberately errors on an incomplete pack rather than
                 // silently mixing its UI with the top-level/default language.
-                return self.attach_resource_file(path);
+                return self
+                    .try_attach_resource_file(path)?
+                    .map(Some)
+                    .ok_or_else(|| {
+                        ResourceAttachmentError::Unavailable(anyhow!(
+                            "required selected-locale archive '{path}': file not found"
+                        ))
+                    });
             }
             // Keys in shipping.res_files omit any `Data/` prefix.
             let rel = path.strip_prefix("Data/").unwrap_or(path);
             if let Some(src) = dd.res_files.get(rel) {
                 tracing::info!("Resource file {rel}: loaded from shipping datadir");
                 self.extend_from(src);
-                return Ok(());
+                return Ok(Some(()));
             }
         }
-        self.attach_resource_file(path)
+        self.try_attach_resource_file(path)
+    }
+
+    fn try_attach_resource_file(
+        &mut self,
+        path: &str,
+    ) -> std::result::Result<Option<()>, ResourceAttachmentError> {
+        let files = self.files().map_err(ResourceAttachmentError::Unavailable)?;
+        let Some(bytes) = acquire_resource_bytes(path, || files.read_shared(path))? else {
+            return Ok(None);
+        };
+        self.attach_resource_bytes(&bytes, path)
+            .map(Some)
+            .map_err(ResourceAttachmentError::Malformed)
     }
 
     /// Open a `.res` file and load all resources into memory.
     /// Parsing failure leaves the currently attached resources unchanged.
     pub fn attach_resource_file(&mut self, path: &str) -> Result<()> {
-        let bytes = self
-            .files()?
-            .read_shared(path)
-            .map_err(|e| anyhow!("read resource file '{path}': error {e}"))?;
-        self.attach_resource_bytes(&bytes, path)
+        self.try_attach_resource_file(path)?
+            .with_context(|| format!("read resource file '{path}': file not found"))
     }
 
     fn attach_resource_bytes(&mut self, bytes: &[u8], path: &str) -> Result<()> {
@@ -1585,6 +1657,107 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_acquisition_classifies_the_single_read_without_reprobing() {
+        use robin_data_io::sbfile::{SBFILE_ERROR_FILE_NOT_FOUND, SBFILE_ERROR_READ};
+        for status in [SBFILE_ERROR_FILE_NOT_FOUND, SBFILE_ERROR_READ] {
+            let calls = std::cell::Cell::new(0);
+            let result = acquire_resource_bytes("fixture.res", || {
+                calls.set(calls.get() + 1);
+                Err(status)
+            });
+            assert_eq!(calls.get(), 1);
+            match (status, result) {
+                (SBFILE_ERROR_FILE_NOT_FOUND, Ok(None)) => {}
+                (SBFILE_ERROR_READ, Err(ResourceAttachmentError::Unavailable(error))) => {
+                    assert!(error.to_string().contains("fixture.res"));
+                    assert!(error.to_string().contains("error -5"));
+                }
+                (_, result) => panic!("wrong acquisition classification: {result:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn optional_attachment_keeps_authority_and_read_failure_distinct_from_absence() {
+        let mut unbound = ResourceManager::new();
+        assert!(matches!(
+            unbound.try_attach_or_from_shipping("missing.res", None),
+            Err(ResourceAttachmentError::Unavailable(_))
+        ));
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let mut manager = ResourceManager::with_files(Arc::new(SbFileSystem::new(assets)));
+        assert_eq!(
+            manager
+                .try_attach_or_from_shipping("missing.res", None)
+                .unwrap(),
+            None
+        );
+        assert!(
+            manager
+                .attach_or_from_shipping("missing.res", None)
+                .is_err()
+        );
+        assert!(matches!(
+            manager.try_attach_or_from_shipping("../forbidden.res", None),
+            Err(ResourceAttachmentError::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn attachment_prefers_shipping_but_preserves_original_fallback_and_parse_errors() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let mut original = ResourceManager::new();
+        original.data.strings.insert(7, vec!["original".into()]);
+        assets
+            .install_preloaded_asset(
+                "fixture.res",
+                original
+                    .write_to_res_bytes(crate::picture::SixteenPacking::None)
+                    .unwrap(),
+            )
+            .unwrap();
+        assets
+            .install_preloaded_asset("broken.res", b"invalid archive".to_vec())
+            .unwrap();
+        let mut manager = ResourceManager::with_files(Arc::new(SbFileSystem::new(assets.clone())));
+        let empty_shipping = crate::shipping_datadir::ShippingAssets::install(
+            Arc::new(crate::shipping_datadir::ShippingDatadir::default()),
+            assets.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            manager
+                .try_attach_or_from_shipping("fixture.res", Some(empty_shipping.datadir()))
+                .unwrap(),
+            Some(())
+        );
+        assert_eq!(manager.get_string(7, 0).unwrap(), "original");
+        let mut converted = ResourceManager::new();
+        converted.data.strings.insert(7, vec!["shipping".into()]);
+        let mut shipping = crate::shipping_datadir::ShippingDatadir::default();
+        shipping.res_files.insert("fixture.res".into(), converted);
+        let shipping =
+            crate::shipping_datadir::ShippingAssets::install(Arc::new(shipping), assets).unwrap();
+        manager
+            .attach_or_from_shipping("fixture.res", Some(shipping.datadir()))
+            .unwrap();
+        assert_eq!(manager.get_string(7, 0).unwrap(), "shipping");
+        let identity = manager.cache_identity();
+        let error = manager
+            .try_attach_or_from_shipping("broken.res", Some(shipping.datadir()))
+            .unwrap_err();
+        assert!(matches!(&error, ResourceAttachmentError::Malformed(_)));
+        assert!(
+            std::error::Error::source(&error)
+                .unwrap()
+                .to_string()
+                .contains("bad magic")
+        );
+        assert_eq!(manager.cache_identity(), identity);
+        assert_eq!(manager.get_string(7, 0).unwrap(), "shipping");
+    }
 
     #[test]
     fn cursor_and_collection_readers_share_picture_payload_order() {
