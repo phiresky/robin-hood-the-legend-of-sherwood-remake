@@ -147,13 +147,16 @@ pub(crate) async fn show_multiplayer_menu(
         resources,
     );
     loop {
-        let io = widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: None,
-        };
-        match state.tick(io, application_context, cursor_renderer).await {
+        match state
+            .tick(
+                event_pump,
+                renderer,
+                resources,
+                application_context,
+                cursor_renderer,
+            )
+            .await
+        {
             MultiplayerMenuTick::Finished(outcome) => return outcome,
             MultiplayerMenuTick::Refresh => continue,
             MultiplayerMenuTick::Pending => crate::window::sleep_ui_frame().await,
@@ -265,16 +268,12 @@ impl MultiplayerMenuState {
     // worker drain, event dispatch, rendering and presentation order is fixed.
     async fn tick(
         &mut self,
-        io: widget_bridge::ModalScreenIo<'_, '_>,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
         application_context: &ApplicationContext,
         cursor_renderer: &mut crate::cursor::CursorRenderer,
     ) -> MultiplayerMenuTick {
-        let widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: _,
-        } = io;
         let rows_len = match &self.mode {
             MenuMode::Games => self.games.len(),
             MenuMode::Missions => self.missions.len(),
