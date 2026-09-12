@@ -172,27 +172,27 @@ pub(super) struct GlobalAi {
 /// Optional component projections are omitted, unlike optional references inside
 /// components, which are emitted as explicit nulls. Keep these policies distinct.
 #[derive(Serialize, Deserialize)]
-pub(super) struct EntityRuntime {
+pub(super) struct EntityRuntime<'a> {
     pub position: Position,
     pub sprite: Sprite,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subtype: Option<serde_json::Value>,
+    pub subtype: Option<super::projectile_projections::Subtype>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub npc_ai: Option<serde_json::Value>,
+    pub npc_ai: Option<NpcAi<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub human_continuation: Option<serde_json::Value>,
+    pub human_continuation: Option<super::human_projections::HumanContinuation<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub human_structure: Option<serde_json::Value>,
+    pub human_structure: Option<super::human_projections::HumanStructure>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pc_tail: Option<serde_json::Value>,
+    pub pc_tail: Option<super::human_projections::PcTail>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pc_core: Option<serde_json::Value>,
+    pub pc_core: Option<super::human_projections::PcCore<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pc_qa: Option<Vec<serde_json::Value>>,
+    pub pc_qa: Option<Vec<super::human_projections::PcQa>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pc_interface: Option<serde_json::Value>,
+    pub pc_interface: Option<super::human_projections::PcInterface>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pc_portrait: Option<serde_json::Value>,
+    pub pc_portrait: Option<super::human_projections::PcPortrait>,
 }
 
 #[derive(Serialize, Deserialize)]

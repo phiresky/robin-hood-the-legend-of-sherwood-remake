@@ -747,16 +747,74 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
         let mut element = ElementData::default();
         element.kind = ElementKind::ActorSoldier;
         let mut inner = EngineInner::new();
+        let mut npc = NpcData::default();
+        npc.ai.ai_brain = brain;
         let id = inner.add_test_entity(Entity::Soldier(ActorSoldier {
             element,
             actor: Default::default(),
             human: Default::default(),
-            npc: NpcData {
-                ai_brain: brain,
-                ..Default::default()
-            },
+            npc,
             soldier: Default::default(),
         }));
+        let handle = crate::ai::AiEntityHandle::new(id.index());
+        if let Some(base) = inner
+            .get_entity_mut(id)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .ai_brain
+            .base_mut()
+        {
+            use crate::ai::{
+                CombatInfo, DoorCombatInfo, Hint, Noise, NoiseOrigin, NoiseType, Stimulus,
+                StimulusInfo, StimulusType, StolenObject,
+            };
+            let infos = [
+                StimulusInfo::None,
+                StimulusInfo::Noise(Noise {
+                    origin: NoiseOrigin {
+                        x: -0.0,
+                        y: 9.5,
+                        sector: None,
+                        layer: None,
+                    },
+                    noise_type: NoiseType::Distraction,
+                    volume: 3,
+                    elevation: 7,
+                    element_id: 0,
+                }),
+                StimulusInfo::Position(Default::default()),
+                StimulusInfo::Human(handle),
+                StimulusInfo::Hint(Hint {
+                    seek_point: Default::default(),
+                    seek_flags: 5,
+                    who_tells_me: handle,
+                }),
+                StimulusInfo::Object(handle),
+                StimulusInfo::Stolen(StolenObject {
+                    object: handle,
+                    thief: handle,
+                }),
+                StimulusInfo::Combat(CombatInfo {
+                    actor_npc: handle,
+                    enemy_position: Default::default(),
+                }),
+                StimulusInfo::DoorCombat(DoorCombatInfo {
+                    delay: 13,
+                    goal: Default::default(),
+                    direction: 9,
+                    adversary: Some(handle),
+                }),
+                StimulusInfo::Index(31),
+            ];
+            base.stimulus_queue.extend(infos.into_iter().map(|info| {
+                let mut stimulus = Stimulus::new(StimulusType::EventEnemyNear);
+                stimulus.info = info;
+                stimulus.owner = Some(handle);
+                stimulus.to_whole_patrol = true;
+                stimulus
+            }));
+        }
         let engine = Engine {
             inner,
             bootstrap_open: false,

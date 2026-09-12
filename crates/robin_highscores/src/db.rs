@@ -3353,7 +3353,7 @@ mod tests {
                 .push_bind(7_i64)
                 .push(" = ")
                 .push_bind(7_i64);
-            assert!(!query.sql().contains("X'"));
+            assert!(!query.sql().as_str().contains("X'"));
             let actual: i64 = query
                 .build_query_scalar()
                 .fetch_one(&mut connection)
@@ -3591,7 +3591,12 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&username.id, username.nonce, public_key, "Robin")
+            .apply_username_update(
+                &username.id,
+                username.nonce.into_bytes(),
+                public_key,
+                "Robin",
+            )
             .await
             .unwrap();
         let challenge = database
@@ -4956,11 +4961,16 @@ mod tests {
             .unwrap();
 
         database
-            .apply_username_update(&old.id, old.nonce, public_key, "Old")
+            .apply_username_update(&old.id, old.nonce.into_bytes(), public_key, "Old")
             .await
             .unwrap();
         database
-            .apply_username_update(&current.id, current.nonce, public_key, "Current")
+            .apply_username_update(
+                &current.id,
+                current.nonce.into_bytes(),
+                public_key,
+                "Current",
+            )
             .await
             .unwrap();
         assert_eq!(
@@ -4993,12 +5003,17 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&newest.id, newest.nonce, public_key, "Newest")
+            .apply_username_update(&newest.id, newest.nonce.into_bytes(), public_key, "Newest")
             .await
             .unwrap();
         assert!(matches!(
             database
-                .apply_username_update(&rollback.id, rollback.nonce, public_key, "Rollback")
+                .apply_username_update(
+                    &rollback.id,
+                    rollback.nonce.into_bytes(),
+                    public_key,
+                    "Rollback"
+                )
                 .await,
             Err(DbError::InvalidChallenge)
         ));

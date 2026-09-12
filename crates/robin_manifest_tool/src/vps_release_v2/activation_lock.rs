@@ -49,7 +49,7 @@ impl PinnedVpsActivationLockV2 {
     }
 
     pub fn ensure_canonical(&self) -> Result<()> {
-        use rustix::fs::{FileType, Mode, OFlags, ResolveFlags, openat2};
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
         use std::os::fd::AsFd as _;
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
