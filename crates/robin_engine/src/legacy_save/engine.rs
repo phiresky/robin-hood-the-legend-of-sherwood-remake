@@ -89,62 +89,34 @@ impl LegacyEnginePreamble {
         limits: &LegacyEngineLimits,
     ) -> LegacyResult<Self> {
         reader.scope("rhsg.engine", |reader| {
-            let start_offset = reader.offset();
-            let cheat_used_flags = reader.read_u32("cheat_used_flags")?;
-            let shield_protected = reader.read_bool("shield_protected")?;
-            let freeze_all = reader.read_bool("freeze_all")?;
-            let view = LegacyPoint2::read(reader, "view")?;
-            let zoom_factor = reader.read_f32("zoom_factor")?;
-            let camera_slide = LegacyPoint2::read(reader, "camera_slide")?;
-            let fixed_camera_speed = reader.read_u16("fixed_camera_speed")?;
-            let speed = reader.read_f32("speed")?;
-            let speed_index = reader.read_u16("speed_index")?;
-            let desired_zoom_factor = reader.read_f32("desired_zoom_factor")?;
-            let old_zoom_factor = reader.read_f32("old_zoom_factor")?;
-            let background_transform = LegacyBackgroundTransform::read(reader, abi_profile)?;
-            let universal_frame_counter = reader.read_u32("universal_frame_counter")?;
-            let creation_counter = reader.read_u32("creation_counter")?;
-            let repulsive_point_counter = reader.read_u32("repulsive_point_counter")?;
-            let lock_engine = reader.read_bool("lock_engine")?;
-            let mission_won = reader.read_bool("mission_won")?;
-            let mission_won_first_time = reader.read_bool("mission_won_first_time")?;
-            let camera_wanted = LegacyPoint2::read(reader, "camera_wanted")?;
-            let locker = reader.read_bool("locker")?;
-            let skip_data = reader.read_string("skip_data")?;
-            let short_briefings = LegacyShortBriefings::read(reader, limits)?;
-            let sound = LegacySound::read(reader, limits)?;
-            let messenger = LegacyMessenger::read(reader)?;
-            let game = LegacyGameState::read(reader)?;
-            let elements_offset = reader.offset();
-
             Ok(Self {
-                start_offset,
-                cheat_used_flags,
-                shield_protected,
-                freeze_all,
-                view,
-                zoom_factor,
-                camera_slide,
-                fixed_camera_speed,
-                speed,
-                speed_index,
-                desired_zoom_factor,
-                old_zoom_factor,
-                background_transform,
-                universal_frame_counter,
-                creation_counter,
-                repulsive_point_counter,
-                lock_engine,
-                mission_won,
-                mission_won_first_time,
-                camera_wanted,
-                locker,
-                skip_data,
-                short_briefings,
-                sound,
-                messenger,
-                game,
-                elements_offset,
+                start_offset: reader.offset(),
+                cheat_used_flags: reader.read_u32("cheat_used_flags")?,
+                shield_protected: reader.read_bool("shield_protected")?,
+                freeze_all: reader.read_bool("freeze_all")?,
+                view: LegacyPoint2::read(reader, "view")?,
+                zoom_factor: reader.read_f32("zoom_factor")?,
+                camera_slide: LegacyPoint2::read(reader, "camera_slide")?,
+                fixed_camera_speed: reader.read_u16("fixed_camera_speed")?,
+                speed: reader.read_f32("speed")?,
+                speed_index: reader.read_u16("speed_index")?,
+                desired_zoom_factor: reader.read_f32("desired_zoom_factor")?,
+                old_zoom_factor: reader.read_f32("old_zoom_factor")?,
+                background_transform: LegacyBackgroundTransform::read(reader, abi_profile)?,
+                universal_frame_counter: reader.read_u32("universal_frame_counter")?,
+                creation_counter: reader.read_u32("creation_counter")?,
+                repulsive_point_counter: reader.read_u32("repulsive_point_counter")?,
+                lock_engine: reader.read_bool("lock_engine")?,
+                mission_won: reader.read_bool("mission_won")?,
+                mission_won_first_time: reader.read_bool("mission_won_first_time")?,
+                camera_wanted: LegacyPoint2::read(reader, "camera_wanted")?,
+                locker: reader.read_bool("locker")?,
+                skip_data: reader.read_string("skip_data")?,
+                short_briefings: LegacyShortBriefings::read(reader, limits)?,
+                sound: LegacySound::read(reader, limits)?,
+                messenger: LegacyMessenger::read(reader)?,
+                game: LegacyGameState::read(reader)?,
+                elements_offset: reader.offset(),
             })
         })
     }

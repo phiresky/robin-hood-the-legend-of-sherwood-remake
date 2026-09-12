@@ -6,6 +6,7 @@
 //! optional inline post-seek sequence. The manager then writes a queue of
 //! sequence-element IDs. These are IDs, not phase-one element references.
 
+use super::read_helpers::{hex16, reserve};
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
@@ -23,25 +24,6 @@ const FINGERPRINT_SEQUENCE_MANAGER: [u8; 16] = hex16("2655e6483ffc10f8c935273d80
 const FINGERPRINT_ORDER_STATIC: [u8; 16] = hex16("c0a03b6622b85950bea7cb175f3de0f0");
 const FINGERPRINT_SEQUENCE_STATIC: [u8; 16] = hex16("56f687760fb3324570654ecc1ff59f92");
 const FINGERPRINT_SEQUENCE_ELEMENT_STATIC: [u8; 16] = hex16("5051f78a07d6f907eb5648339133c723");
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacySequenceManagerLimits {
@@ -149,13 +131,10 @@ impl LegacySequenceManagerState {
             reserve(reader, &mut sequences, sequence_count, "sequences")?;
             for index in 0..sequence_count {
                 sequences.push(reader.scope(format!("sequences[{index}]"), |reader| {
-                    let start_offset = reader.offset();
-                    let body = read_sequence_with_pre_serialization(reader, &limits.payload)?;
-                    let end_offset = reader.offset();
                     Ok(LegacyManagedSequence {
-                        start_offset,
-                        body,
-                        end_offset,
+                        start_offset: reader.offset(),
+                        body: read_sequence_with_pre_serialization(reader, &limits.payload)?,
+                        end_offset: reader.offset(),
                     })
                 })?);
             }
@@ -477,27 +456,11 @@ fn manager_element_state(sequences: &[LegacyManagedSequence], id: u32) -> Option
     })
 }
 
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: &'static str,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
     const FINGERPRINT_SEQUENCE: [u8; 16] = hex16("462542ef9f0ef300dff9647c2091d151");
     const FINGERPRINT_SEQUENCE_ELEMENT: [u8; 16] = hex16("8358d2ae0236d0e6a448a02189c93b67");
@@ -557,13 +520,7 @@ mod tests {
         bytes
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temp = NamedTempFile::new().expect("temporary file");
-        temp.write_all(bytes).expect("write fixture");
-        let mut file =
-            SbFile::open(temp.path().to_str().expect("utf-8 path")).expect("open fixture");
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     #[test]
     fn reads_empty_manager_for_both_v48_abis() {

@@ -9,6 +9,7 @@
 //! Wire order follows the original game's engine, minimap, ground-mark, and
 //! titbit serialization.
 
+use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -22,25 +23,6 @@ use super::payload_base::{
 const FINGERPRINT_MINIMAP: [u8; 16] = hex16("50f6249a4ee7522862f2c5f5442ae167");
 const FINGERPRINT_GROUND_MARK: [u8; 16] = hex16("b7ebd8adf1c9be532ca495049f430da9");
 const FINGERPRINT_TITBITS: [u8; 16] = hex16("0066cad32f8281aebfc9aba90a88aa34");
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyPostSimpleLimits {
@@ -103,7 +85,6 @@ impl LegacyFailedPathRequests {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("failed_path_requests", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             let count = read_count_u16(reader, "count", limits.failed_path_requests)?;
             let mut requests = Vec::new();
@@ -172,7 +153,6 @@ impl LegacyMinimapState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("minimap", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature("fingerprint", FINGERPRINT_MINIMAP, "minimap fingerprint")?;
             let go_in = reader.read_bool("go_in")?;
@@ -304,7 +284,6 @@ impl LegacyGroundMarkState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("ground_mark", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature(
                 "fingerprint",
@@ -377,7 +356,6 @@ impl LegacyTitbitsState {
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
         reader.scope("titbits", |reader| {
-            audit_abi(abi_profile);
             let start_offset = reader.offset();
             reader.read_signature(
                 "fingerprint",
@@ -418,56 +396,6 @@ impl LegacyTitbitsState {
     }
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
-fn read_box2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyBoundingBox2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyBoundingBox2 {
-            top_left: read_point2(reader, "top_left")?,
-            bottom_right: read_point2(reader, "bottom_right")?,
-            bounds_are_set: reader.read_bool("bounds_are_set")?,
-        })
-    })
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: impl std::fmt::Display,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
 fn read_count_u16(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display + Copy,
@@ -486,32 +414,14 @@ fn read_count_u16(
     Ok(count)
 }
 
-fn audit_abi(abi_profile: LegacySaveAbiProfile) {
-    debug_assert!(abi_profile.is_little_endian());
-    debug_assert_eq!(LegacySaveAbiProfile::BOOL_WIDTH, 1);
-    debug_assert_eq!(LegacySaveAbiProfile::WORD_WIDTH, 2);
-    debug_assert_eq!(LegacySaveAbiProfile::LONG_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::ENUM_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::FLOAT_WIDTH, 4);
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
     use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn u16_bytes(value: u16, bytes: &mut Vec<u8>) {
         bytes.extend_from_slice(&value.to_le_bytes());

@@ -6,6 +6,7 @@
 //! structures are nevertheless shared wire-domain types so the manager-owned
 //! form can add those three pointer fixups without redefining the payload.
 
+use super::read_helpers::{hex16, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -20,25 +21,6 @@ const FINGERPRINT_SEQUENCE: [u8; 16] = hex16("462542ef9f0ef300dff9647c2091d151")
 const FINGERPRINT_SEQUENCE_ELEMENT: [u8; 16] = hex16("8358d2ae0236d0e6a448a02189c93b67");
 const FINGERPRINT_ORDER: [u8; 16] = hex16("2000b559de6275b3d22859aac6522a56");
 const NULL_U32: u32 = u32::MAX;
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacySequencePayloadLimits {
@@ -754,60 +736,12 @@ fn read_gate_ref(
     Ok(LegacyGateRef((value != -1).then_some(value)))
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: &'static str,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn push_u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());

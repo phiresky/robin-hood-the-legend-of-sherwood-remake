@@ -466,21 +466,10 @@ fn require_offset(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let path = temporary.path().to_str().unwrap();
-        let mut file = SbFile::open(path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     #[test]
     fn user_lock_consumes_exactly_one_byte_and_preserves_nonzero_truth() {

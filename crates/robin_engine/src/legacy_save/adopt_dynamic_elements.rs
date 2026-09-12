@@ -24,7 +24,7 @@ use crate::{
     element::{
         ActorData, ActorPc, ElementBonus, ElementData, ElementKind, ElementNet, ElementProjectile,
         ElementScroll, Entity, EntityId, HULK_LENGTH, HumanData, NetData, ObjectData, ObjectType,
-        ObjectTypeExt, PcData, ProjectileData,
+        PcData, ProjectileData,
     },
     engine::{EngineInner, LevelAssets},
     fast_find_grid::FastFindGrid,

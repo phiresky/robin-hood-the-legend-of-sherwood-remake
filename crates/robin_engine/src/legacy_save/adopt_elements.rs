@@ -1,9 +1,9 @@
 //! Atomic adoption of the common static-element state in Original v48 saves.
 //!
 //! This module deliberately builds an owned, fully validated plan before
-//! touching the initialized mission.  It is not wired into the replay runner
-//! yet: later stages must first adopt the remaining leaf, sequence, AI, and
-//! manager state into the same candidate engine.
+//! touching the initialized mission. The live save-import and replay paths
+//! coordinate this plan with the remaining sections through
+//! [`super::adopt_engine::adopt_known_linux_v48_replay`].
 
 use std::{collections::BTreeMap, num::NonZeroU32};
 

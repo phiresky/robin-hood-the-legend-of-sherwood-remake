@@ -6,6 +6,7 @@
 //! despite being projectile elements. The readers below mirror the
 //! exact `Serialize` call order.
 
+use super::read_helpers::{read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -169,15 +170,9 @@ pub fn read_object_item_payload(
                     class,
                 )?,
             }),
-            LegacyElementClass::Mobile => {
-                audit_abi(abi_profile);
-                LegacyObjectItemPayload::Mobile(LegacyMobilePayload::read(
-                    reader,
-                    base_limits,
-                    context,
-                    creation_order,
-                )?)
-            }
+            LegacyElementClass::Mobile => LegacyObjectItemPayload::Mobile(
+                LegacyMobilePayload::read(reader, base_limits, context, creation_order)?,
+            ),
             _ => {
                 let offset = reader.offset();
                 return Err(reader.invalid_value(
@@ -223,7 +218,6 @@ impl LegacyProjectilePayload {
         class: LegacyElementClass,
     ) -> LegacyResult<Self> {
         reader.scope("projectile", |reader| {
-            audit_abi(abi_profile);
             reader.read_signature(
                 "fingerprint",
                 FINGERPRINT_PROJECTILE,
@@ -565,31 +559,6 @@ pub struct LegacySpyCapePayload {
     pub object: LegacyObjectPayload,
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field.to_string(), |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
 fn read_bounded_u16(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display + Copy,
@@ -609,45 +578,12 @@ fn read_bounded_u16(
     Ok(count)
 }
 
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: &'static str,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
-fn audit_abi(abi_profile: LegacySaveAbiProfile) {
-    debug_assert!(abi_profile.is_little_endian());
-    debug_assert_eq!(LegacySaveAbiProfile::BOOL_WIDTH, 1);
-    debug_assert_eq!(LegacySaveAbiProfile::WORD_WIDTH, 2);
-    debug_assert_eq!(LegacySaveAbiProfile::LONG_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::ENUM_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::FLOAT_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::POINTER_PLACEHOLDER_WIDTH, 4);
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     #[test]
     fn trajectory_count_is_rejected_before_payload_allocation() {

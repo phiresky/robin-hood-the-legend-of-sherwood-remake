@@ -851,10 +851,7 @@ fn map_mission_status(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
     use std::path::{Path, PathBuf};
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
@@ -863,14 +860,7 @@ mod tests {
     };
     use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn minimal_campaign_bytes() -> Vec<u8> {
         let mut bytes = Vec::new();
