@@ -11,6 +11,39 @@ use crate::{
     sprite_codec::{SpriteGrid, encode_grids_shipping},
 };
 
+/// Conditional entropy estimated from (joint count, context count) pairs,
+/// scaled to the full tile population. Key representation and sampling policy
+/// belong to the caller; no observations preserve the converter's zero estimate.
+pub fn conditional_entropy_bits(
+    counts: impl IntoIterator<Item = (u64, u64)>,
+    sampled: u64,
+    full_tiles: u64,
+) -> f64 {
+    if sampled == 0 {
+        return 0.0;
+    }
+    let mut bits = 0.0;
+    for (count, context_count) in counts {
+        assert!(
+            count > 0 && count <= context_count,
+            "invalid entropy counts"
+        );
+        bits -= count as f64 * (count as f64 / context_count as f64).log2();
+    }
+    bits / sampled as f64 * full_tiles as f64
+}
+
+#[test]
+fn entropy_estimate_keeps_sampling_scale_and_empty_policy() {
+    assert_eq!(conditional_entropy_bits([], 0, 100), 0.0);
+    assert_eq!(conditional_entropy_bits([(4, 4)], 4, 40), 0.0);
+    assert_eq!(conditional_entropy_bits([(2, 4), (2, 4)], 4, 40), 40.0);
+    assert_eq!(
+        conditional_entropy_bits([(1, 2), (1, 2), (2, 2)], 4, 40),
+        20.0
+    );
+}
+
 /// Contiguous whole-grid ranges with a soft tile budget. A grid larger than
 /// the budget stays intact in its own group; zero preserves one original job.
 pub fn vq_group_ranges(grids: &[SpriteGrid<'_>], max_tiles: usize) -> Result<Vec<Range<usize>>> {

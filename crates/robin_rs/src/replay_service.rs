@@ -449,13 +449,17 @@ fn deliver_export(complete: ExportCompletion, result: Result<String, ExportError
 
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default, Serialize)]
-struct NativeExportWorker {
-    #[serde(skip)]
-    sender: Option<std::sync::mpsc::SyncSender<NativeReplayExportJob>>,
-    #[serde(skip)]
-    thread: Option<std::thread::JoinHandle<()>>,
-    closed: bool,
-    failure: Option<String>,
+enum NativeExportWorker {
+    #[default]
+    Idle,
+    Running {
+        #[serde(skip)]
+        sender: std::sync::mpsc::SyncSender<NativeReplayExportJob>,
+        #[serde(skip)]
+        thread: std::thread::JoinHandle<()>,
+    },
+    Closed,
+    Failed(String),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -472,49 +476,44 @@ impl NativeExportWorker {
     fn sender(
         &mut self,
     ) -> Result<&std::sync::mpsc::SyncSender<NativeReplayExportJob>, ExportError> {
-        if let Some(error) = &self.failure {
-            return Err(ExportError::Internal(error.clone()));
-        }
-        if self.closed {
-            return Err(ExportError::Retired(
-                "replay export service is shut down".into(),
-            ));
-        }
-        if self.sender.is_none() {
+        if matches!(self, Self::Idle) {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
-            match std::thread::Builder::new()
+            *self = match std::thread::Builder::new()
                 .name("robin-replay-export".into())
                 .spawn(move || {
                     while let Ok(job) = receiver.recv() {
                         deliver_export(job.complete, job.snapshot.compact_sync());
                     }
                 }) {
-                Ok(thread) => {
-                    self.thread = Some(thread);
-                    self.sender = Some(sender);
-                }
-                Err(error) => {
-                    let error = format!("spawn replay export worker: {error}");
-                    self.failure = Some(error.clone());
-                    return Err(ExportError::Internal(error));
-                }
-            }
+                Ok(thread) => Self::Running { sender, thread },
+                Err(error) => Self::Failed(format!("spawn replay export worker: {error}")),
+            };
         }
-        Ok(self
-            .sender
-            .as_ref()
-            .expect("started export worker owns sender"))
+        match self {
+            Self::Running { sender, .. } => Ok(sender),
+            Self::Failed(error) => Err(ExportError::Internal(error.clone())),
+            Self::Closed => Err(ExportError::Retired(
+                "replay export service is shut down".into(),
+            )),
+            Self::Idle => unreachable!("worker startup always publishes its outcome"),
+        }
     }
 
     fn shutdown(&mut self) -> Result<(), String> {
-        self.closed = true;
-        drop(self.sender.take());
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
-        {
-            self.failure = Some("replay export worker terminated unexpectedly".into());
+        match std::mem::replace(self, Self::Closed) {
+            Self::Running { sender, thread } => {
+                drop(sender);
+                if thread.join().is_err() {
+                    *self = Self::Failed("replay export worker terminated unexpectedly".into());
+                }
+            }
+            Self::Failed(error) => *self = Self::Failed(error),
+            Self::Idle | Self::Closed => {}
         }
-        self.failure.clone().map_or(Ok(()), Err)
+        match self {
+            Self::Failed(error) => Err(error.clone()),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -913,11 +912,7 @@ mod tests {
                 deliver_export(job.complete, job.snapshot.compact_sync());
             }
         });
-        *service.export_worker.lock().unwrap() = NativeExportWorker {
-            sender: Some(sender),
-            thread: Some(thread),
-            ..Default::default()
-        };
+        *service.export_worker.lock().unwrap() = NativeExportWorker::Running { sender, thread };
         let running = service.exports().export();
         started_rx
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -942,7 +937,23 @@ mod tests {
         assert!(matches!(error, ExportError::Retired(_)));
         assert_eq!(error.to_string(), "replay export service is shut down");
         futures::executor::block_on(service.shutdown()).unwrap();
-        assert!(service.export_worker.lock().unwrap().thread.is_none());
+        assert!(!matches!(
+            *service.export_worker.lock().unwrap(),
+            NativeExportWorker::Running { .. }
+        ));
+    }
+
+    #[test]
+    fn idle_shutdown_and_failed_start_are_terminal_and_repeatable() {
+        let mut idle = NativeExportWorker::default();
+        idle.shutdown().unwrap();
+        idle.shutdown().unwrap();
+        assert!(matches!(idle.sender(), Err(ExportError::Retired(_))));
+        let mut failed = NativeExportWorker::Failed("injected spawn failure".into());
+        for _ in 0..2 {
+            assert_eq!(failed.shutdown().unwrap_err(), "injected spawn failure");
+            assert!(matches!(failed.sender(), Err(ExportError::Internal(_))));
+        }
     }
 
     #[test]
@@ -964,16 +975,21 @@ mod tests {
     #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
     fn llvm_export_worker_failure_is_joined_and_remains_reportable() {
         let service = ReplayService::default();
-        service.export_worker.lock().unwrap().thread = Some(std::thread::spawn(|| {
-            panic!("injected export worker failure")
-        }));
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+            sender,
+            thread: std::thread::spawn(|| panic!("injected export worker failure")),
+        };
         let error = futures::executor::block_on(service.shutdown()).unwrap_err();
         assert!(error.contains("terminated unexpectedly"));
         assert_eq!(
             futures::executor::block_on(service.shutdown()).unwrap_err(),
             error
         );
-        assert!(service.export_worker.lock().unwrap().thread.is_none());
+        assert!(!matches!(
+            *service.export_worker.lock().unwrap(),
+            NativeExportWorker::Running { .. }
+        ));
         let export_error = service.export().recv_blocking().unwrap().unwrap_err();
         assert_eq!(export_error, ExportError::Internal(error));
     }
@@ -993,7 +1009,11 @@ mod tests {
         record_export_fixture(&service, "worker-disconnected");
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         drop(receiver);
-        service.export_worker.lock().unwrap().sender = Some(sender);
+        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+            sender,
+            // This fixture owns the receiver directly to control queue timing.
+            thread: std::thread::spawn(|| {}),
+        };
         let error = service.export().recv_blocking().unwrap().unwrap_err();
         assert_eq!(
             error,
@@ -1007,7 +1027,11 @@ mod tests {
         // Hold the worker queue explicitly: scheduling and replacement order do
         // not depend on thread timing or how quickly compact encoding finishes.
         let (sender, worker) = std::sync::mpsc::sync_channel(1);
-        service.export_worker.lock().unwrap().sender = Some(sender);
+        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+            sender,
+            // This fixture owns the receiver directly to control queue timing.
+            thread: std::thread::spawn(|| {}),
+        };
         record_export_fixture(&service, "first-export");
         let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
         let mut first = leaderboard.begin().unwrap();

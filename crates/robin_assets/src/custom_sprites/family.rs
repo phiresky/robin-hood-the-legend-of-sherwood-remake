@@ -139,8 +139,9 @@ pub fn read_selected_bytes(
         expected == family.bank.sprite_count && family.bank.sprites.len() == expected as usize,
         "incomplete family sprite bank"
     );
-    // TODO: prune unselected sibling chunks while retaining both hub closures
-    // when a mission uses only a subset of a selected family.
+    if let Some(selected) = selected {
+        retain_selected_chunks(&mut family, selected)?;
+    }
     family.bank.materialize_vq_chunks(&rhs_files)?;
     let mut result = Vec::new();
     for mut character in family.characters {
@@ -171,6 +172,62 @@ pub fn read_selected_bytes(
         result.push((character.name, character.metadata));
     }
     Ok(result)
+}
+
+/// Retain complete restart groups and both transitive hub closures. Sprite
+/// rows and dictionaries keep their original IDs; only unused compressed
+/// groups are removed. Metadata validation above still covers the whole family.
+fn retain_selected_chunks(
+    family: &mut Family,
+    selected: &std::collections::HashSet<String>,
+) -> Result<()> {
+    let mut providers = vec![None; family.bank.sprites.len()];
+    for (index, chunk) in family.bank.vq_chunks.iter().enumerate() {
+        for &id in &chunk.sprite_ids {
+            let provider = providers
+                .get_mut(id as usize)
+                .context("VQ chunk names an out-of-range family frame")?;
+            ensure!(
+                provider.replace(index).is_none(),
+                "duplicate family VQ frame provider for {id}"
+            );
+        }
+    }
+    let mut pending: Vec<u32> = family
+        .characters
+        .iter()
+        .filter(|character| selected.contains(&character.name))
+        .flat_map(|character| character.first..character.first + character.widths.len() as u32)
+        .collect();
+    let mut retained = vec![false; family.bank.vq_chunks.len()];
+    while let Some(id) = pending.pop() {
+        let provider = providers
+            .get(id as usize)
+            .context("family dependency names an out-of-range frame")?;
+        if let Some(index) = *provider {
+            if std::mem::replace(&mut retained[index], true) {
+                continue;
+            }
+            let chunk = &family.bank.vq_chunks[index];
+            pending.extend(
+                chunk
+                    .base_ids
+                    .iter()
+                    .chain(&chunk.base2_ids)
+                    .flatten()
+                    .copied(),
+            );
+        }
+        // Inline grids need no provider. Missing/malformed required grids are
+        // rejected by the existing materializer or runtime-sprite validator.
+    }
+    let mut index = 0;
+    family.bank.vq_chunks.retain(|_| {
+        let keep = retained[index];
+        index += 1;
+        keep
+    });
+    Ok(())
 }
 
 // Same sampled conditional-entropy hub selection as convert_datadir, with
@@ -208,14 +265,13 @@ fn proxy(member: &[Vec<u16>], base: Option<&[Vec<u16>]>, widths: &[u16]) -> f64 
             .map(|&count| count as f64 * (full as f64 / count as f64).log2())
             .sum();
     }
-    joint
-        .iter()
-        .map(|(&(context, _), &count)| {
-            f64::from(count) * (f64::from(contexts[&context]) / f64::from(count)).log2()
-        })
-        .sum::<f64>()
-        * full as f64
-        / sampled as f64
+    crate::sprite_groups::conditional_entropy_bits(
+        joint
+            .iter()
+            .map(|(&(context, _), &count)| (u64::from(count), u64::from(contexts[&context]))),
+        sampled as u64,
+        full as u64,
+    )
 }
 
 /// Convert one group of positionally identical animation layouts. Uses a
@@ -525,6 +581,146 @@ mod tests {
         let mut bytes = MAGIC.to_vec();
         bytes.extend(bitcode::encode(family));
         zstd::stream::encode_all(bytes.as_slice(), 1).unwrap()
+    }
+
+    fn chunked_family() -> Family {
+        let mut result = family(HACKABLE_RHS_CACHE_VERSION, 0);
+        result.characters.clear();
+        result.bank.sprites.clear();
+        result.bank.sprite_count = 5;
+        result.bank.dictionaries = vec![FrameDictionary::from_raw(
+            2,
+            vec![0, 0, 0, 0, 31, 31, 31, 31],
+        )];
+        for id in 0..5 {
+            let mut member = family(HACKABLE_RHS_CACHE_VERSION, 0);
+            let mut character = member.characters.pop().unwrap();
+            character.name = format!("member{id}");
+            character.first = id;
+            let mut sprite = member.bank.sprites.pop().unwrap().1;
+            sprite.packed_data = Arc::new(Vec::new());
+            result.bank.sprites.push((id, sprite));
+            let base = matches!(id, 1 | 2 | 4).then_some(0);
+            let base2 = matches!(id, 2 | 4).then_some(1);
+            let template = SpriteVqChunk {
+                rhs: character.name.clone(),
+                base_rhs: base.map(|id| format!("member{id}")),
+                base2_rhs: base2.map(|id| format!("member{id}")).unwrap_or_default(),
+                alphabet: 2,
+                sprite_ids: vec![id],
+                base_ids: vec![base],
+                base2_ids: vec![base2],
+                self_refs: base.is_none(),
+                blob: Vec::new(),
+            };
+            let indices = [id as u16 % 2];
+            let grids = [SpriteGrid {
+                cols: 1,
+                rows: 1,
+                indices: &indices,
+            }];
+            result.bank.vq_chunks.extend(
+                crate::sprite_groups::encode_vq_groups(
+                    &template,
+                    &grids,
+                    &[base.map(|_| &[0u16][..])],
+                    &[base2.map(|_| &[1u16][..])],
+                    Some(&rhs(&character)),
+                    GROUP_TILES,
+                )
+                .unwrap(),
+            );
+            result.characters.push(character);
+        }
+        result.bank.vq_chunks.reverse(); // Dependencies need not precede consumers.
+        result
+    }
+
+    #[test]
+    fn selection_retains_both_transitive_hubs_and_preserves_pixels_and_metadata() {
+        let mut family = chunked_family();
+        let bytes = encoded(&family);
+        let all = read_selected_bytes(&bytes, None).unwrap();
+        for name in ["member0", "member1", "member2", "member3", "member4"] {
+            let selected = std::collections::HashSet::from([name.to_owned()]);
+            let loaded = read_selected_bytes(&bytes, Some(&selected)).unwrap();
+            let expected = all.iter().find(|(n, _)| n == name).unwrap();
+            assert_eq!(loaded.len(), 1);
+            assert_eq!(bitcode::encode(&loaded[0].1), bitcode::encode(&expected.1));
+        }
+        let selected = std::collections::HashSet::from(["member2".to_owned()]);
+        retain_selected_chunks(&mut family, &selected).unwrap();
+        assert_eq!(
+            family
+                .bank
+                .vq_chunks
+                .iter()
+                .map(|chunk| chunk.rhs.as_str())
+                .collect::<Vec<_>>(),
+            ["member2", "member1", "member0"]
+        );
+    }
+
+    #[test]
+    fn selection_does_not_decode_unrelated_groups_but_validates_all_metadata() {
+        let mut family = chunked_family();
+        let selected = std::collections::HashSet::from(["member2".to_owned()]);
+        family
+            .bank
+            .vq_chunks
+            .iter_mut()
+            .find(|chunk| chunk.rhs == "member3")
+            .unwrap()
+            .base_ids
+            .clear();
+        assert!(read_selected_bytes(&encoded(&family), None).is_err());
+        assert!(read_selected_bytes(&encoded(&family), Some(&selected)).is_ok());
+        let scripts = &mut family.characters[3].metadata.profiles[0].info.scripts;
+        Arc::make_mut(scripts)[0].frame_ids[0] = u32::MAX;
+        assert!(read_selected_bytes(&encoded(&family), Some(&selected)).is_err());
+    }
+
+    #[test]
+    fn selection_rejects_missing_cyclic_and_ambiguous_required_dependencies() {
+        let selected = std::collections::HashSet::from(["member2".to_owned()]);
+        let mut missing = chunked_family();
+        missing
+            .bank
+            .vq_chunks
+            .retain(|chunk| chunk.rhs != "member1");
+        assert!(read_selected_bytes(&encoded(&missing), Some(&selected)).is_err());
+        let mut outside = chunked_family();
+        outside.bank.vq_chunks[0].sprite_ids[0] = 99;
+        assert!(read_selected_bytes(&encoded(&outside), Some(&selected)).is_err());
+        let mut cyclic = chunked_family();
+        let hub = cyclic
+            .bank
+            .vq_chunks
+            .iter_mut()
+            .find(|chunk| chunk.rhs == "member0")
+            .unwrap();
+        hub.base_rhs = Some("member2".into());
+        hub.base_ids = vec![Some(2)];
+        assert!(read_selected_bytes(&encoded(&cyclic), Some(&selected)).is_err());
+        let mut duplicate = chunked_family();
+        duplicate
+            .bank
+            .vq_chunks
+            .push(duplicate.bank.vq_chunks[0].clone());
+        assert!(read_selected_bytes(&encoded(&duplicate), Some(&selected)).is_err());
+    }
+
+    #[test]
+    fn entropy_proxy_preserves_full_width_symbols_and_one_row_fallback() {
+        assert_eq!(proxy(&[vec![0, u16::MAX]], None, &[8]), 2.0);
+        assert_eq!(
+            proxy(&[vec![0, u16::MAX]], Some(&[vec![42, 42]]), &[4]),
+            2.0
+        );
+        assert_eq!(
+            proxy(&[vec![0, u16::MAX]], Some(&[vec![0, u16::MAX]]), &[4]),
+            0.0
+        );
     }
 
     #[test]

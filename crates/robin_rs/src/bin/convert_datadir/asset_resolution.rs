@@ -116,15 +116,16 @@ pub(super) fn family_proxy_bits(
     sampled: u64,
     full_tiles: u64,
 ) -> f64 {
-    if sampled == 0 {
-        return 0.0;
-    }
-    let mut bits = 0.0f64;
-    for (&k, &n) in joint {
-        let ctx_total = ctx_totals[&((k >> 12) as u16)] as f64;
-        bits -= n as f64 * (n as f64 / ctx_total).log2();
-    }
-    bits / sampled as f64 * full_tiles as f64
+    robin_assets::sprite_groups::conditional_entropy_bits(
+        joint.iter().map(|(&key, &count)| {
+            (
+                u64::from(count),
+                u64::from(ctx_totals[&((key >> 12) as u16)]),
+            )
+        }),
+        sampled,
+        full_tiles,
+    )
 }
 
 /// Resolve a family hub's chunk rel (reusing an existing prep's spelling when
