@@ -3134,12 +3134,6 @@ impl Engine {
         })
     }
 
-    /// Read-only schema-13 snapshot of the ordered failed-path timeout list.
-    #[doc(hidden)]
-    pub fn parity_failed_path_requests(&self) -> Vec<crate::pathfinder::ParityFailedPathRequest> {
-        self.inner.parity_failed_path_requests()
-    }
-
     /// Crate-internal access for the validated Original-save adoption
     /// coordinator. Downstream callers cannot bypass `Engine` construction or
     /// replace a partially converted mission.
