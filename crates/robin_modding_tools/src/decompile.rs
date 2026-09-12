@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write};
 
 use crate::actor_names::{ActorNames, ScriptKind};
-use crate::scb::{ClassEntry, ScbFile};
+use robin_assets::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::{native_name, native_signature_by_index};
 use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode_for_preparation};
 
@@ -2073,7 +2073,7 @@ fn decompile_class(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scb;
+    use robin_assets::scb;
 
     fn diagnostic_class(name: &str, operations: &[u8]) -> ClassEntry {
         ClassEntry {

@@ -22,15 +22,9 @@ mod original_data {
     }
 }
 
-#[cfg(feature = "engine-adapters")]
-pub mod actor_names;
 pub mod binary_reader;
 #[cfg(feature = "engine-adapters")]
 pub mod custom_sprites;
-#[cfg(feature = "engine-adapters")]
-pub mod decompile;
-#[cfg(feature = "engine-adapters")]
-pub mod disasm;
 pub mod frame_holder;
 #[cfg(feature = "engine-adapters")]
 pub mod interface_metadata;

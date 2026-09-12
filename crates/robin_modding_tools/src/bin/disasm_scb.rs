@@ -173,7 +173,7 @@ fn load_actor_names(
     datadir: Option<&str>,
     mission: Option<&str>,
     scb_path: &str,
-) -> Result<Option<robin_assets::actor_names::ActorNames>, std::process::ExitCode> {
+) -> Result<Option<robin_modding_tools::actor_names::ActorNames>, std::process::ExitCode> {
     let Some(dd) = datadir else {
         return Ok(None);
     };
@@ -183,7 +183,7 @@ fn load_actor_names(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default()
     });
-    match robin_assets::actor_names::load_from_datadir(Path::new(dd), &m) {
+    match robin_modding_tools::actor_names::load_from_datadir(Path::new(dd), &m) {
         Ok(n) => Ok(Some(n)),
         Err(e) => {
             tracing::error!("{scb_path}: actor names: {e}");
@@ -195,12 +195,12 @@ fn load_actor_names(
 fn render(
     scb: &robin_assets::scb::ScbFile,
     decompile: bool,
-    names: Option<&robin_assets::actor_names::ActorNames>,
+    names: Option<&robin_modding_tools::actor_names::ActorNames>,
 ) -> String {
     if decompile {
-        robin_assets::decompile::decompile_with_names(scb, names)
+        robin_modding_tools::decompile::decompile_with_names(scb, names)
     } else {
-        robin_assets::disasm::dump(scb)
+        robin_modding_tools::disasm::dump(scb)
     }
 }
 
