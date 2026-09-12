@@ -3,10 +3,9 @@
 //! Inventory comparison and sealing operate only on the validated open files;
 //! topology authoring never gets filesystem mutation authority.
 
-use super::topology::{ExpectedPublicationFileV3, ExpectedPublicationTopologyV3};
+use super::topology::ExpectedPublicationTopologyV3;
 use super::{PublicationTreeInventoryV3, publication_tree_inventory_v3_from_fd};
 use anyhow::{Context as _, Result, ensure};
-use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -17,37 +16,26 @@ impl ExpectedPublicationTopologyV3 {
         path: String,
         executable: bool,
     ) -> Result<()> {
-        let artifact = inventory
+        let artifact = &inventory
             .files
             .iter()
             .find(|file| file.path == path)
             .with_context(|| format!("validated PublicationV3 omits expected file {path}"))?
-            .artifact
-            .clone();
-        self.register_file(path, &artifact, executable)
+            .artifact;
+        self.register_file(path, artifact, executable)
     }
 
     pub(super) fn validate_inventory(&self, inventory: &PublicationTreeInventoryV3) -> Result<()> {
-        let actual_files = inventory
-            .files
-            .iter()
-            .map(|file| {
-                (
-                    file.path.clone(),
-                    ExpectedPublicationFileV3 {
-                        artifact: file.artifact.clone(),
-                        unix_mode: file.unix_mode,
-                    },
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let actual_directories = inventory
-            .directories
-            .iter()
-            .map(|directory| (directory.path.clone(), directory.unix_mode))
-            .collect::<BTreeMap<_, _>>();
+        // Descriptor inventory is sorted once at acquisition. Compare borrowed
+        // entries directly; rebuilding maps cloned every digest/path and hid
+        // duplicate entries. Length plus ordered equality rejects duplicates too.
         ensure!(
-            actual_files == self.files && actual_directories == self.directories,
+            inventory.files.len() == self.files.len()
+                && inventory.files.iter().zip(&self.files).all(|(actual, (path, expected))|
+                    actual.path == *path && actual.artifact == expected.artifact && actual.unix_mode == expected.unix_mode)
+                && inventory.directories.len() == self.directories.len()
+                && inventory.directories.iter().zip(&self.directories).all(|(actual, (path, mode))|
+                    actual.path == *path && actual.unix_mode == *mode),
             "PublicationV3 file/directory topology differs from its independently derived typed closure"
         );
         Ok(())
@@ -57,24 +45,20 @@ impl ExpectedPublicationTopologyV3 {
         &self,
         inventory: &PublicationTreeInventoryV3,
     ) -> Result<()> {
-        let actual_files = inventory
-            .files
-            .iter()
-            .map(|file| (file.path.clone(), file.artifact.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let expected_files = self
-            .files
-            .iter()
-            .map(|(path, file)| (path.clone(), file.artifact.clone()))
-            .collect::<BTreeMap<_, _>>();
-        let actual_directories = inventory
-            .directories
-            .iter()
-            .map(|directory| directory.path.clone())
-            .collect::<BTreeSet<_>>();
-        let expected_directories = self.directories.keys().cloned().collect::<BTreeSet<_>>();
         ensure!(
-            actual_files == expected_files && actual_directories == expected_directories,
+            inventory.files.len() == self.files.len()
+                && inventory
+                    .files
+                    .iter()
+                    .zip(&self.files)
+                    .all(|(actual, (path, expected))| actual.path == *path
+                        && actual.artifact == expected.artifact)
+                && inventory.directories.len() == self.directories.len()
+                && inventory
+                    .directories
+                    .iter()
+                    .zip(self.directories.keys())
+                    .all(|(actual, path)| actual.path == *path),
             "PublicationV3 content topology differs from its independently derived typed closure"
         );
         Ok(())
