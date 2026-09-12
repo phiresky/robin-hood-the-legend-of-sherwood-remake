@@ -30,7 +30,7 @@ use clap::Parser;
 
 use robin_assets::frame_holder::{FrameHolder, TRANSPARENT_COLOR_16};
 use robin_assets::picture::Picture;
-use robin_engine::sbfile::{self, SbFile};
+use robin_engine::sbfile::SbFile;
 use robin_engine::sprite_script::SpriteScriptor;
 use robin_engine::sprite_variant::SpriteVariant;
 

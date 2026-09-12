@@ -12,7 +12,6 @@ use robin_engine::engine as engine_api;
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile as engine_sbfile;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
 use robin_engine::sbfile::{SbFile, SbFileSystem};
