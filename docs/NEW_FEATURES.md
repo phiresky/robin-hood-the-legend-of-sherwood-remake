@@ -1154,17 +1154,22 @@ existing operator bearer token protects list, detail and deletion endpoints:
 `GET /api/v1/operator/diagnostics`,
 `GET /api/v1/operator/diagnostics/{report_id}`, and
 `DELETE /api/v1/operator/diagnostics/{report_id}`.
-The latest 100 reports are listed. Identical payloads share a receipt, allowing
+The latest 100 reports are listed. Identical compressed bytes share a receipt, allowing
 safe retries. Admission limits are 10 reports per IP/hour, 100 globally/hour,
-20 MiB compressed per complete report, and 512 MiB total stored payload. The
+100 MiB compressed per complete report, and 512 MiB total stored payload. The
 native client compresses JSON with zstd; browsers use their built-in gzip
 `CompressionStream`. Compression happens before upload and size validation.
 The VPS stores the original compressed bytes and counts that size toward its
-storage budget. A separate 256 MiB decoded limit bounds decompression memory.
+storage budget. The server never decompresses diagnostic reports, either on
+submission or download, and there is no decoded-size or decompression-memory limit.
+Kind and build metadata come from client-supplied headers and are untrusted.
+The detail endpoint downloads the original compressed attachment without
+Content-Encoding, so browsers preserve its compression. Receipts hash the exact
+uploaded bytes. Legacy uncompressed entries remain downloadable as JSON.
 Entries older than 30 days
 are removed during the next successful submission transaction.
 
-Deployment requires database migrations 0003–0004 and a matching schema-version-4
+Deployment requires database migrations 0003–0005 and a matching schema-version-5
 VPS release. Existing nginx and Cloudflare API routing covers the new endpoints.
 
 The browser toolbar's **Report bug** button opens a report form. Unhandled

@@ -1,7 +1,5 @@
 use super::*;
-use robin_run_protocol::diagnostics::{
-    DiagnosticReceiptV1, DiagnosticReportV1, decompress_gzip_report, decompress_report,
-};
+use robin_run_protocol::diagnostics::{DiagnosticReceiptV1, MAX_DIAGNOSTIC_BODY_BYTES};
 use sha2::{Digest as _, Sha256};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -12,9 +10,17 @@ pub struct DiagnosticSummary {
     pub engine_commit: String,
 }
 
+/// An opaque attachment. Neither ingestion nor download decodes its contents.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiagnosticPayload {
+    pub bytes: Vec<u8>,
+    pub encoding: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use robin_run_protocol::diagnostics::DiagnosticReportV1;
     use sqlx::Connection as _;
 
     #[tokio::test]
@@ -42,6 +48,10 @@ mod tests {
         .execute(&mut connection)
         .await
         .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/0005_larger_diagnostics.sql"))
+            .execute(&mut connection)
+            .await
+            .unwrap();
         let row = sqlx::query("SELECT payload, payload_bytes, encoding, kind, engine_commit FROM diagnostic_reports WHERE id = 'legacy-id'").fetch_one(&mut connection).await.unwrap();
         assert_eq!(row.get::<Vec<u8>, _>("payload"), json.as_bytes());
         assert_eq!(row.get::<i64, _>("payload_bytes"), json.len() as i64);
@@ -76,7 +86,7 @@ mod tests {
                 .unwrap();
         let expected_size = compressed.len();
         let receipt = database
-            .insert_diagnostic(compressed.clone(), "zstd", [1; 32])
+            .insert_diagnostic(compressed.clone(), "zstd", "bug", "test", [1; 32])
             .await
             .unwrap();
         let row = sqlx::query("SELECT payload, payload_bytes FROM diagnostic_reports WHERE id = ?")
@@ -91,9 +101,30 @@ mod tests {
                 .diagnostic_report(&receipt.report_id)
                 .await
                 .unwrap()
-                .recent_log,
-            report.recent_log
+                .bytes,
+            compressed
         );
+        // Opaque captures are preserved without attempting decompression,
+        // including artifacts exceeding the former 20 MiB upload limit.
+        let opaque = vec![42; 21 * 1024 * 1024];
+        let receipt = database
+            .insert_diagnostic(opaque.clone(), "zstd", "panic", "test", [1; 32])
+            .await
+            .unwrap();
+        assert_eq!(
+            database
+                .diagnostic_report(&receipt.report_id)
+                .await
+                .unwrap()
+                .bytes,
+            opaque
+        );
+        assert!(matches!(
+            database
+                .insert_diagnostic(vec![1], "zstd", "", "test", [1; 32])
+                .await,
+            Err(DbError::ResultInvariant(_))
+        ));
     }
 }
 impl Database {
@@ -101,37 +132,37 @@ impl Database {
         &self,
         payload: Vec<u8>,
         encoding: &'static str,
+        kind: &str,
+        engine_commit: &str,
         ip_hash: [u8; 32],
     ) -> Result<DiagnosticReceiptV1, DbError> {
-        let (id, payload, kind, engine_commit) =
-            tokio::task::spawn_blocking(move || -> Result<_, DbError> {
-                let decoded = match encoding {
-                    "zstd" => decompress_report(&payload),
-                    "gzip" => decompress_gzip_report(&payload),
-                    _ => {
-                        return Err(DbError::ResultInvariant(
-                            "unsupported diagnostic encoding".into(),
-                        ));
-                    }
-                }
-                .map_err(|e| DbError::ResultInvariant(e.to_string()))?;
-                let report: DiagnosticReportV1 = serde_json::from_slice(&decoded)
-                    .map_err(|e| DbError::ResultInvariant(e.to_string()))?;
-                report
-                    .validate()
-                    .map_err(|e| DbError::ResultInvariant(e.into()))?;
-                let json = serde_json::to_vec(&report)
-                    .map_err(|e| DbError::ResultInvariant(e.to_string()))?;
-                let id = hex::encode(Sha256::digest(&json));
-                let kind = match report.kind {
-                    robin_run_protocol::diagnostics::DiagnosticKindV1::Bug => "bug",
-                    robin_run_protocol::diagnostics::DiagnosticKindV1::Panic => "panic",
-                    robin_run_protocol::diagnostics::DiagnosticKindV1::FatalError => "fatal_error",
-                };
-                Ok((id, payload, kind, report.engine_commit))
-            })
-            .await
-            .map_err(|e| DbError::ResultInvariant(e.to_string()))??;
+        if payload.is_empty() || payload.len() > MAX_DIAGNOSTIC_BODY_BYTES {
+            return Err(DbError::ResultInvariant(
+                "invalid compressed report size".into(),
+            ));
+        }
+        if !matches!(encoding, "zstd" | "gzip") || !matches!(kind, "bug" | "panic" | "fatal_error")
+        {
+            return Err(DbError::ResultInvariant(
+                "invalid diagnostic metadata".into(),
+            ));
+        }
+        if engine_commit.is_empty()
+            || engine_commit.len() > 128
+            || !engine_commit
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        {
+            return Err(DbError::ResultInvariant(
+                "invalid diagnostic build identifier".into(),
+            ));
+        }
+        // Preserve the exact uploaded artifact, including incomplete/crashed
+        // captures. Index only the small metadata explicitly supplied by clients.
+        let (id, payload) =
+            tokio::task::spawn_blocking(move || (hex::encode(Sha256::digest(&payload)), payload))
+                .await
+                .map_err(|e| DbError::Corrupt(e.to_string()))?;
         let now = now_epoch_ms()?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("DELETE FROM diagnostic_reports WHERE received_at_ms < ?")
@@ -182,29 +213,16 @@ impl Database {
             })
             .collect()
     }
-    pub async fn diagnostic_report(&self, id: &str) -> Result<DiagnosticReportV1, DbError> {
+    pub async fn diagnostic_report(&self, id: &str) -> Result<DiagnosticPayload, DbError> {
         let row = sqlx::query("SELECT payload, encoding FROM diagnostic_reports WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
             .ok_or(DbError::NotFound)?;
-        let payload: Vec<u8> = row.try_get("payload")?;
-        let encoding: String = row.try_get("encoding")?;
-        tokio::task::spawn_blocking(move || {
-            let json = match encoding.as_str() {
-                "zstd" => {
-                    decompress_report(&payload).map_err(|e| DbError::Corrupt(e.to_string()))?
-                }
-                "gzip" => {
-                    decompress_gzip_report(&payload).map_err(|e| DbError::Corrupt(e.to_string()))?
-                }
-                "identity" => payload,
-                _ => return Err(DbError::Corrupt("unknown diagnostic encoding".into())),
-            };
-            serde_json::from_slice(&json).map_err(|e| DbError::Corrupt(e.to_string()))
+        Ok(DiagnosticPayload {
+            bytes: row.try_get("payload")?,
+            encoding: row.try_get("encoding")?,
         })
-        .await
-        .map_err(|e| DbError::Corrupt(e.to_string()))?
     }
 
     pub async fn delete_diagnostic_report(&self, id: &str) -> Result<(), DbError> {

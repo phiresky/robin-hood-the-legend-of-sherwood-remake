@@ -34,7 +34,7 @@ use std::time::Duration;
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 mod acceptance;
 mod diagnostics;
-pub use diagnostics::DiagnosticSummary;
+pub use diagnostics::{DiagnosticPayload, DiagnosticSummary};
 mod maintenance;
 mod public_queries;
 mod uploads;
@@ -4835,8 +4835,8 @@ mod tests {
 
     #[test]
     fn migration_chain_is_one_canonical_production_schema() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 4);
-        assert_eq!(MIGRATOR.migrations.len(), 4);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 5);
+        assert_eq!(MIGRATOR.migrations.len(), 5);
         let migration = &MIGRATOR.migrations[0];
         assert_eq!(migration.version, 1);
         assert_eq!(migration.description.as_ref(), "initial");

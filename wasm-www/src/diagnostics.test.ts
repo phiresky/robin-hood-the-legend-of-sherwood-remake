@@ -14,12 +14,14 @@ test('UTF-8 truncation respects byte limits without splitting characters', () =>
     assert.equal(boundedText('a😀b', 5), 'a😀');
 });
 test('diagnostic submission checks receipt and refuses failed requests', async () => {
-    const body = '{"schema_version":1}';
-    const expected = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))), b => b.toString(16).padStart(2, '0')).join('');
+    const body = '{"schema_version":1,"kind":"bug","engine_commit":"test"}';
+    const expected = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await (await compressDiagnostic(body)).arrayBuffer())), b => b.toString(16).padStart(2, '0')).join('');
     const fetcher: typeof fetch = async (url, options) => {
         assert.equal(url, '/api/v1/diagnostics');
         assert.equal(options?.redirect, 'error');
         assert.equal(new Headers(options?.headers).get('Content-Encoding'), 'gzip');
+        assert.equal(new Headers(options?.headers).get('X-Diagnostic-Kind'), 'bug');
+        assert.equal(new Headers(options?.headers).get('X-Diagnostic-Engine-Commit'), 'test');
         assert.equal(await uploadText(options?.body), body);
         return Response.json({ schema_version: 1, report_id: expected }, { status: 202 });
     };
@@ -40,7 +42,8 @@ test('browser form retains failed reports and retries on reconnect', async () =>
     let online = false;
     globalThis.fetch = async (_url, options) => {
         if (!online) return new Response('', { status: 503 });
-        const bytes = new TextEncoder().encode(await uploadText(options?.body));
+        assert.ok(options?.body instanceof Blob);
+        const bytes = await options.body.arrayBuffer();
         const id = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), b => b.toString(16).padStart(2, '0')).join('');
         return Response.json({ schema_version: 1, report_id: id }, { status: 202 });
     };
@@ -86,11 +89,11 @@ test('large reports are limited by gzip size and survive IndexedDB reopening', a
 });
 
 test('reports exceeding the compressed limit are rejected before fetch', async () => {
-    const body = JSON.stringify({ recent_log: randomBytes(21 * 1024 * 1024).toString('base64') });
+    const body = JSON.stringify({ recent_log: randomBytes(101 * 1024 * 1024).toString('base64') });
     let uploaded = false;
     await assert.rejects(submitDiagnostic(body, async () => {
         uploaded = true;
         throw new Error('unexpected upload');
-    }), /20 MiB compressed upload limit/);
+    }), /100 MiB compressed upload limit/);
     assert.equal(uploaded, false);
 });

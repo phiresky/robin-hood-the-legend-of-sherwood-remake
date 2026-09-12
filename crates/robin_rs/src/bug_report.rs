@@ -3,8 +3,7 @@
 use anyhow::{Context, Result};
 use robin_run_protocol::diagnostics::{
     DiagnosticAttachmentV1, DiagnosticKindV1, DiagnosticReceiptV1, DiagnosticReportV1,
-    MAX_DIAGNOSTIC_ATTACHMENT_BYTES, MAX_DIAGNOSTIC_DECODED_BYTES, MAX_DIAGNOSTIC_LOG_BYTES,
-    compress_report,
+    MAX_DIAGNOSTIC_ATTACHMENT_BYTES, MAX_DIAGNOSTIC_LOG_BYTES, compress_report,
 };
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -177,10 +176,6 @@ fn collect_replay(report: &mut DiagnosticReportV1, replay: Option<&Path>) {
 fn persist(directory: &Path, report: &DiagnosticReportV1) -> Result<PathBuf> {
     report.validate().map_err(anyhow::Error::msg)?;
     let bytes = serde_json::to_vec(report)?;
-    anyhow::ensure!(
-        bytes.len() <= MAX_DIAGNOSTIC_DECODED_BYTES,
-        "report exceeds decoded safety limit"
-    );
     compress_report(&bytes)?;
     std::fs::create_dir_all(directory)?;
     let mut temporary = tempfile::Builder::new()
@@ -281,20 +276,19 @@ fn upload_one(
     path: &Path,
 ) -> Result<DiagnosticReceiptV1> {
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?
-        .take(MAX_DIAGNOSTIC_DECODED_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    anyhow::ensure!(
-        bytes.len() <= MAX_DIAGNOSTIC_DECODED_BYTES,
-        "queued report is too large"
-    );
+    std::fs::File::open(path)?.read_to_end(&mut bytes)?;
     let report: DiagnosticReportV1 = serde_json::from_slice(&bytes)?;
     report.validate().map_err(anyhow::Error::msg)?;
+    let compressed = compress_report(&bytes)?;
+    use sha2::{Digest as _, Sha256};
+    let expected = hex::encode(Sha256::digest(&compressed));
     let response = client
         .post(endpoint)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .header(reqwest::header::CONTENT_ENCODING, "zstd")
-        .body(compress_report(&bytes)?)
+        .header("X-Diagnostic-Kind", report.kind.as_str())
+        .header("X-Diagnostic-Engine-Commit", &report.engine_commit)
+        .body(compressed)
         .send()?;
     anyhow::ensure!(
         response.status() == reqwest::StatusCode::ACCEPTED,
@@ -305,8 +299,6 @@ fn upload_one(
     response.take(4097).read_to_end(&mut body)?;
     anyhow::ensure!(body.len() <= 4096, "receipt too large");
     let receipt: DiagnosticReceiptV1 = serde_json::from_slice(&body)?;
-    use sha2::{Digest as _, Sha256};
-    let expected = hex::encode(Sha256::digest(serde_json::to_vec(&report)?));
     anyhow::ensure!(
         receipt.schema_version == 1 && receipt.report_id == expected,
         "invalid report receipt"
@@ -389,7 +381,9 @@ mod upload_tests {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}/api/v1/diagnostics", server.server_addr());
         use sha2::{Digest as _, Sha256};
-        let id = hex::encode(Sha256::digest(serde_json::to_vec(&report).unwrap()));
+        let id = hex::encode(Sha256::digest(
+            compress_report(&serde_json::to_vec(&report).unwrap()).unwrap(),
+        ));
         let expected_id = id.clone();
         let server_thread = std::thread::spawn(move || {
             for (status, id) in [(503, String::new()), (202, "bad-receipt".into()), (202, id)] {
@@ -406,10 +400,9 @@ mod upload_tests {
                 );
                 let mut compressed = Vec::new();
                 request.as_reader().read_to_end(&mut compressed).unwrap();
-                let body = String::from_utf8(
-                    robin_run_protocol::diagnostics::decompress_report(&compressed).unwrap(),
-                )
-                .unwrap();
+                let body =
+                    String::from_utf8(zstd::stream::decode_all(compressed.as_slice()).unwrap())
+                        .unwrap();
                 let decoded: DiagnosticReportV1 = serde_json::from_str(&body).unwrap();
                 assert_eq!(decoded.description, "stuck");
                 request

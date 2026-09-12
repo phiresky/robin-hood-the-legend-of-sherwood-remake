@@ -14,8 +14,7 @@ export interface DiagnosticReport {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const PREFIX = 'robin-diagnostic-v1:';
-export const MAX_COMPRESSED_REPORT_BYTES = 20 * 1024 * 1024;
-const MAX_DECODED_REPORT_BYTES = 256 * 1024 * 1024;
+export const MAX_COMPRESSED_REPORT_BYTES = 100 * 1024 * 1024;
 const MAX_LOG_BYTES = 32 * 1024 * 1024;
 
 export interface QueuedDiagnostic { id: string; body: string }
@@ -53,9 +52,8 @@ export function diagnosticQueue(factory: IDBFactory): DiagnosticQueue {
 
 export async function compressDiagnostic(body: string): Promise<Blob> {
     const raw = new Blob([body]);
-    if (raw.size > MAX_DECODED_REPORT_BYTES) throw new Error('Report exceeds decoded safety limit');
     const compressed = await new Response(raw.stream().pipeThrough(new CompressionStream('gzip'))).blob();
-    if (compressed.size > MAX_COMPRESSED_REPORT_BYTES) throw new Error('Report exceeds 20 MiB compressed upload limit');
+    if (compressed.size > MAX_COMPRESSED_REPORT_BYTES) throw new Error('Report exceeds 100 MiB compressed upload limit');
     return compressed;
 }
 export function boundedText(text: string, limit: number): string {
@@ -68,8 +66,12 @@ export function boundedText(text: string, limit: number): string {
 }
 export async function submitDiagnostic(body: string, fetcher: typeof fetch = fetch): Promise<string> {
     const compressed = await compressDiagnostic(body);
+    const metadata = JSON.parse(body) as { kind: string; engine_commit: string };
     const response = await fetcher('/api/v1/diagnostics', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        method: 'POST', headers: {
+            'Content-Type': 'application/json', 'Content-Encoding': 'gzip',
+            'X-Diagnostic-Kind': metadata.kind, 'X-Diagnostic-Engine-Commit': metadata.engine_commit,
+        },
         body: compressed, cache: 'no-store', redirect: 'error', credentials: 'omit',
         signal: AbortSignal.timeout(120_000),
     });
@@ -93,7 +95,7 @@ export async function submitDiagnostic(body: string, fetcher: typeof fetch = fet
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
     const receipt: unknown = JSON.parse(decoder.decode(bytes));
-    const expected = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(body))), byte => byte.toString(16).padStart(2, '0')).join('');
+    const expected = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await compressed.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
     if (typeof receipt !== 'object' || receipt === null || !('schema_version' in receipt) || receipt.schema_version !== 1 || !('report_id' in receipt) || receipt.report_id !== expected) {
         throw new Error('Invalid report receipt');
     }

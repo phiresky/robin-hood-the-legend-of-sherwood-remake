@@ -149,7 +149,7 @@ pub use verifier_job::{
 pub const SCHEMA_VERSION_V1: u32 = 1;
 /// Exact SQLx migration level shared by release manifests, backup identities,
 /// and the high-score runtime.
-pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 4;
+pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 5;
 
 /// Exact save format emitted by a build eligible for the current ranked
 /// replay contract. The engine and ranking-service publication gate share
