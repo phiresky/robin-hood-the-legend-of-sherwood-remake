@@ -183,3 +183,46 @@ fn projectile_subtypes_match_frozen_json_including_partial_runtime_metadata() {
         }
     }
 }
+
+#[test]
+fn target_scroll_and_net_subtypes_match_frozen_json() {
+    use crate::element::{
+        ElementData, ElementKind, ElementNet, ElementScroll, ElementTarget, Entity,
+    };
+    let element = |kind| {
+        let mut value = ElementData::default();
+        value.kind = kind;
+        value.active = true;
+        value
+    };
+    let entities = [
+        Entity::Target(ElementTarget {
+            element: element(ElementKind::Target),
+            fx: Default::default(),
+            target: Default::default(),
+        }),
+        Entity::Scroll(ElementScroll {
+            element: element(ElementKind::ObjectScroll),
+            script_hourglass_timeout: 23,
+            ..Default::default()
+        }),
+        Entity::Net(ElementNet {
+            element: element(ElementKind::ObjectNet),
+            object: Default::default(),
+            projectile: Default::default(),
+            net: Default::default(),
+        }),
+    ];
+    for entity in entities {
+        let mut inner = EngineInner::new();
+        let id = inner.add_test_entity(entity);
+        let engine = Engine {
+            inner,
+            bootstrap_open: false,
+        };
+        assert_eq!(
+            engine.parity_entity_runtime_state(id, &LevelAssets::new())["subtype"],
+            engine.original_subtype_frontier(id),
+        );
+    }
+}
