@@ -405,75 +405,15 @@ pub async fn show_dialogue(
         // ── Portrait cross-fade: update state for this frame ──
         portrait_fade.set(sentence.resolved_portrait_id());
 
-        // ── Render ──────────────────────────────────────────────
-        // Pre-load every portrait we might need this frame so the
-        // subsequent renderer calls don't need a `&mut` pass through
-        // `resources`.  On a same-speaker frame this is a single cache
-        // hit; during a cross-fade we need both the old and new surface.
-        let current_portrait = resources.portrait(renderer, portrait_fade.current);
-        let previous_portrait = if portrait_fade.is_fading() {
-            resources.portrait(renderer, portrait_fade.previous)
-        } else {
-            None
-        };
-
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
-
-        if let Some(bg) = resources.parchment_huge {
-            draw_background(renderer, transform, &bg, virt_x, virt_y, WIN_W, WIN_H);
-        }
-
-        // Draw the old portrait opaquely while the new one fades in on
-        // top.  Always draw previous first; the fade is expressed by
-        // the alpha on the current blit that goes on top.
-        if portrait_fade.is_fading()
-            && let Some(p) = previous_portrait
-        {
-            draw_portrait_frame_alpha(
-                renderer,
-                transform,
-                &p,
-                virt_x + PORTRAIT_X,
-                virt_y + PORTRAIT_Y,
-                PORTRAIT_W,
-                PORTRAIT_H,
-                mouth_frame,
-                100,
-            );
-        }
-        if let Some(p) = current_portrait {
-            let alpha = if portrait_fade.is_fading() {
-                portrait_fade.fade_percent()
-            } else {
-                100
-            };
-            draw_portrait_frame_alpha(
-                renderer,
-                transform,
-                &p,
-                virt_x + PORTRAIT_X,
-                virt_y + PORTRAIT_Y,
-                PORTRAIT_W,
-                PORTRAIT_H,
-                mouth_frame,
-                alpha,
-            );
-        }
-        portrait_fade.tick();
-
-        if let Some(font) = resources.popup_font_any() {
-            render_dropped_initial_text(
-                renderer,
-                font,
-                transform,
-                &sentence.text,
-                virt_x + TEXT_X,
-                virt_y + TEXT_Y,
-                TEXT_W,
-                TEXT_H,
-            );
-        }
+        draw_dialogue_body(
+            renderer,
+            resources,
+            transform,
+            (virt_x, virt_y),
+            &sentence.text,
+            &mut portrait_fade,
+            mouth_frame,
+        );
 
         // Draw buttons via widget bridge.
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
@@ -835,75 +775,15 @@ impl DialogueModalState {
         let sentence = &self.sentences[self.sentence_idx];
         self.portrait_fade.set(sentence.resolved_portrait_id());
 
-        let current_portrait = resources.portrait(renderer, self.portrait_fade.current);
-        let previous_portrait = if self.portrait_fade.is_fading() {
-            resources.portrait(renderer, self.portrait_fade.previous)
-        } else {
-            None
-        };
-
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
-
-        if let Some(bg) = resources.parchment_huge {
-            draw_background(
-                renderer,
-                self.transform,
-                &bg,
-                self.virt_x,
-                self.virt_y,
-                WIN_W,
-                WIN_H,
-            );
-        }
-
-        if self.portrait_fade.is_fading()
-            && let Some(p) = previous_portrait
-        {
-            draw_portrait_frame_alpha(
-                renderer,
-                self.transform,
-                &p,
-                self.virt_x + PORTRAIT_X,
-                self.virt_y + PORTRAIT_Y,
-                PORTRAIT_W,
-                PORTRAIT_H,
-                self.mouth_frame,
-                100,
-            );
-        }
-        if let Some(p) = current_portrait {
-            let alpha = if self.portrait_fade.is_fading() {
-                self.portrait_fade.fade_percent()
-            } else {
-                100
-            };
-            draw_portrait_frame_alpha(
-                renderer,
-                self.transform,
-                &p,
-                self.virt_x + PORTRAIT_X,
-                self.virt_y + PORTRAIT_Y,
-                PORTRAIT_W,
-                PORTRAIT_H,
-                self.mouth_frame,
-                alpha,
-            );
-        }
-        self.portrait_fade.tick();
-
-        if let Some(font) = resources.popup_font_any() {
-            render_dropped_initial_text(
-                renderer,
-                font,
-                self.transform,
-                &sentence.text,
-                self.virt_x + TEXT_X,
-                self.virt_y + TEXT_Y,
-                TEXT_W,
-                TEXT_H,
-            );
-        }
+        draw_dialogue_body(
+            renderer,
+            resources,
+            self.transform,
+            (self.virt_x, self.virt_y),
+            &sentence.text,
+            &mut self.portrait_fade,
+            self.mouth_frame,
+        );
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
@@ -993,6 +873,85 @@ pub(crate) async fn show_dialogue_batch(
         results.push(result);
     }
     results
+}
+
+/// Draw the shared dialogue body without selecting a sentence or deciding completion.
+/// The caller retains its sentence-selection timing; the fade advances exactly once
+/// after the portrait blits and before the text, as in both original drivers.
+fn draw_dialogue_body(
+    renderer: &mut Renderer,
+    resources: &mut IngameMenuResources,
+    transform: MenuTransform,
+    (virt_x, virt_y): (i32, i32),
+    text: &str,
+    portrait_fade: &mut PortraitFade,
+    mouth_frame: u8,
+) {
+    // Resolve portraits before entering the modal render phase.
+    let current_portrait = resources.portrait(renderer, portrait_fade.current);
+    let previous_portrait = if portrait_fade.is_fading() {
+        resources.portrait(renderer, portrait_fade.previous)
+    } else {
+        None
+    };
+
+    enter_modal_gpu_phase(renderer);
+    dim_screen(renderer);
+
+    if let Some(bg) = resources.parchment_huge {
+        draw_background(renderer, transform, &bg, virt_x, virt_y, WIN_W, WIN_H);
+    }
+
+    // Draw the old portrait opaquely while the new one fades in on
+    // top.  Always draw previous first; the fade is expressed by
+    // the alpha on the current blit that goes on top.
+    if portrait_fade.is_fading()
+        && let Some(p) = previous_portrait
+    {
+        draw_portrait_frame_alpha(
+            renderer,
+            transform,
+            &p,
+            virt_x + PORTRAIT_X,
+            virt_y + PORTRAIT_Y,
+            PORTRAIT_W,
+            PORTRAIT_H,
+            mouth_frame,
+            100,
+        );
+    }
+    if let Some(p) = current_portrait {
+        let alpha = if portrait_fade.is_fading() {
+            portrait_fade.fade_percent()
+        } else {
+            100
+        };
+        draw_portrait_frame_alpha(
+            renderer,
+            transform,
+            &p,
+            virt_x + PORTRAIT_X,
+            virt_y + PORTRAIT_Y,
+            PORTRAIT_W,
+            PORTRAIT_H,
+            mouth_frame,
+            alpha,
+        );
+    }
+    portrait_fade.tick();
+
+    if let Some(font) = resources.popup_font_any() {
+        render_dropped_initial_text(
+            renderer,
+            font,
+            transform,
+            text,
+            virt_x + TEXT_X,
+            virt_y + TEXT_Y,
+            TEXT_W,
+            TEXT_H,
+        );
+    }
 }
 
 /// Start playing a sentence's voice sample, if sound is enabled and the
