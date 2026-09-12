@@ -73,7 +73,6 @@ pub(crate) fn listbox_scrollbar_thumb(
     (1 + top as i32, height as i32)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_scrollbar_slices(
     renderer: &mut Renderer,
     transform: MenuTransform,
@@ -218,7 +217,6 @@ pub fn make_button_enabled(
 /// ID.  The button widget carries its sprite resource so different
 /// buttons (rectangular `RHID_MENU_BUTTON`, round `RHID_OK` seal, etc.)
 /// can coexist inside the same `FrameWnd`.
-#[allow(clippy::too_many_arguments)]
 pub fn make_button_with_resource(
     id: WidgetId,
     label: &str,
@@ -919,7 +917,6 @@ pub fn draw_picture_alternate_surface(
 }
 
 /// Draw a borrowed uploaded surface, distinct from asset resource IDs.
-#[allow(clippy::too_many_arguments)]
 pub fn draw_menu_surface_rect(
     renderer: &mut Renderer,
     transform: MenuTransform,
@@ -1220,7 +1217,6 @@ impl NoisyTracker {
 /// `tracker` / `current_state` are `Option`/ignored when you don't
 /// need gating (see the thin [`play_widget_noise`] wrapper).
 /// `force_play` fires a sound even if nothing about the state changed.
-#[allow(clippy::too_many_arguments)]
 pub fn play_widget_noise_tracked(
     events: &[UiEvent],
     noisy_id: u32,

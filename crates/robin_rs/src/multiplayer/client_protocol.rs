@@ -539,7 +539,6 @@ pub(super) fn validate_reconnect_content(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_reconnect_state(
     expected_seat: PlayerId,
     expected_mission_id: &str,

@@ -254,7 +254,6 @@ pub(super) fn detectable_mutation_debug_target_matches(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn debug_detectable_mutation_event(
     stage: &str,
     caller: &str,
@@ -2320,7 +2319,6 @@ impl EngineInner {
     /// P3 inner — per-NPC body of [`Self::tick_enemy_ai_refresh_detection`].
     /// Carries the per-NPC tracing span so all events emitted inside the
     /// detection pass automatically include `npc=<id>` in their span context.
-    #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     fn tick_enemy_ai_refresh_detection_for_npc(
         &mut self,
@@ -3484,7 +3482,6 @@ impl EngineInner {
     /// One full iteration of the per-type loop body for
     /// `type ∈ {Body, Object, Friend, MissedFriend, Beggar}`.
     #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
-    #[allow(clippy::too_many_arguments)]
     fn tick_enemy_ai_refresh_per_type_for_npc(
         &mut self,
         npc_id: EntityId,
@@ -3844,7 +3841,6 @@ impl EngineInner {
     /// `contribute_to_maximal`: matches `type < FRIEND` — only Body
     /// and Object contribute to `maximal_detection_suspect`; the
     /// three FRIEND-and-after buckets do not.
-    #[allow(clippy::too_many_arguments)]
     fn run_human_detectable_pass<F>(
         npc: &mut crate::element::AiActorData,
         npc_id: EntityId,
@@ -4225,7 +4221,6 @@ impl EngineInner {
     /// `compute_visibility`.  Same surrounding per-type loop
     /// machinery; no shadow events because the PC gate skips
     /// objects.
-    #[allow(clippy::too_many_arguments)]
     fn run_object_detectable_pass(
         npc: &mut crate::element::AiActorData,
         npc_id: EntityId,
@@ -5199,7 +5194,6 @@ mod tests {
 
 /// Pure projection after the optical scan. No forecasts, LOS queries, RNG or
 /// live-entity lookups may occur here: those belong to the later owner decision.
-#[allow(clippy::too_many_arguments)]
 fn build_enemy_detection_tick_data(
     world: &AiWorldView,
     assets: &LevelAssets,
@@ -5763,7 +5757,6 @@ fn build_enemy_detection_tick_data(
 /// One Enemy-bucket optical sample, preserving the exact outer gate, camp
 /// cadence, cache and disguise order. Aggregation remains in detectable order
 /// in the caller; None means an early gate cleared this sample.
-#[allow(clippy::too_many_arguments)]
 fn scan_enemy_detectable(
     det: &mut Detectable,
     target: &EnemyOpticalTarget,

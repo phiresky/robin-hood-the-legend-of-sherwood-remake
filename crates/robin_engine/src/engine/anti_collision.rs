@@ -593,7 +593,6 @@ impl AntiCollisionState<'_> {
 /// barge / `find_authorized_position` escape hatch fires.  When
 /// `state` is `None`, only the pure deviation math runs (for
 /// standalone call sites and unit tests).
-#[allow(clippy::too_many_arguments)]
 pub fn apply_anti_collision_step(
     mover: &ActorSnapshot,
     neighbours: &[Option<ActorSnapshot>],
@@ -1054,7 +1053,6 @@ pub fn apply_anti_collision_step(
 /// The original game's mobile-blocking test uses the thick movement
 /// corridor must avoid both the cart's repulsive perimeter lines and a
 /// destination move-box overlap with its full motion polygon.
-#[allow(clippy::too_many_arguments)]
 fn is_blocked_by_mobile(
     grid: &FastFindGrid,
     start: MapPoint,

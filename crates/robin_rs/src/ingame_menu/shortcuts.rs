@@ -74,7 +74,6 @@ const ID_CANCEL: u32 = 4;
 /// user's personal custom bindings — the User Defined button restores
 /// from this slot, and switching to a preset while dirty edits are
 /// pending saves them here so they aren't lost.
-#[allow(clippy::too_many_arguments)]
 pub async fn show_shortcuts(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,

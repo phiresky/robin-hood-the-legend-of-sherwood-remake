@@ -4,7 +4,6 @@ impl Renderer {
     /// Draw the persistent, linearly sampled fog mask. The CPU only uploads
     /// new texels when deterministic fog or an exact PC reveal circle changes;
     /// panning and zooming reuse the texture with a different UV rectangle.
-    #[allow(clippy::too_many_arguments)]
     pub fn render_fog_mask(
         &mut self,
         width: u32,
@@ -383,7 +382,6 @@ impl Renderer {
     }
 
     /// Queue the cached edge-map outline tinted by `rgb * alpha`.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_cached_outline(
         &mut self,
         bank_id: u32,
@@ -416,7 +414,6 @@ impl Renderer {
         true
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn render_hidden_mask_outline(
         &mut self,
         frame_holder: &FrameHolder,

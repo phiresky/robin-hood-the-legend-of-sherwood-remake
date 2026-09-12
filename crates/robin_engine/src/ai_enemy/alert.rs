@@ -253,7 +253,6 @@ impl EnemyAi {
     /// returns `Some(slots)` on success (slot 0 is the centre of the
     /// front row, then alternating sideways within the row, then
     /// wrapping into the next row backward).
-    #[allow(clippy::too_many_arguments)]
     fn can_put_soldiers_in_this_direction(
         &self,
         ctx: &AiContext,

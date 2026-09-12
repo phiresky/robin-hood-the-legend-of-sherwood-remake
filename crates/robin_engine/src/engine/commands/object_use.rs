@@ -175,7 +175,6 @@ impl EngineInner {
     /// This is deliberately shared by live launch and quick-action recording:
     /// Original constructs the same movement element in both cases and only
     /// then chooses between quick-action assignment and sequence launch.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn resolve_drop_ale_target(
         &self,
         actor: EntityId,

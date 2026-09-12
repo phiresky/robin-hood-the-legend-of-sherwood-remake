@@ -1294,7 +1294,6 @@ impl PathFinder {
         changed
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn find_path(
         &mut self,
         graph: &PathGraph,
@@ -1404,7 +1403,6 @@ impl PathFinderRuntime {
     /// for a unit with the given half-diagonal index.
     ///
     /// Returns the path as a sequence of waypoints, or `None` if no path exists.
-    #[allow(clippy::too_many_arguments)]
     pub fn find_path(
         &mut self,
         grid: &FastFindGrid,

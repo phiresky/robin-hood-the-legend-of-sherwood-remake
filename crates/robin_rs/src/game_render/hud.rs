@@ -162,7 +162,6 @@ pub(crate) fn render_combat_status_bars(
 /// in this module) rather than going through
 /// [`crate::draw_manager::DrawManager::fill_box`], which has broader
 /// gameplay draw-manager semantics than this fixed HUD overlay.
-#[allow(clippy::too_many_arguments)]
 fn draw_status_bar(
     host: &HostDraw<'_>,
     renderer: &mut Renderer,
@@ -234,7 +233,6 @@ pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Rend
     };
 
     /// Render dots along a trajectory from `start` through `points`.
-    #[allow(clippy::too_many_arguments)]
     fn render_arc(
         start: engine_coordinates::WorldPoint3D,
         points: &[robin_engine::element::TrajectoryPoint],

@@ -2070,7 +2070,6 @@ pub(crate) fn is_possible_sword_strike_victim(
 ///
 /// Returns EntityIds of all valid targets within `[min_distance, max_distance]`
 /// whose direction from the attacker falls between `begin_sector` and `end_sector`.
-#[allow(clippy::too_many_arguments)]
 fn collect_arc_victims(
     entities: &Entities,
     attacker_id: EntityId,
@@ -2117,7 +2116,6 @@ fn collect_arc_victims(
 /// victim in map space.  Using map space for this initial test can admit an
 /// actor on a different elevation whose ground-space direction lies outside
 /// the strike arc.
-#[allow(clippy::too_many_arguments)]
 fn collect_lateral_strike_victims(
     entities: &Entities,
     attacker_id: EntityId,
@@ -2157,7 +2155,6 @@ fn collect_lateral_strike_victims(
 /// admission uses map-space distance and different range rules, while
 /// The full-circle sword-strike effect seeds its retained victim list from
 /// world position and the inclusive authored strike range.
-#[allow(clippy::too_many_arguments)]
 fn collect_full_circle_strike_victims(
     entities: &Entities,
     attacker_id: EntityId,
@@ -2187,7 +2184,6 @@ fn collect_full_circle_strike_victims(
 
 /// Original half-circle DONE-time victim admission: 3D range combined with
 /// an unprojected ground-space angular sector.
-#[allow(clippy::too_many_arguments)]
 fn collect_half_circle_strike_victims(
     entities: &Entities,
     attacker_id: EntityId,
@@ -2319,7 +2315,6 @@ fn circle_warning_walking_tolerance(relative_sector: u16, rotation_angle_deg: u1
 /// Collect possible victims for a circle sword strike in the
 /// strike-warning phase, with the per-victim distance extension for
 /// walking-with-sword enemies.
-#[allow(clippy::too_many_arguments)]
 fn collect_circle_warn_victims(
     entities: &Entities,
     attacker_id: EntityId,

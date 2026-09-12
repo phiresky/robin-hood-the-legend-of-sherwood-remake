@@ -313,7 +313,6 @@ fn render_text_with_shadow_gpu(
     });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_text_in_box_gpu(
     renderer: &mut Renderer,
     font: &Font,
@@ -433,7 +432,6 @@ fn render_text_centered_gpu(
 /// 1. Portrait slot text: character name + HP in the bottom panel
 /// 2. Ammunition counts below action buttons
 /// 3. Floating counter titbits (coin pickups, etc.)
-#[allow(clippy::too_many_arguments)]
 pub fn render_hud_text(
     sprite_streaming_status: Option<(f32, usize, usize)>,
     engine: &PresentationView<'_>,

@@ -598,8 +598,6 @@ pub(super) fn unprepared_replay_launch_error(
     None
 }
 
-#[allow(clippy::too_many_arguments)]
-
 pub(super) async fn ensure_shipping_mission<F>(
     args: &crate::main_entry::MissionLaunch,
     mission: &str,

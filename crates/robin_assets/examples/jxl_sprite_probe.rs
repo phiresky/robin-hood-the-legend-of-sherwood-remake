@@ -871,7 +871,6 @@ mod probe {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn atlas_variant(
         args: &Args,
         holder: &FrameHolder,

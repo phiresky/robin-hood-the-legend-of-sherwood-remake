@@ -148,7 +148,6 @@ pub enum DistributedModError {
 }
 
 impl DistributedModPackage {
-    #[allow(clippy::too_many_arguments)]
     pub fn build(
         slug: String,
         title: String,
@@ -354,7 +353,6 @@ impl<Bytes: std::ops::Deref<Target = [u8]>> DistributedModPackage<Bytes> {
 /// Validate exact mission/shared archive bytes without inventing mutable
 /// catalog metadata. This is the single hostile ZIP/RHM/Spellforge admission
 /// boundary shared by multiplayer packages and cold save/replay restoration.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn validate_mission_archives(
     mission_archive: &[u8],
     shared_library_archive: Option<&[u8]>,

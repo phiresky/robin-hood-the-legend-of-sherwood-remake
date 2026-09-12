@@ -285,7 +285,6 @@ impl EnemyAi {
     /// Begin a search pattern around `center`. Selects seek points from
     /// the global array based on distance, interest, and direction, then
     /// visits them in an optimised order.
-    #[allow(clippy::too_many_arguments)]
     pub fn seek_area(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -511,7 +510,6 @@ impl EnemyAi {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn select_area_seek_points(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1207,7 +1205,6 @@ impl EnemyAi {
     // Corpse-discovery alert flow.
     // -----------------------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
     pub fn dead_body_alert(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1341,7 +1338,6 @@ impl EnemyAi {
     /// Resume soldier corpse-alert processing after its call to
     /// officer alerting. A failed approach is consumed synchronously and falls back to the
     /// corpse search; a successful route has no further tail.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn resume_dead_body_alert_after_alert_officer(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

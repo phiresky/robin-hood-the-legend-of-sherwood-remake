@@ -498,7 +498,6 @@ impl Game {
     ///
     /// Returns `Some(code)` if the mission ended this frame, `None`
     /// if still in progress.
-    #[allow(clippy::too_many_arguments)]
     pub fn run_engine_tick(
         &mut self,
         frontend: &mut crate::host::HostFrontend,

@@ -444,7 +444,6 @@ impl TrueTypeFont {
     /// which sizes a scratch RGBA buffer with [`Self::total_pixel_height`],
     /// calls this method, then uploads the buffer as a one-shot GPU
     /// texture for the standard blend-quad path.
-    #[allow(clippy::too_many_arguments)]
     pub fn render_to_rgba(
         &self,
         data: &mut [u8],

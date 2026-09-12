@@ -1286,7 +1286,6 @@ fn dist(a: MapPoint, b: MapPoint) -> f32 {
 /// `building_is_authorized` mirrors original-game building authorization.
 /// Original checks it whenever an NPC route enters a building door in the
 /// direct direction, both while seeding the search and while expanding it.
-#[allow(clippy::too_many_arguments)]
 pub fn find_path_gates(
     doors: &[Door],
     source: (f32, f32),
@@ -1319,7 +1318,6 @@ pub fn find_path_gates(
 /// endpoints. Omitting it requires number-only endpoints. The two modes are
 /// intentionally not mixed; callers must resolve both sides before entering
 /// the exact graph.
-#[allow(clippy::too_many_arguments)]
 pub fn find_path_gates_with_sector_indices(
     doors: &[Door],
     source: (f32, f32),
@@ -1640,7 +1638,6 @@ pub fn find_path_into_door(
 /// Identity-aware door-targeted gate A*. See
 /// [`find_path_gates_with_sector_indices`] for the exact/number-only
 /// compatibility rule.
-#[allow(clippy::too_many_arguments)]
 pub fn find_path_into_door_with_sector_index(
     doors: &[Door],
     source: (f32, f32),
@@ -1778,7 +1775,6 @@ pub struct GateWaitPosition {
 /// Returns `None` when no path exists or when the caller can cross
 /// every gate on the path (caller misuse — there is nothing for `me`
 /// to wait for).
-#[allow(clippy::too_many_arguments)]
 pub fn compute_avenger_wait_position(
     doors: &[Door],
     avenger_pos: (f32, f32),

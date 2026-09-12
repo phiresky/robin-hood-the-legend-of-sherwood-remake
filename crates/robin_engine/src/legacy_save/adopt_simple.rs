@@ -60,7 +60,6 @@ pub struct LegacySimpleAdoptionPlan {
 }
 
 impl LegacySimpleAdoptionPlan {
-    #[allow(clippy::too_many_arguments)]
     pub fn preflight(
         engine: &EngineInner,
         entities: &LegacyEntityFixups,

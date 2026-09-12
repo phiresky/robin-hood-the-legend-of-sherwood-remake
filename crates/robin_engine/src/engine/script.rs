@@ -5723,7 +5723,6 @@ impl EngineInner {
     }
 
     /// Settle one synchronous state callback before reattaching its caller tail.
-    #[allow(clippy::too_many_arguments)]
     fn settle_ai_owner_state_change(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

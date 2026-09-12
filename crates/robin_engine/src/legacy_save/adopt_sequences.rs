@@ -593,7 +593,6 @@ pub(crate) fn convert_owner_local_sequence(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn convert_element(
     sequence_id: u32,
     saved: &LegacyInlineSequenceElement,

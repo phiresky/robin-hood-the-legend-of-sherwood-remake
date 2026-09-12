@@ -463,7 +463,6 @@ pub(super) fn fail_server(context: &ServerContext, error: String) {
 /// Start with an explicit identity key. Tests use this to
 /// avoid touching the per-install on-disk identity.
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
 pub fn start_server_with_key(
     key: SecretKey,
     host_nickname: String,
@@ -501,7 +500,6 @@ pub fn start_server_with_key(
 /// ticket publication is disabled; production hosting uses
 /// [`start_server_in_campaign`].
 #[cfg(test)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_server_with_key_and_content(
     key: SecretKey,
     host_nickname: String,
@@ -569,7 +567,6 @@ pub fn start_server_in_campaign(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn start_server_inner(
     campaign: &MultiplayerCampaignSession,
     key: SecretKey,
