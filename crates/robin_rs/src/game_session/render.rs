@@ -1407,7 +1407,7 @@ fn render_frame_with_hud(
     // Draw the destination markers (ground marks).  Drawn AFTER the
     // selection marks but BEFORE entity rendering, so ground marks
     // render on top of selection circles but behind characters.
-    render_ground_marks(host, &presentation, engine, renderer);
+    render_ground_marks(host, engine, renderer);
 
     // ── GPU phase: entity sprites (cached as ARGB textures) ──
     // Display-order sort is hoisted to the main loop so it runs

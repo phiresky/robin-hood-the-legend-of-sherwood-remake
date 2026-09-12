@@ -1019,7 +1019,6 @@ fn render_all_view_cones(
 /// sim state.
 pub(crate) fn render_ground_marks(
     host: &HostDraw<'_>,
-    presentation: &FramePresentationInputs,
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
@@ -1033,10 +1032,9 @@ pub(crate) fn render_ground_marks(
         return;
     }
 
-    render_ground_mark_set(host, presentation, engine.ground_mark(), engine, renderer);
+    render_ground_mark_set(host, engine.ground_mark(), engine, renderer);
     render_ground_mark_set(
         host,
-        presentation,
         host.frontend.trajectory_preview().ground_marks(),
         engine,
         renderer,
@@ -1045,7 +1043,6 @@ pub(crate) fn render_ground_marks(
 
 fn render_ground_mark_set(
     host: &HostDraw<'_>,
-    _presentation: &FramePresentationInputs,
     ground_mark: &GroundMark,
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
