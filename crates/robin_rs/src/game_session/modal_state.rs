@@ -10,6 +10,7 @@ use crate::game::Game;
 use crate::host::Host;
 use crate::host::HostSignal;
 use crate::ingame_menu::modal_net::ModalDismissalGate;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, DebriefingModalState, DebriefingOutcome, DialogueModalState, DialogueSentence,
@@ -434,15 +435,17 @@ impl ModalScreen for PopupScrollModalState {
         });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
         self.tick(
-            window,
-            renderer,
-            resources,
+            &mut ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor: Some(&cursor),
+            },
             &mut host.audio.sound,
             audio_backend
                 .as_mut()
                 .map(|b| b as &mut dyn crate::sound::AudioBackend),
             *sample_loader,
-            Some(cursor),
             modal_net.as_ref(),
         )
     }
@@ -506,7 +509,12 @@ impl ModalScreen for DebriefingModalState {
             .as_ref()
             .expect("ModalBatch::tick verified menu resources before step");
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-        self.tick(window, renderer, resources, Some(cursor))
+        self.tick(&mut ModalScreenIo {
+            window,
+            renderer,
+            resources,
+            cursor: Some(&cursor),
+        })
     }
 
     fn to_result(outcome: &Self::Outcome) -> engine_player_command::DialogResult {
@@ -1082,7 +1090,12 @@ pub(super) fn tick_active_modal(
                 return ActiveModalOutcome::None;
             };
             let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-            if let Some(confirmed) = state.tick(window, renderer, resources, Some(cursor)) {
+            if let Some(confirmed) = state.tick(&mut ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor: Some(&cursor),
+            }) {
                 let result = if confirmed {
                     engine_player_command::DialogResult::Completed
                 } else {
@@ -1130,12 +1143,14 @@ pub(super) fn tick_active_modal(
             let sectors = engine.live_tradable_production_sectors(profiles);
             let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
             match state.tick(
-                window,
-                renderer,
-                resources,
+                &mut ModalScreenIo {
+                    window,
+                    renderer,
+                    resources,
+                    cursor: Some(&cursor),
+                },
                 receipts,
                 &sectors,
-                Some(cursor),
             ) {
                 Some(TradingOutcome::Close) => {
                     *active_modal = None;

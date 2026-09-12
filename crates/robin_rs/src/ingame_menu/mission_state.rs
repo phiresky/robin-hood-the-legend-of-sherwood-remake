@@ -5,6 +5,7 @@
 //! button position, and on open advances a frame-driven Yes/No
 //! confirmation prompt. Reports `true` when the player confirms.
 
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::renderer::Renderer;
 
 use super::layout::{
@@ -12,7 +13,6 @@ use super::layout::{
     render_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON};
-use super::widget_bridge::ModalCursor;
 use super::yesno::YesNoModalState;
 
 const TRANSITION_SPEED: f32 = 1.5;
@@ -73,16 +73,19 @@ impl MissionStatePopupState {
         }
     }
 
-    pub fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
-    ) -> Option<bool> {
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<bool> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         match &mut self.phase {
             MissionStatePopupPhase::Opening(transition) => {
-                if transition.tick(event_pump, renderer, resources, cursor) {
+                if transition.tick(&mut ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                }) {
                     self.phase = MissionStatePopupPhase::Confirming(Box::new(
                         YesNoModalState::new(event_pump, renderer, resources, self.message.clone()),
                     ));
@@ -90,9 +93,12 @@ impl MissionStatePopupState {
                 None
             }
             MissionStatePopupPhase::Confirming(yesno) => {
-                if let Some(confirmed) =
-                    yesno.tick(event_pump, renderer, resources, cursor.as_ref())
-                {
+                if let Some(confirmed) = yesno.tick(&mut ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                }) {
                     if confirmed {
                         self.phase = MissionStatePopupPhase::Done;
                         Some(true)
@@ -112,7 +118,12 @@ impl MissionStatePopupState {
                 }
             }
             MissionStatePopupPhase::Closing(transition) => {
-                if transition.tick(event_pump, renderer, resources, cursor) {
+                if transition.tick(&mut ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                }) {
                     self.phase = MissionStatePopupPhase::Done;
                     Some(false)
                 } else {
@@ -194,13 +205,11 @@ impl MissionStateTransition {
         }
     }
 
-    fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        mut cursor: Option<ModalCursor<'_>>,
-    ) -> bool {
+    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         // Exponential decay:
         //   open:  counter *= INV_TRANSITION_SPEED
         //   close: counter *= TRANSITION_SPEED
@@ -275,7 +284,7 @@ impl MissionStateTransition {
             );
         }
 
-        if let Some(c) = cursor.as_mut() {
+        if let Some(c) = cursor {
             let (mx, my) = event_pump.cursor_pos();
             c.cursor
                 .render(renderer, mx as f32, my as f32, c.opacity, c.shadow_color);

@@ -37,7 +37,7 @@ use super::layout::{
     enter_modal_gpu_phase, render_text_in_box_with_drop_cap_font, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_OK, MenuSurface};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 
 /// Virtual window geometry: `(0, 0, 496, 463)`.
 pub const WIN_W: i32 = 496;
@@ -155,17 +155,18 @@ pub(crate) async fn show_popup_scroll(
         item.align,
         item.universal_frame,
     );
-    let mut cursor =
-        super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
+    let cursor = super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
     loop {
         let result = state.tick(
-            window,
-            renderer,
-            resources,
+            &mut ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor: Some(&cursor),
+            },
             sound,
             audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend),
             *sample_loader,
-            Some(cursor.reborrow()),
             modal_net.as_ref(),
         );
         if let Some(result) = result {
@@ -285,15 +286,16 @@ impl PopupScrollModalState {
 
     pub fn tick(
         &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
+        io: &mut ModalScreenIo<'_, '_>,
         sound: &mut SoundManager,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: &SampleLoader,
-        cursor: Option<ModalCursor<'_>>,
         modal_net: Option<&super::ModalNet<'_>>,
     ) -> Option<DialogResult> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         let mut dismissed = false;
         let remote_result = self.dismissal.poll(modal_net);
         if remote_result.is_some() {
@@ -347,7 +349,7 @@ impl PopupScrollModalState {
             dismissed = true;
         }
 
-        self.render(renderer, resources, cursor.as_ref());
+        self.render(renderer, resources, cursor);
         renderer.present();
 
         if let Some(result) = remote_result {

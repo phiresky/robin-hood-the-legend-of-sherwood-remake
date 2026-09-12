@@ -5,6 +5,7 @@
 //! awaits or pauses multiplayer simulation.
 
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::leaderboard_mission_end::{
     BoardLoadState, MissionEndLeaderboardAction, MissionEndLeaderboardController,
     MissionEndLeaderboardEvent, MissionSubmissionState,
@@ -74,13 +75,11 @@ impl MissionEndLeaderboardScreen {
 
     /// Advance and render exactly one UI frame. A returned event is consumed
     /// by the outer cooperative task; `None` keeps the overlay alive.
-    pub fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) -> Option<MissionEndLeaderboardEvent> {
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<MissionEndLeaderboardEvent> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         self.controller.poll();
         self.sync_widget_enabled();
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);

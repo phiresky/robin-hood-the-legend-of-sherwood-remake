@@ -9,6 +9,7 @@ use super::interactive::{
 use super::*;
 use crate::game::Game;
 use crate::ingame_menu::modal_net::ModalDismissalGate;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
 /// The wire index describes a dialog answer, never filesystem authority. Only
@@ -590,12 +591,12 @@ impl TerminalDebriefingState {
                     &mut context.resources.cursor,
                     &mut context.presentation.renderer,
                 );
-                let Some(confirmed) = state.tick(
-                    context.window,
-                    &mut context.presentation.renderer,
+                let Some(confirmed) = state.tick(&mut ModalScreenIo {
+                    window: context.window,
+                    renderer: &mut context.presentation.renderer,
                     resources,
-                    Some(cursor),
-                ) else {
+                    cursor: Some(&cursor),
+                }) else {
                     return TerminalDebriefingProgress::Pending;
                 };
                 let result = if confirmed {
@@ -649,12 +650,12 @@ impl TerminalDebriefingState {
                     &mut context.resources.cursor,
                     &mut context.presentation.renderer,
                 );
-                let Some(outcome) = state.tick(
-                    context.window,
-                    &mut context.presentation.renderer,
+                let Some(outcome) = state.tick(&mut ModalScreenIo {
+                    window: context.window,
+                    renderer: &mut context.presentation.renderer,
                     resources,
-                    Some(cursor),
-                ) else {
+                    cursor: Some(&cursor),
+                }) else {
                     return TerminalDebriefingProgress::Pending;
                 };
                 if let DebriefingOutcome::LoadAttempt { body, was_on_stat } = outcome {
@@ -715,10 +716,12 @@ impl TerminalDebriefingState {
                     &mut context.presentation.renderer,
                 );
                 let outcome = picker.tick(
-                    context.window,
-                    &mut context.presentation.renderer,
-                    resources,
-                    Some(cursor),
+                    &mut ModalScreenIo {
+                        window: context.window,
+                        renderer: &mut context.presentation.renderer,
+                        resources,
+                        cursor: Some(&cursor),
+                    },
                     &mut context.callbacks.save_manager,
                     Some(&mut context.host.audio.sound),
                     context
