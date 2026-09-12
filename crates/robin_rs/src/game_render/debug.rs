@@ -93,7 +93,7 @@ pub(crate) fn render_debug_doors(
         (sx, sy)
     };
     let box_at = |renderer: &mut Renderer, (x, y): (i32, i32), (r, g, b): (u8, u8, u8)| {
-        renderer.render_gpu_rect(x - half, y - half, side, side, r, g, b, 255);
+        renderer.render_gpu_rect(x - half, y - half, side, side, [r, g, b, 255]);
     };
 
     for door in engine.doors() {
@@ -111,9 +111,7 @@ pub(crate) fn render_debug_doors(
                 out_screen.1,
                 in_screen.0,
                 in_screen.1,
-                line_r,
-                line_g,
-                line_b,
+                [line_r, line_g, line_b],
             );
             box_at(renderer, out_screen, (out_r, out_g, out_b));
             box_at(renderer, in_screen, (in_r, in_g, in_b));
@@ -125,18 +123,14 @@ pub(crate) fn render_debug_doors(
                 out_screen.1,
                 mid_screen.0,
                 mid_screen.1,
-                line_r,
-                line_g,
-                line_b,
+                [line_r, line_g, line_b],
             );
             renderer.render_gpu_line(
                 mid_screen.0,
                 mid_screen.1,
                 in_screen.0,
                 in_screen.1,
-                line_r,
-                line_g,
-                line_b,
+                [line_r, line_g, line_b],
             );
             box_at(renderer, out_screen, (out_r, out_g, out_b));
             box_at(renderer, mid_screen, (mid_r, mid_g, mid_b));
@@ -207,7 +201,7 @@ pub(crate) fn render_debug_motion_graph(
             let (r, g, blu) = rgb565_to_rgb8(color);
             let (x1, y1) = world_to_screen(a);
             let (x2, y2) = world_to_screen(b);
-            renderer.render_gpu_line(x1, y1, x2, y2, r, g, blu);
+            renderer.render_gpu_line(x1, y1, x2, y2, [r, g, blu]);
         },
     );
 
@@ -219,7 +213,7 @@ pub(crate) fn render_debug_motion_graph(
             let (r, g, blu) = rgb565_to_rgb8(color);
             let (x1, y1) = world_to_screen(a);
             let (x2, y2) = world_to_screen(b);
-            renderer.render_gpu_line(x1, y1, x2, y2, r, g, blu);
+            renderer.render_gpu_line(x1, y1, x2, y2, [r, g, blu]);
         },
     );
 }
@@ -284,7 +278,7 @@ fn draw_polygon_outline_map(
     {
         let (x1, y1) = previous;
         let (x2, y2) = next;
-        renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
+        renderer.render_gpu_line(x1, y1, x2, y2, [r, g, b]);
         previous = next;
     }
 }
@@ -321,7 +315,7 @@ fn fill_polygon_map(
         let p0 = map_to_screen(verts[tri[0]]);
         let p1 = map_to_screen(verts[tri[1]]);
         let p2 = map_to_screen(verts[tri[2]]);
-        renderer.render_gpu_triangle([p0, p1, p2], r, g, b, a);
+        renderer.render_gpu_triangle([p0, p1, p2], [r, g, b, a]);
     }
 }
 
@@ -454,10 +448,10 @@ pub(crate) fn render_debug_surfaces_outline(
             };
             let (x1, y1) = to_screen_i(prev);
             let (x2, y2) = to_screen_i(wp);
-            renderer.render_gpu_line(x1, y1, x2, y2, r, g, b);
+            renderer.render_gpu_line(x1, y1, x2, y2, [r, g, b]);
             const M: i32 = 4;
-            renderer.render_gpu_line(x2 - M, y2 - M, x2 + M, y2 + M, r, g, b);
-            renderer.render_gpu_line(x2 - M, y2 + M, x2 + M, y2 - M, r, g, b);
+            renderer.render_gpu_line(x2 - M, y2 - M, x2 + M, y2 + M, [r, g, b]);
+            renderer.render_gpu_line(x2 - M, y2 + M, x2 + M, y2 - M, [r, g, b]);
             prev = wp;
         }
     }
@@ -488,7 +482,7 @@ pub(crate) fn render_debug_surfaces_outline(
             ((bot_y_w - view.y) * zoom).round() as i32,
         );
         // Vertical drop line.
-        renderer.render_gpu_line(top.0, top.1, bot.0, bot.1, 255, 255, 255);
+        renderer.render_gpu_line(top.0, top.1, bot.0, bot.1, [255, 255, 255]);
         // Footprint ellipse: 16 segments around an ellipse with
         // world-unit radii (rx, ry) — flattened to suggest the
         // ground plane.  Drawn in screen space directly.
@@ -508,9 +502,7 @@ pub(crate) fn render_debug_surfaces_outline(
                 prev_pt.1.round() as i32,
                 p.0.round() as i32,
                 p.1.round() as i32,
-                255,
-                255,
-                255,
+                [255, 255, 255],
             );
             prev_pt = p;
         }
@@ -782,7 +774,7 @@ pub(crate) fn render_debug_whatsup_overlay(
             let width = sx2 - sx1;
             let height = sy2 - sy1;
             if width > 0 && height > 0 {
-                renderer.render_gpu_rect(sx1, sy1, width, height, 255, 0, 0, 255);
+                renderer.render_gpu_rect(sx1, sy1, width, height, [255, 0, 0, 255]);
             }
         }
 
@@ -791,10 +783,10 @@ pub(crate) fn render_debug_whatsup_overlay(
         let (ex2, ey2) = to_screen(cx + HALF_WIDTH, cy + HALF_HEIGHT);
         if ex2 > ex1 && ey2 > ey1 {
             // 4-line rectangle — `b3D=false` bounding-box branch.
-            renderer.render_gpu_line(ex1, ey1, ex2, ey1, 255, 255, 255);
-            renderer.render_gpu_line(ex2, ey1, ex2, ey2, 255, 255, 255);
-            renderer.render_gpu_line(ex2, ey2, ex1, ey2, 255, 255, 255);
-            renderer.render_gpu_line(ex1, ey2, ex1, ey1, 255, 255, 255);
+            renderer.render_gpu_line(ex1, ey1, ex2, ey1, [255, 255, 255]);
+            renderer.render_gpu_line(ex2, ey1, ex2, ey2, [255, 255, 255]);
+            renderer.render_gpu_line(ex2, ey2, ex1, ey2, [255, 255, 255]);
+            renderer.render_gpu_line(ex1, ey2, ex1, ey1, [255, 255, 255]);
         }
     }
 }

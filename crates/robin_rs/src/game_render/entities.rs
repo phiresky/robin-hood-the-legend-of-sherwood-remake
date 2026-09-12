@@ -800,7 +800,7 @@ pub(super) fn render_entity_fallback(
     let w = ((screen_x + half).min(screen_w) - x).max(0);
     let h = ((screen_y + half).min(screen_h) - y).max(0);
     if w > 0 && h > 0 {
-        renderer.render_gpu_rect(x, y, w, h, r, g, b, 255);
+        renderer.render_gpu_rect(x, y, w, h, [r, g, b, 255]);
     }
 }
 
