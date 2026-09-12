@@ -2329,3 +2329,10 @@ respectively `backup_authority_state` or `database_schema_version`. Tests must
 prove absent → durable initialize-v2 intent/key → present → complete-v2 intent
 removal, and read-only live-schema admission including a committed WAL while
 both runtime locks are held. Main-file-only schema reads are insufficient.
+
+## Diagnostic reports
+
+Crash and bug reports use `/api/v1/diagnostics` and the private operator endpoints.
+See [Crash and bug reporting](../../docs/NEW_FEATURES.md#crash-and-bug-reporting)
+for payload limits, retention, client behavior and migration requirements.
+Diagnostics are included in the normal SQLite backup and maintenance fencing.

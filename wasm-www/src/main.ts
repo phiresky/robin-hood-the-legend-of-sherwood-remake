@@ -1,3 +1,4 @@
+import { installDiagnostics } from './diagnostics.js';
 import { requestFullContentFolder } from './content-picker.js';
 import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport.js';
 import { withAbort } from './cancellation.js';
@@ -130,6 +131,7 @@ window.addEventListener('pagehide', event => {
 const logOk = (t: string): void => appendLogLine(logEl, t);
 const logErr = (t: string): void => appendLogLine(logEl, t, 'err');
 
+const diagnostics = installDiagnostics();
 installConsoleMirror(logEl);
 installFullscreenButton(fullscreenButton);
 
@@ -154,6 +156,7 @@ function installConsoleMirror(target: HTMLElement): void {
         console[method] = (...args: unknown[]): void => {
             original(...args);
             const line = formatConsoleArgs(args);
+            diagnostics.log(line);
             enqueue(line, method === 'error' ? 'err' : undefined);
         };
     }
@@ -297,7 +300,11 @@ async function main(): Promise<void> {
     await bootGame({
         buildsBase: WASM_BUILDS_BASE,
         prepareJoin: signal => prepareBrowserJoin(capturedBrowserJoinCode, signal),
-        resolveBuild,
+        resolveBuild: async (ticket, signal) => {
+            const selection = await resolveBuild(ticket, signal);
+            diagnostics.setBuild(selection.short);
+            return selection;
+        },
         loadManifest: async (base, ticket, signal) => parseMultiplayerBuildManifest(await fetchJson(`${base}/manifest.json`, signal), ticket),
         loadRuntime: async (base, compressed, latest, signal) => {
             const prepared = await prepareReplayWithRuntime(
@@ -421,6 +428,7 @@ main().catch((e: unknown) => {
     const msg = e instanceof Error ? e.message : String(e);
     // eslint-disable-next-line no-console
     console.error(msg);
+    diagnostics.failure(e);
     bootProgressError(`boot failed: ${msg}`);
     logErr(`[boot failed] ${msg}`);
 });

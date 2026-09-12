@@ -22,6 +22,8 @@ use std::sync::{Mutex, OnceLock};
     any(target_os = "windows", target_os = "linux", target_os = "macos")
 ))]
 pub mod auto_update;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bug_report;
 pub mod leaderboard_signing;
 pub mod localization;
 #[cfg(not(target_arch = "wasm32"))]
@@ -101,6 +103,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ReplayLogMakeWriter {
 #[cfg(not(target_arch = "wasm32"))]
 impl std::io::Write for ReplayLogWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        crate::bug_report::record_log(buf);
         if let Some(file) = REPLAY_LOG_FILE
             .get_or_init(|| Mutex::new(None))
             .lock()

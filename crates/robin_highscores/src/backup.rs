@@ -2077,16 +2077,29 @@ mod tests {
             "verifier_sha256": "78".repeat(32),
         });
         let bytes = canonical_json_bytes(&document).unwrap();
+        let mut historical_document = document.clone();
+        historical_document["database_schema_version"] = serde_json::json!(2);
+        let historical_bytes = canonical_json_bytes(&historical_document).unwrap();
         assert_eq!(
-            release_identity_from_bytes_with_compiled_schema(bytes.clone(), None, false, 3,)
-                .unwrap()
-                .database_schema_version,
+            release_identity_from_bytes_with_compiled_schema(
+                historical_bytes.clone(),
+                None,
+                false,
+                3,
+            )
+            .unwrap()
+            .database_schema_version,
             2,
             "a canonical schema-2 VpsManifestV2 remains historical authority under schema 3"
         );
         assert!(
-            release_identity_from_bytes_with_compiled_schema(bytes.clone(), None, true, 3,)
-                .is_err(),
+            release_identity_from_bytes_with_compiled_schema(
+                historical_bytes.clone(),
+                None,
+                true,
+                3,
+            )
+            .is_err(),
             "current-release admission must reject a historical downgrade"
         );
         let mut pre_vps_v2_schema = document.clone();

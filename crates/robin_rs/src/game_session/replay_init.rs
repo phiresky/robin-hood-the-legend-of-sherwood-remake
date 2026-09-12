@@ -154,6 +154,7 @@ pub(super) fn restart_recording(
             .map_err(|error| error.error)?;
         tracing::info!("Recording restarted replay → {}", path.display());
         _recording_index.recording_started(&path);
+        crate::bug_report::set_replay(&path);
         let log_path = replay_debug_log_path(path.to_str().expect("replay directory is UTF-8"));
         if let Err(error) = crate::set_replay_log_file(&log_path) {
             tracing::warn!("Failed to create restarted replay debug log: {error}");
@@ -251,6 +252,7 @@ pub(super) fn init_recording(
                     Ok(rec) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
+                            crate::bug_report::set_replay(archive.directory());
                             args.global_options.recording_index().recording_started(
                                 &archive.directory().join(archive.current_chunk()),
                             );

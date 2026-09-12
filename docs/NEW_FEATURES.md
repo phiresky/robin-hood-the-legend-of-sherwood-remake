@@ -1133,3 +1133,43 @@ through the normal load path, without depending on the original save file.
 Clean same-session saves still use compact load-back markers. Loading after a
 terminal recording starts a new recording with the embedded restore boundary.
 Save loads remain ineligible for ranked submissions.
+
+## Crash and bug reporting
+
+The native game queues Rust panic and fatal startup/game-loop reports under the
+OS data directory's `robin_hood/reports`. On the next launch it retries pending
+reports against the leaderboard VPS at `POST /api/v1/diagnostics`. Uploads run on
+a background worker with a timeout and no redirects. Reports remain queued on
+failure and are marked submitted only after a matching receipt.
+
+Open the in-game console (`~`) and enter `BUGREPORT description of the problem`
+to submit a manual report. Submission status and the report ID appear in the
+console. Reports include the engine commit, platform, panic backtrace, recent
+debug log (256 KiB), and active replay JSON files (up to 1 MiB). Missing or
+oversized replay attachments are explicitly reported. Logs and replays can
+contain player names, local paths and gameplay.
+
+The VPS stores diagnostics privately, separately from ranked evidence. Its
+existing operator bearer token protects list, detail and deletion endpoints:
+`GET /api/v1/operator/diagnostics`,
+`GET /api/v1/operator/diagnostics/{report_id}`, and
+`DELETE /api/v1/operator/diagnostics/{report_id}`.
+The latest 100 reports are listed. Identical payloads share a receipt, allowing
+safe retries. Admission limits are 10 reports per IP/hour, 100 globally/hour,
+2 MiB per request, and 512 MiB total stored payload. Entries older than 30 days
+are removed during the next successful submission transaction.
+
+Deployment requires database migration 0003 and a matching schema-version-3
+VPS release. Existing nginx and Cloudflare API routing covers the new endpoints.
+
+The browser toolbar's **Report bug** button opens a report form. Unhandled
+JavaScript errors, rejected promises, Rust panic console messages and fatal boot
+errors also queue reports. Failed reports retry on reload or when connectivity
+returns. Browser storage holds at most ten pending reports; automatic capture is
+limited to three reports per page load. Browser reports include logs and build
+details, but do not yet include a replay attachment.
+
+TODO: a native report form, browser replay attachments, native fatal-signal
+minidumps, queue retention settings, and coherent replay snapshots. Rust panic
+hooks do not capture OOM, SIGKILL or native fatal signals; a captured replay can
+end in an incomplete write.

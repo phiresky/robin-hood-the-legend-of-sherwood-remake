@@ -149,7 +149,7 @@ pub use verifier_job::{
 pub const SCHEMA_VERSION_V1: u32 = 1;
 /// Exact SQLx migration level shared by release manifests, backup identities,
 /// and the high-score runtime.
-pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 2;
+pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 3;
 
 /// Exact save format emitted by a build eligible for the current ranked
 /// replay contract. The engine and ranking-service publication gate share
@@ -166,3 +166,5 @@ pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 33;
 /// build manifests, and immutable ruleset allowlists. A current replay schema
 /// may not be paired with an older self-consistent network tuple.
 pub const CURRENT_RANKED_NETWORK_PROTOCOL_VERSION_V1: u32 = 41;
+
+pub mod diagnostics;

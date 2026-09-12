@@ -33,6 +33,8 @@ use std::time::Duration;
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 mod acceptance;
+mod diagnostics;
+pub use diagnostics::DiagnosticSummary;
 mod maintenance;
 mod public_queries;
 mod uploads;
@@ -4833,8 +4835,8 @@ mod tests {
 
     #[test]
     fn migration_chain_is_one_canonical_production_schema() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 2);
-        assert_eq!(MIGRATOR.migrations.len(), 2);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 3);
+        assert_eq!(MIGRATOR.migrations.len(), 3);
         let migration = &MIGRATOR.migrations[0];
         assert_eq!(migration.version, 1);
         assert_eq!(migration.description.as_ref(), "initial");
@@ -4849,6 +4851,14 @@ mod tests {
                 "canonical schema retained obsolete replay namespace {forbidden}",
             );
         }
+        let diagnostics = &MIGRATOR.migrations[2];
+        assert_eq!(diagnostics.version, 3);
+        assert!(
+            diagnostics
+                .sql
+                .as_str()
+                .contains("CREATE TABLE diagnostic_reports")
+        );
         let maintenance = &MIGRATOR.migrations[1];
         assert_eq!(maintenance.version, 2);
         assert_eq!(maintenance.description.as_ref(), "maintenance write leases");
