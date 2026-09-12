@@ -9,10 +9,6 @@ import {
     parseRunDetail,
 } from './public-response.js';
 import {
-    parseAndVerifyBuildManifest,
-} from './build-contract.js';
-import {
-    parseAndVerifyContentManifest,
     parseAndVerifyCampaignContentManifest,
 } from './content-contract.js';
 import {
@@ -30,8 +26,6 @@ import {
 import {
     type BoardMetadata,
     type BoardPage,
-    type BuildManifest,
-    type ContentManifest,
     type CampaignContentManifest,
     type CampaignSessionDetail,
     type RulesConfigIdentity,
@@ -124,18 +118,6 @@ export class HighscoreApi {
         return detail;
     }
 
-    async buildManifest(sha256: string, signal?: AbortSignal): Promise<DigestVerified<BuildManifest>> {
-        requireSha256(sha256, 'Build manifest');
-        const document = await this.getJson(['builds', sha256], signal, {}, 'force-cache');
-        return await parseAndVerifyBuildManifest(document, sha256);
-    }
-
-    async contentManifest(sha256: string, signal?: AbortSignal): Promise<DigestVerified<ContentManifest>> {
-        requireSha256(sha256, 'Content manifest');
-        const document = await this.getJson(['content-manifests', sha256], signal, {}, 'force-cache');
-        return await parseAndVerifyContentManifest(document, sha256);
-    }
-
     async campaignContentManifest(
         sha256: string,
         signal?: AbortSignal,
@@ -177,19 +159,6 @@ export class HighscoreApi {
         // digest. This cross-binds mutable publication status to the exact
         // immutable ranking policy without trusting either response's labels.
         return immutableManifest;
-    }
-
-    async player(publicKey: string, signal?: AbortSignal): Promise<PlayerProfile> {
-        requireSha256(publicKey, 'Player public key');
-        const player = parsePlayerProfile(await this.getJson(['players', publicKey], signal));
-        if (player.publicKey !== publicKey) {
-            throw new PublicApiError(
-                0,
-                'player_identity_mismatch',
-                'The player response did not match its requested identity.',
-            );
-        }
-        return player;
     }
 
     async playerRuns(
@@ -331,25 +300,8 @@ export class HighscoreApi {
         params: Readonly<Record<string, string | number | null | undefined>> = {},
         cache: RequestCache = 'no-store',
     ): Promise<unknown> {
-        const deadline = new NetworkDeadline(signal, 'API request', this.#requestTimeoutMs);
-        try {
-            const response = await deadline.race(fetch(
-                apiUrl(this.base, path, params),
-                requestInit(deadline.signal, 'application/json', cache),
-            ));
-            await requireSuccess(response, deadline);
-            const text = new TextDecoder('utf-8', { fatal: true })
-                .decode(await readBounded(response, MAX_JSON_BYTES, 'JSON', deadline));
-            try {
-                return JSON.parse(text) as unknown;
-            } catch {
-                throw new PublicApiError(0, 'invalid_json', 'The server returned invalid JSON.');
-            }
-        } catch (error) {
-            throw publicDeadlineError(deadline, error);
-        } finally {
-            deadline.dispose();
-        }
+        return this.requestJson(apiUrl(this.base, path, params), signal,
+            requestSignal => requestInit(requestSignal, 'application/json', cache));
     }
 
     private async sendJson(
@@ -358,14 +310,22 @@ export class HighscoreApi {
         body: unknown,
         signal?: AbortSignal,
     ): Promise<unknown> {
+        return this.requestJson(apiUrl(this.base, path), signal, requestSignal => ({
+            ...requestInit(requestSignal, 'application/json'),
+            method,
+            headers: { accept: 'application/json', 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+        }));
+    }
+
+    private async requestJson(
+        url: string,
+        signal: AbortSignal | undefined,
+        init: (signal: AbortSignal) => RequestInit,
+    ): Promise<unknown> {
         const deadline = new NetworkDeadline(signal, 'API request', this.#requestTimeoutMs);
         try {
-            const response = await deadline.race(fetch(apiUrl(this.base, path), {
-                ...requestInit(deadline.signal, 'application/json'),
-                method,
-                headers: { accept: 'application/json', 'content-type': 'application/json' },
-                body: JSON.stringify(body),
-            }));
+            const response = await deadline.race(fetch(url, init(deadline.signal)));
             await requireSuccess(response, deadline);
             const text = new TextDecoder('utf-8', { fatal: true })
                 .decode(await readBounded(response, MAX_JSON_BYTES, 'JSON', deadline));

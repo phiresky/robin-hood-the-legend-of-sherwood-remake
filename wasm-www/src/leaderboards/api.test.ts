@@ -7,6 +7,85 @@ import type { BoardFilters } from './state.js';
 const digest = '11'.repeat(32);
 const substitutedPlayerKey = '22'.repeat(32);
 
+for (const method of ['GET', 'POST'] as const) {
+    test(`${method} JSON transport retains decoding, bounds, error envelopes and request policies`, async t => {
+        const call = (api: HighscoreApi): Promise<unknown> => method === 'GET'
+            ? api.metadata() : api.usernameChallenge(digest);
+        const api = new HighscoreApi('https://scores.example/api/v1');
+        let response: Response;
+        t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+            assert.equal(init.method, method);
+            assert.equal(init.credentials, 'omit');
+            assert.equal(init.mode, 'cors');
+            assert.equal(init.cache, 'no-store');
+            assert.equal(init.redirect, 'error');
+            assert.equal(init.referrerPolicy, 'no-referrer');
+            assert.ok(init.signal instanceof AbortSignal);
+            assert.equal(new Headers(init.headers).get('accept'), 'application/json');
+            assert.equal(new Headers(init.headers).get('content-type'), method === 'POST' ? 'application/json' : null);
+            assert.equal(init.body, method === 'POST' ? JSON.stringify({ schema_version: 1, public_key: digest }) : undefined);
+            return response;
+        });
+        response = new Response('{');
+        await assert.rejects(call(api), { code: 'invalid_json', message: 'The server returned invalid JSON.' });
+        response = new Response(new Uint8Array([0xff]));
+        await assert.rejects(call(api), TypeError);
+        response = new Response(JSON.stringify({ schema_version: 1, error: { code: 'denied', message: 'Denied.' } }), { status: 403 });
+        await assert.rejects(call(api), { status: 403, code: 'denied', message: 'Denied.' });
+        response = new Response('{', { status: 503 });
+        await assert.rejects(call(api), { status: 503, code: 'http_503' });
+        for (const advertised of [false, true]) {
+            for (const rejecting of [false, true]) {
+                let cancelled = false;
+                response = new Response(new ReadableStream<Uint8Array>({
+                    start(controller) { controller.enqueue(new Uint8Array(2 * 1024 * 1024 + 1)); },
+                    cancel() {
+                        cancelled = true;
+                        return rejecting ? Promise.reject(new Error('cleanup failed')) : new Promise<void>(() => {});
+                    },
+                }), { headers: advertised ? { 'content-length': String(2 * 1024 * 1024 + 1) } : {} });
+                await assert.rejects(call(api), { code: 'response_too_large' });
+                assert.equal(cancelled, true);
+            }
+        }
+    });
+
+    test(`${method} JSON deadlines and caller cancellation cover headers and body`, { timeout: 2000 }, async t => {
+        const call = (signal?: AbortSignal): Promise<unknown> => {
+            const api = new HighscoreApi('https://scores.example/api/v1', 20);
+            return method === 'GET' ? api.metadata(signal) : api.usernameChallenge(digest, signal);
+        };
+        for (const stalledBody of [false, true]) {
+            for (const abort of [false, true]) {
+                let cancelled = false;
+                let started!: () => void;
+                const entered = new Promise<void>(resolve => { started = resolve; });
+                t.mock.method(globalThis, 'fetch', async () => {
+                    if (!stalledBody) {
+                        started();
+                        return new Promise<Response>(() => {});
+                    }
+                    return new Response(new ReadableStream<Uint8Array>({
+                        pull() { started(); },
+                        cancel() { cancelled = true; return Promise.reject(new Error('cleanup failed')); },
+                    }));
+                });
+                const controller = new AbortController();
+                const reason = new Error('caller stopped request');
+                const pending = call(controller.signal);
+                await entered;
+                // Let the response reader attach before aborting a body read.
+                await new Promise<void>(resolve => setTimeout(resolve, 0));
+                if (abort) controller.abort(reason);
+                await assert.rejects(pending, error => abort ? error === reason
+                    : error instanceof PublicApiError && error.code === 'network_timeout');
+                assert.equal(cancelled, stalledBody);
+                t.mock.restoreAll();
+            }
+        }
+    });
+}
+
 function fingerprint(publicKeyHex: string): string {
     return createHash('sha256')
         .update(Buffer.from('robinhood-run-key-fingerprint-v1\0'))
@@ -156,8 +235,6 @@ test('content-addressed manifest routes reject an invalid digest before fetching
     }) as typeof fetch;
     try {
         const api = new HighscoreApi('https://scores.example/api/v1');
-        await assert.rejects(api.buildManifest('../not-a-digest'), /non-zero lowercase SHA-256/u);
-        await assert.rejects(api.contentManifest('0'.repeat(64)), /non-zero lowercase SHA-256/u);
         await assert.rejects(api.campaignContentManifest('../catalog'), /non-zero lowercase SHA-256/u);
         await assert.rejects(api.rulesConfig('A'.repeat(64)), /non-zero lowercase SHA-256/u);
         await assert.rejects(api.rulesetManifest('short'), /non-zero lowercase SHA-256/u);
@@ -217,7 +294,7 @@ test('ruleset lookup cross-binds immutable policy and mutable publication routes
     }
 });
 
-test('leaderboard and player routes reject identity substitution', async () => {
+test('leaderboard route rejects cursor substitution', async () => {
     const originalFetch = globalThis.fetch;
     const responses: unknown[] = [{
         schema_version: 1,
@@ -235,11 +312,6 @@ test('leaderboard and player routes reject identity substitution', async () => {
         previous_cursor: null,
         entries: [],
         next_cursor: null,
-    }, {
-        schema_version: 1,
-        username: 'Substituted Player',
-        public_key: substitutedPlayerKey,
-        public_key_fingerprint: fingerprint(substitutedPlayerKey),
     }];
     globalThis.fetch = (async () => new Response(JSON.stringify(responses.shift()), {
         status: 200,
@@ -251,11 +323,6 @@ test('leaderboard and player routes reject identity substitution', async () => {
             api.board(fullCampaignFilters),
             (error: unknown) => error instanceof PublicApiError
                 && error.code === 'leaderboard_cursor_mismatch',
-        );
-        await assert.rejects(
-            api.player(digest),
-            (error: unknown) => error instanceof PublicApiError
-                && error.code === 'player_identity_mismatch',
         );
     } finally {
         globalThis.fetch = originalFetch;

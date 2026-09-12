@@ -4,6 +4,52 @@ import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { fetchJson, fetchPrecompressedWasm, fetchRuntimeWasm, fetchWithProgress } from './boot-transport.ts';
 import { withAbort } from './cancellation.ts';
 
+for (const cancelBehavior of ['reject', 'stall'] as const) {
+    test(`unused responses never delay fallback or mask errors when cancellation will ${cancelBehavior}`, { timeout: 2000 }, async () => {
+        const bytes = new Uint8Array([0, 97, 115, 109]);
+        for (const outcome of ['gzip', 'error', 'abort', 'raw'] as const) {
+            const controller = new AbortController();
+            const cancelled: string[] = [];
+            const urls: string[] = [];
+            const originalError = new Error('gzip fetch failed');
+            const unused = (url: string, status: number): Response => new Response(new ReadableStream({
+                cancel() {
+                    cancelled.push(url);
+                    return cancelBehavior === 'reject'
+                        ? Promise.reject(new Error('cleanup failed'))
+                        : new Promise<void>(() => {});
+                },
+            }), { status });
+            const raw = new Response(bytes);
+            const pending = fetchRuntimeWasm('asset.wasm', true, 'default', () => {}, controller.signal, async url => {
+                const name = String(url);
+                urls.push(name);
+                if (name.endsWith('.br')) return unused(name, 404);
+                if (name.endsWith('.gz')) {
+                    if (outcome === 'error') throw originalError;
+                    if (outcome === 'abort') {
+                        controller.abort(originalError);
+                        return new Promise<Response>(() => {});
+                    }
+                    return outcome === 'raw' ? unused(name, 404) : new Response(gzipSync(bytes));
+                }
+                return outcome === 'raw' ? raw : unused(name, 404);
+            });
+            if (outcome === 'error' || outcome === 'abort') {
+                await assert.rejects(pending, error => error === originalError);
+            } else {
+                const result = await pending;
+                assert.deepEqual(new Uint8Array(await result.arrayBuffer()), bytes);
+                if (outcome === 'raw') assert.equal(raw.bodyUsed, true);
+            }
+            assert.deepEqual(urls, ['asset.wasm.br', 'asset.wasm', 'asset.wasm.gz']);
+            assert.deepEqual(cancelled, outcome === 'raw'
+                ? ['asset.wasm.br', 'asset.wasm.gz']
+                : ['asset.wasm.br', 'asset.wasm']);
+        }
+    });
+}
+
 test('abort releases an uncooperative provider and prevents already-aborted operations', async () => {
     const controller = new AbortController();
     const pending = withAbort(controller.signal, () => new Promise<never>(() => {}));
