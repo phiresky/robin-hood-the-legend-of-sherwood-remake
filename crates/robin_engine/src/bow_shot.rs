@@ -761,24 +761,6 @@ pub struct BowTickEvents {
     pub pc_equip_actions: Vec<EntityId>,
 }
 
-#[cfg(test)]
-thread_local! {
-    static CROSS_ACTOR_SHOT_REPLACEMENT: std::cell::Cell<Option<(EntityId, ActiveShot)>> =
-        const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-fn apply_cross_actor_shot_replacement(entities: &mut Entities) {
-    let Some((actor_id, replacement)) = CROSS_ACTOR_SHOT_REPLACEMENT.take() else {
-        return;
-    };
-    entities
-        .get_mut(actor_id)
-        .and_then(Entity::actor_data_mut)
-        .expect("cross-actor replacement target must remain an actor")
-        .active_shot = replacement;
-}
-
 /// Advance the shoot animation for every actor with an [`ActiveShot`].
 ///
 /// Returns a list of results for actors whose shoot animation reached
@@ -828,9 +810,6 @@ fn tick_bow_shots_matching(
         target_ground_positions[entity_id] = Some(bow_target_ground_position(entity));
         target_map_positions[entity_id] = Some(entity.element_data().position_map());
     }
-
-    #[cfg(test)]
-    apply_cross_actor_shot_replacement(entities);
 
     for (actor_id, entity) in entities.actors_mut() {
         let shooter_id: EntityId = actor_id.into();

@@ -751,14 +751,12 @@ impl NativeContext<'_, '_> {
     /// invoking `HostFunctions`, so a rejected direct-host call cannot mutate
     /// the recorder, entities, or sequence manager first.
     pub fn requires_engine_driver(&self, native: NativeFn, args: &[i32]) -> bool {
+        match native.yield_policy() {
+            signatures::NativeYieldPolicy::Never => return false,
+            signatures::NativeYieldPolicy::Always => return true,
+            signatures::NativeYieldPolicy::Conditional => {}
+        }
         match native {
-            NativeFn::Thanx
-            | NativeFn::SendMessage
-            | NativeFn::SendMessageWithArguments
-            | NativeFn::PrototypeFilterEvent
-            | NativeFn::SetActorPosture
-            | NativeFn::SetActorLocation
-            | NativeFn::SetActorActionState => true,
             NativeFn::SetAIState => {
                 let Some((&actor, &state)) = args.first().zip(args.get(1)) else {
                     return false;
@@ -798,7 +796,7 @@ impl NativeContext<'_, '_> {
                             .is_some_and(|entity| entity.human_data().is_some())
                     })
             }
-            _ => false,
+            _ => unreachable!("conditional native yield policy requires a preflight predicate"),
         }
     }
 
@@ -3254,7 +3252,15 @@ impl HostFunctions for NativeContext<'_, '_> {
 
         let value = dispatch::call_immediate(self, index, stack);
         match self.pending_yield.take() {
-            Some(request) => NativeCallOutcome::Yield(request),
+            Some(request) => {
+                assert!(
+                    NativeFn::try_from(index)
+                        .expect("dispatched native must be registered")
+                        .may_yield(),
+                    "native {index} yielded without registry preflight metadata"
+                );
+                NativeCallOutcome::Yield(request)
+            }
             None => NativeCallOutcome::Return(value),
         }
     }

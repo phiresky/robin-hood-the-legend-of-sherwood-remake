@@ -1516,39 +1516,27 @@ pub enum CrossNpcAction {
     /// (reciprocal cleanup).
     SetLeftCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         neighbour: Option<AiEntityHandle>,
     },
     /// Set the target NPC's right combat neighbour link (one-way).
     SetRightCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         neighbour: Option<AiEntityHandle>,
     },
     /// One-way counterpart of the original game's rear-archer assignment, used while
     /// applying the reciprocal half of shield-bearer-ahead updates.
     SetArcherBehindMe {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         archer: Option<AiEntityHandle>,
     },
     /// One-way counterpart of the original game's forward shield-bearer assignment, used while
     /// applying the reciprocal half of archer-behind updates.
     SetShieldBearerBeforeMe {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         shield_bearer: Option<AiEntityHandle>,
     },
     /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
@@ -1561,29 +1549,17 @@ pub enum CrossNpcAction {
     /// `target`'s current state being unmodified.
     UpdateLeftCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         old_left: Option<AiEntityHandle>,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         new_left: Option<AiEntityHandle>,
     },
     /// Mirror of [`Self::UpdateLeftCombatNeighbour`] for the right side.
     UpdateRightCombatNeighbour {
         target: NpcHandle,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         old_right: Option<AiEntityHandle>,
-        #[serde(
-            serialize_with = "serialize_optional_ai_handle",
-            deserialize_with = "deserialize_optional_ai_handle"
-        )]
+        #[serde(with = "optional_ai_handle")]
         new_right: Option<AiEntityHandle>,
     },
     /// Propagate primary target to a phalanx member during
@@ -2306,10 +2282,7 @@ pub struct DoorCombatInfo {
     pub direction: u16,
     /// The original game's pre-door combat dispatch explicitly permits no adversary.
     /// Slot zero is a live human, so only `None` represents that null pointer.
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     pub adversary: Option<AiEntityHandle>,
 }
 
@@ -2635,10 +2608,7 @@ pub struct ReconnaissanceReport {
     pub seek_position: Position,
     pub report_type: ReportType,
     pub seen_bodies: Vec<HumanHandle>,
-    #[serde(
-        serialize_with = "serialize_optional_ai_handle",
-        deserialize_with = "deserialize_optional_ai_handle"
-    )]
+    #[serde(with = "optional_ai_handle")]
     pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
 }

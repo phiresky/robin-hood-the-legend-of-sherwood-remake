@@ -138,18 +138,10 @@ crate::bitcode_adapters::impl_native_bitcode_flags!(ConditionFlags, u16);
     bitcode::Decode,
 )]
 pub struct CombatPosition {
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub attacker: Option<AiEntityHandle>,
     pub attacker_position: Position,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub target: Option<AiEntityHandle>,
     pub target_position: Position,
     pub target_direction: u16,
@@ -158,17 +150,9 @@ pub struct CombatPosition {
     pub bonus: i16,
     pub estimated_damage: i16,
     pub line_position: bool,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub left_neighbour: Option<AiEntityHandle>,
-    #[serde(
-        default,
-        serialize_with = "crate::ai::serialize_optional_ai_handle",
-        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
-    )]
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub right_neighbour: Option<AiEntityHandle>,
     /// Jump-line index when the combat position sits across a jump line
     /// (table-swordfight case); `None` otherwise.

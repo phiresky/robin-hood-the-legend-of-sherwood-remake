@@ -1227,34 +1227,13 @@ pub fn tick_arrows(
     )
 }
 
-/// Advance every projectile except the ones listed in `skip_arrow_ids`.
-///
-/// Used for bow arrows released from the sequence-manager phase: the original
-/// game already advanced the arrow before insertion, and the global
-/// element hourglass pass for that frame has already finished.
-pub fn tick_arrows_excluding(
-    entities: &mut Entities,
-    sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
-    skip_arrow_ids: &[EntityId],
-) -> Vec<ArrowTickResult> {
-    tick_arrows_matching(
-        entities,
-        sight_obstacles,
-        None,
-        None,
-        false,
-        skip_arrow_ids,
-        None,
-        None,
-    )
-}
-
 /// Advance and resolve collision for one active projectile.
 ///
 /// Used immediately after spawning a bow arrow to match the original game,
 /// which advances it before the
 /// arrow enters the engine element list.
-pub fn tick_arrow(
+#[cfg(test)]
+pub(crate) fn tick_arrow(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
