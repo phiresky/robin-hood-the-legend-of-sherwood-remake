@@ -78,10 +78,10 @@ mod tests {
 
         let hourglass = frame.hourglass_input();
         let authoritative = frame.authoritative_input();
-        let json = |value| serde_json::to_value(value).unwrap();
+        let json = |value: &[ExternalAction]| serde_json::to_value(value).unwrap();
         assert_eq!(
             json(&hourglass.external_actions),
-            json(&vec![action("pending")])
+            json(&[action("pending")])
         );
         assert_eq!(
             json(&authoritative.external_actions),
