@@ -1745,13 +1745,10 @@ impl EngineInner {
             caller,
             "tower-guard battle continuation caller must be its owner"
         );
-        begin_suspended_tower_guard_alert_think(
-            self.world
-                .entities
-                .get_mut(source_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
-        );
+        begin_suspended_tower_guard_alert_think(self.world.entities.expect_ai_controller_mut(
+            source_id,
+            format_args!("tower-guard caller {caller} lost its AI"),
+        ));
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self
             .world
@@ -1779,18 +1776,16 @@ impl EngineInner {
         let grid = &self.world.fast_grid;
         self.world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its EnemyAi"))
+            .expect_enemy_ai_mut(
+                source_id,
+                format_args!("tower-guard caller {caller} lost its EnemyAi"),
+            )
             .battle_decisions(sim, global, &ctx, &tick, Some(grid));
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
-        end_suspended_tower_guard_alert_think(
-            self.world
-                .entities
-                .get_mut(source_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("tower-guard caller {caller} lost its AI")),
-        );
+        end_suspended_tower_guard_alert_think(self.world.entities.expect_ai_controller_mut(
+            source_id,
+            format_args!("tower-guard caller {caller} lost its AI"),
+        ));
         // Decision-tick completion can itself publish a completion event. Close that final
         // piece of resumed original-game evaluation before returning to the
         // cross-NPC action dispatcher.
@@ -1810,9 +1805,10 @@ impl EngineInner {
         let target_id = self.expect_human_id_for_ai_handle(target, "ConsiderReport target");
         self.world
             .entities
-            .get_mut(target_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("ConsiderReport target human {target} has no EnemyAi"))
+            .expect_enemy_ai_mut(
+                target_id,
+                format_args!("ConsiderReport target human {target} has no EnemyAi"),
+            )
             .base
             .consider_report_merged_at_frame(
                 &report,
@@ -1864,9 +1860,10 @@ impl EngineInner {
         let grid = use_formation.then_some(&*self.world.fast_grid);
         self.world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} lost its EnemyAi"))
+            .expect_enemy_ai_mut(
+                source_id,
+                format_args!("AlertSoldiers caller {caller} lost its EnemyAi"),
+            )
             .finalize_alert_soldiers(sim, failure, global, grid, &ctx, &tick);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }
@@ -1952,9 +1949,10 @@ impl EngineInner {
             };
             self.world
                 .entities
-                .get_mut(source_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| panic!("look-there caller {caller} lost its AI"))
+                .expect_ai_controller_mut(
+                    source_id,
+                    format_args!("look-there caller {caller} lost its AI"),
+                )
                 .outbox
                 .reentrant
                 .cross_npc_actions
@@ -2025,9 +2023,10 @@ impl EngineInner {
         let grid = &self.world.fast_grid;
         self.world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| panic!("look-there caller {caller} lost its EnemyAi"))
+            .expect_enemy_ai_mut(
+                source_id,
+                format_args!("look-there caller {caller} lost its EnemyAi"),
+            )
             .resume_after_look_there(sim, continuation, global, Some(grid), &ctx, &tick);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, source_id, assets);
     }

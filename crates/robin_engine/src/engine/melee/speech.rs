@@ -222,9 +222,10 @@ impl EngineInner {
         };
         self.world
             .entities
-            .get_mut(entity_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| panic!("hurt-speech owner {} has no AI", entity_id.index()))
+            .expect_ai_controller_mut(
+                entity_id,
+                format_args!("hurt-speech owner {} has no AI", entity_id.index()),
+            )
             .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
         self.drain_ai_owner_work_for(sim, assets, entity_id);
 

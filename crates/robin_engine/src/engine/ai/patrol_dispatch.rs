@@ -208,9 +208,10 @@ impl EngineInner {
                 let grid = &self.world.fast_grid;
                 self.world
                     .entities
-                    .get_mut(chief_id)
-                    .and_then(Entity::enemy_ai_mut)
-                    .unwrap_or_else(|| panic!("patrol chief {chief} lost its EnemyAi"))
+                    .expect_enemy_ai_mut(
+                        chief_id,
+                        format_args!("patrol chief {chief} lost its EnemyAi"),
+                    )
                     .dispatch_stimulus_to_whole_patrol(
                         sim,
                         &stimulus,
@@ -414,9 +415,10 @@ impl EngineInner {
             let grid = &self.world.fast_grid;
             self.world
                 .entities
-                .get_mut(source_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| panic!("Think-result caller {caller} lost its EnemyAi"))
+                .expect_enemy_ai_mut(
+                    source_id,
+                    format_args!("Think-result caller {caller} lost its EnemyAi"),
+                )
                 .resolve_think_result(
                     sim,
                     accepted,
