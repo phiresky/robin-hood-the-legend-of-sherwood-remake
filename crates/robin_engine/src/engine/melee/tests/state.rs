@@ -990,7 +990,11 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
         strike_kind: crate::profiles::WeaponThrustKind::Lateral,
     });
 
-    engine.stop_owner_active_mechanics(attacker);
+    crate::engine::order_arbitration::stop_owner_active_mechanics(
+        &mut engine.world,
+        &mut engine.orders,
+        attacker,
+    );
     let retained_after_interrupt = engine
         .get_entity(attacker)
         .unwrap()
@@ -1129,7 +1133,11 @@ fn interrupted_push_victims_are_rebound_by_replacement_lateral_start() {
         .unwrap()
         .pending_push_swordfight = vec![victim];
 
-    engine.stop_owner_active_mechanics(attacker);
+    crate::engine::order_arbitration::stop_owner_active_mechanics(
+        &mut engine.world,
+        &mut engine.orders,
+        attacker,
+    );
     assert_eq!(
         engine
             .get_entity(attacker)

@@ -506,7 +506,10 @@ impl EngineInner {
         // `MotionState::Done`, then clears `last_motion_state` so the
         // next tick starts fresh.  Read by the postpone-race guard in
         // `EngineInner::engine_postpone`.
-        self.propagate_done_to_current_orders();
+        crate::engine::order_arbitration::propagate_done_to_current_orders(
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+        );
 
         // Keep bodies carried by Little John positioned on the carrier and
         // drive their sprite animation synchronized with the carrier.
