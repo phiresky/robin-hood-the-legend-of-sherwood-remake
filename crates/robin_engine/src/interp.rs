@@ -487,7 +487,7 @@ impl Vm {
 
     fn bytes_mut(&mut self, region: u16) -> &mut [u8] {
         match region {
-            REGION_STATIC => std::sync::Arc::make_mut(&mut self.static_area),
+            REGION_STATIC => std::sync::Arc::make_mut(&mut self.static_area).as_mut_slice(),
             REGION_HEAP => &mut self.heap,
             REGION_VOLATILE => &mut self.current_frame_mut().volatile,
             REGION_TEMP => &mut self.current_frame_mut().temporary,
