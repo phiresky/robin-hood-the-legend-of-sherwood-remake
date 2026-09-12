@@ -1139,26 +1139,31 @@ impl AiController {
                     )
             }
             ProbabilityDistribution::GaussHighVariance | ProbabilityDistribution::Gauss => {
-                let (sample_scale, center_scale, site) = match dist {
-                    ProbabilityDistribution::GaussHighVariance => (
-                        0.333_f32,
-                        0.5_f32,
-                        crate::sim_rng::RngSite::AiRandomValueGaussHigh,
-                    ),
-                    ProbabilityDistribution::Gauss => (
-                        0.166_f32,
-                        0.25_f32,
-                        crate::sim_rng::RngSite::AiRandomValueGauss,
-                    ),
+                let (sample_scale, center_scale) = match dist {
+                    ProbabilityDistribution::GaussHighVariance => (0.333_f32, 0.5_f32),
+                    ProbabilityDistribution::Gauss => (0.166_f32, 0.25_f32),
                     _ => unreachable!("Gaussian distribution arm"),
                 };
                 let width = ((range as f32) * sample_scale) as i16;
                 let center = ((range as f32) * center_scale) as i16;
                 let mut val = 0_i32;
                 if width > 0 {
-                    val = crate::sim_rng::i16(sim, site, 0..width) as i32
-                        + crate::sim_rng::i16(sim, site, 0..width) as i32
-                        + crate::sim_rng::i16(sim, site, 0..width) as i32;
+                    // Keep each draw's site explicit for the source inventory.
+                    // Both distributions draw exactly three samples, in order.
+                    let sample = || match dist {
+                        ProbabilityDistribution::GaussHighVariance => crate::sim_rng::i16(
+                            sim,
+                            crate::sim_rng::RngSite::AiRandomValueGaussHigh,
+                            0..width,
+                        ),
+                        ProbabilityDistribution::Gauss => crate::sim_rng::i16(
+                            sim,
+                            crate::sim_rng::RngSite::AiRandomValueGauss,
+                            0..width,
+                        ),
+                        _ => unreachable!("Gaussian distribution arm"),
+                    };
+                    val = sample() as i32 + sample() as i32 + sample() as i32;
                 }
                 val += gauss_curve_top as i32 - center as i32;
                 val.clamp(min_val as i32, max_val as i32) as i16
@@ -1217,21 +1222,20 @@ impl AiController {
             )
         };
         if debug {
-            eprintln!(
-                "BORED_BOUNDARY frame={} owner={} phase=get_bored_time state={:?} substate={:?} rank={:?} pride={} min={} delta={} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
-                ctx.frame,
-                self.me,
-                self.current_state,
-                self.current_substate,
-                ctx.self_rank,
-                ctx.self_pride,
-                min,
-                delta,
-                self.timer_is_running,
-                self.when_does_timer_ring,
-                self.outbox.reentrant.self_stimuli.len(),
-                self.outbox.reentrant.owner_work.len(),
-                self.outbox.actor.orders.len(),
+            crate::ai::parity_trace::bored_boundary_get_bored_time(
+                &(ctx.frame),
+                &(self.me),
+                &(self.current_state),
+                &(self.current_substate),
+                &(ctx.self_rank),
+                &(ctx.self_pride),
+                &(min),
+                &(delta),
+                &(self.timer_is_running),
+                &(self.when_does_timer_ring),
+                &(self.outbox.reentrant.self_stimuli.len()),
+                &(self.outbox.reentrant.owner_work.len()),
+                &(self.outbox.actor.orders.len()),
             );
         }
         // P_RECTANGLE ignores `lambda`; pass MAX_ATT_VALUE for the un-biased sample.
@@ -1497,23 +1501,24 @@ impl AiController {
         if !config.matches_required([Some(ctx.frame), ctx.original_creation_order]) {
             return;
         }
-        eprintln!(
-            "MACROLIFE frame={} owner={:?} me={} phase={phase} reason={reason:?} state={:?} substate={:?} in_progress={} timer_running={} timer_deadline={} started_this_frame={} command_offset={} remaining_bytes={} waypoint={:?} owner_work_len={} self_stimuli_len={} finish_after_stimuli={}",
-            ctx.frame,
-            ctx.original_creation_order,
-            self.me,
-            self.current_state,
-            self.current_substate,
-            self.macro_in_progress,
-            self.macro_timer_is_running,
-            self.when_does_macro_timer_ring,
-            self.macro_started_in_this_frame,
-            self.macro_command_offset,
-            self.number_of_remaining_macro_bytes,
-            self.macro_command_waypoint,
-            self.outbox.reentrant.owner_work.len(),
-            self.outbox.reentrant.self_stimuli.len(),
-            self.outbox.reentrant.finish_macro_after_self_stimuli,
+        crate::ai::parity_trace::macrolife(
+            &(ctx.frame),
+            &(ctx.original_creation_order),
+            &(self.me),
+            &(self.current_state),
+            &(self.current_substate),
+            &(self.macro_in_progress),
+            &(self.macro_timer_is_running),
+            &(self.when_does_macro_timer_ring),
+            &(self.macro_started_in_this_frame),
+            &(self.macro_command_offset),
+            &(self.number_of_remaining_macro_bytes),
+            &(self.macro_command_waypoint),
+            &(self.outbox.reentrant.owner_work.len()),
+            &(self.outbox.reentrant.self_stimuli.len()),
+            &(self.outbox.reentrant.finish_macro_after_self_stimuli),
+            &(phase),
+            &(reason),
         );
     }
 
@@ -1626,9 +1631,12 @@ impl AiController {
         let debug = frame.is_some_and(|frame| consider_report_debug_matches(frame, self.me));
         if debug {
             let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-            eprintln!(
-                "CONSIDERREPORT {{\"stage\":\"merge_start\",\"frame\":{frame},\"owner\":{},\"flags\":{flags},\"incoming\":{:?},\"known_before\":{:?}}}",
-                self.me, other.seen_bodies, self.my_reconnaissance_report.seen_bodies,
+            crate::ai::parity_trace::considerreport_merge_start(
+                &(self.me),
+                &(other.seen_bodies),
+                &(self.my_reconnaissance_report.seen_bodies),
+                &(frame),
+                &(flags),
             );
         }
 
@@ -1652,29 +1660,27 @@ impl AiController {
                     .delete_detectable_entity((body_id, DetectableType::Body));
                 if debug {
                     let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-                    eprintln!(
-                        "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":false,\"resolved_kind\":{:?},\"resolved_index\":{},\"queued\":true}}",
-                        self.me,
-                        body_id.kind(),
-                        body_id.index(),
+                    crate::ai::parity_trace::considerreport_body(
+                        &(self.me),
+                        &(body_id.kind()),
+                        &(body_id.index()),
+                        &(frame),
+                        &(body),
                     );
                 }
             } else if debug {
                 let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-                eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"body\",\"frame\":{frame},\"owner\":{},\"body\":{body},\"known\":true,\"resolved_kind\":null,\"resolved_index\":null,\"queued\":false}}",
-                    self.me,
-                );
+                crate::ai::parity_trace::considerreport_body_2(&(self.me), &(frame), &(body));
             }
         }
 
         if debug {
             let frame = frame.expect("enabled ConsiderReport diagnostic has a frame");
-            eprintln!(
-                "CONSIDERREPORT {{\"stage\":\"merge_end\",\"frame\":{frame},\"owner\":{},\"known_after\":{:?},\"queued_mutations\":{:?}}}",
-                self.me,
-                self.my_reconnaissance_report.seen_bodies,
-                self.outbox.actor.detectable_mutations,
+            crate::ai::parity_trace::considerreport_merge_end(
+                &(self.me),
+                &(self.my_reconnaissance_report.seen_bodies),
+                &(self.outbox.actor.detectable_mutations),
+                &(frame),
             );
         }
 
@@ -3250,22 +3256,22 @@ impl AiController {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=goto_enter destination=({:08x},{:08x},sector={:?},level={}) flags={flags:?} position=({:08x},{:08x},sector={:?},level={}) couldnt_before={} already_before={} owner_work_before={:?}",
-                ctx.frame,
-                self.me,
-                ctx.original_creation_order,
-                destination.x.to_bits(),
-                destination.y.to_bits(),
-                destination.sector,
-                destination.level,
-                ctx.position.x.to_bits(),
-                ctx.position.y.to_bits(),
-                ctx.position.sector,
-                ctx.position.level,
-                self.couldnt_reachpoint,
-                self.already_on_point,
-                self.outbox.reentrant.owner_work,
+            crate::ai::parity_trace::aidecision_goto_enter(
+                &(ctx.frame),
+                &(self.me),
+                &(ctx.original_creation_order),
+                &(destination.x.to_bits()),
+                &(destination.y.to_bits()),
+                &(destination.sector),
+                &(destination.level),
+                &(ctx.position.x.to_bits()),
+                &(ctx.position.y.to_bits()),
+                &(ctx.position.sector),
+                &(ctx.position.level),
+                &(self.couldnt_reachpoint),
+                &(self.already_on_point),
+                &(self.outbox.reentrant.owner_work),
+                &(flags),
             );
         }
         // Record the latest destination / flags so stuck-retry replays,
@@ -3337,13 +3343,12 @@ impl AiController {
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=goto_result result=already_on_point couldnt={} already={} owner_work={:?}",
-                    ctx.frame,
-                    self.me,
-                    self.couldnt_reachpoint,
-                    self.already_on_point,
-                    self.outbox.reentrant.owner_work,
+                crate::ai::parity_trace::aidecision_goto_result_already_on_point(
+                    &(ctx.frame),
+                    &(self.me),
+                    &(self.couldnt_reachpoint),
+                    &(self.already_on_point),
+                    &(self.outbox.reentrant.owner_work),
                 );
             }
             return;
@@ -3366,14 +3371,13 @@ impl AiController {
         {
             self.finish_already_on_point();
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=goto_result result=already_near tolerance_bits={:08x} couldnt={} already={} owner_work={:?}",
-                    ctx.frame,
-                    self.me,
-                    near_tolerance.to_bits(),
-                    self.couldnt_reachpoint,
-                    self.already_on_point,
-                    self.outbox.reentrant.owner_work,
+                crate::ai::parity_trace::aidecision_goto_result_already_near(
+                    &(ctx.frame),
+                    &(self.me),
+                    &(near_tolerance.to_bits()),
+                    &(self.couldnt_reachpoint),
+                    &(self.already_on_point),
+                    &(self.outbox.reentrant.owner_work),
                 );
             }
             return;
@@ -3387,9 +3391,9 @@ impl AiController {
         if destination.x <= 0.0 || destination.y <= 0.0 {
             self.couldnt_reachpoint = true;
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=goto_result result=reject_nonpositive couldnt=true",
-                    ctx.frame, self.me,
+                crate::ai::parity_trace::aidecision_goto_result_reject_nonpositive(
+                    &(ctx.frame),
+                    &(self.me),
                 );
             }
             return;
@@ -3402,9 +3406,9 @@ impl AiController {
         if destination.sector.is_none() {
             self.couldnt_reachpoint = true;
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=goto_result result=reject_null_sector couldnt=true",
-                    ctx.frame, self.me,
+                crate::ai::parity_trace::aidecision_goto_result_reject_null_sector(
+                    &(ctx.frame),
+                    &(self.me),
                 );
             }
             return;
@@ -3448,14 +3452,13 @@ impl AiController {
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=goto_result result=queued couldnt={} already={} pending_orders={} owner_work={:?}",
-                ctx.frame,
-                self.me,
-                self.couldnt_reachpoint,
-                self.already_on_point,
-                self.outbox.actor.orders.len(),
-                self.outbox.reentrant.owner_work,
+            crate::ai::parity_trace::aidecision_goto_result_queued(
+                &(ctx.frame),
+                &(self.me),
+                &(self.couldnt_reachpoint),
+                &(self.already_on_point),
+                &(self.outbox.actor.orders.len()),
+                &(self.outbox.reentrant.owner_work),
             );
         }
     }
@@ -3608,19 +3611,19 @@ impl AiController {
         let debug_decision_path = crate::ai_enemy::decision_path_debug_enabled()
             && crate::ai_enemy::decision_path_debug_matches(ctx.frame, self.me);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=go_near_enter destination=({:08x},{:08x},sector={:?},level={}) distance={} flags={flags:?} recursion_depth={} couldnt_before={} already_before={}",
-                ctx.frame,
-                self.me,
-                ctx.original_creation_order,
-                destination.x.to_bits(),
-                destination.y.to_bits(),
-                destination.sector,
-                destination.level,
-                distance,
-                self.think_recursion_depth,
-                self.couldnt_reachpoint,
-                self.already_on_point,
+            crate::ai::parity_trace::aidecision_go_near_enter(
+                &(ctx.frame),
+                &(self.me),
+                &(ctx.original_creation_order),
+                &(destination.x.to_bits()),
+                &(destination.y.to_bits()),
+                &(destination.sector),
+                &(destination.level),
+                &(distance),
+                &(self.think_recursion_depth),
+                &(self.couldnt_reachpoint),
+                &(self.already_on_point),
+                &(flags),
             );
         }
         // Deep recursion shrinks the stop-distance toward zero so the
@@ -3672,13 +3675,12 @@ impl AiController {
         if may_short_circuit && self.check_already_on_point(&destination, 5.0, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=go_near_result result=already_on_point effective_distance={} couldnt={} already={}",
-                    ctx.frame,
-                    self.me,
-                    effective_distance,
-                    self.couldnt_reachpoint,
-                    self.already_on_point,
+                crate::ai::parity_trace::aidecision_go_near_result_already_on_point(
+                    &(ctx.frame),
+                    &(self.me),
+                    &(effective_distance),
+                    &(self.couldnt_reachpoint),
+                    &(self.already_on_point),
                 );
             }
             return;
@@ -3692,13 +3694,12 @@ impl AiController {
         if same_layer && self.check_already_near(&destination, effective_distance as f32, ctx) {
             self.finish_already_on_point();
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=go_near_result result=already_near effective_distance={} couldnt={} already={}",
-                    ctx.frame,
-                    self.me,
-                    effective_distance,
-                    self.couldnt_reachpoint,
-                    self.already_on_point,
+                crate::ai::parity_trace::aidecision_go_near_result_already_near(
+                    &(ctx.frame),
+                    &(self.me),
+                    &(effective_distance),
+                    &(self.couldnt_reachpoint),
+                    &(self.already_on_point),
                 );
             }
             return;
@@ -3718,15 +3719,14 @@ impl AiController {
         order.lower_shield_before_move = lower_shield_before_move;
         self.outbox.actor.orders.push(order);
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=go_near_result result=queued effective_distance={} couldnt={} already={} pending_orders={} owner_work={:?}",
-                ctx.frame,
-                self.me,
-                effective_distance,
-                self.couldnt_reachpoint,
-                self.already_on_point,
-                self.outbox.actor.orders.len(),
-                self.outbox.reentrant.owner_work,
+            crate::ai::parity_trace::aidecision_go_near_result_queued(
+                &(ctx.frame),
+                &(self.me),
+                &(effective_distance),
+                &(self.couldnt_reachpoint),
+                &(self.already_on_point),
+                &(self.outbox.actor.orders.len()),
+                &(self.outbox.reentrant.owner_work),
             );
         }
     }
@@ -4089,9 +4089,13 @@ impl AiController {
             target.y - me.y,
         );
         if std::env::var_os("PARITY_DEBUG_POINT_TO").is_some() {
-            eprintln!(
-                "[POINT_TO frame={} owner={owner:?} pos={pos:?} target={target:?} me={me:?} dir={direction}]",
-                ctx.frame
+            crate::ai::parity_trace::point_to(
+                &(ctx.frame),
+                &(owner),
+                &(pos),
+                &(target),
+                &(me),
+                &(direction),
             );
         }
         let mut turn = SequenceElement::new_generic(1, Command::Turn, Some(owner));
@@ -4441,12 +4445,17 @@ impl AiController {
         });
         let result = self.will_stop_at_next_waypoint_inner(sim, hiking_paths);
         if let Some((forecasted_before, value_before, path, waypoint)) = before {
-            eprintln!(
-                "WILLSTOP frame={} owner={:?} caller={caller:?} path={path:?} waypoint={waypoint:?} forecast_before={forecasted_before} value_before={value_before} forecast_after={} value_after={} result={result}",
-                ctx.frame,
-                ctx.original_creation_order,
-                self.next_macro_rand_forecasted,
-                self.next_macro_rand,
+            crate::ai::parity_trace::willstop(
+                &(ctx.frame),
+                &(ctx.original_creation_order),
+                &(self.next_macro_rand_forecasted),
+                &(self.next_macro_rand),
+                &(caller),
+                &(path),
+                &(waypoint),
+                &(forecasted_before),
+                &(value_before),
+                &(result),
             );
         }
         result
@@ -5456,9 +5465,10 @@ impl AiController {
         let stimulus_type = stimulus.stimulus_type;
         if stimulus_type == StimulusType::EventReachPoint {
             if panic_debug_matches(ctx.frame) {
-                eprintln!(
-                    "[AIHIDE f={} co={:?} substate={:?}]",
-                    ctx.frame, ctx.original_creation_order, self.current_substate,
+                crate::ai::parity_trace::aihide(
+                    &(ctx.frame),
+                    &(ctx.original_creation_order),
+                    &(self.current_substate),
                 );
             }
             self.set_ai_state(AiState::Fleeing);
@@ -5504,15 +5514,14 @@ impl AiController {
             return false;
         }
         if panic_debug_matches(ctx.frame) {
-            eprintln!(
-                "[AIPANIC f={} me={} co={:?} stim={:?} runs={} directed={} first_try={}]",
-                ctx.frame,
-                self.me,
-                ctx.original_creation_order,
-                stimulus_type,
-                self.lasting_panic_runs,
-                self.directed_panic,
-                self.first_try,
+            crate::ai::parity_trace::aipanic(
+                &(ctx.frame),
+                &(self.me),
+                &(ctx.original_creation_order),
+                &(stimulus_type),
+                &(self.lasting_panic_runs),
+                &(self.directed_panic),
+                &(self.first_try),
             );
         }
 
@@ -5614,32 +5623,32 @@ impl AiController {
                     ctx.move_box.x_max(),
                     ctx.move_box.y_max(),
                 );
-                eprintln!(
-                    "[AIPANIC-GEOMETRY f={} me={} sector={} distance_bits={:08x} origin_bits={:08x},{:08x} destination_bits={:08x},{:08x} layer={} move_box={:?} position_authorized={} reachable_thick={} straight_authorized={}]",
-                    ctx.frame,
-                    self.me,
-                    sector_index,
-                    segment.to_bits(),
-                    origin.x.to_bits(),
-                    origin.y.to_bits(),
-                    destination.x.to_bits(),
-                    destination.y.to_bits(),
-                    ctx.position.level,
-                    ctx.move_box,
-                    ctx.fast_grid
-                        .is_position_authorized(&destination_box, ctx.position.level,),
-                    ctx.fast_grid.is_reachable_thick(
+                crate::ai::parity_trace::aipanic_geometry(
+                    &(ctx.frame),
+                    &(self.me),
+                    &(sector_index),
+                    &(segment.to_bits()),
+                    &(origin.x.to_bits()),
+                    &(origin.y.to_bits()),
+                    &(destination.x.to_bits()),
+                    &(destination.y.to_bits()),
+                    &(ctx.position.level),
+                    &(ctx.move_box),
+                    &(ctx
+                        .fast_grid
+                        .is_position_authorized(&destination_box, ctx.position.level)),
+                    &(ctx.fast_grid.is_reachable_thick(
                         origin,
                         destination,
                         ctx.position.level,
                         half_diagonal,
-                    ),
-                    ctx.fast_grid.is_straight_movement_authorized(
+                    )),
+                    &(ctx.fast_grid.is_straight_movement_authorized(
                         origin,
                         destination,
                         ctx.position.level,
                         &ctx.move_box,
-                    ),
+                    )),
                 );
             }
 

@@ -65,196 +65,280 @@ pub async fn show_graphics(
     cursor: Option<ModalCursor<'_>>,
     config: &mut GraphicConfig,
 ) -> (bool, bool) {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
-    let mut edit = crate::options_model::GraphicsEdit::new(config.clone());
-    let mut dirty = false;
-    let retroarch_presets = crate::shader_preset::retroarch_presets();
-    if edit.working.shader_preset.is_empty()
-        && let Some(preset) = retroarch_presets.first()
-    {
-        edit.working.shader_preset = preset.id.clone();
-    }
-    let mut preset_scroll = preset_index(retroarch_presets, &edit.working.shader_preset)
-        .unwrap_or(0)
-        .saturating_sub(PRESET_LIST_ROWS / 2);
-
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let scale_modes = scale_modes();
-    let row_h = resources.button_dimensions().1;
-    let scale_x = 330;
-    let scale_btn_w = COLUMN_W;
-    let effect_y = OPTION_START_Y;
-    let parameter_y = PRESET_LIST_Y;
-    let mut page = 0;
-    let mut frame = FrameWnd::interactive();
-    let mut add = |id, label: &str, x, y, width, height| {
-        let label = super::gameplay::fit_button_label(resources, label, true, width);
-        frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
-    };
-    for (i, label) in ["Display", "Scaling", "Effects & Tuning"]
-        .iter()
-        .enumerate()
-    {
-        add(
-            ID_PAGE_BASE + i as u32,
-            label,
-            30 + i as i32 * 196,
-            55,
-            188,
-            row_h,
-        );
-    }
-    for (i, &(label_id, _, _)) in RESOLUTIONS.iter().enumerate() {
-        let label = resources.menu_text.get(label_id);
-        add(
-            ID_RES_BASE + i as u32,
-            &label,
-            30,
-            OPTION_START_Y + i as i32 * (row_h + OPTION_SPACING),
-            COLUMN_W,
-            row_h,
-        );
-    }
-    add(
-        ID_ADAPTIVE_WIDESCREEN,
-        "Adaptive Widescreen",
-        30,
-        OPTION_START_Y + RESOLUTIONS.len() as i32 * (row_h + OPTION_SPACING),
-        COLUMN_W,
-        row_h,
+    let transform = MenuTransform::centered(
+        renderer.screen_width() as i32,
+        renderer.screen_height() as i32,
     );
-    let option_labels = [
-        resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
-        resources.menu_text.get(MT_STR_TRANSPARENT_SHADOWS),
-        resources.menu_text.get(MT_STR_EFFECT_ANIMATIONS),
-        resources.menu_text.get(MT_STR_BCKGND_ANIMATIONS),
-        "Fog/Night All Sprites".into(),
-        "Native Refresh Rate".into(),
-        "Mission Countdown".into(),
-        "Dynamic Ambience Visuals".into(),
-        "Diplomacy Colors (neutral = amber)".into(),
-        "Quick-Action Cursor Pulse".into(),
-    ];
-    assert_eq!(option_labels.len(), OPTION_COUNT as usize);
-    for (i, label) in option_labels.iter().enumerate() {
-        let (x, y) = option_position(i, row_h);
-        add(ID_OPT_BASE + i as u32, label, x, y, COLUMN_W, row_h);
+    let input_state = ModalInputState::from_window(event_pump, transform);
+    let mut screen = GraphicsScreen::new(resources, config, input_state);
+    while !screen.done {
+        screen
+            .tick(widget_bridge::ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            })
+            .await;
+        // Preserve the original final-frame presentation and sleep on close.
+        crate::window::sleep_ui_frame().await;
     }
-    for (i, mode) in scale_modes.iter().enumerate() {
-        let (x, y) = scaling_position(i, scale_modes.len(), row_h);
-        add(
-            ID_SCALE_BASE + i as u32,
-            mode.label(),
-            x,
-            y,
-            COLUMN_W,
-            row_h,
-        );
+    let outcome = screen.finish(config);
+    if outcome.0 {
+        renderer.apply_upscale_config(config);
     }
-    for (i, effect) in TextureEffect::ALL.iter().enumerate() {
+    outcome
+}
+
+/// Live modal owner: keyboard capture and widget interaction state cannot be
+/// restored from serialization. Edited configuration remains ordinary data.
+struct GraphicsScreen {
+    edit: crate::options_model::GraphicsEdit,
+    dirty: bool,
+    preset_scroll: usize,
+    row_h: i32,
+    scale_x: i32,
+    scale_btn_w: i32,
+    effect_y: i32,
+    parameter_y: i32,
+    page: u32,
+    frame: FrameWnd,
+    title: String,
+    res_label: String,
+    fx_label: String,
+    done: bool,
+    accepted: bool,
+    parameter_page_effect: bool,
+    parameter_status: String,
+    input_state: ModalInputState,
+}
+
+impl GraphicsScreen {
+    fn new(
+        resources: &IngameMenuResources,
+        config: &GraphicConfig,
+        input_state: ModalInputState,
+    ) -> Self {
+        let mut edit = crate::options_model::GraphicsEdit::new(config.clone());
+        let dirty = false;
+        let retroarch_presets = crate::shader_preset::retroarch_presets();
+        if edit.working.shader_preset.is_empty()
+            && let Some(preset) = retroarch_presets.first()
+        {
+            edit.working.shader_preset = preset.id.clone();
+        }
+        let preset_scroll = preset_index(retroarch_presets, &edit.working.shader_preset)
+            .unwrap_or(0)
+            .saturating_sub(PRESET_LIST_ROWS / 2);
+
+        let ok_label = resources.menu_text.get(MT_BTN_OK);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let scale_modes = scale_modes();
+        let row_h = resources.button_dimensions().1;
+        let scale_x = 330;
+        let scale_btn_w = COLUMN_W;
+        let effect_y = OPTION_START_Y;
+        let parameter_y = PRESET_LIST_Y;
+        let page = 0;
+        let mut frame = FrameWnd::interactive();
+        let mut add = |id, label: &str, x, y, width, height| {
+            let label = super::gameplay::fit_button_label(resources, label, true, width);
+            frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
+        };
+        for (i, label) in ["Display", "Scaling", "Effects & Tuning"]
+            .iter()
+            .enumerate()
+        {
+            add(
+                ID_PAGE_BASE + i as u32,
+                label,
+                30 + i as i32 * 196,
+                55,
+                188,
+                row_h,
+            );
+        }
+        for (i, &(label_id, _, _)) in RESOLUTIONS.iter().enumerate() {
+            let label = resources.menu_text.get(label_id);
+            add(
+                ID_RES_BASE + i as u32,
+                &label,
+                30,
+                OPTION_START_Y + i as i32 * (row_h + OPTION_SPACING),
+                COLUMN_W,
+                row_h,
+            );
+        }
         add(
-            ID_EFFECT_BASE + i as u32,
-            effect.label(),
+            ID_ADAPTIVE_WIDESCREEN,
+            "Adaptive Widescreen",
             30,
-            effect_y + i as i32 * (row_h + OPTION_SPACING),
+            OPTION_START_Y + RESOLUTIONS.len() as i32 * (row_h + OPTION_SPACING),
             COLUMN_W,
             row_h,
         );
+        let option_labels = [
+            resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
+            resources.menu_text.get(MT_STR_TRANSPARENT_SHADOWS),
+            resources.menu_text.get(MT_STR_EFFECT_ANIMATIONS),
+            resources.menu_text.get(MT_STR_BCKGND_ANIMATIONS),
+            "Fog/Night All Sprites".into(),
+            "Native Refresh Rate".into(),
+            "Mission Countdown".into(),
+            "Dynamic Ambience Visuals".into(),
+            "Diplomacy Colors (neutral = amber)".into(),
+            "Quick-Action Cursor Pulse".into(),
+        ];
+        assert_eq!(option_labels.len(), OPTION_COUNT as usize);
+        for (i, label) in option_labels.iter().enumerate() {
+            let (x, y) = option_position(i, row_h);
+            add(ID_OPT_BASE + i as u32, label, x, y, COLUMN_W, row_h);
+        }
+        for (i, mode) in scale_modes.iter().enumerate() {
+            let (x, y) = scaling_position(i, scale_modes.len(), row_h);
+            add(
+                ID_SCALE_BASE + i as u32,
+                mode.label(),
+                x,
+                y,
+                COLUMN_W,
+                row_h,
+            );
+        }
+        for (i, effect) in TextureEffect::ALL.iter().enumerate() {
+            add(
+                ID_EFFECT_BASE + i as u32,
+                effect.label(),
+                30,
+                effect_y + i as i32 * (row_h + OPTION_SPACING),
+                COLUMN_W,
+                row_h,
+            );
+        }
+        add(ID_OK, &ok_label, 330, 472 - row_h, 134, row_h);
+        add(ID_CANCEL, &cancel_label, 476, 472 - row_h, 134, row_h);
+
+        let title = resources.menu_text.get(MT_TTL_GRAPHICS);
+        let res_label = resources.menu_text.get(MT_STR_RES);
+        let fx_label = resources.menu_text.get(MT_STR_SPECIAL_FX);
+
+        let done = false;
+        let accepted = false;
+        let parameter_page_effect = false;
+        let parameter_status = String::new();
+
+        Self {
+            edit,
+            dirty,
+            preset_scroll,
+            row_h,
+            scale_x,
+            scale_btn_w,
+            effect_y,
+            parameter_y,
+            page,
+            frame,
+            title,
+            res_label,
+            fx_label,
+            done,
+            accepted,
+            parameter_page_effect,
+            parameter_status,
+            input_state,
+        }
     }
-    add(ID_OK, &ok_label, 330, 472 - row_h, 134, row_h);
-    add(ID_CANCEL, &cancel_label, 476, 472 - row_h, 134, row_h);
 
-    let title = resources.menu_text.get(MT_TTL_GRAPHICS);
-    let res_label = resources.menu_text.get(MT_STR_RES);
-    let fx_label = resources.menu_text.get(MT_STR_SPECIAL_FX);
-
-    let mut done = false;
-    let mut accepted = false;
-    let mut parameter_page_effect = false;
-    let mut parameter_status = String::new();
-    let mut input_state = ModalInputState::from_window(event_pump, transform);
-
-    while !done {
+    async fn tick(&mut self, io: widget_bridge::ModalScreenIo<'_, '_>) {
+        let widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor,
+        } = io;
+        let retroarch_presets = crate::shader_preset::retroarch_presets();
+        let scale_modes = scale_modes();
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input_state.update_from_event(&event, transform);
+            self.input_state.update_from_event(&event, transform);
             match event {
-                GameEvent::Quit => done = true,
-                GameEvent::MouseDown(x, y, 1, _) if page == 2 => {
+                GameEvent::Quit => self.done = true,
+                GameEvent::MouseDown(x, y, 1, _) if self.page == 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
                     let row_count =
-                        parameter_rows(&edit.working, parameter_page_effect).len() as i32;
-                    if (edit.working.scale_mode != TextureScaleMode::RetroArch
-                        || parameter_page_effect)
-                        && (scale_x..scale_x + scale_btn_w).contains(&vx)
-                        && (parameter_y..parameter_y + row_count * PARAMETER_ROW_H).contains(&vy)
+                        parameter_rows(&self.edit.working, self.parameter_page_effect).len() as i32;
+                    if (self.edit.working.scale_mode != TextureScaleMode::RetroArch
+                        || self.parameter_page_effect)
+                        && (self.scale_x..self.scale_x + self.scale_btn_w).contains(&vx)
+                        && (self.parameter_y..self.parameter_y + row_count * PARAMETER_ROW_H)
+                            .contains(&vy)
                     {
-                        let row = ((vy - parameter_y) / PARAMETER_ROW_H) as usize;
+                        let row = ((vy - self.parameter_y) / PARAMETER_ROW_H) as usize;
                         adjust_parameter(
-                            &mut edit.working,
-                            parameter_page_effect,
+                            &mut self.edit.working,
+                            self.parameter_page_effect,
                             row,
-                            vx >= scale_x + scale_btn_w / 2,
+                            vx >= self.scale_x + self.scale_btn_w / 2,
                         );
-                        dirty = true;
-                    } else if page == 2
-                        && edit.working.scale_mode == TextureScaleMode::RetroArch
-                        && !parameter_page_effect
+                        self.dirty = true;
+                    } else if self.page == 2
+                        && self.edit.working.scale_mode == TextureScaleMode::RetroArch
+                        && !self.parameter_page_effect
                         && (PRESET_LIST_X..PRESET_LIST_X + PRESET_LIST_W).contains(&vx)
                         && (PRESET_LIST_Y
                             ..PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32)
                             .contains(&vy)
                     {
                         let row = ((vy - PRESET_LIST_Y) / PRESET_LIST_ROW_H) as usize;
-                        let index = preset_scroll + row;
+                        let index = self.preset_scroll + row;
                         if let Some(preset) = retroarch_presets.get(index) {
                             select_builtin_preset(
-                                &mut edit.working,
+                                &mut self.edit.working,
                                 &preset.id,
-                                &mut parameter_status,
+                                &mut self.parameter_status,
                             );
-                            dirty = true;
+                            self.dirty = true;
                         }
                     }
                 }
                 GameEvent::MouseWheel(delta)
-                    if page == 2
-                        && edit.working.scale_mode == TextureScaleMode::RetroArch
-                        && !parameter_page_effect =>
+                    if self.page == 2
+                        && self.edit.working.scale_mode == TextureScaleMode::RetroArch
+                        && !self.parameter_page_effect =>
                 {
                     if delta > 0 {
-                        preset_scroll = preset_scroll.saturating_sub(delta as usize);
+                        self.preset_scroll = self.preset_scroll.saturating_sub(delta as usize);
                     } else if delta < 0 {
-                        preset_scroll = (preset_scroll + (-delta) as usize)
+                        self.preset_scroll = (self.preset_scroll + (-delta) as usize)
                             .min(retroarch_presets.len().saturating_sub(PRESET_LIST_ROWS));
                     }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Tab,
                     ..
-                } => parameter_page_effect = !parameter_page_effect,
+                } => self.parameter_page_effect = !self.parameter_page_effect,
                 GameEvent::KeyDown {
                     keycode: Keycode::Char(b'i'),
                     ..
-                } if page == 2 && edit.working.scale_mode == TextureScaleMode::RetroArch => {
+                } if self.page == 2
+                    && self.edit.working.scale_mode == TextureScaleMode::RetroArch =>
+                {
                     match pick_retroarch_preset().await {
                         Ok(Some(path)) => {
                             let selected = path.to_string_lossy().to_string();
                             match renderer.validate_retroarch_preset(&selected) {
                                 Ok(()) => {
-                                    edit.working.shader_preset = selected;
-                                    parameter_status = "Imported preset validated".to_string();
-                                    dirty = true;
+                                    self.edit.working.shader_preset = selected;
+                                    self.parameter_status = "Imported preset validated".to_string();
+                                    self.dirty = true;
                                 }
-                                Err(error) => parameter_status = format!("Import failed: {error}"),
+                                Err(error) => {
+                                    self.parameter_status = format!("Import failed: {error}")
+                                }
                             }
                         }
                         Ok(None) => {}
-                        Err(error) => parameter_status = error,
+                        Err(error) => self.parameter_status = error,
                     }
                 }
                 GameEvent::KeyDown {
@@ -265,20 +349,20 @@ pub async fn show_graphics(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    accepted = true;
-                    done = true;
+                    self.accepted = true;
+                    self.done = true;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Escape,
                     ..
-                } => done = true,
+                } => self.done = true,
                 GameEvent::KeyDown { keycode, .. }
-                    if page == 2
-                        && edit.working.scale_mode == TextureScaleMode::RetroArch
-                        && !parameter_page_effect =>
+                    if self.page == 2
+                        && self.edit.working.scale_mode == TextureScaleMode::RetroArch
+                        && !self.parameter_page_effect =>
                 {
-                    let current = preset_index(retroarch_presets, &edit.working.shader_preset)
-                        .unwrap_or(preset_scroll);
+                    let current = preset_index(retroarch_presets, &self.edit.working.shader_preset)
+                        .unwrap_or(self.preset_scroll);
                     let next = match keycode {
                         Keycode::Up => current.saturating_sub(1),
                         Keycode::Down => {
@@ -294,66 +378,75 @@ pub async fn show_graphics(
                     if next != current
                         && let Some(preset) = retroarch_presets.get(next)
                     {
-                        select_builtin_preset(&mut edit.working, &preset.id, &mut parameter_status);
-                        preset_scroll = keep_visible(next, preset_scroll, retroarch_presets.len());
-                        dirty = true;
+                        select_builtin_preset(
+                            &mut self.edit.working,
+                            &preset.id,
+                            &mut self.parameter_status,
+                        );
+                        self.preset_scroll =
+                            keep_visible(next, self.preset_scroll, retroarch_presets.len());
+                        self.dirty = true;
                     }
                 }
                 _ => {}
             }
         }
 
-        for widget in frame.widgets_mut() {
-            let active = widget_page(widget.id()).is_none_or(|owner| owner == page);
+        for widget in self.frame.widgets_mut() {
+            let active = widget_page(widget.id()).is_none_or(|owner| owner == self.page);
             let base = widget.base_mut();
             base.enabled = active;
             if !active {
                 base.state = crate::ui::UiState::Default;
             }
         }
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
 
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
-                id if (ID_PAGE_BASE..ID_PAGE_BASE + 3).contains(&id) => page = id - ID_PAGE_BASE,
-                ID_OK => {
-                    accepted = true;
-                    done = true;
+                id if (ID_PAGE_BASE..ID_PAGE_BASE + 3).contains(&id) => {
+                    self.page = id - ID_PAGE_BASE
                 }
-                ID_CANCEL => done = true,
+                ID_OK => {
+                    self.accepted = true;
+                    self.done = true;
+                }
+                ID_CANCEL => self.done = true,
                 id if (ID_RES_BASE..=ID_RES_LAST).contains(&id) => {
-                    apply_resolution(&mut edit.working, (id - ID_RES_BASE) as usize);
-                    dirty = true;
+                    apply_resolution(&mut self.edit.working, (id - ID_RES_BASE) as usize);
+                    self.dirty = true;
                 }
                 ID_ADAPTIVE_WIDESCREEN => {
                     crate::options_model::adjust_graphics_setting(
-                        &mut edit.working,
+                        &mut self.edit.working,
                         crate::options_model::GraphicsSetting::AdaptiveWidescreen,
                         1,
                     );
-                    dirty = true;
+                    self.dirty = true;
                 }
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_COUNT).contains(&id) => {
-                    apply_option_toggle(&mut edit.working, (id - ID_OPT_BASE) as usize);
-                    dirty = true;
+                    apply_option_toggle(&mut self.edit.working, (id - ID_OPT_BASE) as usize);
+                    self.dirty = true;
                 }
                 id if (ID_SCALE_BASE..ID_SCALE_BASE + scale_modes.len() as u32).contains(&id) => {
-                    edit.working.scale_mode = scale_modes[(id - ID_SCALE_BASE) as usize];
-                    if edit.working.scale_mode == TextureScaleMode::RetroArch {
-                        let index = preset_index(retroarch_presets, &edit.working.shader_preset)
-                            .unwrap_or(0);
-                        preset_scroll = keep_visible(index, preset_scroll, retroarch_presets.len());
+                    self.edit.working.scale_mode = scale_modes[(id - ID_SCALE_BASE) as usize];
+                    if self.edit.working.scale_mode == TextureScaleMode::RetroArch {
+                        let index =
+                            preset_index(retroarch_presets, &self.edit.working.shader_preset)
+                                .unwrap_or(0);
+                        self.preset_scroll =
+                            keep_visible(index, self.preset_scroll, retroarch_presets.len());
                     }
-                    dirty = true;
+                    self.dirty = true;
                 }
                 id if (ID_EFFECT_BASE..ID_EFFECT_BASE + TextureEffect::ALL.len() as u32)
                     .contains(&id) =>
                 {
-                    edit.working.texture_effect =
+                    self.edit.working.texture_effect =
                         TextureEffect::ALL[(id - ID_EFFECT_BASE) as usize];
-                    dirty = true;
+                    self.dirty = true;
                 }
                 _ => {}
             }
@@ -367,36 +460,36 @@ pub async fn show_graphics(
         }
 
         if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width(&title);
-            render_text_virt_font(renderer, font, transform, &title, (640 - tw) / 2, 20);
+            let tw = font.text_width(&self.title);
+            render_text_virt_font(renderer, font, transform, &self.title, (640 - tw) / 2, 20);
         }
         if let Some(font) = resources.label_font_any() {
-            if page == 0 {
-                render_text_virt_font(renderer, font, transform, &res_label, 30, 90);
-                render_text_virt_font(renderer, font, transform, &fx_label, 330, 90);
+            if self.page == 0 {
+                render_text_virt_font(renderer, font, transform, &self.res_label, 30, 90);
+                render_text_virt_font(renderer, font, transform, &self.fx_label, 330, 90);
                 render_text_virt_font(
                     renderer,
                     font,
                     transform,
-                    &fx_label,
+                    &self.fx_label,
                     30,
-                    option_position(7, row_h).1 - 22,
+                    option_position(7, self.row_h).1 - 22,
                 );
-            } else if page == 1 {
+            } else if self.page == 1 {
                 render_text_virt_font(renderer, font, transform, "Scaling", 30, 90);
             }
-            if page == 2 {
+            if self.page == 2 {
                 render_text_virt_font(
                     renderer,
                     font,
                     transform,
                     "Texture effect",
                     30,
-                    effect_y - 22,
+                    self.effect_y - 22,
                 );
-                if page == 2
-                    && edit.working.scale_mode == TextureScaleMode::RetroArch
-                    && !parameter_page_effect
+                if self.page == 2
+                    && self.edit.working.scale_mode == TextureScaleMode::RetroArch
+                    && !self.parameter_page_effect
                 {
                     render_text_virt_font(
                         renderer,
@@ -415,7 +508,7 @@ pub async fn show_graphics(
                         PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32 + 2,
                     );
                 } else {
-                    let page = if parameter_page_effect {
+                    let parameter_page_label = if self.parameter_page_effect {
                         "Effect parameters (Tab)"
                     } else {
                         "Upscaler parameters (Tab)"
@@ -424,100 +517,100 @@ pub async fn show_graphics(
                         renderer,
                         font,
                         transform,
-                        page,
-                        scale_x,
-                        parameter_y - 24,
+                        parameter_page_label,
+                        self.scale_x,
+                        self.parameter_y - 24,
                     );
                 }
             }
-            if page == 2 && !parameter_status.is_empty() {
-                let status = fit_label(font, &parameter_status, 580);
+            if self.page == 2 && !self.parameter_status.is_empty() {
+                let status = fit_label(font, &self.parameter_status, 580);
                 render_text_virt_font(renderer, font, transform, &status, 30, 410);
             }
         }
 
         // Render only controls owned by the active page.
-        if page == 0 {
+        if self.page == 0 {
             for i in 0..RESOLUTIONS.len() as u32 {
-                if let Some(w) = frame.widget(ID_RES_BASE + i) {
+                if let Some(w) = self.frame.widget(ID_RES_BASE + i) {
                     widget_bridge::draw_widget_radio(
                         renderer,
                         resources,
                         transform,
                         w,
-                        is_resolution_selected(&edit.working, i as usize),
+                        is_resolution_selected(&self.edit.working, i as usize),
                     );
                 }
             }
-            if let Some(w) = frame.widget(ID_ADAPTIVE_WIDESCREEN) {
+            if let Some(w) = self.frame.widget(ID_ADAPTIVE_WIDESCREEN) {
                 widget_bridge::draw_widget_radio(
                     renderer,
                     resources,
                     transform,
                     w,
-                    edit.working.adaptive_widescreen,
+                    self.edit.working.adaptive_widescreen,
                 );
             }
             for i in 0..OPTION_COUNT {
-                if let Some(w) = frame.widget(ID_OPT_BASE + i) {
+                if let Some(w) = self.frame.widget(ID_OPT_BASE + i) {
                     widget_bridge::draw_widget_radio(
                         renderer,
                         resources,
                         transform,
                         w,
-                        is_option_selected(&edit.working, i as usize),
+                        is_option_selected(&self.edit.working, i as usize),
                     );
                 }
             }
         }
-        if page == 1 {
+        if self.page == 1 {
             for (i, mode) in scale_modes.iter().enumerate() {
-                if let Some(w) = frame.widget(ID_SCALE_BASE + i as u32) {
+                if let Some(w) = self.frame.widget(ID_SCALE_BASE + i as u32) {
                     widget_bridge::draw_widget_radio(
                         renderer,
                         resources,
                         transform,
                         w,
-                        edit.working.scale_mode == *mode,
+                        self.edit.working.scale_mode == *mode,
                     );
                 }
             }
         }
-        if page == 2 {
+        if self.page == 2 {
             for (i, effect) in TextureEffect::ALL.iter().enumerate() {
-                if let Some(w) = frame.widget(ID_EFFECT_BASE + i as u32) {
+                if let Some(w) = self.frame.widget(ID_EFFECT_BASE + i as u32) {
                     widget_bridge::draw_widget_radio(
                         renderer,
                         resources,
                         transform,
                         w,
-                        edit.working.texture_effect == *effect,
+                        self.edit.working.texture_effect == *effect,
                     );
                 }
             }
 
-            if page == 2
-                && edit.working.scale_mode == TextureScaleMode::RetroArch
-                && !parameter_page_effect
+            if self.page == 2
+                && self.edit.working.scale_mode == TextureScaleMode::RetroArch
+                && !self.parameter_page_effect
             {
                 draw_preset_list(
                     renderer,
                     resources,
                     transform,
                     retroarch_presets,
-                    preset_scroll,
-                    &edit.working.shader_preset,
+                    self.preset_scroll,
+                    &self.edit.working.shader_preset,
                 );
             } else {
                 draw_parameter_panel(
                     renderer,
                     resources,
                     transform,
-                    &edit.working,
-                    parameter_page_effect,
-                    scale_x,
-                    parameter_y,
-                    scale_btn_w,
+                    &self.edit.working,
+                    self.parameter_page_effect,
+                    self.scale_x,
+                    self.parameter_y,
+                    self.scale_btn_w,
                 );
             }
         }
@@ -526,33 +619,30 @@ pub async fn show_graphics(
                 renderer,
                 resources,
                 transform,
-                frame
+                self.frame
                     .widget(ID_PAGE_BASE + i)
                     .expect("graphics page button"),
-                page == i,
+                self.page == i,
             );
         }
         // OK / Cancel as regular buttons.
-        if let Some(w) = frame.widget(ID_OK) {
+        if let Some(w) = self.frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
-        if let Some(w) = frame.widget(ID_CANCEL) {
+        if let Some(w) = self.frame.widget(ID_CANCEL) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
 
         if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+            c.draw(renderer, transform, &self.input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ui_frame().await;
     }
 
-    let outcome = edit.commit(accepted && dirty, config);
-    if outcome.0 {
-        renderer.apply_upscale_config(config);
+    fn finish(self, config: &mut GraphicConfig) -> (bool, bool) {
+        self.edit.commit(self.accepted && self.dirty, config)
     }
-    outcome
 }
 
 fn widget_page(id: u32) -> Option<u32> {
@@ -561,6 +651,59 @@ fn widget_page(id: u32) -> Option<u32> {
         ID_SCALE_BASE..=499 => Some(1),
         ID_EFFECT_BASE..=599 => Some(2),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod screen_state_tests {
+    use super::*;
+
+    fn screen(config: &GraphicConfig) -> GraphicsScreen {
+        GraphicsScreen {
+            edit: crate::options_model::GraphicsEdit::new(config.clone()),
+            dirty: false,
+            preset_scroll: 0,
+            row_h: 20,
+            scale_x: 330,
+            scale_btn_w: COLUMN_W,
+            effect_y: OPTION_START_Y,
+            parameter_y: PRESET_LIST_Y,
+            page: 0,
+            frame: FrameWnd::interactive(),
+            title: String::new(),
+            res_label: String::new(),
+            fx_label: String::new(),
+            done: false,
+            accepted: false,
+            parameter_page_effect: false,
+            parameter_status: String::new(),
+            input_state: ModalInputState::new(),
+        }
+    }
+
+    #[test]
+    fn graphics_screen_finish_preserves_accept_dirty_and_resolution_contract() {
+        for accepted in [false, true] {
+            for dirty in [false, true] {
+                let mut config = GraphicConfig::default();
+                let before = serde_json::to_value(&config).unwrap();
+                let mut screen = screen(&config);
+                apply_resolution(&mut screen.edit.working, 0);
+                screen.edit.working.adaptive_widescreen = !config.adaptive_widescreen;
+                let expected = serde_json::to_value(&screen.edit.working).unwrap();
+                let resolution_changed = screen.edit.resolution_changed();
+                screen.accepted = accepted;
+                screen.dirty = dirty;
+                assert_eq!(
+                    screen.finish(&mut config),
+                    (accepted && dirty, accepted && dirty && resolution_changed)
+                );
+                assert_eq!(
+                    serde_json::to_value(&config).unwrap(),
+                    if accepted && dirty { expected } else { before }
+                );
+            }
+        }
     }
 }
 

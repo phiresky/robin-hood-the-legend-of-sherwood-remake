@@ -72,164 +72,235 @@ pub async fn show_sounds(
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) -> bool {
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
-    let mut edit = crate::options_model::SoundEdit::new(*config);
-    let mut dirty = false;
-
-    // - The EAX/3D radio's label is `MT_STR_SOUND_EAX` when the
-    //   backend supports EAX, otherwise `MT_STR_SOUND_3D`.
-    // - The radio is enabled only when the backend can do 3D sound;
-    //   on a 2D-only backend (today's kira) the user can't pick EAX.
-    // When `sound` is `None` (main-menu options entry without a live
-    // backend), default to "no 3D / no EAX" so a sound-disabled boot
-    // still presents a coherent UI.
-    let (can_3d, can_eax) = sound
-        .as_ref()
-        .map(|s| (s.can_3d_sound(), s.can_eax_sound()))
-        .unwrap_or((false, false));
-    let mode_label_id = if can_eax {
-        MT_STR_SOUND_EAX
-    } else {
-        MT_STR_SOUND_3D
-    };
-
-    let (btn_w, btn_h) = resources.button_dimensions();
-    let ok_label = resources.menu_text.get(MT_BTN_OK);
-    let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
-
-    // ── Stereo / EAX radios at (30,70) ────────────────────────────
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let mut mode_layout = vec![
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_SOUND_STEREO),
-            enabled: true,
-            x: 30,
-            y: 70,
-            w: field_w,
-            h: field_h,
-        },
-        super::layout::MenuButton {
-            label: resources.menu_text.get(mode_label_id),
-            enabled: can_3d,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: field_h,
-        },
-    ];
-    align_on_first_widget(&mut mode_layout, 2);
-
-    // ── High/Low resolution radios at (30,170) ────────────────────
-    let mut res_layout = vec![
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_SOUND_RES_HIGH),
-            enabled: true,
-            x: 30,
-            y: 170,
-            w: field_w,
-            h: field_h,
-        },
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_SOUND_RES_LOW),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: field_h,
-        },
-    ];
-    align_on_first_widget(&mut res_layout, 2);
-
-    // Build FrameWnd with radios, OK/Cancel, and five volume sliders.
-    let mut frame = FrameWnd::interactive();
-
-    for (i, mb) in mode_layout.iter().enumerate() {
-        // Honour the per-button `enabled` flag so a 3D-incapable
-        // backend renders the EAX radio greyed out.
-        frame.add_widget_absolute(widget_bridge::make_button_enabled(
-            ID_MODE_BASE + i as u32,
-            &mb.label,
-            mb.enabled,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
-    }
-    for (i, mb) in res_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_RES_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
-    }
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
-
-    // ── Slider widgets ────────────────────────────────────────────
-    // Same virtual rects the pre-widget version drew at; now they drive
-    // hit-testing + drag state through `WidgetSlider`.
-    let slider_rects: [MenuRect; SOUND_SLIDERS.len()] = std::array::from_fn(|index| MenuRect {
-        x: 30,
-        y: 290 + index as i32 * 40,
-        w: 200,
-        h: 16,
-    });
-    let slider_labels = SOUND_SLIDERS.map(|(_, label)| resources.menu_text.get(label));
-    for (i, rect) in slider_rects.iter().enumerate() {
-        let mut slider = WidgetSlider::new(ID_SLIDER_BASE + i as u32);
-        slider.base.bbox = ScreenBBox::from_coords(
-            rect.x as f32,
-            rect.y as f32,
-            (rect.x + rect.w) as f32,
-            (rect.y + rect.h) as f32,
+    let transform = MenuTransform::centered(
+        renderer.screen_width() as i32,
+        renderer.screen_height() as i32,
+    );
+    let input_state = ModalInputState::from_window(event_pump, transform);
+    let mut screen = SoundsScreen::new(resources, config, input_state, sound.as_deref());
+    while !screen.done {
+        screen.tick(
+            widget_bridge::ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            },
+            &mut sound,
+            &mut audio_backend,
+            sample_loader,
         );
-        slider.set_range(0.0, SLIDER_MAX as f32);
-        slider.set_step_count(SLIDER_STEPS);
-        slider.set_value(slider_value(&edit.working, i) as f32);
-        frame.add_widget_absolute(Widget::Slider(slider));
+        // Preserve the original final-frame presentation and sleep on close.
+        crate::window::sleep_ui_frame().await;
+    }
+    screen.finish(config)
+}
+
+/// Live modal owner: keyboard capture and widget interaction state cannot be
+/// restored from serialization. Edited configuration remains ordinary data.
+struct SoundsScreen {
+    edit: crate::options_model::SoundEdit,
+    dirty: bool,
+    frame: FrameWnd,
+    slider_rects: [MenuRect; SOUND_SLIDERS.len()],
+    slider_labels: [String; SOUND_SLIDERS.len()],
+    title: String,
+    done: bool,
+    accepted: bool,
+    input_state: ModalInputState,
+    noisy_tracker: widget_bridge::NoisyTracker,
+    slider_events: Vec<UiEvent>,
+    button_events: Vec<UiEvent>,
+}
+
+impl SoundsScreen {
+    fn new(
+        resources: &IngameMenuResources,
+        config: &SoundConfig,
+        input_state: ModalInputState,
+        sound: Option<&SoundManager>,
+    ) -> Self {
+        let edit = crate::options_model::SoundEdit::new(*config);
+        let dirty = false;
+
+        // - The EAX/3D radio's label is `MT_STR_SOUND_EAX` when the
+        //   backend supports EAX, otherwise `MT_STR_SOUND_3D`.
+        // - The radio is enabled only when the backend can do 3D sound;
+        //   on a 2D-only backend (today's kira) the user can't pick EAX.
+        // When `sound` is `None` (main-menu options entry without a live
+        // backend), default to "no 3D / no EAX" so a sound-disabled boot
+        // still presents a coherent UI.
+        let (can_3d, can_eax) = sound
+            .as_ref()
+            .map(|s| (s.can_3d_sound(), s.can_eax_sound()))
+            .unwrap_or((false, false));
+        let mode_label_id = if can_eax {
+            MT_STR_SOUND_EAX
+        } else {
+            MT_STR_SOUND_3D
+        };
+
+        let (btn_w, btn_h) = resources.button_dimensions();
+        let ok_label = resources.menu_text.get(MT_BTN_OK);
+        let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
+        let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
+        let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
+
+        // ── Stereo / EAX radios at (30,70) ────────────────────────────
+        let (field_w, field_h) = resources.input_field_dimensions();
+        let mut mode_layout = vec![
+            super::layout::MenuButton {
+                label: resources.menu_text.get(MT_STR_SOUND_STEREO),
+                enabled: true,
+                x: 30,
+                y: 70,
+                w: field_w,
+                h: field_h,
+            },
+            super::layout::MenuButton {
+                label: resources.menu_text.get(mode_label_id),
+                enabled: can_3d,
+                x: 30,
+                y: 0,
+                w: field_w,
+                h: field_h,
+            },
+        ];
+        align_on_first_widget(&mut mode_layout, 2);
+
+        // ── High/Low resolution radios at (30,170) ────────────────────
+        let mut res_layout = vec![
+            super::layout::MenuButton {
+                label: resources.menu_text.get(MT_STR_SOUND_RES_HIGH),
+                enabled: true,
+                x: 30,
+                y: 170,
+                w: field_w,
+                h: field_h,
+            },
+            super::layout::MenuButton {
+                label: resources.menu_text.get(MT_STR_SOUND_RES_LOW),
+                enabled: true,
+                x: 30,
+                y: 0,
+                w: field_w,
+                h: field_h,
+            },
+        ];
+        align_on_first_widget(&mut res_layout, 2);
+
+        // Build FrameWnd with radios, OK/Cancel, and five volume sliders.
+        let mut frame = FrameWnd::interactive();
+
+        for (i, mb) in mode_layout.iter().enumerate() {
+            // Honour the per-button `enabled` flag so a 3D-incapable
+            // backend renders the EAX radio greyed out.
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                ID_MODE_BASE + i as u32,
+                &mb.label,
+                mb.enabled,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
+            ));
+        }
+        for (i, mb) in res_layout.iter().enumerate() {
+            frame.add_widget_absolute(widget_bridge::make_button(
+                ID_RES_BASE + i as u32,
+                &mb.label,
+                mb.x,
+                mb.y,
+                mb.w,
+                mb.h,
+            ));
+        }
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_OK,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+
+        // ── Slider widgets ────────────────────────────────────────────
+        // Same virtual rects the pre-widget version drew at; now they drive
+        // hit-testing + drag state through `WidgetSlider`.
+        let slider_rects: [MenuRect; SOUND_SLIDERS.len()] = std::array::from_fn(|index| MenuRect {
+            x: 30,
+            y: 290 + index as i32 * 40,
+            w: 200,
+            h: 16,
+        });
+        let slider_labels = SOUND_SLIDERS.map(|(_, label)| resources.menu_text.get(label));
+        for (i, rect) in slider_rects.iter().enumerate() {
+            let mut slider = WidgetSlider::new(ID_SLIDER_BASE + i as u32);
+            slider.base.bbox = ScreenBBox::from_coords(
+                rect.x as f32,
+                rect.y as f32,
+                (rect.x + rect.w) as f32,
+                (rect.y + rect.h) as f32,
+            );
+            slider.set_range(0.0, SLIDER_MAX as f32);
+            slider.set_step_count(SLIDER_STEPS);
+            slider.set_value(slider_value(&edit.working, i) as f32);
+            frame.add_widget_absolute(Widget::Slider(slider));
+        }
+
+        let title = resources.menu_text.get(MT_TTL_SOUNDS);
+
+        let done = false;
+        let accepted = false;
+        // Per-widget noise-tracking state. Kept alive across frames so
+        // repeat events in the same widget state stay silent; resets on
+        // state change.
+        let noisy_tracker = widget_bridge::NoisyTracker::new();
+        let slider_events = Vec::new();
+        let button_events = Vec::new();
+
+        Self {
+            edit,
+            dirty,
+            frame,
+            slider_rects,
+            slider_labels,
+            title,
+            done,
+            accepted,
+            input_state,
+            noisy_tracker,
+            slider_events,
+            button_events,
+        }
     }
 
-    let title = resources.menu_text.get(MT_TTL_SOUNDS);
-
-    let mut done = false;
-    let mut accepted = false;
-    let mut input_state = ModalInputState::from_window(event_pump, transform);
-    // Per-widget noise-tracking state. Kept alive across frames so
-    // repeat events in the same widget state stay silent; resets on
-    // state change.
-    let mut noisy_tracker = widget_bridge::NoisyTracker::new();
-    let mut slider_events = Vec::new();
-    let mut button_events = Vec::new();
-
-    while !done {
+    fn tick(
+        &mut self,
+        io: widget_bridge::ModalScreenIo<'_, '_>,
+        sound: &mut Option<&mut SoundManager>,
+        audio_backend: &mut Option<&mut dyn AudioBackend>,
+        sample_loader: Option<&SampleLoader>,
+    ) {
+        let widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor,
+        } = io;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input_state.update_from_event(&event, transform);
+            self.input_state.update_from_event(&event, transform);
             match event {
-                GameEvent::Quit => done = true,
+                GameEvent::Quit => self.done = true,
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -238,20 +309,20 @@ pub async fn show_sounds(
                     keycode: Keycode::KpEnter,
                     ..
                 } => {
-                    accepted = true;
-                    done = true;
+                    self.accepted = true;
+                    self.done = true;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Escape,
                     ..
-                } => done = true,
+                } => self.done = true,
                 _ => {}
             }
         }
 
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
 
         // Apply slider value updates + slider activations to the edit.working
         // config.  Track events carry the new tick value via
@@ -263,12 +334,12 @@ pub async fn show_sounds(
             }
             let idx = (ev.origin_widget_id - ID_SLIDER_BASE) as usize;
             if matches!(ev.msg_type, UiMsg::WidgetSliderTrack)
-                && let Some(Widget::Slider(s)) = frame.widget(ev.origin_widget_id)
+                && let Some(Widget::Slider(s)) = self.frame.widget(ev.origin_widget_id)
             {
                 let new_val = s.tick_index().min(SLIDER_MAX as u32) as u16;
-                if new_val != slider_value(&edit.working, idx) {
-                    store_slider_value(&mut edit.working, idx, new_val);
-                    dirty = true;
+                if new_val != slider_value(&self.edit.working, idx) {
+                    store_slider_value(&mut self.edit.working, idx, new_val);
+                    self.dirty = true;
                 }
             }
         }
@@ -280,7 +351,7 @@ pub async fn show_sounds(
         // dispatch passes the current widget's `UiState` and the
         // shared `NoisyTracker` so the state-gate applies per-widget:
         // a sound plays at most once per (widget, state) pair.
-        partition_widget_events(events, &mut slider_events, &mut button_events);
+        partition_widget_events(events, &mut self.slider_events, &mut self.button_events);
 
         // Observe buttons even on silent mouse-leave frames to rearm hover.
         if let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader) {
@@ -288,17 +359,18 @@ pub async fn show_sounds(
                 .as_mut()
                 .map(|b| &mut **b as &mut dyn AudioBackend);
             widget_bridge::play_frame_widget_noise(
-                &button_events,
-                &frame,
+                &self.button_events,
+                &self.frame,
                 widget_bridge::WIDGET_NOISY_BUTTON,
                 snd,
                 backend,
                 loader,
-                &mut noisy_tracker,
+                &mut self.noisy_tracker,
             );
         }
-        for e in &slider_events {
-            let state = frame
+        for e in &self.slider_events {
+            let state = self
+                .frame
                 .widget(e.origin_widget_id)
                 .map(|w| w.base().state)
                 .unwrap_or(UiState::Default);
@@ -311,7 +383,7 @@ pub async fn show_sounds(
                 sound.as_deref_mut(),
                 backend,
                 sample_loader,
-                Some(&mut noisy_tracker),
+                Some(&mut self.noisy_tracker),
                 state,
             );
         }
@@ -320,32 +392,33 @@ pub async fn show_sounds(
         // only react to real buttons, not slider `WidgetActivated`
         // (drag release), which `find_activated` would otherwise
         // return first.
-        if let Some(id) = button_events
+        if let Some(id) = self
+            .button_events
             .iter()
             .find(|e| e.msg_type == UiMsg::WidgetActivated)
             .map(|e| e.origin_widget_id)
         {
             match id {
                 ID_OK => {
-                    accepted = true;
-                    done = true;
+                    self.accepted = true;
+                    self.done = true;
                 }
-                ID_CANCEL => done = true,
+                ID_CANCEL => self.done = true,
                 id if id == ID_MODE_BASE => {
-                    edit.working.sound_3d = false;
-                    dirty = true;
+                    self.edit.working.sound_3d = false;
+                    self.dirty = true;
                 }
                 id if id == ID_MODE_BASE + 1 => {
-                    edit.working.sound_3d = true;
-                    dirty = true;
+                    self.edit.working.sound_3d = true;
+                    self.dirty = true;
                 }
                 id if id == ID_RES_BASE => {
-                    edit.working.sound_8bit = false;
-                    dirty = true;
+                    self.edit.working.sound_8bit = false;
+                    self.dirty = true;
                 }
                 id if id == ID_RES_BASE + 1 => {
-                    edit.working.sound_8bit = true;
-                    dirty = true;
+                    self.edit.working.sound_8bit = true;
+                    self.dirty = true;
                 }
                 _ => {}
             }
@@ -359,34 +432,34 @@ pub async fn show_sounds(
         }
 
         if let Some(font) = resources.title_font_any() {
-            let tw = font.text_width(&title);
-            render_text_virt_font(renderer, font, transform, &title, (460 - tw) / 2, 20);
+            let tw = font.text_width(&self.title);
+            render_text_virt_font(renderer, font, transform, &self.title, (460 - tw) / 2, 20);
         }
         if let Some(font) = resources.label_font_any() {
-            for (i, label) in slider_labels.iter().enumerate() {
+            for (i, label) in self.slider_labels.iter().enumerate() {
                 render_text_virt_font(
                     renderer,
                     font,
                     transform,
                     label,
-                    slider_rects[i].x,
-                    slider_rects[i].y - 20,
+                    self.slider_rects[i].x,
+                    self.slider_rects[i].y - 20,
                 );
             }
         }
 
         // Radio buttons with config-driven selected state.
         for i in 0..2u32 {
-            if let Some(w) = frame.widget(ID_MODE_BASE + i) {
-                let selected =
-                    (i == 0 && !edit.working.sound_3d) || (i == 1 && edit.working.sound_3d);
+            if let Some(w) = self.frame.widget(ID_MODE_BASE + i) {
+                let selected = (i == 0 && !self.edit.working.sound_3d)
+                    || (i == 1 && self.edit.working.sound_3d);
                 widget_bridge::draw_widget_radio(renderer, resources, transform, w, selected);
             }
         }
         for i in 0..2u32 {
-            if let Some(w) = frame.widget(ID_RES_BASE + i) {
-                let selected =
-                    (i == 0 && !edit.working.sound_8bit) || (i == 1 && edit.working.sound_8bit);
+            if let Some(w) = self.frame.widget(ID_RES_BASE + i) {
+                let selected = (i == 0 && !self.edit.working.sound_8bit)
+                    || (i == 1 && self.edit.working.sound_8bit);
                 widget_bridge::draw_widget_radio(renderer, resources, transform, w, selected);
             }
         }
@@ -395,38 +468,40 @@ pub async fn show_sounds(
         // renderer, reading the live value off the widget (which may
         // be mid-drag, so `edit.working` lags until the widget publishes
         // a track event).
-        for (i, rect) in slider_rects.iter().enumerate() {
-            let value = frame
+        for (i, rect) in self.slider_rects.iter().enumerate() {
+            let value = self
+                .frame
                 .widget(ID_SLIDER_BASE + i as u32)
                 .and_then(|w| match w {
                     Widget::Slider(s) => Some(s.tick_index().min(SLIDER_MAX as u32) as u16),
                     _ => None,
                 })
-                .unwrap_or_else(|| slider_value(&edit.working, i));
+                .unwrap_or_else(|| slider_value(&self.edit.working, i));
             draw_slider(renderer, resources, transform, rect, value, SLIDER_MAX);
         }
 
         // OK / Cancel as regular buttons.
-        if let Some(w) = frame.widget(ID_OK) {
+        if let Some(w) = self.frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
-        if let Some(w) = frame.widget(ID_CANCEL) {
+        if let Some(w) = self.frame.widget(ID_CANCEL) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
 
         if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+            c.draw(renderer, transform, &self.input_state);
         }
 
         renderer.present();
-        crate::window::sleep_ui_frame().await;
     }
 
-    // The `dirty` flag is set on every widget event — even a click on
-    // the already-selected radio. Any accepted+dirty exit triggers
-    // sound-settings re-apply in the caller, regardless of whether the
-    // edit.working config differs field-for-field from the original.
-    edit.commit(accepted && dirty, config)
+    fn finish(self, config: &mut SoundConfig) -> bool {
+        // The `dirty` flag is set on every widget event — even a click on
+        // the already-selected radio. Any accepted+dirty exit triggers
+        // sound-settings re-apply in the caller, regardless of whether the
+        // edit.working config differs field-for-field from the original.
+        self.edit.commit(self.accepted && self.dirty, config)
+    }
 }
 
 fn partition_widget_events(
@@ -441,6 +516,53 @@ fn partition_widget_events(
             sliders.push(event);
         } else {
             buttons.push(event);
+        }
+    }
+}
+
+#[cfg(test)]
+mod screen_state_tests {
+    use super::*;
+
+    #[test]
+    fn sound_screen_finish_retains_dirty_click_reapply_and_cancel_policy() {
+        for accepted in [false, true] {
+            for dirty in [false, true] {
+                let mut config = SoundConfig::default();
+                let original = config;
+                let mut edit = crate::options_model::SoundEdit::new(config);
+                edit.working.sound_8bit = !config.sound_8bit;
+                let expected = edit.working;
+                let screen = SoundsScreen {
+                    edit,
+                    dirty,
+                    frame: FrameWnd::interactive(),
+                    slider_rects: [MenuRect {
+                        x: 0,
+                        y: 0,
+                        w: 200,
+                        h: 16,
+                    }; SOUND_SLIDERS.len()],
+                    slider_labels: std::array::from_fn(|_| String::new()),
+                    title: String::new(),
+                    done: true,
+                    accepted,
+                    input_state: ModalInputState::new(),
+                    noisy_tracker: widget_bridge::NoisyTracker::new(),
+                    slider_events: Vec::new(),
+                    button_events: Vec::new(),
+                };
+                assert_eq!(screen.finish(&mut config), accepted && dirty);
+                assert_eq!(
+                    serde_json::to_value(config).unwrap(),
+                    serde_json::to_value(if accepted && dirty {
+                        expected
+                    } else {
+                        original
+                    })
+                    .unwrap()
+                );
+            }
         }
     }
 }

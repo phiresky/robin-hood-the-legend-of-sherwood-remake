@@ -84,16 +84,47 @@ pub(crate) async fn show_credits(
     // are no longer needed during the potentially long-running scroll.
     drop(res);
 
-    let initial_screen_h = renderer.screen_height() as i32;
+    let mut state = CreditsModalState::new(renderer.screen_height() as i32);
+    while !state.tick(
+        event_pump,
+        renderer,
+        &credits_surface,
+        bg_surface.as_ref(),
+        (credit_width, credit_height),
+    ) {
+        crate::window::sleep_ui_frame().await;
+    }
+    retire_uploads(
+        renderer,
+        credits_surface,
+        bg_surface.map(|(surface, _)| surface),
+    );
+}
 
-    // Start the offset at `-screen_h` so the roll enters from the
-    // bottom of the screen, then increment by 1 per tick while the
-    // guard below holds.
-    let mut offset: i32 = -initial_screen_h;
-    let mut last_scroll_sample = web_time::Instant::now();
-    let mut scroll_accumulated_us = 0_u64;
+/// Runtime clock and scroll position belong to this one credits presentation.
+struct CreditsModalState {
+    offset: i32,
+    last_scroll_sample: web_time::Instant,
+    scroll_accumulated_us: u64,
+}
 
-    'credits: loop {
+impl CreditsModalState {
+    fn new(screen_height: i32) -> Self {
+        Self {
+            offset: -screen_height,
+            last_scroll_sample: web_time::Instant::now(),
+            scroll_accumulated_us: 0,
+        }
+    }
+
+    fn tick(
+        &mut self,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        credits_surface: &crate::renderer::OwnedSurface,
+        bg_surface: Option<&(crate::renderer::OwnedSurface, (i32, i32))>,
+        (credit_width, credit_height): (i32, i32),
+    ) -> bool {
         let events = event_pump.poll_events();
         renderer.sync_window_size(event_pump);
         for event in events {
@@ -107,7 +138,7 @@ pub(crate) async fn show_credits(
                     ..
                 }
                 | GameEvent::MouseDown(_, _, 1, _) => {
-                    break 'credits;
+                    return true;
                 }
                 _ => {}
             }
@@ -120,7 +151,7 @@ pub(crate) async fn show_credits(
         // Background: fill with black, then blit the centered texture.
         renderer.begin_gpu_frame_clear();
         renderer.begin_ui_only_frame();
-        if let Some((bg, dimensions)) = &bg_surface {
+        if let Some((bg, dimensions)) = bg_surface {
             let (bw, bh) = *dimensions;
             let bx = (screen_w - bw) / 2;
             let by = (screen_h - bh) / 2;
@@ -131,9 +162,11 @@ pub(crate) async fn show_credits(
                 .expect("live credits background");
         }
 
-        if let Some((src, dst)) =
-            credits_rectangles(offset, (credit_width, credit_height), (screen_w, screen_h))
-        {
+        if let Some((src, dst)) = credits_rectangles(
+            self.offset,
+            (credit_width, credit_height),
+            (screen_w, screen_h),
+        ) {
             renderer
                 .draw_surface_with_shadow(
                     credits_surface.handle(),
@@ -145,33 +178,54 @@ pub(crate) async fn show_credits(
                 .expect("live credits upload");
         }
 
-        // Stop guard: keep advancing only until the roll's centred end
-        // clears the midpoint of a 768-tall target surface.  The 768
-        // literal is preserved so other resolutions hit the same scroll
-        // stop point.
-        if offset + screen_h + ((768 - screen_h) / 2) < credit_height - 1 {
-            let now = web_time::Instant::now();
-            scroll_accumulated_us = scroll_accumulated_us
-                .saturating_add(now.duration_since(last_scroll_sample).as_micros() as u64);
-            last_scroll_sample = now;
-            let pixels = (scroll_accumulated_us / 20_000).min(i32::MAX as u64) as i32;
-            scroll_accumulated_us %= 20_000;
-            offset = offset.saturating_add(pixels);
-        } else {
-            last_scroll_sample = web_time::Instant::now();
-            scroll_accumulated_us = 0;
-        }
+        self.advance_scroll(screen_h, credit_height, web_time::Instant::now());
 
         renderer.flip();
         // Presentation follows the configured display cadence; scroll motion
         // above remains at the original 50 pixels/second wall-clock rate.
-        crate::window::sleep_ui_frame().await;
+        false
     }
-    retire_uploads(
-        renderer,
-        credits_surface,
-        bg_surface.map(|(surface, _)| surface),
-    );
+
+    fn advance_scroll(&mut self, screen_h: i32, credit_height: i32, now: web_time::Instant) {
+        // Stop guard: keep advancing only until the roll's centred end
+        // clears the midpoint of a 768-tall target surface.  The 768
+        // literal is preserved so other resolutions hit the same scroll
+        // stop point.
+        if self.offset + screen_h + ((768 - screen_h) / 2) < credit_height - 1 {
+            self.scroll_accumulated_us = self
+                .scroll_accumulated_us
+                .saturating_add(now.duration_since(self.last_scroll_sample).as_micros() as u64);
+            self.last_scroll_sample = now;
+            let pixels = (self.scroll_accumulated_us / 20_000).min(i32::MAX as u64) as i32;
+            self.scroll_accumulated_us %= 20_000;
+            self.offset = self.offset.saturating_add(pixels);
+        } else {
+            self.last_scroll_sample = now;
+            self.scroll_accumulated_us = 0;
+        }
+    }
+}
+
+#[test]
+fn credits_scroll_state_retains_fractional_time_and_discards_stopped_time() {
+    let mut state = CreditsModalState::new(480);
+    let start = state.last_scroll_sample;
+    let sample = |micros| start + std::time::Duration::from_micros(micros);
+    state.advance_scroll(480, 1000, sample(19_999));
+    assert_eq!(state.offset, -480);
+    state.advance_scroll(480, 1000, sample(40_001));
+    assert_eq!(state.offset, -478);
+    assert_eq!(state.scroll_accumulated_us, 1);
+
+    // The original 768-high centering guard stops this roll at offset 375.
+    state.offset = 375;
+    state.advance_scroll(480, 1000, sample(1_000_000));
+    assert_eq!(state.offset, 375);
+    assert_eq!(state.scroll_accumulated_us, 0);
+    // If a resize permits scrolling again, stopped wall time is not replayed.
+    state.advance_scroll(400, 1000, sample(1_020_000));
+    assert_eq!(state.offset, 376);
+    assert_eq!(state.scroll_accumulated_us, 0);
 }
 
 /// Preserve the entering, full-screen, and trailing phases of the legacy roll.

@@ -166,7 +166,7 @@ pub struct CliArgs {
     #[cfg_attr(any(feature = "script-rpc", target_arch = "wasm32"), arg(long, default_value_t = crate::http_server::DEFAULT_PORT))]
     #[cfg_attr(
         all(not(feature = "script-rpc"), not(target_arch = "wasm32")),
-        arg(skip = 0)
+        arg(skip = 0_u16)
     )]
     pub http_server: u16,
 

@@ -69,9 +69,11 @@
 //! to disable the server entirely.
 
 use crate::http_server::diagnostics::{
-    decompile_script, engine_dump_json, frame_console_response_to_json, info_json,
-    level_assets_json, list_natives_json, snapshot_host_debug, snapshot_script, snapshot_state,
+    decompile_script, engine_dump_json, frame_console_response_to_json, level_assets_json,
+    snapshot_host_debug, snapshot_script, snapshot_state,
 };
+#[cfg(any(feature = "script-rpc", target_arch = "wasm32"))]
+use crate::http_server::diagnostics::{info_json, list_natives_json};
 pub use crate::http_server::screenshot::apply_screenshot_flags;
 use crate::http_server::screenshot::{can_capture_presented_ui, encode_png};
 use robin_engine::element as engine_element;
@@ -560,7 +562,7 @@ mod disabled_transport_tests {
 
     #[test]
     fn native_listener_requires_feature_but_disabled_ingress_remains_usable() {
-        let replay = crate::replay_service::ReplayService::default();
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
         let mut transport = HttpTransport::default();
         assert!(
             transport
@@ -1225,10 +1227,10 @@ fn browser_rejection_reason(
 
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
-#[cfg(all(feature = "script-rpc", not(target_arch = "wasm32")))]
+#[cfg(all(any(feature = "script-rpc", test), not(target_arch = "wasm32")))]
 async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     let (response_tx, rx) = Responder::channel();
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let retirement = queue
         .lock()
         .expect("RPC router poisoned")

@@ -434,12 +434,126 @@ pub(crate) async fn show_main_menu(
         return Ok(MainMenuChoice::RedisplayOptions);
     }
 
-    // ── Event-loop state ─────────────────────────────────────────────
-    let mut input_state = ModalInputState::new();
-    // First button (Start Game) has widget id 0.
-    let mut keyboard_selection: u32 = 0;
-
+    let mut state = MainMenuState::new(frame);
     loop {
+        if let Some(choice) = state
+            .tick(
+                window,
+                &mut renderer,
+                &mut menu_resources,
+                &mut save_manager,
+                &mut cursor_renderer,
+                campaign,
+                profiles,
+                application_context,
+                bg,
+                &buttons,
+                &mut menu_audio,
+            )
+            .await?
+        {
+            return Ok(choice);
+        }
+        crate::window::sleep_ui_frame().await;
+    }
+}
+
+/// Owns the live menu widget/input state; phase resources stay borrowed.
+struct MainMenuState {
+    frame: FrameWnd,
+    input_state: ModalInputState,
+    keyboard_selection: u32,
+}
+
+impl MainMenuState {
+    fn new(frame: FrameWnd) -> Self {
+        Self {
+            frame,
+            input_state: ModalInputState::new(),
+            keyboard_selection: 0,
+        }
+    }
+
+    fn process_events(
+        &mut self,
+        events: Vec<GameEvent>,
+        transform: MenuTransform,
+        menu_audio: &mut Option<MainMenuAudio>,
+    ) -> (Option<u32>, bool) {
+        // ── Events ──────────────────────────────────────────────
+        let mut activated: Option<u32> = None;
+        let mut exit_requested = false;
+        for event in events {
+            self.input_state.update_from_event(&event, transform);
+            match event {
+                GameEvent::Quit => exit_requested = true,
+                GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => exit_requested = true,
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, -1),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } => move_keyboard_selection(&self.frame, &mut self.keyboard_selection, 1),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return,
+                    ..
+                }
+                | GameEvent::KeyDown {
+                    keycode: Keycode::KpEnter,
+                    ..
+                }
+                | GameEvent::KeyDown {
+                    keycode: Keycode::Space,
+                    ..
+                } => {
+                    activated = Some(self.keyboard_selection);
+                }
+                _ => {}
+            }
+        }
+
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
+        if let Some(audio) = menu_audio.as_mut() {
+            audio.play_button_noise(&events, &self.frame);
+        }
+
+        // Sync keyboard focus with the mouse-hovered widget so keyboard
+        // + mouse don't fight each other.
+        for w in self.frame.widgets() {
+            if w.base().state != UiState::Default && w.base().enabled {
+                self.keyboard_selection = w.id();
+            }
+        }
+
+        if let Some(id) = widget_bridge::find_activated(&events) {
+            activated = Some(id);
+        }
+
+        (activated, exit_requested)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn tick(
+        &mut self,
+        window: &mut GameWindow,
+        renderer: &mut Renderer,
+        menu_resources: &mut IngameMenuResources,
+        save_manager: &mut SaveGameManager,
+        cursor_renderer: &mut CursorRenderer,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        application_context: &ApplicationContext,
+        bg: Option<crate::ingame_menu::resources::MenuSurface>,
+        buttons: &[(String, ClickAction)],
+        menu_audio: &mut Option<MainMenuAudio>,
+    ) -> Result<Option<MainMenuChoice>, String> {
         // Queued score verification is application work, not mission/UI work.
         // Keep it moving while the player remains at the main menu.
         application_context.poll_leaderboard_receipts();
@@ -456,61 +570,7 @@ pub(crate) async fn show_main_menu(
             renderer.screen_height() as i32,
         );
 
-        // ── Events ──────────────────────────────────────────────
-        let mut activated: Option<u32> = None;
-        let mut exit_requested = false;
-        for event in events {
-            input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => exit_requested = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => exit_requested = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => move_keyboard_selection(&frame, &mut keyboard_selection, -1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => move_keyboard_selection(&frame, &mut keyboard_selection, 1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Space,
-                    ..
-                } => {
-                    activated = Some(keyboard_selection);
-                }
-                _ => {}
-            }
-        }
-
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
-        if let Some(audio) = menu_audio.as_mut() {
-            audio.play_button_noise(&events, &frame);
-        }
-
-        // Sync keyboard focus with the mouse-hovered widget so keyboard
-        // + mouse don't fight each other.
-        for w in frame.widgets() {
-            if w.base().state != UiState::Default && w.base().enabled {
-                keyboard_selection = w.id();
-            }
-        }
-
-        if let Some(id) = widget_bridge::find_activated(&events) {
-            activated = Some(id);
-        }
+        let (activated, mut exit_requested) = self.process_events(events, transform, menu_audio);
 
         // ── Dispatch ────────────────────────────────────────────
         // OS close takes priority over a simultaneous Start/other activation:
@@ -527,24 +587,24 @@ pub(crate) async fn show_main_menu(
             } else if let Some(choice) = dispatch_click(
                 action,
                 &mut *window,
-                &mut renderer,
-                &mut menu_resources,
-                &mut save_manager,
-                &mut cursor_renderer,
+                renderer,
+                menu_resources,
+                save_manager,
+                cursor_renderer,
                 campaign,
                 profiles,
                 application_context,
             )
             .await?
             {
-                return Ok(choice);
+                return Ok(Some(choice));
             }
             if browsing_campaign {
                 // The browser consumed pointer releases; do not carry its
                 // opening press into the restored main menu.
-                input_state = ModalInputState::new();
-                input_state.seed_mouse_from_window(window, transform);
-                for widget in frame.widgets_mut() {
+                self.input_state = ModalInputState::new();
+                self.input_state.seed_mouse_from_window(window, transform);
+                for widget in self.frame.widgets_mut() {
                     widget.base_mut().state = UiState::Default;
                 }
             }
@@ -558,13 +618,9 @@ pub(crate) async fn show_main_menu(
             if window.close_requested
                 || show_yesno(
                     &mut *window,
-                    &mut renderer,
-                    &menu_resources,
-                    Some(ModalCursor::new(
-                        &mut cursor_renderer,
-                        MOUSE_OPACITY_DEFAULT,
-                        0,
-                    )),
+                    renderer,
+                    menu_resources,
+                    Some(ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
                     &msg,
                 )
                 .await
@@ -578,7 +634,7 @@ pub(crate) async fn show_main_menu(
                         panic!("Main menu Exit lost its ApplicationContext: {error}")
                     })
                     .log_persistence_error("Main menu Exit: failed to save profile manager");
-                return Ok(MainMenuChoice::Exit);
+                return Ok(Some(MainMenuChoice::Exit));
             }
             // Cancelled — stay in the menu and redraw next frame.
         }
@@ -607,11 +663,11 @@ pub(crate) async fn show_main_menu(
         }
 
         // Buttons (sprite layer).
-        for widget in frame.widgets() {
+        for widget in self.frame.widgets() {
             let base = widget.base();
             let enabled = base.enabled;
             let hovered = matches!(base.state, UiState::Focused | UiState::Pushed)
-                || (widget.id() == keyboard_selection && base.state == UiState::Default);
+                || (widget.id() == self.keyboard_selection && base.state == UiState::Default);
             let pressed = base.state == UiState::Pushed;
             let state_idx = button_sprite_state(enabled, hovered, pressed);
             let Some(rect) = base.bbox.0 else { continue };
@@ -633,24 +689,25 @@ pub(crate) async fn show_main_menu(
         // glyph quads instead of drawing into a software surface.
         render_text_layer(
             application_context,
-            &mut renderer,
-            &menu_resources,
-            &frame,
-            keyboard_selection,
+            renderer,
+            menu_resources,
+            &self.frame,
+            self.keyboard_selection,
             transform,
         );
 
         // Custom cursor on top — the OS cursor is hidden, so skip this
         // and the mouse appears to vanish.
         cursor_renderer.advance_ui_animation();
-        ModalCursor::new(&mut cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
-            &mut renderer,
+        ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0).draw(
+            renderer,
             transform,
-            &input_state,
+            &self.input_state,
         );
 
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+
+        Ok(None)
     }
 }
 
@@ -1119,6 +1176,51 @@ fn seconds_to_time(seconds: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_menu_frame_state_retains_navigation_and_reports_close_with_activation() {
+        let mut frame = FrameWnd::interactive();
+        for id in 0..3 {
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
+                id,
+                "choice",
+                id != 1,
+                100,
+                100 + id as i32 * 30,
+                80,
+                20,
+            ));
+        }
+        let mut state = MainMenuState::new(frame);
+        let transform = MenuTransform::centered(640, 480);
+        let key = |keycode| GameEvent::KeyDown {
+            keycode,
+            physical_key: None,
+        };
+        assert_eq!(
+            state.process_events(vec![key(Keycode::Down)], transform, &mut None),
+            (None, false)
+        );
+        assert_eq!(state.keyboard_selection, 2);
+        assert_eq!(
+            state.process_events(vec![], transform, &mut None),
+            (None, false)
+        );
+        assert_eq!(state.keyboard_selection, 2);
+        assert_eq!(
+            state.process_events(
+                vec![key(Keycode::Return), GameEvent::Quit],
+                transform,
+                &mut None
+            ),
+            (Some(2), true)
+        );
+        assert_eq!(
+            state.process_events(vec![key(Keycode::Up)], transform, &mut None),
+            (None, false)
+        );
+        assert_eq!(state.keyboard_selection, 0);
+    }
 
     #[test]
     fn difficulty_labels_preserve_localized_legacy_and_application_namespaces() {
