@@ -1051,24 +1051,23 @@ use cloudflare::derive_cloudflare_origin_inventories_v1;
 #[cfg(test)]
 use cloudflare::CloudflareMaterializationProvenanceV1;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 use cloudflare::resolve_cloudflare_materialization_git_authority_v1;
 
 #[cfg(test)]
 use cloudflare::expected_topology_from_materialized_inventory_v1;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 use cloudflare::populate_cloudflare_materialization_staging_v1;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 use cloudflare::persist_cloudflare_materialization_v1;
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(target_os = "linux")]
 pub use cloudflare::materialize_cloudflare_publication_v3;
 
-#[cfg(not(target_os = "linux"))]
-#[cfg(target_os = "linux")]
 pub use cloudflare::validate_cloudflare_publication_materialization_v1;
 
 use closure::validate_publication_closure;
@@ -1080,14 +1079,12 @@ use closure::expected_publication_topology_from_loaded_v3;
 
 use closure::publication_lock;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 use closure::publication_lock_from_actual_for_test;
 
 #[cfg(test)]
 use closure::validate_publication_inventory_against_lock_v3;
 
-#[cfg(target_os = "linux")]
-#[cfg(not(target_os = "linux"))]
 pub use closure::validate_publication_v3;
 
 #[cfg(target_os = "linux")]
@@ -1148,11 +1145,8 @@ use staging::copy_directory_exact_preserving_modes_with;
 #[cfg(test)]
 use staging::create_private_publication_root;
 
-#[cfg(unix)]
 use staging::make_private_executables_and_states_read_only;
 
-#[cfg(unix)]
-#[cfg(not(unix))]
 use staging::make_lock_files_read_only;
 
 pub(crate) use inventory::PublicationNodeIdentityV3;
@@ -1212,23 +1206,23 @@ use inventory::validate_publication_node_v3;
 #[cfg(target_os = "linux")]
 use inventory::stable_publication_file_artifact_v3;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 use inventory::stable_publication_file_artifact_v3_with;
 
 #[cfg(target_os = "linux")]
 use inventory::publication_tree_inventory_v3_from_fd;
 
+#[cfg(target_os = "linux")]
 #[cfg(test)]
 use inventory::publication_tree_inventory_v3_from_fd_with;
 
-#[cfg(target_os = "linux")]
-#[cfg(not(target_os = "linux"))]
 use inventory::publication_tree_inventory_v3;
 
 #[cfg(test)]
 use inventory::publication_directories;
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
 use inventory::reject_publication_mounts_in_v3;
 
 #[cfg(test)]

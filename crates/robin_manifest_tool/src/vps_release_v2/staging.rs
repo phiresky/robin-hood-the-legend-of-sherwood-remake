@@ -4,30 +4,16 @@ use super::*;
 pub(super) const MAX_FAILED_VPS_STAGING_ENTRIES: usize = 262_144;
 pub(super) const MAX_FAILED_VPS_STAGING_DEPTH: usize = 128;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("VPS release {} for source {} was atomically installed with manifest {} but parent-directory durability sync failed; validate the immutable final and treat it as installed",
+            .output.display(),
+            .source_commit,
+            .release_manifest_sha256)]
 pub struct VpsReleaseInstalledButParentSyncFailed {
     pub output: PathBuf,
     pub release_manifest_sha256: Digest32,
     pub source_commit: String,
     pub source: anyhow::Error,
-}
-
-impl std::fmt::Display for VpsReleaseInstalledButParentSyncFailed {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "VPS release {} for source {} was atomically installed with manifest {} but parent-directory durability sync failed; validate the immutable final and treat it as installed",
-            self.output.display(),
-            self.source_commit,
-            self.release_manifest_sha256,
-        )
-    }
-}
-
-impl std::error::Error for VpsReleaseInstalledButParentSyncFailed {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
-    }
 }
 
 pub(super) fn vps_installed_durability_error(

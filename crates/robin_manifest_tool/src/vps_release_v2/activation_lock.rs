@@ -5,7 +5,7 @@
 //! constructors preserve distinct checks for fresh acquisition and inheritance
 //! of the exact open-file-description already holding exclusion.
 
-use super::{INSTALL_ROOT, NixOwnedFdV2};
+use super::{INSTALL_ROOT, InheritedFd, fd_policy};
 use anyhow::{Context as _, Result, ensure};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 enum PinnedVpsActivationLockDescriptorV2 {
     Owned(std::os::fd::OwnedFd),
-    InheritedDuplicate(NixOwnedFdV2),
+    InheritedDuplicate(InheritedFd),
 }
 
 impl PinnedVpsActivationLockDescriptorV2 {
@@ -44,10 +44,7 @@ impl PinnedVpsActivationLockV2 {
     }
 
     pub fn clear_close_on_exec(&self) -> Result<()> {
-        nix_legacy::fcntl::fcntl(
-            self.lock_fd.as_raw_fd(),
-            nix_legacy::fcntl::FcntlArg::F_SETFD(nix_legacy::fcntl::FdFlag::empty()),
-        )?;
+        fd_policy::clear_close_on_exec(self.lock_fd.as_raw_fd())?;
         Ok(())
     }
 
@@ -91,12 +88,15 @@ impl PinnedVpsActivationLockV2 {
             ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
         )?;
         let current_lock_metadata = rustix::fs::fstat(&current_lock)?;
-        let held_lock_metadata = nix_legacy::sys::stat::fstat(self.lock_fd.as_raw_fd())?;
+        let held_lock_metadata = fd_policy::stat(self.lock_fd.as_raw_fd())?;
+        fd_policy::ensure_private_regular(
+            current_lock_metadata.st_mode,
+            current_lock_metadata.st_uid,
+            current_lock_metadata.st_nlink as u64,
+            &format!("canonical activation lock changed while its descriptor was held"),
+        )?;
         ensure!(
-            FileType::from_raw_mode(current_lock_metadata.st_mode).is_file()
-                && current_lock_metadata.st_uid == rustix::process::geteuid().as_raw()
-                && current_lock_metadata.st_nlink == 1
-                && current_lock_metadata.st_mode & 0o777 == 0o600
+            current_lock_metadata.st_mode & 0o777 == 0o600
                 && current_lock_metadata.st_dev == self.lock_device
                 && current_lock_metadata.st_ino == self.lock_inode
                 && held_lock_metadata.st_dev == self.lock_device
@@ -132,11 +132,8 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
         activation_lock_fd >= 3,
         "inherited activation lock descriptor must be at least 3"
     );
-    let lock_fd = NixOwnedFdV2(nix_legacy::unistd::dup(activation_lock_fd)?);
-    nix_legacy::fcntl::fcntl(
-        lock_fd.0,
-        nix_legacy::fcntl::FcntlArg::F_SETFD(nix_legacy::fcntl::FdFlag::FD_CLOEXEC),
-    )?;
+    let lock_fd = InheritedFd::duplicate(activation_lock_fd)?;
+    // InheritedFd::duplicate sets CLOEXEC atomically.
     let opt_metadata = fs::symlink_metadata(opt_root)?;
     ensure!(
         opt_metadata.is_dir()
@@ -158,7 +155,7 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
         pinned_opt.st_dev == opt_metadata.dev() && pinned_opt.st_ino == opt_metadata.ino(),
         "activation opt root changed while inherited lock was pinned"
     );
-    let inherited_metadata = nix_legacy::sys::stat::fstat(lock_fd.0)?;
+    let inherited_metadata = fd_policy::stat(lock_fd.0)?;
     let canonical_lock = openat2(
         opt_fd.as_fd(),
         "activation.lock",
@@ -167,11 +164,14 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
         ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
     )?;
     let canonical_metadata = rustix::fs::fstat(&canonical_lock)?;
+    fd_policy::ensure_private_regular(
+        inherited_metadata.st_mode,
+        inherited_metadata.st_uid,
+        inherited_metadata.st_nlink as u64,
+        &format!("inherited activation lock is not the canonical owner-only lock inode"),
+    )?;
     ensure!(
-        rustix::fs::FileType::from_raw_mode(inherited_metadata.st_mode).is_file()
-            && inherited_metadata.st_uid == rustix::process::geteuid().as_raw()
-            && inherited_metadata.st_nlink == 1
-            && inherited_metadata.st_mode & 0o777 == 0o600
+        inherited_metadata.st_mode & 0o777 == 0o600
             && inherited_metadata.st_dev == pinned_opt.st_dev
             && inherited_metadata.st_dev == canonical_metadata.st_dev
             && inherited_metadata.st_ino == canonical_metadata.st_ino,
@@ -187,12 +187,8 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
         Err(Errno::WOULDBLOCK) => {}
         Err(error) => return Err(error.into()),
     }
-    #[allow(deprecated)]
-    nix_legacy::fcntl::flock(
-        lock_fd.0,
-        nix_legacy::fcntl::FlockArg::LockExclusiveNonblock,
-    )
-    .context("inherited activation lock is not the open file description holding exclusion")?;
+    fd_policy::assert_inherited_exclusive_lock(lock_fd.0)
+        .context("inherited activation lock is not the open file description holding exclusion")?;
     let pinned = PinnedVpsActivationLockV2 {
         lock_fd: PinnedVpsActivationLockDescriptorV2::InheritedDuplicate(lock_fd),
         opt_fd,

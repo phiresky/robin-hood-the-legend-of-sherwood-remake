@@ -544,7 +544,7 @@ where
         candidate_root_fd >= 3,
         "inherited VPS candidate descriptor must be at least 3"
     );
-    let inherited = nix_legacy::sys::stat::fstat(candidate_root_fd)?;
+    let inherited = fd_policy::stat(candidate_root_fd)?;
     ensure!(
         FileType::from_raw_mode(inherited.st_mode).is_dir()
             && inherited.st_uid == rustix::process::geteuid().as_raw()
@@ -1782,7 +1782,7 @@ pub(super) fn pin_vps_source_document(
     allowed_modes: &[u32],
 ) -> Result<PinnedVpsSourceDocument> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
-    use std::io::Read as _;
+
     use std::os::fd::AsFd as _;
 
     let fd = openat2(
@@ -1797,19 +1797,21 @@ pub(super) fn pin_vps_source_document(
     )?;
     let parent = rustix::fs::fstat(parent_fd)?;
     let metadata = rustix::fs::fstat(&fd)?;
+    fd_policy::ensure_private_regular(
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink as u64,
+        &format!("VPS source consume journal metadata is unsafe"),
+    )?;
     ensure!(
-        rustix::fs::FileType::from_raw_mode(metadata.st_mode).is_file()
-            && metadata.st_uid == rustix::process::geteuid().as_raw()
-            && metadata.st_dev == parent.st_dev
-            && metadata.st_nlink == 1
+        metadata.st_dev == parent.st_dev
             && allowed_modes.contains(&(metadata.st_mode & 0o777))
             && metadata.st_size >= 0
             && metadata.st_size as u64 <= limit,
         "VPS source consume journal metadata is unsafe"
     );
     let mut file = File::from(fd);
-    let mut bytes = Vec::with_capacity(metadata.st_size as usize);
-    file.read_to_end(&mut bytes)?;
+    let bytes = crate::fs_util::read_bounded(&mut file, limit, metadata.st_size as u64)?;
     let observed = rustix::fs::fstat(&file)?;
     ensure!(
         bytes.len() as u64 == metadata.st_size as u64
@@ -2015,12 +2017,12 @@ where
         Err(rustix::io::Errno::NOENT) => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    ensure!(
-        rustix::fs::FileType::from_raw_mode(temporary.st_mode).is_file()
-            && temporary.st_uid == rustix::process::geteuid().as_raw()
-            && temporary.st_nlink == 1,
-        "VPS source consume journal temporary is unsafe"
-    );
+    fd_policy::ensure_private_regular(
+        temporary.st_mode,
+        temporary.st_uid,
+        temporary.st_nlink as u64,
+        &format!("VPS source consume journal temporary is unsafe"),
+    )?;
     let temporary_journal = load_vps_source_consume_journal(parent_fd, temporary_name);
     if let Ok(temporary_journal) = temporary_journal {
         ensure!(

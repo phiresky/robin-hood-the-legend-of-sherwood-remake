@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Deterministic operator tooling for verified-run release manifests.
 //!
 //! Ranked content identities are engine-owned simulation projections, not
@@ -7,6 +8,10 @@
 //! materialized only below the private verifier-bundle tree; only DEMO
 //! component objects are copied into the public static tree.
 
+mod fs_util;
+#[cfg(test)]
+mod test_fixtures;
+use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
 pub mod plan_v3;
 pub mod publication_v3;
@@ -19,7 +24,7 @@ pub mod vps_release_v2;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read as _, Write as _};
+use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -888,15 +893,8 @@ fn load_canonical_document<T>(path: &Path) -> Result<T>
 where
     T: DeserializeOwned + Serialize + robin_run_protocol::Validate,
 {
-    let bytes = read_regular_file_bounded(path, MAX_DOCUMENT_BYTES)?;
-    let document: T = strict_json_from_slice(&bytes)
-        .with_context(|| format!("parse canonical document {}", path.display()))?;
+    let (document, _): (T, _) = fs_util::load_canonical_bytes(path, MAX_DOCUMENT_BYTES)?;
     document.validate()?;
-    ensure!(
-        canonical_json_bytes(&document)? == bytes,
-        "{} is valid but not byte-for-byte canonical JSON",
-        path.display()
-    );
     Ok(document)
 }
 
@@ -1054,17 +1052,6 @@ fn validate_mount_root(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_regular_file(path: &Path) -> Result<fs::Metadata> {
-    let metadata = fs::symlink_metadata(path)
-        .with_context(|| format!("required file {} is absent", path.display()))?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "{} must be a regular non-symlink file",
-        path.display()
-    );
-    Ok(metadata)
-}
-
 fn validate_relative_source_path(path: &Path) -> Result<()> {
     ensure!(!path.as_os_str().is_empty(), "source path is empty");
     ensure!(!path.is_absolute(), "source path must be relative");
@@ -1090,53 +1077,8 @@ fn resolve_mounted_file(root: &Path, relative: &Path) -> Result<PathBuf> {
     Ok(candidate)
 }
 
-fn read_regular_file_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>> {
-    let metadata = validate_regular_file(path)?;
-    ensure!(
-        metadata.len() <= maximum,
-        "{} exceeds the {} byte operator-document limit",
-        path.display(),
-        maximum
-    );
-    let capacity = usize::try_from(metadata.len()).context("file length does not fit usize")?;
-    let mut bytes = Vec::with_capacity(capacity);
-    File::open(path)?.read_to_end(&mut bytes)?;
-    ensure!(
-        u64::try_from(bytes.len()).ok() == Some(metadata.len()),
-        "{} changed while it was read",
-        path.display()
-    );
-    Ok(bytes)
-}
-
 fn walk_regular_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
-    let mut pending = vec![(PathBuf::new(), root.to_path_buf())];
-    let mut files = Vec::new();
-    while let Some((relative_root, absolute_root)) = pending.pop() {
-        let mut entries = fs::read_dir(&absolute_root)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries.into_iter().rev() {
-            let metadata = fs::symlink_metadata(entry.path())?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "tree contains forbidden symlink {}",
-                entry.path().display()
-            );
-            let relative = relative_root.join(entry.file_name());
-            if metadata.is_dir() {
-                pending.push((relative, entry.path()));
-            } else {
-                ensure!(
-                    metadata.is_file(),
-                    "tree contains non-regular entry {}",
-                    entry.path().display()
-                );
-                files.push((relative, entry.path()));
-            }
-        }
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
+    Ok(fs_util::walk_regular_tree(root)?.0)
 }
 
 fn path_to_manifest(path: &Path) -> Result<String> {
@@ -1163,6 +1105,10 @@ fn path_to_manifest(path: &Path) -> Result<String> {
 }
 
 fn validate_relative_source_path_shallow(path: &Path) -> Result<()> {
+    ensure!(
+        fs_util::valid_relative_path(path.to_str().context("path is not UTF-8")?),
+        "path is not canonical relative"
+    );
     ensure!(!path.is_absolute(), "path is absolute");
     ensure!(
         path.components()

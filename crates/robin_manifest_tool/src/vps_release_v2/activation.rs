@@ -10,7 +10,6 @@ pub fn project_vps_publication_lock_v2(
     expected_vps_release_manifest_sha256: &str,
 ) -> Result<Digest32> {
     {
-        use rustix::fs::FileType;
         use std::io::Read as _;
 
         ensure!(
@@ -26,13 +25,16 @@ pub fn project_vps_publication_lock_v2(
             !expected.is_zero(),
             "expected VPS release manifest digest is zero"
         );
-        let duplicate = NixOwnedFdV2(nix_legacy::unistd::dup(release_manifest_fd)?);
-        let initial = nix_legacy::sys::stat::fstat(duplicate.0)?;
+        let duplicate = InheritedFd::duplicate(release_manifest_fd)?;
+        let initial = fd_policy::stat(duplicate.0)?;
+        fd_policy::ensure_private_regular(
+            initial.st_mode,
+            initial.st_uid,
+            initial.st_nlink as u64,
+            &format!("release-manifest descriptor has unsafe type, owner, links, mode, or size"),
+        )?;
         ensure!(
-            FileType::from_raw_mode(initial.st_mode).is_file()
-                && initial.st_uid == rustix::process::geteuid().as_raw()
-                && initial.st_nlink == 1
-                && initial.st_mode & 0o777 == 0o440
+            initial.st_mode & 0o777 == 0o440
                 && initial.st_size > 0
                 && u64::try_from(initial.st_size)? <= MAX_DOCUMENT_BYTES,
             "release-manifest descriptor has unsafe type, owner, links, mode, or size"
@@ -69,7 +71,7 @@ pub fn project_vps_publication_lock_v2(
                 && reader_observed.st_ctime_nsec == reader_initial.st_ctime_nsec,
             "release-manifest procfs duplicate changed while it was read"
         );
-        let observed = nix_legacy::sys::stat::fstat(duplicate.0)?;
+        let observed = fd_policy::stat(duplicate.0)?;
         ensure!(
             observed.st_dev == initial.st_dev
                 && observed.st_ino == initial.st_ino
@@ -96,7 +98,7 @@ pub fn project_vps_publication_lock_v2(
             "descriptor-pinned VpsReleaseManifestV2 is not canonical JSON"
         );
         ensure!(
-            nix_legacy::sys::stat::fstat(duplicate.0)? == observed,
+            fd_policy::stat(duplicate.0)? == observed,
             "release-manifest descriptor changed after canonical validation"
         );
         Ok(manifest.publication_lock_sha256)
@@ -107,15 +109,16 @@ pub(super) fn load_pinned_vps_plan(
     plan_fd: &Path,
     expected_plan_sha256: &str,
 ) -> Result<(VpsReleasePlanV2, Vec<u8>, Digest32)> {
-    use rustix::fs::FileType;
-
     let descriptor = canonical_proc_descriptor(plan_fd, "VPS release plan")?;
-    let metadata = nix_legacy::sys::stat::fstat(descriptor)?;
+    let metadata = fd_policy::stat(descriptor)?;
+    fd_policy::ensure_private_regular(
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink as u64,
+        &format!("VPS release plan descriptor must be an owner-only regular nlink-1 file"),
+    )?;
     ensure!(
-        FileType::from_raw_mode(metadata.st_mode).is_file()
-            && metadata.st_uid == rustix::process::geteuid().as_raw()
-            && metadata.st_nlink == 1
-            && metadata.st_mode & 0o777 == 0o400,
+        metadata.st_mode & 0o777 == 0o400,
         "VPS release plan descriptor must be an owner-only regular nlink-1 file"
     );
     let expected_plan_sha256 = expected_plan_sha256
@@ -129,17 +132,6 @@ pub(super) fn load_pinned_vps_plan(
     );
     let plan = VpsReleasePlanV2::load_pinned_absolute_bytes(&plan_bytes, plan_fd)?;
     Ok((plan, plan_bytes, expected_plan_sha256))
-}
-
-/// The exact canonical activation lock held across deploy, rollback, and
-/// destructive source consumption.
-#[derive(Debug)]
-pub(super) struct NixOwnedFdV2(pub(super) std::os::fd::RawFd);
-
-impl Drop for NixOwnedFdV2 {
-    fn drop(&mut self) {
-        let _ = nix_legacy::unistd::close(self.0);
-    }
 }
 
 /// Validate every inherited deploy authority before acquiring the canonical
@@ -373,36 +365,37 @@ pub(super) fn read_pinned_descriptor_bounded(
     maximum_bytes: u64,
     label: &str,
 ) -> Result<Vec<u8>> {
-    use rustix::fs::FileType;
     use std::os::fd::AsRawFd as _;
     use std::os::unix::fs::FileExt as _;
 
     ensure!(descriptor >= 3, "{label} descriptor must be at least 3");
-    let initial = nix_legacy::sys::stat::fstat(descriptor)?;
+    let initial = fd_policy::stat(descriptor)?;
+    fd_policy::ensure_private_regular(
+        initial.st_mode,
+        initial.st_uid,
+        initial.st_nlink as u64,
+        &format!("{label} descriptor has unsafe type, owner, links, or size"),
+    )?;
     ensure!(
-        FileType::from_raw_mode(initial.st_mode).is_file()
-            && initial.st_uid == rustix::process::geteuid().as_raw()
-            && initial.st_nlink == 1
-            && initial.st_size >= 0
-            && u64::try_from(initial.st_size)? <= maximum_bytes,
+        initial.st_size >= 0 && u64::try_from(initial.st_size)? <= maximum_bytes,
         "{label} descriptor has unsafe type, owner, links, or size"
     );
     // Reading can legitimately update atime on relatime/strictatime mounts.
     // Continue checking inode, permissions, size, mtime and ctime for mutation.
-    let unchanged = |mut observed: nix_legacy::sys::stat::FileStat| {
+    let unchanged = |mut observed: fd_policy::RawStat| {
         observed.st_atime = initial.st_atime;
         observed.st_atime_nsec = initial.st_atime_nsec;
         observed == initial
     };
-    let duplicate = NixOwnedFdV2(nix_legacy::unistd::dup(descriptor)?);
+    let duplicate = InheritedFd::duplicate(descriptor)?;
     ensure!(
-        unchanged(nix_legacy::sys::stat::fstat(duplicate.0)?),
+        unchanged(fd_policy::stat(duplicate.0)?),
         "{label} descriptor changed before its duplicate was read"
     );
     let duplicate_path = PathBuf::from(format!("/proc/self/fd/{}", duplicate.0));
     let file = File::open(duplicate_path)?;
     ensure!(
-        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?),
+        unchanged(fd_policy::stat(file.as_raw_fd())?),
         "{label} procfs duplicate names another inode"
     );
     let expected_length = usize::try_from(initial.st_size)?;
@@ -419,8 +412,7 @@ pub(super) fn read_pinned_descriptor_bounded(
         "{label} descriptor grew while it was read"
     );
     ensure!(
-        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?)
-            && unchanged(nix_legacy::sys::stat::fstat(descriptor)?),
+        unchanged(fd_policy::stat(file.as_raw_fd())?) && unchanged(fd_policy::stat(descriptor)?),
         "{label} descriptor changed while it was read"
     );
     Ok(bytes)
@@ -435,8 +427,6 @@ pub(super) fn pin_vps_activation_exec_authorities(
     expected_bootstrap_sha256: &str,
     plan_fd: Option<&Path>,
 ) -> Result<Vec<std::os::fd::RawFd>> {
-    use rustix::fs::FileType;
-
     let descriptors = [
         (script_fd, 0o500, "activation script"),
         (bootstrap_manifest_fd, 0o400, "bootstrap manifest"),
@@ -447,24 +437,30 @@ pub(super) fn pin_vps_activation_exec_authorities(
     for (path, mode, label) in descriptors {
         let descriptor = canonical_proc_descriptor(path, label)?;
         ensure!(descriptor >= 3, "{label} descriptor must be at least 3");
-        let metadata = nix_legacy::sys::stat::fstat(descriptor)?;
+        let metadata = fd_policy::stat(descriptor)?;
+        fd_policy::ensure_private_regular(
+            metadata.st_mode,
+            metadata.st_uid,
+            metadata.st_nlink as u64,
+            &format!("{label} descriptor has unsafe type, owner, links, or mode"),
+        )?;
         ensure!(
-            FileType::from_raw_mode(metadata.st_mode).is_file()
-                && metadata.st_uid == rustix::process::geteuid().as_raw()
-                && metadata.st_nlink == 1
-                && metadata.st_mode & 0o777 == mode,
+            metadata.st_mode & 0o777 == mode,
             "{label} descriptor has unsafe type, owner, links, or mode"
         );
         raw.push(descriptor);
     }
     if let Some(plan_fd) = plan_fd {
         let descriptor = canonical_proc_descriptor(plan_fd, "VPS release plan")?;
-        let metadata = nix_legacy::sys::stat::fstat(descriptor)?;
+        let metadata = fd_policy::stat(descriptor)?;
+        fd_policy::ensure_private_regular(
+            metadata.st_mode,
+            metadata.st_uid,
+            metadata.st_nlink as u64,
+            &format!("VPS release plan descriptor has unsafe type, owner, links, or mode"),
+        )?;
         ensure!(
-            FileType::from_raw_mode(metadata.st_mode).is_file()
-                && metadata.st_uid == rustix::process::geteuid().as_raw()
-                && metadata.st_nlink == 1
-                && metadata.st_mode & 0o777 == 0o400,
+            metadata.st_mode & 0o777 == 0o400,
             "VPS release plan descriptor has unsafe type, owner, links, or mode"
         );
         raw.push(descriptor);
@@ -475,7 +471,7 @@ pub(super) fn pin_vps_activation_exec_authorities(
     );
 
     let executing = fs::metadata("/proc/self/exe")?;
-    let manifest_tool = nix_legacy::sys::stat::fstat(raw[3])?;
+    let manifest_tool = fd_policy::stat(raw[3])?;
     use std::os::unix::fs::MetadataExt as _;
     ensure!(
         executing.dev() == manifest_tool.st_dev && executing.ino() == manifest_tool.st_ino,
@@ -534,11 +530,7 @@ pub(super) fn pin_vps_activation_exec_authorities(
 }
 
 pub(super) fn clear_vps_close_on_exec(descriptor: std::os::fd::RawFd) -> Result<()> {
-    let flags = nix_legacy::fcntl::fcntl(descriptor, nix_legacy::fcntl::FcntlArg::F_GETFD)?;
-    let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-    flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-    nix_legacy::fcntl::fcntl(descriptor, nix_legacy::fcntl::FcntlArg::F_SETFD(flags))?;
-    Ok(())
+    fd_policy::clear_close_on_exec(descriptor)
 }
 
 pub(super) fn validate_deploy_plan_source_paths(

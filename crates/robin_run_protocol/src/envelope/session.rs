@@ -285,8 +285,12 @@ pub struct ReplaySessionGenesisClaimV1 {
 
 impl ReplaySessionGenesisClaimV1 {
     pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1, self)
+        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
     }
+}
+
+impl crate::canonical::DomainSignedClaim for ReplaySessionGenesisClaimV1 {
+    const DOMAIN: &'static [u8] = REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1;
 }
 
 impl Validate for ReplaySessionGenesisClaimV1 {
@@ -444,8 +448,12 @@ pub struct NamedSeatJoinClaimV1 {
 
 impl NamedSeatJoinClaimV1 {
     pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        crate::canonical::domain_separated_bytes(NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1, self)
+        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
     }
+}
+
+impl crate::canonical::DomainSignedClaim for NamedSeatJoinClaimV1 {
+    const DOMAIN: &'static [u8] = NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1;
 }
 
 impl Validate for NamedSeatJoinClaimV1 {

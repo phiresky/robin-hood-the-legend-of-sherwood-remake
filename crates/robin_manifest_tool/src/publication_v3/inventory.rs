@@ -275,11 +275,8 @@ pub(super) fn read_inventory_file_v3(
         file.artifact.byte_length <= maximum,
         "PublicationV3 file {path} exceeds its read bound"
     );
-    let capacity = usize::try_from(file.artifact.byte_length)
-        .context("PublicationV3 file length does not fit usize")?;
     file.file.seek(std::io::SeekFrom::Start(0))?;
-    let mut bytes = Vec::with_capacity(capacity);
-    file.file.read_to_end(&mut bytes)?;
+    let bytes = crate::fs_util::read_bounded(&mut file.file, maximum, file.artifact.byte_length)?;
     ensure!(
         u64::try_from(bytes.len()).ok() == Some(file.artifact.byte_length)
             && Digest32::digest_bytes(&bytes) == file.artifact.sha256

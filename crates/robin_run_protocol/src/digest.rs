@@ -325,6 +325,21 @@ mod tests {
         assert_eq!(serde_json::from_str::<Digest32>(&json).unwrap(), digest);
         assert!("AB".repeat(32).parse::<Digest32>().is_err());
         assert!("ab".repeat(31).parse::<Digest32>().is_err());
+        assert_eq!(
+            decode_lower_hex::<2>("00aZ"),
+            Err(HexError::Character { index: 3 })
+        );
+        assert_eq!(
+            decode_lower_hex::<2>("é00"),
+            Err(HexError::Character { index: 0 })
+        );
+        assert_eq!(
+            decode_lower_hex::<2>("000"),
+            Err(HexError::Length {
+                expected: 4,
+                actual: 3
+            })
+        );
     }
 
     #[test]

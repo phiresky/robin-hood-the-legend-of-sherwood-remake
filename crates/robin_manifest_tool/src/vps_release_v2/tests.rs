@@ -1,12 +1,5 @@
 use super::*;
-
-fn fact(bytes: &[u8]) -> ArtifactRefV1 {
-    ArtifactRefV1 {
-        sha256: Digest32::digest_bytes(bytes),
-        byte_length: bytes.len() as u64,
-        media_type: "application/octet-stream".into(),
-    }
-}
+use crate::test_fixtures::fact;
 
 struct SourceConsumeFixture {
     sandbox: tempfile::TempDir,
@@ -1151,7 +1144,7 @@ fn inherited_candidate_fd_rejects_closed_reused_wrong_and_identity_mismatch() ->
         reusable_candidate.as_raw_fd(),
         nix_legacy::fcntl::FcntlArg::F_DUPFD_CLOEXEC(512),
     )?;
-    let reused = NixOwnedFdV2(reused_fd);
+    let reused = InheritedFd(reused_fd);
     nix_legacy::unistd::dup2(wrong.as_raw_fd(), reused.0)?;
     assert!(
         pin_inherited_vps_candidate_root_at_with(
@@ -1275,10 +1268,7 @@ fn inherited_candidate_descriptor_survives_actual_exec() -> Result<()> {
     let releases = fixture_release_parent(&fixture)?;
     let candidate = File::open(&fixture.candidate)?;
     let fd = candidate.as_raw_fd();
-    let flags = nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_GETFD)?;
-    let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-    flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-    nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_SETFD(flags))?;
+    clear_vps_close_on_exec(fd)?;
     let status = Command::new(std::env::current_exe()?)
         .args([
             "--exact",
@@ -1363,10 +1353,7 @@ fn candidate_parent_pinning_crosses_private_home_bind_mount() -> Result<()> {
     let test_executable = File::open(std::env::current_exe()?)?;
     let install_root = File::open(fixture.sandbox.path())?;
     for fd in [test_executable.as_raw_fd(), install_root.as_raw_fd()] {
-        let flags = nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_GETFD)?;
-        let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-        flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-        nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_SETFD(flags))?;
+        clear_vps_close_on_exec(fd)?;
     }
     let mut command = Command::new("/usr/bin/bwrap");
     command
@@ -1764,10 +1751,7 @@ fn release_validation_allows_exact_root_bind_but_rejects_descendant_mount() -> R
         candidate.as_raw_fd(),
         nested.as_raw_fd(),
     ] {
-        let flags = nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_GETFD)?;
-        let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-        flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-        nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_SETFD(flags))?;
+        clear_vps_close_on_exec(fd)?;
     }
 
     for nested_mount in [false, true] {

@@ -55,16 +55,19 @@ pub(super) fn pin_runtime_fence_intent(
     allowed_modes: &[u32],
 ) -> Result<PinnedRuntimeFenceIntentV1> {
     use rustix::fs::{AtFlags, FileType, Mode, OFlags, ResolveFlags, openat2, statat};
-    use std::io::Read as _;
+
     use std::os::fd::AsFd as _;
 
     let named = statat(state.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
     let state_metadata = rustix::fs::fstat(state)?;
+    fd_policy::ensure_private_regular(
+        named.st_mode,
+        named.st_uid,
+        named.st_nlink as u64,
+        &format!("runtime-fence initializer intent has unsafe metadata"),
+    )?;
     ensure!(
-        FileType::from_raw_mode(named.st_mode).is_file()
-            && named.st_uid == rustix::process::geteuid().as_raw()
-            && named.st_dev == state_metadata.st_dev
-            && named.st_nlink == 1
+        named.st_dev == state_metadata.st_dev
             && allowed_modes.contains(&(named.st_mode & 0o777))
             && named.st_size > 0
             && named.st_size as u64 <= MAX_DOCUMENT_BYTES,
@@ -91,8 +94,8 @@ pub(super) fn pin_runtime_fence_intent(
         "runtime-fence initializer intent changed while it was pinned"
     );
     let mut file = File::from(fd);
-    let mut bytes = Vec::with_capacity(metadata.st_size as usize);
-    file.read_to_end(&mut bytes)?;
+    let bytes =
+        crate::fs_util::read_bounded(&mut file, MAX_DOCUMENT_BYTES, metadata.st_size as u64)?;
     let after_read = rustix::fs::fstat(&file)?;
     ensure!(
         after_read.st_dev == metadata.st_dev
@@ -225,11 +228,14 @@ pub(super) fn remove_runtime_fence_writing_scratch(
 
     let state_metadata = rustix::fs::fstat(state)?;
     let named = statat(state.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
+    fd_policy::ensure_private_regular(
+        named.st_mode,
+        named.st_uid,
+        named.st_nlink as u64,
+        &format!("runtime-fence intent writing scratch has unsafe metadata"),
+    )?;
     ensure!(
-        FileType::from_raw_mode(named.st_mode).is_file()
-            && named.st_uid == rustix::process::geteuid().as_raw()
-            && named.st_dev == state_metadata.st_dev
-            && named.st_nlink == 1
+        named.st_dev == state_metadata.st_dev
             && matches!(named.st_mode & 0o777, 0o400 | 0o600)
             && named.st_size >= 0
             && named.st_size as u64 <= MAX_DOCUMENT_BYTES,
@@ -419,83 +425,88 @@ where
         }
     }
 
-    let validate_fence =
-        |root: &std::os::fd::OwnedFd, mode: u32, allow_subset: bool| -> Result<()> {
-            let root_metadata = rustix::fs::fstat(root)?;
-            ensure!(
-                FileType::from_raw_mode(root_metadata.st_mode).is_dir()
-                    && root_metadata.st_uid == rustix::process::geteuid().as_raw()
-                    && root_metadata.st_dev == state_pinned.st_dev
-                    && root_metadata.st_mode & 0o777 == mode,
-                "runtime-fence directory has unsafe identity, owner, device, or mode"
-            );
-            let scan = openat2(
-                root.as_fd(),
-                ".",
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-                Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-            )?;
-            let mut buffer = Vec::with_capacity(4096);
-            let mut directory = RawDir::new(&scan, buffer.spare_capacity_mut());
-            let mut names = BTreeSet::new();
-            while let Some(entry) = directory.next() {
-                let entry = entry?;
-                let bytes = entry.file_name().to_bytes();
-                if bytes == b"." || bytes == b".." {
-                    continue;
-                }
-                let name = OsString::from_vec(bytes.to_vec());
-                ensure!(
-                    name == "db-admission.lock" || name == "db-quiescence.lock",
-                    "runtime-fence contains an unexpected entry"
-                );
-                ensure!(
-                    names.insert(name.clone()),
-                    "runtime-fence entry is duplicated"
-                );
-                let named = statat(root.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
-                ensure!(
-                    FileType::from_raw_mode(named.st_mode).is_file()
-                        && named.st_uid == rustix::process::geteuid().as_raw()
-                        && named.st_dev == state_pinned.st_dev
-                        && named.st_nlink == 1
-                        && named.st_size == 0
-                        && named.st_mode & 0o777 == 0o400,
-                    "runtime-fence leaf has unsafe type, owner, device, links, size, or mode"
-                );
-                let leaf = openat2(
-                    root.as_fd(),
-                    &name,
-                    OFlags::RDONLY | OFlags::CLOEXEC,
-                    Mode::empty(),
-                    ResolveFlags::BENEATH
-                        | ResolveFlags::NO_SYMLINKS
-                        | ResolveFlags::NO_MAGICLINKS
-                        | ResolveFlags::NO_XDEV,
-                )?;
-                let pinned = rustix::fs::fstat(&leaf)?;
-                ensure!(
-                    pinned.st_dev == named.st_dev
-                        && pinned.st_ino == named.st_ino
-                        && pinned.st_uid == named.st_uid
-                        && pinned.st_mode == named.st_mode
-                        && pinned.st_nlink == named.st_nlink
-                        && pinned.st_size == named.st_size,
-                    "runtime-fence leaf changed while it was pinned"
-                );
+    let validate_fence = |root: &std::os::fd::OwnedFd,
+                          mode: u32,
+                          allow_subset: bool|
+     -> Result<()> {
+        let root_metadata = rustix::fs::fstat(root)?;
+        ensure!(
+            FileType::from_raw_mode(root_metadata.st_mode).is_dir()
+                && root_metadata.st_uid == rustix::process::geteuid().as_raw()
+                && root_metadata.st_dev == state_pinned.st_dev
+                && root_metadata.st_mode & 0o777 == mode,
+            "runtime-fence directory has unsafe identity, owner, device, or mode"
+        );
+        let scan = openat2(
+            root.as_fd(),
+            ".",
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        )?;
+        let mut buffer = Vec::with_capacity(4096);
+        let mut directory = RawDir::new(&scan, buffer.spare_capacity_mut());
+        let mut names = BTreeSet::new();
+        while let Some(entry) = directory.next() {
+            let entry = entry?;
+            let bytes = entry.file_name().to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
             }
+            let name = OsString::from_vec(bytes.to_vec());
             ensure!(
-                allow_subset
-                    || names
-                        == BTreeSet::from([
-                            OsString::from("db-admission.lock"),
-                            OsString::from("db-quiescence.lock"),
-                        ]),
-                "runtime-fence final inventory is incomplete"
+                name == "db-admission.lock" || name == "db-quiescence.lock",
+                "runtime-fence contains an unexpected entry"
             );
-            Ok(())
-        };
+            ensure!(
+                names.insert(name.clone()),
+                "runtime-fence entry is duplicated"
+            );
+            let named = statat(root.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
+            fd_policy::ensure_private_regular(
+                named.st_mode,
+                named.st_uid,
+                named.st_nlink as u64,
+                &format!("runtime-fence leaf has unsafe type, owner, device, links, size, or mode"),
+            )?;
+            ensure!(
+                named.st_dev == state_pinned.st_dev
+                    && named.st_size == 0
+                    && named.st_mode & 0o777 == 0o400,
+                "runtime-fence leaf has unsafe type, owner, device, links, size, or mode"
+            );
+            let leaf = openat2(
+                root.as_fd(),
+                &name,
+                OFlags::RDONLY | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH
+                    | ResolveFlags::NO_SYMLINKS
+                    | ResolveFlags::NO_MAGICLINKS
+                    | ResolveFlags::NO_XDEV,
+            )?;
+            let pinned = rustix::fs::fstat(&leaf)?;
+            ensure!(
+                pinned.st_dev == named.st_dev
+                    && pinned.st_ino == named.st_ino
+                    && pinned.st_uid == named.st_uid
+                    && pinned.st_mode == named.st_mode
+                    && pinned.st_nlink == named.st_nlink
+                    && pinned.st_size == named.st_size,
+                "runtime-fence leaf changed while it was pinned"
+            );
+        }
+        ensure!(
+            allow_subset
+                || names
+                    == BTreeSet::from([
+                        OsString::from("db-admission.lock"),
+                        OsString::from("db-quiescence.lock"),
+                    ]),
+            "runtime-fence final inventory is incomplete"
+        );
+        Ok(())
+    };
 
     let open_fence = |name: &OsStr| -> Result<std::os::fd::OwnedFd> {
         use rustix::fs::StatxFlags;
@@ -811,11 +822,14 @@ where
             Err(error) => return Err(error.into()),
         };
         let metadata = rustix::fs::fstat(&leaf)?;
+        fd_policy::ensure_private_regular(
+            metadata.st_mode,
+            metadata.st_uid,
+            metadata.st_nlink as u64,
+            &format!("runtime-fence leaf creation did not produce exact authority"),
+        )?;
         ensure!(
-            FileType::from_raw_mode(metadata.st_mode).is_file()
-                && metadata.st_uid == rustix::process::geteuid().as_raw()
-                && metadata.st_dev == state_pinned.st_dev
-                && metadata.st_nlink == 1
+            metadata.st_dev == state_pinned.st_dev
                 && metadata.st_size == 0
                 && metadata.st_mode & 0o777 == 0o400,
             "runtime-fence leaf creation did not produce exact authority"
