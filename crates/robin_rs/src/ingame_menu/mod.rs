@@ -69,7 +69,7 @@ pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
 pub use save_load::{LoadPickerModalState, SaveLoadMode, SaveLoadOutcome, show_load_picker};
 pub use trading::{TradingModalState, TradingOutcome};
-pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
+pub use yesno::{YesNoModalState, show_yesno};
 
 /// Terminal result from a one-frame menu state.
 ///
