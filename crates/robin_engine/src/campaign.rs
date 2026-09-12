@@ -259,6 +259,7 @@ pub struct CampaignPracticeReturn {
 /// collections or exposing mutation of progression state.
 #[derive(Clone, Copy)]
 pub struct CampaignPracticeReturnView<'a> {
+    pub history_replay_mission_idx: Option<usize>,
     pub ares: i8,
     pub missions: &'a [Mission],
     pub accessible_mission_indices: &'a [usize],
@@ -305,6 +306,7 @@ impl CampaignPracticeReturn {
             production_sectors,
         } = self;
         CampaignPracticeReturnView {
+            history_replay_mission_idx: None,
             ares: *ares,
             missions,
             accessible_mission_indices,
@@ -517,6 +519,7 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
     /// Borrow admission-relevant state without cloning campaign collections.
     pub fn validation_view(&self) -> CampaignPracticeReturnView<'_> {
         CampaignPracticeReturnView {
+            history_replay_mission_idx: self.history_replay_mission_idx,
             ares: self.ares,
             missions: &self.missions,
             accessible_mission_indices: &self.accessible_mission_indices,
@@ -2699,12 +2702,13 @@ impl Campaign {
         profiles: &ProfileManager,
         difficulty: DifficultyLevel,
     ) {
-        self.create_gang_from_pcs_with_file_exists(
-            pcs,
-            profiles,
-            difficulty,
-            crate::sbfile::SbFile::exists,
-        );
+        self.create_gang_from_pcs_with_file_exists(pcs, profiles, difficulty, |path| {
+            crate::sbfile::global_file_system()
+                .try_exists(path)
+                .unwrap_or_else(|error| {
+                    panic!("cannot inspect campaign resource {path:?}: {error:?}")
+                })
+        });
     }
 
     pub(crate) fn create_gang_from_pcs_with_file_exists(

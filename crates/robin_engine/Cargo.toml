@@ -47,7 +47,6 @@ nonmax = { workspace = true, features = ["serde"] }
 bitcode.workspace = true
 enum-map = { workspace = true, features = ["serde"] }
 indexmap = { workspace = true, features = ["serde"] }
-unicode-security.workspace = true
 json-patch = "4.2"
 serde_ignored = "0.1"
 

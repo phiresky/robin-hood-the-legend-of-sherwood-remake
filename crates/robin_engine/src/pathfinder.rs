@@ -1675,15 +1675,14 @@ impl PathFinderRuntime {
         let mut best_node: Option<NodeIdx> = None;
         let mut attempts_left = self.number_of_attempts;
 
-        while !self.open_nodes.is_empty() {
-            // Pop the node with the lowest score
-            let current_idx = self.open_nodes.pop_front().expect("non-empty open list");
+        // Pop the node with the lowest score, preserving Original insertion order.
+        while let Some(current_idx) = self.open_nodes.pop_front() {
             let current_pos = self.graph.nodes[current_idx.0 as usize].position;
             let node_config = self.graph.nodes[current_idx.0 as usize]
                 .configurations
                 .get(self.current_half_diagonal_idx as usize)
                 .copied()
-                .unwrap_or(0);
+                .expect("half-diagonal index outside docking configurations");
 
             // Check if the goal is directly reachable from this node
             let mut end_place: u8 = 0;
@@ -2100,7 +2099,7 @@ impl PathFinderRuntime {
             .configurations
             .get(hd_idx)
             .copied()
-            .unwrap_or(0);
+            .expect("half-diagonal index outside docking configurations");
 
         let num_leave = number_of_places(leave_places);
 
