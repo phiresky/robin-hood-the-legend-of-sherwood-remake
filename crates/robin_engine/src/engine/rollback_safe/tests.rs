@@ -2,6 +2,108 @@ use super::*;
 use crate::engine::SimCommand;
 
 #[test]
+fn authored_capture_preserves_postconstruction_projection_and_run_identity() {
+    use crate::simulation_inputs::{
+        AuthoredSimulationInputs, PreparedMissionRunProjectionV1, SimulationContentProjectionV1,
+    };
+
+    let mut profiles = crate::profiles::ProfileManager::default();
+    profiles
+        .missions
+        .push(crate::profiles::MissionProfile::default());
+    let mut campaign = crate::campaign::Campaign::default();
+    campaign.missions.push(crate::mission::Mission {
+        profile_idx: Some(0),
+        ..Default::default()
+    });
+    campaign.current_mission_idx = Some(0);
+    campaign.set_value(crate::campaign::CampaignValue::MissionLength, 123);
+    let mut assets = LevelAssets::new();
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    // These are stale preparation inputs: only the constructor can publish
+    // the final navigation, mobile count and installed script identity.
+    std::sync::Arc::make_mut(&mut assets.navigation.level_grid).grid_width = 321;
+    assets.entities.mobile_element_count = 999;
+    assets.scripts.mission_name = Some("stale-before-construction".into());
+    let loaded = crate::level_data::LoadedLevel::empty();
+    let config = SimConfig {
+        script_enabled: false,
+        ..Default::default()
+    };
+    let ground = GroundMarkSpriteData {
+        half_w: -0.0,
+        half_h: 2.5,
+        frame_sizes: vec![(4, 5)],
+        per_frame_offsets: vec![(-1, 2)],
+    };
+    let rows = vec![1, 3, 7];
+    let mut reference_assets = assets.clone();
+    let reference = Engine::construct_preserving_campaign(EngineArgs {
+        campaign: campaign.clone(),
+        level: LevelLoadArgs {
+            assets: &mut reference_assets,
+            level_directory: "",
+            progress: &mut |_| {},
+            loaded: loaded.clone(),
+            bg_pixel_dims: (320.0, 240.0),
+        },
+        ground_mark_sprite: Some(ground.clone()),
+        titbit_row_frame_counts: rows.clone(),
+        rng_seed: 17,
+        original_rng_replay: None,
+        sim_config: config,
+    })
+    .unwrap_or_else(|(error, _)| panic!("reference construction: {error}"));
+    // The old path cloned authored values, constructed, and only then projected
+    // them together with finalized assets. Preserve both documents and digests.
+    let expected_static = SimulationContentProjectionV1::from_prepared_engine_inputs(
+        AuthoredSimulationInputs::capture(&loaded, Some(&ground), &rows).unwrap(),
+        &reference_assets,
+        (320.0, 240.0),
+    )
+    .unwrap();
+    let expected_run = PreparedMissionRunProjectionV1::new(
+        &expected_static,
+        &campaign,
+        17,
+        &config,
+        None,
+        &reference_assets,
+    )
+    .unwrap();
+    let prepared = Engine::prepare_preserving_campaign(EngineArgs {
+        campaign,
+        level: LevelLoadArgs {
+            assets: &mut assets,
+            level_directory: "",
+            progress: &mut |_| {},
+            loaded,
+            bg_pixel_dims: (320.0, 240.0),
+        },
+        ground_mark_sprite: Some(ground),
+        titbit_row_frame_counts: rows,
+        rng_seed: 17,
+        original_rng_replay: None,
+        sim_config: config,
+    })
+    .unwrap_or_else(|(error, _)| panic!("prepared construction: {error}"));
+    assert_ne!(assets.navigation.level_grid.grid_width, 321);
+    assert_eq!(assets.entities.mobile_element_count, 0);
+    assert_eq!(assets.scripts.mission_name, None);
+    assert_eq!(prepared.static_projection(), &expected_static);
+    assert_eq!(prepared.run_projection(), &expected_run);
+    assert_eq!(
+        prepared.run_projection_sha256().unwrap(),
+        expected_run.sha256().unwrap()
+    );
+    let actual = Engine::from_prepared(prepared);
+    assert_eq!(
+        crate::replay::state_hash(&actual),
+        crate::replay::state_hash(&reference)
+    );
+}
+
+#[test]
 fn engine_serde_facade_preserves_exact_wire_shape_and_roundtrip_hash() {
     let (engine, assets) = frame_api_fixture();
     let historical_bytes = serde_json::to_vec(&engine.inner).expect("historical inner codec");
