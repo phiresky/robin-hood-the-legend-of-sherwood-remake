@@ -29,14 +29,6 @@ use crate::fast_find_grid::{FastFindGrid, GRID_CELL_SIZE, SectorIndex};
 use crate::geo2d;
 use crate::repulsive::{RepulsiveLine, RepulsivePoint};
 
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
 // ---------------------------------------------------------------------------
 // Plane Z-coefficients
 // ---------------------------------------------------------------------------
@@ -583,7 +575,7 @@ impl std::hash::Hash for SectorHandle {
 #[derive(Serialize, Deserialize)]
 struct SectorHandleSerde {
     number: crate::sector::SectorNumber,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     arena: Option<crate::fast_find_grid::SectorIndex>,
 }
 
@@ -796,9 +788,9 @@ pub struct PositionInterface {
     directional_tolerance: bool,
 
     // -- Pathfinder indices --
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pathfinder_index: Option<PathfinderIndex>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pathfinder_index_alternate: Option<PathfinderIndex>,
 
     // -- Move boxes --
@@ -822,31 +814,31 @@ pub struct PositionInterface {
     saved_old_posture: crate::element::Posture,
 
     // -- Layer & sector --
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     layer: Option<Layer>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     sector: Option<SectorHandle>,
     /// Exact `FastFindGrid::level.sectors` arena identity paired with
     /// `sector`.  `SectorHandle` retains the compact/public sector number,
     /// which is not sufficient to distinguish overlapping sector objects.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     sector_index: Option<SectorIndex>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     layer_goal: Option<Layer>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     sector_goal: Option<SectorHandle>,
     /// Arena identity paired with `sector_goal`.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     sector_goal_index: Option<SectorIndex>,
 
     // -- Obstacle / plane --
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     obstacle: Option<ObstacleHandle>,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     plane: Option<PlaneZCoeffs>,
 
     // -- Door --
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     door: Option<DoorHandle>,
     door_direction: bool,
 
@@ -865,7 +857,7 @@ pub struct PositionInterface {
     pub box_blocked: MapBBox,
     pub radius: f32,
     pub radius_initial: f32,
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     saved_target_element: Option<crate::entity_id::EntityId>,
 
     // -- Average speed --

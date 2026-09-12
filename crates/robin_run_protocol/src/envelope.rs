@@ -3530,6 +3530,55 @@ mod tests {
                 field: "session_genesis.run_preflight_grant_presence"
             })
         ));
+
+        // Wire decoding preserves populated grants independently of the
+        // mutually exclusive scope checks above. Each nullable field must be
+        // present, including when it explicitly carries no grant.
+        both.claim.competition_run_grant = Some(CompetitionRunGrantV1 {
+            claim: CompetitionRunGrantClaimV1 {
+                schema_version: 1,
+                grant_id: id("competition-grant"),
+                grant_nonce: ChallengeNonce32::from_bytes([1; 32]),
+                grant_authority_public_key: PublicKey32::from_bytes([2; 32]),
+                host_public_key: both.claim.host_public_key,
+                competition_manifest_sha256: Digest32::from_bytes([3; 32]),
+                ranked_session_sha256: Digest32::from_bytes([4; 32]),
+                grant_request_sha256: Digest32::from_bytes([5; 32]),
+                replay_session_id: both.claim.replay_session_id,
+                host_participant_instance_id: both.claim.host_participant_instance_id,
+                host_nonce: both.claim.host_nonce,
+                admitted_at_unix_ms: 1,
+                expires_at_unix_ms: 2,
+            },
+            algorithm: SignatureAlgorithmV1::Ed25519,
+            authority_signature: Signature64::from_bytes([6; 64]),
+        });
+        let populated = serde_json::to_value(&both).unwrap();
+        assert_eq!(
+            serde_json::from_value::<ReplaySessionGenesisV1>(populated.clone()).unwrap(),
+            both
+        );
+        for field in [
+            "fresh_run_preflight_grant",
+            "campaign_continuation_preflight_grant",
+            "competition_run_grant",
+        ] {
+            assert!(populated["claim"][field].is_object());
+            let mut explicit_null = populated.clone();
+            explicit_null["claim"][field] = serde_json::Value::Null;
+            let decoded: ReplaySessionGenesisV1 =
+                serde_json::from_value(explicit_null.clone()).unwrap();
+            assert_eq!(serde_json::to_value(decoded).unwrap(), explicit_null);
+
+            let mut missing = populated.clone();
+            missing["claim"].as_object_mut().unwrap().remove(field);
+            let error = serde_json::from_value::<ReplaySessionGenesisV1>(missing).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("missing field `{field}`"))
+            );
+        }
     }
 
     #[test]

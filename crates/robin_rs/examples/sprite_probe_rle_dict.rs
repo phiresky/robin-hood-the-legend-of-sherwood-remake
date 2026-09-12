@@ -40,6 +40,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -167,24 +168,70 @@ fn zstd19_len(data: &[u8]) -> Result<u64> {
 }
 
 /// xz -9e via the CLI (same tool/version as the research sweeps). Uses a
-/// per-pid temp file so parallel worktree agents cannot clobber each other.
+/// uniquely owned temp file, removed even when writing or spawning fails.
 fn xz9e_len(data: &[u8]) -> Result<u64> {
-    let path = std::env::temp_dir().join(format!(
-        "sprite_probe_rle_dict_{}_{:p}.bin",
-        std::process::id(),
-        data.as_ptr()
-    ));
-    fs::write(&path, data).with_context(|| format!("write {}", path.display()))?;
-    let out = Command::new("xz")
+    xz9e_len_with_command(data, &mut Command::new("xz"))
+}
+
+fn xz9e_len_with_command(data: &[u8], command: &mut Command) -> Result<u64> {
+    let mut input = tempfile::NamedTempFile::new().context("create xz input")?;
+    input
+        .write_all(data)
+        .with_context(|| format!("write {}", input.path().display()))?;
+    let out = command
         .args(["-9e", "-T1", "-c"])
-        .arg(&path)
+        .arg(input.path())
         .output()
         .context("run xz -9e")?;
-    fs::remove_file(&path).ok();
     if !out.status.success() {
         bail!("xz -9e failed: {}", String::from_utf8_lossy(&out.stderr));
     }
     Ok(out.stdout.len() as u64)
+}
+
+#[cfg(test)]
+mod xz_temp_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn success_preserves_input_bytes_and_arguments_and_removes_temp_file() {
+        let data = b"sprite\0\xff\ninput";
+        let mut expected = tempfile::NamedTempFile::new().unwrap();
+        expected.write_all(data).unwrap();
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", r#"test "$0" = -9e && test "$1" = -T1 && test "$2" = -c && cmp "$3" "$EXPECTED_INPUT" && cat "$3""#])
+            .env("EXPECTED_INPUT", expected.path());
+        assert_eq!(
+            xz9e_len_with_command(data, &mut command).unwrap(),
+            data.len() as u64
+        );
+        assert!(!Path::new(command.get_args().last().unwrap()).exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn nonzero_exit_retains_error_and_removes_temp_file() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf 'compression failed' >&2; exit 7"]);
+        let error = xz9e_len_with_command(b"input", &mut command).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("xz -9e failed: compression failed")
+        );
+        assert!(!Path::new(command.get_args().last().unwrap()).exists());
+    }
+
+    #[test]
+    fn spawn_failure_removes_temp_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(directory.path().join("missing-xz"));
+        let error = xz9e_len_with_command(b"input", &mut command).unwrap_err();
+        assert!(error.to_string().contains("run xz -9e"));
+        assert!(!Path::new(command.get_args().last().unwrap()).exists());
+    }
 }
 
 fn push_u16s(out: &mut Vec<u8>, words: impl IntoIterator<Item = u16>) {

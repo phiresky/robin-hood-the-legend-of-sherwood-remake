@@ -275,11 +275,11 @@ pub enum QueuedQuickActionCommand {
         destination: MapPoint,
         running: bool,
         show_marker: bool,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         door_route_override: Option<bool>,
         recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
         recorded_failed_gate_routes: Vec<EntityId>,
@@ -328,7 +328,7 @@ pub enum QueuedQuickActionCommand {
         /// Resolved input quality for this native-schema command.
         gesture_quality: GestureQuality,
         with_seek: bool,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         seek_distance: Option<f32>,
     },
     RaiseShieldWithDanger {
@@ -342,11 +342,11 @@ pub enum QueuedQuickActionCommand {
         target_pos: MapPoint,
         running: bool,
         already_authorized: bool,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     CrouchDown,
@@ -688,19 +688,19 @@ pub enum PlayerCommand {
         /// registered geometry). Jump-sector hover also rewrites the
         /// selected sector to the underlying motion sector when no jump
         /// line is executable, matching original-game movement behavior.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         /// Replay-only exact arena identity for `goal_override`. Schema-16
         /// Original traces retain the sparse FastFindGrid slot; live input
         /// leaves this unset and uses the spatial hit's arena identity.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         /// Replay-only reconstruction of which original-game route form was
         /// selected. `Some(false)` forces ordinary movement construction
         /// semantics even when Rust's spatial hit lands on a coincident door
         /// overlay; `Some(true)` forces the door-target constructor. Live
         /// input leaves this unset and uses the spatial selection normally.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         door_route_override: Option<bool>,
         /// Schema-16 replay-only ordinary gate routes, keyed by actor. Each
         /// gate is `(Original gate index, direct)`. Original has already run
@@ -790,7 +790,7 @@ pub enum PlayerCommand {
         with_seek: bool,
         /// Exact tolerance resolved by the input source. Explicitly null for
         /// a direct strike and required in every current Rust command.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         seek_distance: Option<f32>,
     },
     /// Promote `opponent_id` to `actor`'s principal opponent (front of
@@ -872,17 +872,17 @@ pub enum PlayerCommand {
         /// Authoritative route goal retained by a matching schema-16 route
         /// construction event. Spatially re-querying an authorized projected
         /// point can select an overlapping floor instead.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
         /// Replay-only exact sparse FastFindGrid identity for
         /// `goal_override`. Public sector numbers are not unique, so retaining
         /// only the number instead of the exact identity can
         /// turn a valid cross-building route into no route at all.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         /// Replay-only authoritative result of Original's gate search. Live
         /// commands leave this unset and use the runtime gate graph.
-        #[serde(deserialize_with = "deserialize_required_option")]
+        #[serde(deserialize_with = "Option::deserialize")]
         recorded_gate_path: Option<crate::gate::RecordedGatePath>,
     },
     /// Shield two-click protocol, first click: stash the focusable PC to
@@ -1541,13 +1541,6 @@ impl PlayerCommand {
 ///
 /// Serde otherwise treats an absent `Option<T>` field as `None`, which would
 /// silently accept replay commands from an older, truncated schema.
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
 
 #[cfg(test)]
 mod tests {

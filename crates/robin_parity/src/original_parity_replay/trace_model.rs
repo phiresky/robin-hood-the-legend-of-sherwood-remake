@@ -954,13 +954,13 @@ pub(super) struct TraceActor {
     #[serde(default)]
     pub(super) passing_door_directly: bool,
     /// Explicitly null when there is no active PassDoor.
-    #[serde(default, deserialize_with = "deserialize_nullable_pass_door")]
+    #[serde(default)]
     pub(super) active_pass_door: Option<TracePassDoor>,
     /// Rust does not yet expose a stable public current-sequence snapshot with
     /// Original's element identities.
     /// TODO(parity-sequence): compare the remaining fields once that capture
     /// can be produced without walking mutable sequence-manager internals.
-    #[serde(default, deserialize_with = "deserialize_nullable_sequence_element")]
+    #[serde(default)]
     pub(super) sequence_element: Option<TraceSequenceElement>,
     /// PositionInterface diagnostics. Kept as a cache-safe JSON
     /// tree because it is observational evidence rather than comparable
@@ -989,37 +989,19 @@ pub(super) struct TraceSequenceElement {
     pub(super) priority: u32,
     pub(super) posture_after_transition: u32,
     pub(super) action_state_after_transition: u32,
-    #[serde(default, deserialize_with = "deserialize_nullable_sequence_movement")]
+    #[serde(default)]
     pub(super) movement: Option<TraceSequenceMovement>,
     /// Current sequence topology and active-order diagnostics. These are
     /// nullable or command-shaped in the Original recorder, so retaining the
     /// draft payload verbatim is safer than inventing a false common shape.
-    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default)]
     pub(super) following: Option<TraceJsonValue>,
-    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default)]
     pub(super) postponed: Option<TraceJsonValue>,
-    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default)]
     pub(super) current_order: Option<TraceJsonValue>,
-    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default)]
     pub(super) movement_payload: Option<TraceJsonValue>,
-}
-
-pub(super) fn deserialize_nullable_sequence_movement<'de, D>(
-    deserializer: D,
-) -> Result<Option<TraceSequenceMovement>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<TraceSequenceMovement>::deserialize(deserializer)
-}
-
-pub(super) fn deserialize_nullable_trace_json_value<'de, D>(
-    deserializer: D,
-) -> Result<Option<TraceJsonValue>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<TraceJsonValue>::deserialize(deserializer)
 }
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
@@ -1030,24 +1012,6 @@ pub(super) struct TraceSequenceMovement {
     pub(super) action: Option<u32>,
     #[serde(default)]
     pub(super) pass_door: Option<TracePassDoor>,
-}
-
-pub(super) fn deserialize_nullable_pass_door<'de, D>(
-    deserializer: D,
-) -> Result<Option<TracePassDoor>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<TracePassDoor>::deserialize(deserializer)
-}
-
-pub(super) fn deserialize_nullable_sequence_element<'de, D>(
-    deserializer: D,
-) -> Result<Option<TraceSequenceElement>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<TraceSequenceElement>::deserialize(deserializer)
 }
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
@@ -1088,13 +1052,6 @@ pub(super) struct TraceElementAmmo {
     pub(super) wasp_nests: u16,
 }
 
-pub(super) fn deserialize_nullable_u16<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<u16>::deserialize(deserializer)
-}
-
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct TraceAi {
     pub(super) state: u32,
@@ -1114,7 +1071,7 @@ pub(super) struct TraceAi {
     #[serde(default)]
     pub(super) macro_timer_ring: u32,
     /// Explicitly null for an inactive macro.
-    #[serde(default, deserialize_with = "deserialize_nullable_u16")]
+    #[serde(default)]
     pub(super) macro_cursor: Option<u16>,
     #[serde(default)]
     pub(super) macro_remaining: u16,
@@ -1125,17 +1082,8 @@ pub(super) struct TraceAi {
     #[serde(default)]
     pub(super) list_them: Vec<TraceEntityId>,
     /// Authoritative jump-line reference, explicitly null when absent.
-    #[serde(default, deserialize_with = "deserialize_nullable_jump_line")]
+    #[serde(default)]
     pub(super) my_line_jump: Option<TraceJumpLine>,
-}
-
-pub(super) fn deserialize_nullable_jump_line<'de, D>(
-    deserializer: D,
-) -> Result<Option<TraceJumpLine>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<TraceJumpLine>::deserialize(deserializer)
 }
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
@@ -1830,5 +1778,113 @@ impl Serialize for TraceJsonValue {
 impl<'de> Deserialize<'de> for TraceJsonValue {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         TraceJsonTree::deserialize(deserializer).map(Self::from)
+    }
+}
+
+#[cfg(test)]
+mod nullable_field_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn historical_nullable_diagnostics_preserve_missing_null_and_populated_fields() {
+        let actor = json!({
+            "action_state": 1, "animation": 2, "command": 3,
+            "command_name": "pass_door", "motion_state": 4, "wait_time": 5,
+            "active_pass_door": {"gate_id": 51, "direct": true, "direction": -1},
+            "sequence_element": {
+                "id": 7, "type": 4, "state": 2, "command_level": 1,
+                "command": 3, "command_name": "pass_door", "order_count": 1,
+                "priority": 8, "posture_after_transition": 1,
+                "action_state_after_transition": 2,
+                "movement": {"action": 12, "pass_door": null},
+                "following": {"id": 8}, "postponed": [1, 2],
+                "current_order": "wait", "movement_payload": false
+            }
+        });
+        for field in ["active_pass_door", "sequence_element"] {
+            let decoded: TraceActor = serde_json::from_value(actor.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&decoded).unwrap()[field], actor[field]);
+            let cached: TraceActor = bitcode::decode(&bitcode::encode(&decoded)).unwrap();
+            assert_eq!(serde_json::to_value(cached).unwrap()[field], actor[field]);
+            for missing in [false, true] {
+                let mut historical = actor.clone();
+                if missing {
+                    historical.as_object_mut().unwrap().remove(field);
+                } else {
+                    historical[field] = Value::Null;
+                }
+                let decoded: TraceActor = serde_json::from_value(historical).unwrap();
+                assert!(serde_json::to_value(decoded).unwrap()[field].is_null());
+            }
+        }
+        let sequence = &actor["sequence_element"];
+        for field in [
+            "movement",
+            "following",
+            "postponed",
+            "current_order",
+            "movement_payload",
+        ] {
+            let decoded: TraceSequenceElement = serde_json::from_value(sequence.clone()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&decoded).unwrap()[field],
+                sequence[field]
+            );
+            let cached: TraceSequenceElement = bitcode::decode(&bitcode::encode(&decoded)).unwrap();
+            assert_eq!(
+                serde_json::to_value(cached).unwrap()[field],
+                sequence[field]
+            );
+            for missing in [false, true] {
+                let mut historical = sequence.clone();
+                if missing {
+                    historical.as_object_mut().unwrap().remove(field);
+                } else {
+                    historical[field] = Value::Null;
+                }
+                let decoded: TraceSequenceElement = serde_json::from_value(historical).unwrap();
+                assert!(serde_json::to_value(decoded).unwrap()[field].is_null());
+            }
+        }
+        let ai = json!({
+            "state": 1, "substate": 2, "macro_cursor": 65535,
+            "my_line_jump": {
+                "a": {"x": {"bits": 0}, "y": {"bits": 0}},
+                "b": {"x": {"bits": 1065353216}, "y": {"bits": 0}}
+            }
+        });
+        for field in ["macro_cursor", "my_line_jump"] {
+            let decoded: TraceAi = serde_json::from_value(ai.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&decoded).unwrap()[field], ai[field]);
+            let cached: TraceAi = bitcode::decode(&bitcode::encode(&decoded)).unwrap();
+            assert_eq!(serde_json::to_value(cached).unwrap()[field], ai[field]);
+            for missing in [false, true] {
+                let mut historical = ai.clone();
+                if missing {
+                    historical.as_object_mut().unwrap().remove(field);
+                } else {
+                    historical[field] = Value::Null;
+                }
+                let decoded: TraceAi = serde_json::from_value(historical).unwrap();
+                assert!(serde_json::to_value(decoded).unwrap()[field].is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn nullable_trace_fields_retain_typed_value_validation() {
+        assert!(
+            serde_json::from_value::<TraceAi>(json!({
+                "state": 1, "substate": 2, "macro_cursor": 65536
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<TraceAi>(json!({
+                "state": 1, "substate": 2, "my_line_jump": {"a": null, "b": null}
+            }))
+            .is_err()
+        );
     }
 }

@@ -19,14 +19,6 @@ use crate::element::EntityId;
 use crate::profiles::Action;
 use serde::{Deserialize, Serialize};
 
-fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
 /// Sim-tracked state owned by one player seat.
 #[derive(
     Clone,
@@ -73,7 +65,7 @@ pub struct SeatState {
     /// First half of a planned Shield/BigShield action. Kept per seat so two
     /// players can independently choose protectees and rollback restores the
     /// exact prompt stage.
-    #[serde(deserialize_with = "deserialize_required_option")]
+    #[serde(deserialize_with = "Option::deserialize")]
     pub planned_shield_target: Option<(EntityId, EntityId)>,
     /// Original-game pre-control messenger action, used to restore the
     /// globally armed action when Ctrl is released.
