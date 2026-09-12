@@ -310,11 +310,71 @@ impl FrameState {
             swap_w,
             swap_h,
         );
-        let dx = presentation.x;
-        let dy = presentation.y;
-        let dst_w = presentation.width;
-        let dst_h = presentation.height;
 
+        self.prepare_presentation_geometry(gpu, presentation, [swap_w, swap_h]);
+        self.encode_presentation(
+            gpu,
+            pipelines,
+            &mut encoder,
+            &swap_view,
+            presentation,
+            [swap_w, swap_h],
+            compose_logical_frame,
+            presentation_frame_count,
+        );
+
+        if self.native_refresh_presentation {
+            self.encode_cached_present_to_swapchain(
+                gpu,
+                pipelines,
+                &mut encoder,
+                &swap_view,
+                swap_w,
+                swap_h,
+            );
+        }
+
+        if compose_logical_frame {
+            self.encode_ui_to_logical_frame(&mut encoder, pipelines, resources);
+        }
+
+        let submit_start = web_time::Instant::now();
+        gpu.queue.submit(Some(encoder.finish()));
+        let submit_us = submit_start.elapsed().as_micros();
+        let swap_start = web_time::Instant::now();
+        gpu.queue.present(frame);
+        tracing::trace!(target: "present_perf", acquire_us, submit_us,
+            swap_us = swap_start.elapsed().as_micros(),
+            total_us = present_start.elapsed().as_micros(), "present phases");
+        self.presentation_frame_count = self.presentation_frame_count.wrapping_add(1);
+        if reconfigure_after_present {
+            self.reconfigure_surface(gpu);
+        }
+
+        // Frame done — clear queues and reset GPU phase for next frame.
+        if compose_logical_frame {
+            let draws_this_frame = self.queued.len();
+            let present_us = present_start.elapsed().as_micros() as u64;
+            self.clear_recording();
+            self.diagnostics
+                .log_fps(draws_this_frame, present_us, resources);
+        }
+        true
+    }
+
+    fn prepare_presentation_geometry(
+        &mut self,
+        gpu: &GpuContext,
+        presentation: PresentationRect,
+        swap_size: [u32; 2],
+    ) {
+        let [swap_w, swap_h] = swap_size;
+        let PresentationRect {
+            x: dx,
+            y: dy,
+            width: dst_w,
+            height: dst_h,
+        } = presentation;
         // One-quad vertex buffer for the blit. Build it on a separate
         // small per-frame buffer so it can't collide with the queue's
         // shared vbo offset usage.
@@ -361,7 +421,10 @@ impl FrameState {
                 mapped_at_creation: false,
             }));
         }
-        let blit_vbo = self.blit_vbo.as_ref().unwrap();
+        let blit_vbo = self
+            .blit_vbo
+            .as_ref()
+            .expect("blit geometry buffer initialized");
         gpu.queue
             .write_buffer(blit_vbo, 0, bytemuck::cast_slice(&blit_verts));
 
@@ -379,7 +442,27 @@ impl FrameState {
             0,
             bytemuck::bytes_of(&screen_swap),
         );
+    }
 
+    #[allow(clippy::too_many_arguments)]
+    fn encode_presentation(
+        &self,
+        gpu: &GpuContext,
+        pipelines: &mut PipelineStore,
+        encoder: &mut wgpu::CommandEncoder,
+        swap_view: &wgpu::TextureView,
+        presentation: PresentationRect,
+        swap_size: [u32; 2],
+        compose_logical_frame: bool,
+        presentation_frame_count: usize,
+    ) {
+        let [swap_w, swap_h] = swap_size;
+        let PresentationRect {
+            x: dx,
+            y: dy,
+            width: dst_w,
+            height: dst_h,
+        } = presentation;
         let presentation_target = if self.native_refresh_presentation {
             &self
                 .cached_present
@@ -387,7 +470,7 @@ impl FrameState {
                 .expect("native-refresh presentation cache was not created")
                 .view
         } else {
-            &swap_view
+            swap_view
         };
         let (scale_mode, texture_effect) = presentation_profile(
             self.ui_only_frame,
@@ -400,7 +483,7 @@ impl FrameState {
                 .gpu_upscale
                 .render_multipass(
                     scale_mode,
-                    &mut encoder,
+                    encoder,
                     &self.render_target_texture,
                     presentation_target,
                     [swap_w, swap_h],
@@ -497,7 +580,13 @@ impl FrameState {
                 pass.set_pipeline(&pipelines.blit_pipeline);
                 pass.set_bind_group(0, &self.swap_screen_bg, &[]);
                 pass.set_bind_group(1, &self.render_target_bg, &[]);
-                pass.set_vertex_buffer(0, blit_vbo.slice(..));
+                pass.set_vertex_buffer(
+                    0,
+                    self.blit_vbo
+                        .as_ref()
+                        .expect("blit geometry uploaded before presentation")
+                        .slice(..),
+                );
                 pass.draw(0..6, 0..1);
             }
         }
@@ -508,49 +597,12 @@ impl FrameState {
                 .is_some_and(|start| start < self.queued.len())
         {
             pipelines.gpu_upscale.render_ui_overlay(
-                &mut encoder,
+                encoder,
                 &self.ui_target_texture,
                 presentation_target,
                 [dx as f32, dy as f32, dst_w, dst_h],
             );
         }
-        if self.native_refresh_presentation {
-            self.encode_cached_present_to_swapchain(
-                gpu,
-                pipelines,
-                &mut encoder,
-                &swap_view,
-                swap_w,
-                swap_h,
-            );
-        }
-
-        if compose_logical_frame {
-            self.encode_ui_to_logical_frame(&mut encoder, pipelines, resources);
-        }
-
-        let submit_start = web_time::Instant::now();
-        gpu.queue.submit(Some(encoder.finish()));
-        let submit_us = submit_start.elapsed().as_micros();
-        let swap_start = web_time::Instant::now();
-        gpu.queue.present(frame);
-        tracing::trace!(target: "present_perf", acquire_us, submit_us,
-            swap_us = swap_start.elapsed().as_micros(),
-            total_us = present_start.elapsed().as_micros(), "present phases");
-        self.presentation_frame_count = self.presentation_frame_count.wrapping_add(1);
-        if reconfigure_after_present {
-            self.reconfigure_surface(gpu);
-        }
-
-        // Frame done — clear queues and reset GPU phase for next frame.
-        if compose_logical_frame {
-            let draws_this_frame = self.queued.len();
-            let present_us = present_start.elapsed().as_micros() as u64;
-            self.clear_recording();
-            self.diagnostics
-                .log_fps(draws_this_frame, present_us, resources);
-        }
-        true
     }
 
     fn ensure_cached_presentation(

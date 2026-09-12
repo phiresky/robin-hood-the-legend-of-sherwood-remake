@@ -84,6 +84,19 @@ impl FrameWnd {
         }
     }
 
+    /// Update a required widget without resetting an unchanged enabled state.
+    pub fn update_widget(&mut self, id: WidgetId, label: Option<&str>, enabled: bool) {
+        let widget = self
+            .widget_mut(id)
+            .unwrap_or_else(|| panic!("FrameWnd: missing widget {id}"));
+        if let Some(label) = label {
+            widget.base_mut().set_text(label);
+        }
+        if widget.base().enabled != enabled {
+            widget.set_enable(enabled);
+        }
+    }
+
     /// Set a unique frame ID (used for FrameFocus events).
     pub fn set_frame_id(&mut self, id: u32) {
         self.frame_id = id;
