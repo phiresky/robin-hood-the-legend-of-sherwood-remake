@@ -17,6 +17,7 @@
 //!   Escape               → Quit
 
 use crate::gfx_types::Keycode;
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
@@ -93,8 +94,8 @@ impl BuyBlazonsModalState {
         );
         let win_x = (MENU_W - WIN_W) / 2;
         let win_y = (MENU_H - WIN_H) / 2;
-        let (ok_w, ok_h) = resources.ok_button_dimensions();
-        let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
+        let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
         let btn_w = ok_w.max(cancel_w);
         let btn_h = ok_h.max(cancel_h);
         let total_w = 2 * btn_w + BUTTON_GAP;
@@ -102,9 +103,7 @@ impl BuyBlazonsModalState {
         let quit_x = buy_x + btn_w + BUTTON_GAP;
         let btn_y = win_y + BUTTON_ROW_Y;
 
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         frame.add_widget_absolute(widget_bridge::make_button_with_resource(
             ID_BUY,
             "",
@@ -141,8 +140,7 @@ impl BuyBlazonsModalState {
         }
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
         Self {
             screen,
             frame,

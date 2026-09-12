@@ -35,9 +35,7 @@ pub async fn show_multiplayer_privacy(
     let bottom = align_bottom_right(&[(&ok, true), (&cancel, true)], btn_w, btn_h);
     let (field_w, field_h) = resources.input_field_dimensions();
 
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     frame.add_widget_absolute(widget_bridge::make_button(
         ID_PUBLICATION,
         "Publish Browser Join Links",
@@ -65,8 +63,7 @@ pub async fn show_multiplayer_privacy(
 
     let mut done = false;
     let mut accepted = false;
-    let mut input = ModalInputState::new();
-    input.seed_mouse_from_window(event_pump, transform);
+    let mut input = ModalInputState::from_window(event_pump, transform);
     while !done {
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
@@ -87,8 +84,7 @@ pub async fn show_multiplayer_privacy(
                 _ => {}
             }
         }
-        let widget_events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let widget_events = input.process_frame(&mut frame);
         if let Some(id) = widget_bridge::find_activated(&widget_events) {
             match id {
                 ID_PUBLICATION => {

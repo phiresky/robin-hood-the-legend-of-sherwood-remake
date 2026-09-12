@@ -146,8 +146,7 @@ pub(crate) async fn show_custom_missions(
         mission_detail_lines(font, &entries[selected], detail_view.content_width() - 4);
     detail_view.set_total(detail_lines.len());
 
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
 
     // FrameWnd holds widget state (Focused/Pushed/Activated) across
     // frames — menu buttons take multiple ticks to traverse the state
@@ -155,9 +154,7 @@ pub(crate) async fn show_custom_missions(
     // iteration would reset every button to Default and clicks would
     // never register. Enablement is updated in-place each frame on the
     // existing widgets below.
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (id, label, x, y) in &btn_positions {
         frame.add_widget_absolute(widget_bridge::make_button_enabled(
             *id, label, true, *x, *y, btn_w, btn_h,

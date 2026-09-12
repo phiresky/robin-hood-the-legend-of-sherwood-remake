@@ -8,6 +8,7 @@
 //! layout helpers drive the *rendering*.
 
 use crate::cursor::CursorRenderer;
+use crate::ingame_menu::resources::SealButton;
 
 use crate::gfx_types::GameEvent;
 use crate::input::KeyboardState;
@@ -248,9 +249,7 @@ fn bitmap_renderer(bbox: ScreenBBox, resource_id: crate::ui::ResourceId) -> Widg
 ///
 /// `buttons` is a slice of `(id, label, x, y, w, h)`.
 pub fn make_button_frame(buttons: &[(WidgetId, &str, i32, i32, i32, i32)]) -> FrameWnd {
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for &(id, label, x, y, w, h) in buttons {
         frame.add_widget_absolute(make_button(id, label, x, y, w, h));
     }
@@ -433,6 +432,20 @@ impl ModalInputState {
         state
     }
 
+    /// Initialize both the keyboard baseline and the live mouse position.
+    pub fn from_window(event_pump: &crate::window::GameWindow, transform: MenuTransform) -> Self {
+        let mut input = Self::new();
+        input.seed_mouse_from_window(event_pump, transform);
+        input
+    }
+
+    /// Deliver one frame and consume its one-shot mouse/text input.
+    pub fn process_frame(&mut self, frame: &mut FrameWnd) -> Vec<UiEvent> {
+        let events = frame.process_input(&self.as_widget_input());
+        self.end_frame();
+        events
+    }
+
     /// Update from a window event. Returns the event unchanged so the
     /// caller can also process keyboard shortcuts, quit, etc.
     pub fn update_from_event<'e>(
@@ -570,6 +583,24 @@ impl ModalInputState {
 }
 
 #[test]
+fn modal_frame_consumes_one_shots_but_retains_held_buttons() {
+    let mut input = ModalInputState::new();
+    input.buttons =
+        MouseButtons::LEFT_CLICK | MouseButtons::LEFT_DOUBLE_CLICK | MouseButtons::LEFT_DOWN;
+    input.text_input.push_str("typed this frame");
+    let mut frame = FrameWnd::interactive();
+    frame.bbox = ScreenBBox::from_coords(-10.0, -10.0, 10.0, 10.0);
+    let events = input.process_frame(&mut frame);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].msg_type, UiMsg::FrameFocus);
+    assert!(!input.buttons.contains(MouseButtons::LEFT_CLICK));
+    assert!(!input.buttons.contains(MouseButtons::LEFT_DOUBLE_CLICK));
+    assert!(input.buttons.contains(MouseButtons::LEFT_DOWN));
+    assert!(input.text_input.is_empty());
+    assert!(frame.enabled && frame.input_enabled);
+}
+
+#[test]
 fn first_modal_frame_observes_a_new_key_press() {
     let mut input = ModalInputState::new();
     input
@@ -643,10 +674,18 @@ pub fn attach_alpha_masks(
             | Widget::RadioButton(_)
             | Widget::Picture(_)
             | Widget::MultiPicture(_) => match resource_id {
-                resource_ids::RHID_OK => resources.ok_button_surface(BTN_STATE_NORMAL),
-                resource_ids::RHID_CANCEL => resources.cancel_button_surface(BTN_STATE_NORMAL),
-                resource_ids::RHID_RESTART => resources.restart_button_surface(BTN_STATE_NORMAL),
-                resource_ids::RHID_LOAD => resources.load_button_surface(BTN_STATE_NORMAL),
+                resource_ids::RHID_OK => {
+                    resources.seal_button_surface(SealButton::Ok, BTN_STATE_NORMAL)
+                }
+                resource_ids::RHID_CANCEL => {
+                    resources.seal_button_surface(SealButton::Cancel, BTN_STATE_NORMAL)
+                }
+                resource_ids::RHID_RESTART => {
+                    resources.seal_button_surface(SealButton::Restart, BTN_STATE_NORMAL)
+                }
+                resource_ids::RHID_LOAD => {
+                    resources.seal_button_surface(SealButton::Load, BTN_STATE_NORMAL)
+                }
                 resource_ids::RHID_MENU_BUTTON => resources.button_surface(BTN_STATE_NORMAL),
                 _ => None,
             },
@@ -709,10 +748,10 @@ pub fn draw_widget_button(
         .map(|b| b.resource_id)
         .unwrap_or(resource_ids::RHID_MENU_BUTTON);
     let sprite = match resource_id {
-        resource_ids::RHID_OK => resources.ok_button_surface(state_idx),
-        resource_ids::RHID_CANCEL => resources.cancel_button_surface(state_idx),
-        resource_ids::RHID_RESTART => resources.restart_button_surface(state_idx),
-        resource_ids::RHID_LOAD => resources.load_button_surface(state_idx),
+        resource_ids::RHID_OK => resources.seal_button_surface(SealButton::Ok, state_idx),
+        resource_ids::RHID_CANCEL => resources.seal_button_surface(SealButton::Cancel, state_idx),
+        resource_ids::RHID_RESTART => resources.seal_button_surface(SealButton::Restart, state_idx),
+        resource_ids::RHID_LOAD => resources.seal_button_surface(SealButton::Load, state_idx),
         resource_ids::RHID_RADIO => {
             let selected = matches!(
                 widget,

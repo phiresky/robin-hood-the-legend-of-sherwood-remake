@@ -145,9 +145,7 @@ impl PauseMenu {
         let menu_buttons = align_bottom_right(&labels, btn_w, btn_h);
 
         // Build a FrameWnd with widget buttons matching the layout.
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         for ((id, _, _), mb) in entries.iter().zip(&menu_buttons) {
             frame.add_widget_absolute(widget_bridge::make_button_enabled(
                 *id, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,

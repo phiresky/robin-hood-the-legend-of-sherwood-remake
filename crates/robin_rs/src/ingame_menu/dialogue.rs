@@ -20,6 +20,7 @@
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
 
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::player_command::DialogResult;
 use robin_engine::sprite::BBox;
@@ -205,9 +206,7 @@ fn dialogue_buttons(
     let total_w = 2 * btn_w + spacing;
     let start_x = virt_x + (WIN_W - total_w) / 2;
     let btn_y = (virt_y + 384).min(virt_y + WIN_H - btn_h - 16);
-    let mut frame = FrameWnd::default();
-    frame.enabled = true;
-    frame.input_enabled = true;
+    let mut frame = FrameWnd::interactive();
     for (id, resource, x, tooltip) in [
         (
             ID_SKIP,
@@ -271,8 +270,8 @@ pub async fn show_dialogue(
 
     let mut frame = dialogue_buttons(
         (virt_x, virt_y),
-        resources.ok_button_dimensions(),
-        resources.cancel_button_dimensions(),
+        resources.seal_button_dimensions(SealButton::Ok),
+        resources.seal_button_dimensions(SealButton::Cancel),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
     );
@@ -299,8 +298,7 @@ pub async fn show_dialogue(
     // Start the first sentence's audio.
     start_sentence(sound, &mut audio_slot, sound_enabled, &sentences[0]);
 
-    let mut input_state = ModalInputState::new();
-    input_state.seed_mouse_from_window(event_pump, transform);
+    let mut input_state = ModalInputState::from_window(event_pump, transform);
 
     let mut remote_result = None;
     'outer: loop {
@@ -512,15 +510,14 @@ impl DialogueModalState {
 
         let mut frame = dialogue_buttons(
             (virt_x, virt_y),
-            resources.ok_button_dimensions(),
-            resources.cancel_button_dimensions(),
+            resources.seal_button_dimensions(SealButton::Ok),
+            resources.seal_button_dimensions(SealButton::Cancel),
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
         );
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
         let portrait_fade = PortraitFade::new(sentences[0].resolved_portrait_id());
 
         Self {

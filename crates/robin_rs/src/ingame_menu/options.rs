@@ -158,9 +158,7 @@ pub async fn show_options(
         let labels: Vec<(&str, bool)> = entries.iter().map(|&(_, label)| (label, true)).collect();
         let menu_buttons = align_bottom_right(&labels, btn_w, btn_h);
 
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
+        let mut frame = FrameWnd::interactive();
         for (i, mb) in menu_buttons.iter().enumerate() {
             frame.add_widget_absolute(widget_bridge::make_button(
                 entries[i].0,

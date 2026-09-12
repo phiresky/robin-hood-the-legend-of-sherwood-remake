@@ -77,8 +77,7 @@ impl LoadPickerModalState {
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
         );
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
         let row_height = if detailed_metadata {
             DETAILED_ROW_HEIGHT
         } else {
@@ -359,10 +358,8 @@ const COMPACT_ROW_HEIGHT: i32 = 36;
 const DETAILED_ROW_HEIGHT: i32 = 52;
 const DETAIL_LINE_HEIGHT: i32 = 16;
 
-/// Units passed through the save-metadata localization seam. The original
-/// string table has no relative-time phrases, so the save UI uses this small
-/// adapter instead of inventing numeric Original resource IDs. A port-owned
-/// language catalog can implement the same interface later.
+/// Relative-time units used by save metadata. The Original string table has
+/// no equivalent phrases; these belong in the port-owned language catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RelativeTimeUnit {
     Second,
@@ -374,38 +371,9 @@ pub(crate) enum RelativeTimeUnit {
     Year,
 }
 
-pub(crate) trait SaveMetadataText {
-    fn new_save_label(&self) -> String;
-    fn new_save_hint(&self) -> String;
-    fn mission(&self, value: &str) -> String;
-    fn player(&self, value: &str) -> String;
-    fn saved(&self, value: &str) -> String;
-    fn exact_date(&self, value: &str) -> String;
-    fn campaign_progress(&self, progress: u32) -> String;
-    fn missions(&self, done: usize, total: usize) -> String;
-    fn gang_size(&self, size: usize) -> String;
-    fn ransom(&self, value: i32) -> String;
-    fn blazons(&self, value: i32) -> String;
-    fn amulets(&self, value: i32) -> String;
-    fn legacy_value_unavailable(&self) -> String;
-    fn invalid_timestamp(&self) -> String;
-    fn relative_time_unavailable(&self) -> String;
-    fn local_time_unavailable(&self) -> String;
-    fn just_now(&self) -> String;
-    fn elapsed(&self, value: u64, unit: RelativeTimeUnit) -> String;
-    fn future(&self, value: u64, unit: RelativeTimeUnit) -> String;
-    fn compact_saved(&self, value: &str) -> String;
-    fn compact_campaign_progress(&self, progress: u32) -> String;
-    fn compact_missions(&self, done: usize, total: usize) -> String;
-    fn compact_gang_size(&self, size: usize) -> String;
-    fn compact_ransom(&self, value: i32) -> String;
-    fn compact_blazons(&self, value: i32) -> String;
-    fn compact_amulets(&self, value: i32) -> String;
-}
-
-/// English fallback used until the port-wide language catalog supplies an
-/// implementation of [`SaveMetadataText`]. Keeping all new copy behind the
-/// adapter prevents relative-time grammar from leaking through the UI code.
+/// English save metadata copy and relative-time grammar.
+/// TODO: integrate this copy into the port-wide language catalog.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct EnglishSaveMetadataText;
 
 impl EnglishSaveMetadataText {
@@ -427,7 +395,7 @@ impl EnglishSaveMetadataText {
     }
 }
 
-impl SaveMetadataText for EnglishSaveMetadataText {
+impl EnglishSaveMetadataText {
     fn new_save_label(&self) -> String {
         "< New Save >".to_string()
     }
@@ -654,7 +622,7 @@ fn draw_preview(
     resources: &IngameMenuResources,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
     detailed_metadata: bool,
 ) {
     let slot = match selected {
@@ -732,7 +700,7 @@ fn row_label<'a>(
     row: ListRow,
     save_manager: &'a SaveGameManager,
     visible: &[usize],
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> Cow<'a, str> {
     match row {
         ListRow::New => Cow::Owned(text.new_save_label()),
@@ -760,7 +728,7 @@ fn row_detail_lines(
     visible: &[usize],
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
     detailed_metadata: bool,
 ) -> [String; 2] {
     match row {
@@ -779,7 +747,7 @@ fn existing_save_row_detail_lines(
     save: &SaveGame,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
     detailed_metadata: bool,
 ) -> [String; 2] {
     if !detailed_metadata {
@@ -820,7 +788,7 @@ pub(crate) fn cooperative_save_row_detail_lines(
 fn compact_row_detail(
     save: &SaveGame,
     local_time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> String {
     let exact = format_compact_saved_time(&save.timestamp, local_time_zone, text);
     let mut output = text.compact_saved(&exact);
@@ -859,7 +827,7 @@ fn selected_metadata_lines(
     save: &SaveGame,
     now_unix: Option<u64>,
     local_time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> Vec<String> {
     let mission = mission_with_time(save, text);
     let player = metadata_value(&save.player_name, text);
@@ -892,7 +860,7 @@ fn selected_metadata_lines(
     lines
 }
 
-fn mission_with_time(save: &SaveGame, text: &impl SaveMetadataText) -> String {
+fn mission_with_time(save: &SaveGame, text: &EnglishSaveMetadataText) -> String {
     let mission = metadata_value(&save.mission_name, text);
     match save.mission_elapsed_seconds {
         Some(seconds) => format!("{mission} ({:02}:{:02})", seconds / 60, seconds % 60),
@@ -900,7 +868,7 @@ fn mission_with_time(save: &SaveGame, text: &impl SaveMetadataText) -> String {
     }
 }
 
-fn metadata_value<'a>(value: &'a str, text: &impl SaveMetadataText) -> Cow<'a, str> {
+fn metadata_value<'a>(value: &'a str, text: &EnglishSaveMetadataText) -> Cow<'a, str> {
     if value.is_empty() {
         Cow::Owned(text.legacy_value_unavailable())
     } else {
@@ -915,7 +883,7 @@ fn parse_save_timestamp(timestamp: &str) -> Result<u64, ()> {
 fn format_exact_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> String {
     format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M:%S %Z")
 }
@@ -923,7 +891,7 @@ fn format_exact_saved_time(
 fn format_compact_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> String {
     format_local_saved_time(timestamp, time_zone, text, "%Y-%m-%d %H:%M")
 }
@@ -931,7 +899,7 @@ fn format_compact_saved_time(
 fn format_local_saved_time(
     timestamp: &str,
     time_zone: Option<&TimeZone>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
     format: &str,
 ) -> String {
     let Ok(seconds) = parse_save_timestamp(timestamp) else {
@@ -955,7 +923,7 @@ fn format_local_saved_time(
 fn format_relative_saved_time(
     timestamp: &str,
     now_unix: Option<u64>,
-    text: &impl SaveMetadataText,
+    text: &EnglishSaveMetadataText,
 ) -> String {
     let Ok(saved_unix) = parse_save_timestamp(timestamp) else {
         return text.invalid_timestamp();

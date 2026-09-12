@@ -11,6 +11,7 @@
 //! and select transitions.  The bridge module renders them using the
 //! existing sprite pipeline.
 
+use crate::ingame_menu::resources::SealButton;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::sprite::BBox;
 use serde::{Deserialize, Serialize};
@@ -101,8 +102,8 @@ impl YesNoModalState {
         // `RHID_CANCEL`) with no label, like the original dialog.  Both
         // get the max intrinsic size so they render at native
         // dimensions when centred as a pair.
-        let (ok_w, ok_h) = resources.ok_button_dimensions();
-        let (cancel_w, cancel_h) = resources.cancel_button_dimensions();
+        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
+        let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
         let btn_w = ok_w.max(cancel_w);
         let btn_h = ok_h.max(cancel_h);
         let n = 2i32;
@@ -158,8 +159,7 @@ impl YesNoModalState {
         focus.add_shortcut(ID_YES, KeyCode::NumpadEnter);
         focus.add_shortcut(ID_NO, KeyCode::Escape);
 
-        let mut input_state = ModalInputState::new();
-        input_state.seed_mouse_from_window(event_pump, transform);
+        let mut input_state = ModalInputState::from_window(event_pump, transform);
 
         Self {
             message,

@@ -220,6 +220,29 @@ pub fn align_bottom_right_in(
         .collect()
 }
 
+/// Horizontal placement for a row of buttons.
+///
+/// Given a list of button widths, returns the left-edge x of each button
+/// so the whole row is centered within the window (width `window_w`) with
+/// `gap` pixels between neighbours.
+pub fn center_horizontally_x(widths: &[i32], window_w: i32, gap: i32) -> Vec<i32> {
+    if widths.is_empty() {
+        return Vec::new();
+    }
+    let mut x = centered_row_start(widths.iter().sum(), widths.len(), window_w, gap);
+    let mut xs = Vec::with_capacity(widths.len());
+    for &w in widths {
+        xs.push(x);
+        x += w + gap;
+    }
+    xs
+}
+
+fn centered_row_start(content_width: i32, count: usize, window_w: i32, gap: i32) -> i32 {
+    let total = content_width + gap * (count as i32 - 1).max(0);
+    (window_w - total) / 2
+}
+
 /// Lays out buttons on one horizontal row, centred inside the 640x480
 /// window at the shared y of the first entry.
 pub fn center_horizontally(
@@ -232,9 +255,7 @@ pub fn center_horizontally(
     if labels.is_empty() {
         return Vec::new();
     }
-    let n = labels.len() as i32;
-    let total_w = n * btn_w + (n - 1) * spacing;
-    let start_x = (MENU_W - total_w) / 2;
+    let start_x = centered_row_start(labels.len() as i32 * btn_w, labels.len(), MENU_W, spacing);
     labels
         .iter()
         .enumerate()
