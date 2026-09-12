@@ -1825,14 +1825,13 @@ fn is_pc_action_enabled(
         return true;
     };
     let Some(profile) = assets.profile_manager.get_character(pc.profile_index) else {
+        tracing::warn!(profile_index = ?pc.profile_index, "PC action validation references a missing character profile");
         return false;
     };
     let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
         return true;
     };
-    let disabled = pc.disabled_actions.get(idx).copied().unwrap_or(false)
-        || pc.disabled_actions_temp.get(idx).copied().unwrap_or(false);
-    !disabled
+    !pc.action_slot_disabled(idx)
 }
 
 fn is_entity_robin(entity: &Entity) -> bool {

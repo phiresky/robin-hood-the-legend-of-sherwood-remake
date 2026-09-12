@@ -58,6 +58,17 @@ impl<const N: usize> ParityGate<N> {
                 filter.is_none_or(|expected| value.is_none_or(|actual| actual == expected))
             })
     }
+
+    /// Unlike publication probes, a selected owner must already have its
+    /// identity. An enabled filter rejects an absent observed identity.
+    pub(crate) fn matches_required(&self, values: [Option<u32>; N]) -> bool {
+        self.enabled
+            && self
+                .filters
+                .iter()
+                .zip(values)
+                .all(|(filter, value)| filter.is_none_or(|expected| value == Some(expected)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -317,6 +328,8 @@ mod tests {
         .unwrap();
         assert!(gate.enabled());
         assert!(gate.matches([Some(5), None]));
+        assert!(!gate.matches_required([Some(5), None]));
+        assert!(gate.matches_required([Some(5), Some(9)]));
         assert!(gate.matches([Some(5), Some(9)]));
         assert!(!gate.matches([Some(6), Some(9)]));
         assert!(!gate.matches([Some(5), Some(8)]));

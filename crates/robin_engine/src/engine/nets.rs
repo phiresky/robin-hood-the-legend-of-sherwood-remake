@@ -38,38 +38,20 @@ const NET_DESCENT_APPLY_THRESHOLD: f32 = 60.0;
 
 #[cfg(test)]
 thread_local! {
-    static NET_SPRITE_PROGRESSIONS: std::cell::RefCell<Option<Vec<(EntityId, crate::sprite::FrameProgression)>>> =
-        const { std::cell::RefCell::new(None) };
+    static NET_SPRITE_PROGRESSIONS: super::test_support::Probe<(EntityId, crate::sprite::FrameProgression)> =
+        const { super::test_support::Probe::new() };
 }
 
 #[cfg(test)]
 fn observe_net_sprite_progression(net: EntityId, progression: crate::sprite::FrameProgression) {
-    NET_SPRITE_PROGRESSIONS.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push((net, progression));
-        }
-    });
+    NET_SPRITE_PROGRESSIONS.with(|trace| trace.record((net, progression)));
 }
 
 #[cfg(test)]
 fn capture_net_sprite_progressions<T>(
     f: impl FnOnce() -> T,
 ) -> (T, Vec<(EntityId, crate::sprite::FrameProgression)>) {
-    NET_SPRITE_PROGRESSIONS.with(|trace| {
-        assert!(
-            trace.borrow().is_none(),
-            "net sprite capture is not re-entrant"
-        );
-        *trace.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let trace = NET_SPRITE_PROGRESSIONS.with(|trace| {
-        trace
-            .borrow_mut()
-            .take()
-            .expect("net sprite capture must remain active")
-    });
-    (result, trace)
+    NET_SPRITE_PROGRESSIONS.with(|trace| trace.capture(f))
 }
 
 /// Cosine threshold for the landing-slope crumple test in

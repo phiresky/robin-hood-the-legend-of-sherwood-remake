@@ -5,11 +5,7 @@ use super::*;
 use crate::bow_shot::{self};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
-fn arrow_publication_debug_filter(
-    frame_after: u32,
-    shooter_creation_order: u32,
-    projectile_creation_order: Option<u32>,
-) -> bool {
+fn arrow_publication_debug_gate() -> &'static super::diagnostics::ParityGate<3> {
     static GATE: std::sync::OnceLock<super::diagnostics::ParityGate<3>> =
         std::sync::OnceLock::new();
     GATE.get_or_init(|| {
@@ -22,11 +18,6 @@ fn arrow_publication_debug_filter(
             ],
         )
     })
-    .matches([
-        Some(frame_after),
-        Some(shooter_creation_order),
-        projectile_creation_order,
-    ])
 }
 
 fn record_arrow_publication_debug(
@@ -36,11 +27,11 @@ fn record_arrow_publication_debug(
     projectile_creation_order: Option<u32>,
     entity: &Entity,
 ) {
-    if !arrow_publication_debug_filter(
-        frame_after,
-        shooter_creation_order,
+    if !arrow_publication_debug_gate().matches([
+        Some(frame_after),
+        Some(shooter_creation_order),
         projectile_creation_order,
-    ) {
+    ]) {
         return;
     }
     let Entity::Projectile(arrow) = entity else {
@@ -838,15 +829,14 @@ impl EngineInner {
                 lands_in_hole: terminal_lands_in_hole,
                 initial_velocity: velocity,
             });
-            let diagnostic_identity =
-                std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").map(|_| {
-                    (
-                        self.control.frame_counter.checked_add(1).expect(
-                            "frame counter overflow while recording arrow publication diagnostic",
-                        ),
-                        self.world.original_creation_order(result.shooter),
-                    )
-                });
+            let diagnostic_identity = arrow_publication_debug_gate().enabled().then(|| {
+                (
+                    self.control.frame_counter.checked_add(1).expect(
+                        "frame counter overflow while recording arrow publication diagnostic",
+                    ),
+                    self.world.original_creation_order(result.shooter),
+                )
+            });
             if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
                 record_arrow_publication_debug(
                     "after_spawn_arrow",

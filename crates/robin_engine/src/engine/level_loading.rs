@@ -3734,6 +3734,18 @@ impl EngineInner {
             .fast_grid_mut()
             .allocate_layers(conventional_layers);
 
+        self.register_motion_sight_obstacles(assets);
+        self.register_motion_masks(staging);
+        self.register_motion_elevation_lines(assets, staging);
+        self.register_motion_obstacle_lines(assets, motion_data);
+        self.initialize_motion_pathfinder_graph(assets, motion_data);
+        self.initialize_motion_sector_conversion(assets);
+        self.initialize_motion_obstacle_states(assets);
+        self.register_motion_sectors(assets, staging, motion_data, lifts);
+        self.initialize_motion_jump_zones(staging);
+    }
+
+    fn register_motion_sight_obstacles(&mut self, assets: &mut LevelAssets) {
         // Register the already-loaded sight obstacles with the grid so
         // per-cell queries (`get_obstacle_indices`) can restrict the
         // 3D raycast scan to overlapping obstacles.
@@ -3762,7 +3774,9 @@ impl EngineInner {
                     .add_obstacle_index(idx, layer, &box_ground);
             }
         }
+    }
 
+    fn register_motion_masks(&mut self, staging: &mut LevelLoadStaging) {
         // Drain raw masks stashed by `initialize_from_mission` and push the
         // decoded `RuntimeMask`s into the grid.  Masks are pushed just
         // after the grid is sized.
@@ -3782,7 +3796,13 @@ impl EngineInner {
                 raw_count - added,
             );
         }
+    }
 
+    fn register_motion_elevation_lines(
+        &mut self,
+        assets: &mut LevelAssets,
+        staging: &mut LevelLoadStaging,
+    ) {
         // ── Elevation (bond) lines → grid lines ──
         //
         // Each bond line separates two adjacent sight obstacles on the
@@ -3839,7 +3859,13 @@ impl EngineInner {
                 elev_skipped_layer,
             );
         }
+    }
 
+    fn register_motion_obstacle_lines(
+        &mut self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) {
         // ── Part 1: Motion obstacles → grid lines + pathfinder move_layers ──
         // Part 5 registers these same areas/obstacles in exactly this order.
         // Reserve their flat sector slots now so pathfinder state changes can
@@ -4051,7 +4077,13 @@ impl EngineInner {
             static_data.move_layers.push(move_areas);
             static_data.alternative_move_layers.push(alt_move_areas);
         }
+    }
 
+    fn initialize_motion_pathfinder_graph(
+        &mut self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) {
         // ── Part 2: Pathfinder graph ──
         let graph_started = web_time::Instant::now();
         if !motion_data.graph_bytes.is_empty()
@@ -4104,10 +4136,14 @@ impl EngineInner {
             graph.alternative_layers = graph.layers.clone();
             graph.states = shape.iter().map(|layer| vec![0; layer.len()]).collect();
         }
+    }
 
+    fn initialize_motion_sector_conversion(&mut self, assets: &mut LevelAssets) {
         // ── Part 3: Build sector conversion table ──
         std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph).build_sector_conversion();
+    }
 
+    fn initialize_motion_obstacle_states(&mut self, assets: &mut LevelAssets) {
         // ── Part 4: Initialize pathfinder obstacle states ──
         // Must happen after graph is loaded, not during engine.initialize() which
         // runs before load_background_map processes the motion data.
@@ -4118,7 +4154,15 @@ impl EngineInner {
                 .pathfinder
                 .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
+    }
 
+    fn register_motion_sectors(
+        &mut self,
+        assets: &mut LevelAssets,
+        staging: &mut LevelLoadStaging,
+        motion_data: &crate::level_data::RawMotionData,
+        lifts: &[crate::level_data::RawLift],
+    ) {
         // ── Part 5: Register sectors in grid blocks ──
         //
         // Each motion area polygon becomes a MOTION | AREA | MOUSE
@@ -4625,7 +4669,9 @@ impl EngineInner {
                 .sector_conversion
                 .len(),
         );
+    }
 
+    fn initialize_motion_jump_zones(&mut self, staging: &mut LevelLoadStaging) {
         // ── Jump zones + jump line pairs ──
         //
         // Must run after all motion-area sectors are registered so

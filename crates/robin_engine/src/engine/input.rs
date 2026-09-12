@@ -640,7 +640,7 @@ impl EngineInner {
             );
         }
 
-        self.npc_focusable(assets, entity_id, entity, focus, selected_pc_id, blipped)
+        self.npc_focusable(assets, entity, focus, selected_pc_id, blipped)
     }
 
     fn pc_focusable(
@@ -831,7 +831,6 @@ impl EngineInner {
     fn npc_focusable(
         &self,
         assets: &LevelAssets,
-        entity_id: EntityId,
         entity: &Entity,
         focus: crate::element::Focus,
         selected_pc_id: Option<EntityId>,
