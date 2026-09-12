@@ -19,6 +19,7 @@ use crate::ingame_menu::save_load::{
     ListRow, PickerAction, PickerController, PickerModel, PickerTarget, begin_picker_delete,
     edit_save_name, feed_save_name, finish_picker_delete, picker_slots, sync_input_for_selection,
 };
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::ingame_menu::{SaveLoadMode, YesNoModalState};
 use crate::key_config::{KeyConfig, REAL_KEY_COUNT};
@@ -208,16 +209,17 @@ impl ActiveUiTask {
     pub(super) fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
-        window: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         save_manager: &mut SaveGameManager,
         profiles: Option<&ProfileManager>,
         sound: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         match self {
             Self::CampaignManager(state) => {
                 state.tick_browser(window, renderer, cursor).map(|exit| {
@@ -228,21 +230,11 @@ impl ActiveUiTask {
                     }
                 })
             }
-            Self::Options(state) => state.tick(
-                application_context,
-                window,
-                renderer,
-                resources,
-                cursor,
-                sound,
-                audio_backend,
-                sample_loader,
-            ),
+            Self::Options(state) => {
+                state.tick(application_context, io, sound, audio_backend, sample_loader)
+            }
             Self::SaveLoad(state) => state.tick(
-                window,
-                renderer,
-                resources,
-                cursor,
+                io,
                 save_manager,
                 profiles,
                 sound,
@@ -267,20 +259,18 @@ impl ActiveUiTask {
                     }
                 })
             }
-            Self::QuickLoad(state) => state.tick(window, renderer, resources, cursor),
-            Self::MissionEndLeaderboard(state) => {
-                match state.tick(window, renderer, resources, cursor) {
-                    super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Pending => None,
-                    super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Finished => {
-                        Some(UiTaskOutcome::MissionEndLeaderboardFinished(None))
-                    }
-                    super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Detach(
-                        controller,
-                    ) => Some(UiTaskOutcome::MissionEndLeaderboardFinished(Some(
-                        controller,
-                    ))),
+            Self::QuickLoad(state) => state.tick(io),
+            Self::MissionEndLeaderboard(state) => match state.tick(io) {
+                super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Pending => None,
+                super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Finished => {
+                    Some(UiTaskOutcome::MissionEndLeaderboardFinished(None))
                 }
-            }
+                super::leaderboard_runtime::MissionEndLeaderboardTaskProgress::Detach(
+                    controller,
+                ) => Some(UiTaskOutcome::MissionEndLeaderboardFinished(Some(
+                    controller,
+                ))),
+            },
         }
     }
 
@@ -375,13 +365,11 @@ impl QuickLoadTaskState {
         }
     }
 
-    fn tick(
-        &mut self,
-        window: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) -> Option<UiTaskOutcome> {
+    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<UiTaskOutcome> {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         let (events, transform) =
             crate::ingame_menu::layout::poll_events_with_transform(window, renderer);
         let result = self.dialog.handle_events(&events, transform);
@@ -503,16 +491,25 @@ impl OptionsTaskState {
     fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
-        window: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         sound_manager: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         if let Some(content) = self.spellforge_content.as_mut() {
-            let outcome = content.tick(application_context, window, renderer, resources, cursor);
+            let outcome = content.tick(
+                application_context,
+                &mut ModalScreenIo {
+                    window,
+                    renderer,
+                    resources,
+                    cursor,
+                },
+            );
             match outcome {
                 crate::ingame_menu::spellforge_content::SpellforgeContentSettingsOutcome::Pending => {
                     return None;
@@ -1537,16 +1534,17 @@ impl SaveLoadTaskState {
 
     fn tick(
         &mut self,
-        window: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         save_manager: &mut SaveGameManager,
         profiles: Option<&ProfileManager>,
         sound_manager: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         self.refresh(save_manager);
         if self.error_notice.is_none()
             && let Some(error) = self.model.operation_error()
@@ -1554,7 +1552,12 @@ impl SaveLoadTaskState {
             self.error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_owned()));
         }
         if let Some(notice) = &mut self.error_notice {
-            if notice.tick(window, renderer, resources, cursor) {
+            if notice.tick(&mut ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor,
+            }) {
                 self.error_notice = None;
                 self.model.dismiss_error();
                 if window.close_requested {

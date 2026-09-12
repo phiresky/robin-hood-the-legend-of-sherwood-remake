@@ -3,6 +3,7 @@
 use super::interactive::{MissionPresentation, MissionResources};
 use crate::host::Host;
 use crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_LOST;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::window::GameWindow;
 use robin_engine::engine::Engine;
@@ -156,12 +157,12 @@ pub(super) fn drive_lost_sherwood_gate(
         .modal
         .as_mut()
         .and_then(|modal| {
-            modal.tick(
+            modal.tick(&mut ModalScreenIo {
                 window,
-                &mut presentation.renderer,
-                menu_resources,
-                Some(cursor),
-            )
+                renderer: &mut presentation.renderer,
+                resources: menu_resources,
+                cursor: Some(&cursor),
+            })
         })
         .is_none()
     {

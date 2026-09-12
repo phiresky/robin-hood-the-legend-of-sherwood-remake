@@ -16,6 +16,7 @@ use super::ui_task_state::{ActiveUiTask, UiTaskKind, UiTaskOutcome};
 use super::*;
 use crate::game::Game;
 use crate::host::HostSignal;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -913,10 +914,12 @@ impl InteractiveFrameSimulation {
             let application_context = host.application_context().clone();
             let task_outcome = task.tick(
                 &application_context,
-                window,
-                &mut presentation.renderer,
-                menu_resources,
-                Some(&cursor),
+                &mut ModalScreenIo {
+                    window,
+                    renderer: &mut presentation.renderer,
+                    resources: menu_resources,
+                    cursor: Some(&cursor),
+                },
                 &mut callbacks.save_manager,
                 Some(profiles),
                 Some(&mut host.audio.sound),

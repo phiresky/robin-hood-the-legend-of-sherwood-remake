@@ -30,7 +30,7 @@ use super::resources::{
     MT_STR_DB_S06, MT_STR_DB_S07, MT_STR_DB_S08, MT_STR_DB_S09, MT_STR_DB_S10, MT_STR_DB_S11,
     MT_STR_DB_S13, MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON, MenuText,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 496;
@@ -131,7 +131,7 @@ pub async fn show_debriefing(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
+    cursor: Option<ModalCursor<'_>>,
     body: &str,
     stat: Option<&MissionStat>,
     mission_length_seconds: u32,
@@ -163,12 +163,12 @@ pub async fn show_debriefing(
         start_at_stat,
     );
     loop {
-        if let Some(outcome) = state.tick(
-            event_pump,
+        if let Some(outcome) = state.tick(&mut ModalScreenIo {
+            window: event_pump,
             renderer,
             resources,
-            cursor.as_mut().map(|c| c.reborrow()),
-        ) {
+            cursor: cursor.as_ref(),
+        }) {
             return outcome;
         }
         crate::window::sleep_ui_frame().await;
@@ -257,13 +257,10 @@ impl DebriefingModalState {
         renderer.present();
     }
 
-    pub fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
-    ) -> Option<DebriefingOutcome> {
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<DebriefingOutcome> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
         match self.phase {
             DebriefingPhase::Body => {
                 if self.current_page.is_none() {
@@ -279,10 +276,7 @@ impl DebriefingModalState {
                         self.active_quick_load,
                     ));
                 }
-                let outcome = self
-                    .current_page
-                    .as_mut()
-                    .and_then(|page| page.tick(event_pump, renderer, resources, cursor));
+                let outcome = self.current_page.as_mut().and_then(|page| page.tick(io));
                 let outcome = outcome?;
                 self.finish_page(outcome)
             }
@@ -304,10 +298,7 @@ impl DebriefingModalState {
                         self.active_quick_load,
                     ));
                 }
-                let outcome = self
-                    .current_page
-                    .as_mut()
-                    .and_then(|page| page.tick(event_pump, renderer, resources, cursor));
+                let outcome = self.current_page.as_mut().and_then(|page| page.tick(io));
                 let outcome = outcome?;
                 self.finish_page(outcome)
             }
@@ -625,13 +616,11 @@ impl DebriefingPageState {
         }
     }
 
-    fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
-    ) -> Option<PageOutcome> {
+    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<PageOutcome> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         let mut outcome = None;
         let (font, lines) = self.prepare_body(resources);
         self.scroll_view.set_total(lines.len());
@@ -703,7 +692,7 @@ impl DebriefingPageState {
             });
         }
 
-        self.render(renderer, resources, cursor.as_ref(), font, &lines);
+        self.render(renderer, resources, cursor, font, &lines);
         renderer.present();
         outcome
     }

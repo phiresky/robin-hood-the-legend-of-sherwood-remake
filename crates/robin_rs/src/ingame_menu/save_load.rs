@@ -27,7 +27,7 @@ pub(crate) use super::save_picker::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
     PickerSlot, PickerTarget, retire_thumbnail,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 use super::yesno::YesNoModalState;
 
 /// Which flavour of slot picker to show.
@@ -106,15 +106,16 @@ impl LoadPickerModalState {
 
     pub fn tick(
         &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         save_manager: &mut SaveGameManager,
         sound: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<SaveLoadOutcome> {
+        let event_pump = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         self.model.refresh(picker_slots(save_manager));
         if self.error_notice.is_none()
             && let Some(error) = self.model.operation_error()
@@ -122,7 +123,12 @@ impl LoadPickerModalState {
             self.error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_string()));
         }
         if let Some(notice) = &mut self.error_notice {
-            if notice.tick(event_pump, renderer, resources, cursor.as_ref()) {
+            if notice.tick(&mut ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor,
+            }) {
                 self.error_notice = None;
                 self.model.dismiss_error();
                 if event_pump.close_requested {
@@ -134,7 +140,12 @@ impl LoadPickerModalState {
             return None;
         }
         if let Some(confirmation) = self.delete_confirmation.as_mut() {
-            let outcome = confirmation.tick(event_pump, renderer, resources, cursor.as_ref());
+            let outcome = confirmation.tick(&mut ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor,
+            });
             let confirmed = outcome?;
             self.delete_confirmation = None;
             finish_picker_delete(&mut self.model, save_manager, confirmed);
@@ -534,7 +545,7 @@ pub async fn show_load_picker(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
+    cursor: Option<ModalCursor<'_>>,
     save_manager: &mut SaveGameManager,
     detailed_metadata: bool,
 ) -> SaveLoadOutcome {
@@ -542,10 +553,12 @@ pub async fn show_load_picker(
         LoadPickerModalState::new(event_pump, renderer, save_manager, detailed_metadata, false);
     loop {
         if let Some(outcome) = state.tick(
-            event_pump,
-            renderer,
-            resources,
-            cursor.as_mut().map(|cursor| cursor.reborrow()),
+            &mut ModalScreenIo {
+                window: event_pump,
+                renderer,
+                resources,
+                cursor: cursor.as_ref(),
+            },
             save_manager,
             None,
             None,

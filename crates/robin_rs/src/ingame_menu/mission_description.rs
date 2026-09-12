@@ -21,6 +21,7 @@
 
 use crate::gfx_types::Keycode;
 use crate::ingame_menu::resources::SealButton;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use robin_engine::campaign::CampaignValue;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine::{
@@ -284,19 +285,19 @@ impl MissionDescriptionModalState {
         event_pump: &mut crate::window::GameWindow,
         renderer: &mut Renderer,
         resources: &mut IngameMenuResources,
-        mut cursor: Option<ModalCursor<'_>>,
+        cursor: Option<ModalCursor<'_>>,
         engine: &mut Engine,
         assets: &LevelAssets,
         admitted_actions: &mut Vec<ExternalAction>,
         profiles: &engine_profiles::ProfileManager,
     ) -> Option<(MissionChoice, bool)> {
         if let Some(child) = self.buy_blazons.as_mut() {
-            if let Some(outcome) = child.tick(
-                event_pump,
+            if let Some(outcome) = child.tick(&mut ModalScreenIo {
+                window: event_pump,
                 renderer,
                 resources,
-                cursor.as_mut().map(|cursor| cursor.reborrow()),
-            ) {
+                cursor: cursor.as_ref(),
+            }) {
                 self.buy_blazons = None;
                 self.apply_buy_outcome(outcome, engine, assets, admitted_actions, profiles);
             }

@@ -1,6 +1,7 @@
 //! Cooperative post-mission UI ownership. Admission and signature tasks are separate owners.
 
 use super::*;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 
 /// Cooperative presentation/background state installed only after the final
 /// authoritative debrief decision has been recorded. The first poll therefore
@@ -46,11 +47,12 @@ impl MissionEndLeaderboardTaskState {
 
     pub(in crate::game_session) fn tick(
         &mut self,
-        window: &mut GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
     ) -> MissionEndLeaderboardTaskProgress {
+        let window = &mut *io.window;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let cursor = io.cursor;
         match &mut self.phase {
             MissionEndLeaderboardTaskPhase::Preparing(preparation) => {
                 let replay_exports = self.application_context.replay_exports();
@@ -186,7 +188,12 @@ impl MissionEndLeaderboardTaskState {
                 }
             }
             MissionEndLeaderboardTaskPhase::Visible(screen) => {
-                let event = screen.tick(window, renderer, resources, cursor);
+                let event = screen.tick(&mut ModalScreenIo {
+                    window,
+                    renderer,
+                    resources,
+                    cursor,
+                });
                 if let Err(error) = screen
                     .controller_mut()
                     .persist_queued_receipt_watch(&self.application_context)
@@ -207,7 +214,12 @@ impl MissionEndLeaderboardTaskState {
                 retire_or_detach(controller)
             }
             MissionEndLeaderboardTaskPhase::Unavailable(notice) => {
-                if notice.tick(window, renderer, resources, cursor) {
+                if notice.tick(&mut ModalScreenIo {
+                    window,
+                    renderer,
+                    resources,
+                    cursor,
+                }) {
                     self.phase = MissionEndLeaderboardTaskPhase::Finished;
                     MissionEndLeaderboardTaskProgress::Finished
                 } else {
