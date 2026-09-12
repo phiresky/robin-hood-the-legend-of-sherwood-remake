@@ -543,8 +543,8 @@ impl EngineInner {
         // unconscious never re-enters it.
         let unconscious_before = victim
             .human_data()
-            .map(|human| human.unconscious)
-            .unwrap_or(false);
+            .expect("damage victim must be human")
+            .unconscious;
 
         // Look up defender's weapon profile
         let defender_profile_idx = get_hth_weapon_id_full(victim, &assets.profile_manager);
@@ -1010,8 +1010,8 @@ impl EngineInner {
         let victim_is_unconscious = self
             .expect_entity(victim_id, "sword-damage hero-speech victim")
             .human_data()
-            .map(|h| h.unconscious)
-            .unwrap_or(false);
+            .expect("damage victim must be human")
+            .unconscious;
         let victim_is_lacklandist =
             match self.expect_entity(victim_id, "sword-damage hero-speech victim") {
                 Entity::Soldier(s) => self.is_hostile_to_player_camp(s.soldier.cached_camp),
@@ -1053,7 +1053,7 @@ impl EngineInner {
                 .expect_entity(victim_id, "sword-damage hit-reaction victim")
                 .human_data()
                 .map(|h| !h.unconscious)
-                .unwrap_or(false);
+                .expect("damage victim must be human");
             // Shoulder-posture victims route through
             // `translate_shoulder_damage` *unconditionally* — even for
             // lethal/KO hits — so the partner's carrier/carried
@@ -1081,7 +1081,10 @@ impl EngineInner {
                 let anims = {
                     let e = self.expect_entity(victim_id, "sword-damage hit-reaction victim");
                     let posture = e.element_data().posture();
-                    let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+                    let action = e
+                        .actor_data()
+                        .expect("damage animation victim must be an actor")
+                        .action_state;
                     select_combat_animations(posture, action)
                 };
                 if let Some(a) = anims {
@@ -1256,7 +1259,10 @@ impl EngineInner {
             if !is_rider && stunning_effect > 0 {
                 let e = self.expect_entity(victim_id, "sword-damage death anim victim");
                 let posture = e.element_data().posture();
-                let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+                let action = e
+                    .actor_data()
+                    .expect("damage animation victim must be an actor")
+                    .action_state;
                 select_combat_animations(posture, action).map(|a| a.falling_back)
             } else {
                 None
@@ -1283,8 +1289,8 @@ impl EngineInner {
                 let posture = victim.element_data().posture();
                 let action = victim
                     .actor_data()
-                    .map(|actor| actor.action_state)
-                    .unwrap_or_default();
+                    .expect("damage animation victim must be an actor")
+                    .action_state;
                 select_combat_animations(posture, action)
                     .map(|animations| dying_anim_override.unwrap_or(animations.dying_forward))
             });
@@ -1491,9 +1497,9 @@ impl EngineInner {
         //      terminate immediately.  Uses `life_points > 0`, not
         //      `!is_dead()`, to keep parity with the original guard.
         let pre_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "damage posture snapshot")
+            .element_data()
+            .posture();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
             self.translate_ladder_wall_fall(assets, victim_id, damage_element);
             return;
@@ -1540,9 +1546,9 @@ impl EngineInner {
         // `translate_shoulder_damage` instead of the base-class
         // handler.
         let victim_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "damage posture snapshot")
+            .element_data()
+            .posture();
         if matches!(
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
@@ -1594,7 +1600,10 @@ impl EngineInner {
                 .get_entity(victim_id)
                 .and_then(|e| {
                     let posture = e.element_data().posture();
-                    let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+                    let action = e
+                        .actor_data()
+                        .expect("damage animation victim must be an actor")
+                        .action_state;
                     select_combat_animations(posture, action)
                 })
                 .map(|a| a.simple_hit);
@@ -1645,9 +1654,9 @@ impl EngineInner {
         // so every other arrow-damage / generic-damage translation branch switches
         // on the posture produced by the damage (notably amulet coma -> Lying).
         let pre_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "damage posture snapshot")
+            .element_data()
+            .posture();
 
         let (ctx, max_lp, life_points_before, unconscious_before) =
             self.damage_victim_snapshot(assets, victim_id);
@@ -1720,9 +1729,9 @@ impl EngineInner {
         }
 
         let translation_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "damage posture snapshot")
+            .element_data()
+            .posture();
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
         self.add_damage_number(victim_id, damage);
@@ -1867,7 +1876,10 @@ impl EngineInner {
         };
         let animations = self.get_entity(victim_id).and_then(|e| {
             let posture = e.element_data().posture();
-            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+            let action = e
+                .actor_data()
+                .expect("damage animation victim must be an actor")
+                .action_state;
             select_combat_animations(posture, action)
         });
         if still_on_ground {
@@ -2167,7 +2179,10 @@ impl EngineInner {
                 None => return,
             };
             let posture = v.element_data().posture();
-            let action = v.actor_data().map(|a| a.action_state).unwrap_or_default();
+            let action = v
+                .actor_data()
+                .expect("damage animation victim must be an actor")
+                .action_state;
             (posture, action)
         };
 
@@ -2515,7 +2530,10 @@ impl EngineInner {
             };
             (
                 get_life_points(victim),
-                victim.human_data().map(|h| h.unconscious).unwrap_or(false),
+                victim
+                    .human_data()
+                    .expect("damage victim must be human")
+                    .unconscious,
                 victim.kind().is_pc(),
                 victim
                     .pc_data()
@@ -3156,7 +3174,10 @@ impl EngineInner {
         // Lying/Dead/Carried — the "already on the ground" case).
         let dying_anim = self.get_entity(victim_id).and_then(|e| {
             let posture = e.element_data().posture();
-            let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+            let action = e
+                .actor_data()
+                .expect("damage animation victim must be an actor")
+                .action_state;
             select_combat_animations(posture, action)
                 .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
         });
@@ -3462,7 +3483,10 @@ impl EngineInner {
             .get_entity(victim_id)
             .and_then(|e| {
                 let posture = e.element_data().posture();
-                let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
+                let action = e
+                    .actor_data()
+                    .expect("damage animation victim must be an actor")
+                    .action_state;
                 select_combat_animations(posture, action)
             })
             .map(|a| a.falling_back);
