@@ -871,13 +871,11 @@ pub fn update_mouse(
             cursor
         }
         Action::Bow => cursor_for_bow(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Hit | Action::HitHard => {
-            cursor_for_hit(engine, host, assets, mouse_map_pt, shift_held)
-        }
+        Action::Hit | Action::HitHard => cursor_for_hit(engine, host, assets, mouse_map_pt),
         Action::Apple => cursor_for_apple(engine, host, assets, mouse_map_pt, shift_held),
         Action::Stone => cursor_for_stone(engine, host, assets, mouse_map_pt, shift_held),
         Action::Purse => cursor_for_purse(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Heal => cursor_for_heal(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Heal => cursor_for_heal(engine, host, assets, mouse_map_pt),
         Action::WaspNest => cursor_for_wasp_nest(engine, host, assets, mouse_map_pt, shift_held),
         Action::HelpToClimb => {
             cursor_for_help_to_climb(engine, host, assets, mouse_map_pt, shift_held)
@@ -888,9 +886,9 @@ pub fn update_mouse(
             cursor_for_shield(engine, host, assets, mouse_map_pt, shift_held)
         }
         Action::Net => cursor_for_net(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Lever => cursor_for_lever(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Ale => cursor_for_ale(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Strangle => cursor_for_strangle(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Lever => cursor_for_lever(engine, host, assets, mouse_map_pt),
+        Action::Ale => cursor_for_ale(engine, host, mouse_map_pt),
+        Action::Strangle => cursor_for_strangle(engine, host, assets, mouse_map_pt),
         Action::Beggar => cursor_for_beggar(engine, host, assets, mouse_map_pt, shift_held),
         Action::Listen => cursor_for_listen(engine, host, assets, mouse_map_pt, shift_held),
         // Remaining actions.
@@ -900,10 +898,9 @@ pub fn update_mouse(
 
 // ─── Per-action cursor arms ─────────────────────────────────────────
 //
-// One function per `update_mouse` action arm. All share the same
-// signature: read engine/host/assets and the mouse-map point, mutate
-// `host.frontend.input` focus/opacity/trajectory fields, and return the cursor
-// resource id.
+// One function per `update_mouse` action arm. Each takes only the
+// context its cursor decision needs, updates host-owned focus/opacity/preview
+// feedback, and returns the cursor resource id.
 
 /// Bow cursor arm.
 fn cursor_for_bow(
@@ -1107,7 +1104,6 @@ fn cursor_for_hit(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1447,7 +1443,6 @@ fn cursor_for_heal(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1768,7 +1763,6 @@ fn cursor_for_lever(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1788,13 +1782,7 @@ fn cursor_for_lever(
 }
 
 /// Ale cursor arm.
-fn cursor_for_ale(
-    engine: &Engine,
-    host: &mut Host,
-    _assets: &LevelAssets,
-    mouse_map_pt: MapPoint,
-    _shift_held: bool,
-) -> i32 {
+fn cursor_for_ale(engine: &Engine, host: &mut Host, mouse_map_pt: MapPoint) -> i32 {
     use robin_engine::resource_ids::*;
     {
         // Validate mouse sector (no door, no wall/ladder).
@@ -1834,7 +1822,6 @@ fn cursor_for_strangle(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    _shift_held: bool,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -2161,13 +2148,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_hit(
-            &engine,
-            &mut host,
-            &assets,
-            MapPoint::new(300.0, 300.0),
-            false,
-        );
+        let cursor = cursor_for_hit(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
         assert_eq!(cursor, RHMOUSE_HIT_NO);
         assert_eq!(host.frontend.input.feedback.focused_entity_id, None);
     }
@@ -2177,14 +2158,18 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_heal(
-            &engine,
-            &mut host,
-            &assets,
-            MapPoint::new(300.0, 300.0),
-            false,
-        );
+        let cursor = cursor_for_heal(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
         assert_eq!(cursor, RHMOUSE_HEAL_NO);
+    }
+
+    #[test]
+    fn lever_cursor_is_no_without_focusable_target() {
+        let (mut engine, assets, mut host) = fixture();
+        add_selected_pc(&mut engine, &assets);
+
+        let cursor = cursor_for_lever(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
+        assert_eq!(cursor, RHMOUSE_LEVER_NO);
+        assert_eq!(host.frontend.input.feedback.focused_entity_id, None);
     }
 
     #[test]
@@ -2194,13 +2179,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_ale(
-            &engine,
-            &mut host,
-            &assets,
-            MapPoint::new(300.0, 300.0),
-            false,
-        );
+        let cursor = cursor_for_ale(&engine, &mut host, MapPoint::new(300.0, 300.0));
         assert_eq!(cursor, RHMOUSE_ALE_NO);
     }
 
@@ -2250,13 +2229,7 @@ mod tests {
         let (mut engine, assets, mut host) = fixture();
         add_selected_pc(&mut engine, &assets);
 
-        let cursor = cursor_for_strangle(
-            &engine,
-            &mut host,
-            &assets,
-            MapPoint::new(300.0, 300.0),
-            false,
-        );
+        let cursor = cursor_for_strangle(&engine, &mut host, &assets, MapPoint::new(300.0, 300.0));
         assert_eq!(cursor, RHMOUSE_STRANGLE_NO);
     }
 }
