@@ -807,7 +807,6 @@ impl EngineInner {
 
     pub(super) fn drain_smalltalk_strikes(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         smalltalk_strikes: Vec<(EntityId, EntityId, crate::weapons::SwordStrike)>,
     ) {
@@ -850,7 +849,7 @@ impl EngineInner {
                     .unwrap_or_else(|| {
                         panic!("smalltalk attacker {actor_id:?} has no HtH weapon profile")
                     });
-                self.queue_sword_damage(sim, assets, target_id, actor_id, strike, profile_idx);
+                self.queue_sword_damage(target_id, actor_id, strike, profile_idx);
                 continue;
             }
 
