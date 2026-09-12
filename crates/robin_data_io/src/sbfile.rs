@@ -504,11 +504,9 @@ pub fn detect_zip_layout_for_mission(
 }
 
 pub struct SbFile {
-    /// Game data is short and read sequentially / seekably, so we always
-    /// slurp the whole file into memory and drive it with a `Cursor`.
-    /// That lets `SbFile::open` uniformly consume bytes from the native
-    /// filesystem *or* the shipping-datadir byte store hosted in
-    /// `robin_util::asset_fs` without a type split.
+    /// Read-only stream over immutable, shared asset bytes. Native files and
+    /// archive entries are buffered; memory-mounted assets reuse their backing
+    /// allocation. Every source uses a `Cursor` for sequential reads and seeking.
     file: Cursor<AssetBytes>,
     last_error: i32,
     /// Logical path requested by the caller. Typed legacy readers surface it
