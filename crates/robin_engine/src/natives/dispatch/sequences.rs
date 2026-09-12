@@ -430,20 +430,24 @@ impl NativeContext<'_, '_> {
                     dest_layer_sector.expect("validated RecordMove point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
-                self.append_move_to_sequence(
-                    actor,
-                    action,
-                    (sx, sy),
-                    src_sector,
-                    src_layer,
-                    (dx, dy),
-                    goal_sector,
-                    goal_layer,
-                    None,
-                    0.0,
-                    MoveFlags::CALLED_BY_SCRIPT,
-                    1.0,
-                );
+                self.append_move_to_sequence(SequenceMoveRequest {
+                    actor_handle: actor,
+                    action: action,
+                    source: SequenceMovePoint {
+                        position: (sx, sy),
+                        sector: src_sector,
+                        layer: src_layer,
+                    },
+                    goal: SequenceMovePoint {
+                        position: (dx, dy),
+                        sector: goal_sector,
+                        layer: goal_layer,
+                    },
+                    victim: None,
+                    tolerance: 0.0,
+                    initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+                    speed_factor: 1.0,
+                });
                 // NONINTERRUPTABLE walks bump every just-added
                 // element to Script priority.
                 if matches!(style, 2 | 3)
@@ -493,20 +497,24 @@ impl NativeContext<'_, '_> {
                     dest_layer_sector.expect("validated RecordMoveNear point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
-                self.append_move_to_sequence(
-                    actor,
-                    action,
-                    (sx, sy),
-                    src_sector,
-                    src_layer,
-                    (dx, dy),
-                    goal_sector,
-                    goal_layer,
-                    None,
-                    tolerance as f32,
-                    MoveFlags::CALLED_BY_SCRIPT,
-                    1.0,
-                );
+                self.append_move_to_sequence(SequenceMoveRequest {
+                    actor_handle: actor,
+                    action: action,
+                    source: SequenceMovePoint {
+                        position: (sx, sy),
+                        sector: src_sector,
+                        layer: src_layer,
+                    },
+                    goal: SequenceMovePoint {
+                        position: (dx, dy),
+                        sector: goal_sector,
+                        layer: goal_layer,
+                    },
+                    victim: None,
+                    tolerance: tolerance as f32,
+                    initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+                    speed_factor: 1.0,
+                });
                 // NONINTERRUPTABLE near-walks bump every
                 // just-added element to Preference priority (one
                 // rung weaker than RecordMove's Script).
@@ -561,7 +569,7 @@ impl NativeContext<'_, '_> {
                     let ddx = door.point_mid.x - lx;
                     let ddy = door.point_mid.y - ly;
                     let sq = ddx * ddx + ddy * ddy;
-                    if sq < max_sq_dist && (best.is_none() || sq < best.unwrap().0) {
+                    if sq < max_sq_dist && (best.is_none_or(|(best_sq, _)| sq < best_sq)) {
                         let mut sector =
                             crate::position_interface::SectorHandle::new(u16::from(door.sector_in))
                                 .expect("door interior uses null sector sentinel");
@@ -601,20 +609,24 @@ impl NativeContext<'_, '_> {
                 // the door's interior (layer, sector).
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((ix, iy, door_layer, door_sector));
-                self.append_move_to_sequence(
-                    actor,
-                    action,
-                    (sx, sy),
-                    src_sector,
-                    src_layer,
-                    (ix, iy),
-                    door_sector,
-                    door_layer,
-                    None,
-                    0.0,
-                    MoveFlags::CALLED_BY_SCRIPT,
-                    1.0,
-                );
+                self.append_move_to_sequence(SequenceMoveRequest {
+                    actor_handle: actor,
+                    action: action,
+                    source: SequenceMovePoint {
+                        position: (sx, sy),
+                        sector: src_sector,
+                        layer: src_layer,
+                    },
+                    goal: SequenceMovePoint {
+                        position: (ix, iy),
+                        sector: door_sector,
+                        layer: door_layer,
+                    },
+                    victim: None,
+                    tolerance: 0.0,
+                    initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+                    speed_factor: 1.0,
+                });
                 // Apply the same NONINTERRUPTABLE bump the inner
                 // RecordMove would apply.
                 if matches!(style, 2 | 3)
@@ -828,20 +840,24 @@ impl NativeContext<'_, '_> {
                     .expect("validated RecordLeaveGame point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
                     origin.unwrap_or((dx, dy, goal_layer, goal_sector));
-                self.append_move_to_sequence(
-                    actor,
-                    action,
-                    (sx, sy),
-                    src_sector,
-                    src_layer,
-                    (dx, dy),
-                    goal_sector,
-                    goal_layer,
-                    None,
-                    0.0,
-                    MoveFlags::CALLED_BY_SCRIPT,
-                    1.0,
-                );
+                self.append_move_to_sequence(SequenceMoveRequest {
+                    actor_handle: actor,
+                    action: action,
+                    source: SequenceMovePoint {
+                        position: (sx, sy),
+                        sector: src_sector,
+                        layer: src_layer,
+                    },
+                    goal: SequenceMovePoint {
+                        position: (dx, dy),
+                        sector: goal_sector,
+                        layer: goal_layer,
+                    },
+                    victim: None,
+                    tolerance: 0.0,
+                    initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+                    speed_factor: 1.0,
+                });
 
                 // Insert the two moves at adjacent sequence
                 // levels so they execute sequentially rather
@@ -1445,20 +1461,24 @@ impl NativeContext<'_, '_> {
                     let Some(tolerance) = self.actor_action_distance(actor, animation) else {
                         return 0;
                     };
-                    self.append_move_to_sequence(
-                        actor,
-                        action,
-                        (sx, sy),
-                        src_sector,
-                        src_layer,
-                        (pos.x, pos.y),
-                        corpse_sector,
-                        corpse_layer,
-                        None,
-                        tolerance,
-                        MoveFlags::CALLED_BY_SCRIPT,
-                        1.0,
-                    );
+                    self.append_move_to_sequence(SequenceMoveRequest {
+                        actor_handle: actor,
+                        action: action,
+                        source: SequenceMovePoint {
+                            position: (sx, sy),
+                            sector: src_sector,
+                            layer: src_layer,
+                        },
+                        goal: SequenceMovePoint {
+                            position: (pos.x, pos.y),
+                            sector: corpse_sector,
+                            layer: corpse_layer,
+                        },
+                        victim: None,
+                        tolerance: tolerance,
+                        initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+                        speed_factor: 1.0,
+                    });
                 }
 
                 // Take it.

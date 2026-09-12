@@ -170,13 +170,7 @@ pub fn build_blazon_set_state(
     let row_step_y = slot_h + BLAZON_SPACING;
     let col_step_x = slot_w + BLAZON_SPACING;
 
-    let rows_full = total_blazons / per_row;
-    let rows = rows_full
-        + if !total_blazons.is_multiple_of(per_row) {
-            1
-        } else {
-            0
-        };
+    let rows = total_blazons.div_ceil(per_row);
 
     // Assert the laid-out grid fits vertically inside the layout box.
     // Never fires in shipping data for either caller (tooltip: 1×14

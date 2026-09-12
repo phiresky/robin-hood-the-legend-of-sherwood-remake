@@ -8,19 +8,18 @@ use crate::parameters_ai;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
 fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
-    if std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for SEEKAREA diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SEEK_AREA_FRAME").is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == Some(expected))
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SEEK_AREA_OWNER_POSITION",
+            [
+                "PARITY_DEBUG_SEEK_AREA_FRAME",
+                "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled() && gate.matches_required([Some(frame), creation_order])
 }
 
 fn seek_area_phase6_debug_enabled() -> bool {

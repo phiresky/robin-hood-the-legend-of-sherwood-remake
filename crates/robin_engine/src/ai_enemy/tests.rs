@@ -2648,7 +2648,7 @@ fn periodic_phalanx_goto_does_not_hide_same_call_idle_actor() {
         is_friendly: true,
         is_soldier: true,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx as u32,
+        current_substate: Substate::AttackingPhalanx,
         ..FighterSnapshot::default()
     });
 
@@ -2735,7 +2735,7 @@ fn periodic_phalanx_goto_does_not_fake_wait_during_attentive_transition() {
         is_friendly: true,
         is_soldier: true,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx as u32,
+        current_substate: Substate::AttackingPhalanx,
         ..FighterSnapshot::default()
     });
 
@@ -2824,7 +2824,7 @@ fn periodic_phalanx_already_on_point_does_not_fake_a_pending_sequence() {
         is_friendly: true,
         is_soldier: true,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx as u32,
+        current_substate: Substate::AttackingPhalanx,
         ..FighterSnapshot::default()
     });
 

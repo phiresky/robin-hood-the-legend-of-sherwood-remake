@@ -801,10 +801,20 @@ impl NativeContext<'_, '_> {
     }
 
     fn yield_engine_action(&mut self, request: crate::interp::SynchronousScriptRequest) {
-        let native_return = request.native_return();
+        // Teleport's final boolean is determined by the engine after its
+        // ordered cleanup/placement phases. Other natives return their fixed
+        // validated admission value, not the driver's operation result.
+        let resume = if matches!(
+            request,
+            crate::interp::SynchronousScriptRequest::SetActorLocation { .. }
+        ) {
+            crate::interp::ResumePolicy::OperationResult
+        } else {
+            crate::interp::ResumePolicy::Fixed(request.native_return())
+        };
         self.pending_yield = Some(crate::interp::NativeYield {
             operation: crate::interp::NativeOperation::EngineAction(request),
-            resume: crate::interp::ResumePolicy::Fixed(native_return),
+            resume,
         });
     }
 
@@ -1034,22 +1044,27 @@ impl NativeContext<'_, '_> {
     ///
     /// `victim` is the SEEK target, passed straight through onto the
     /// trailing MOVE element's `element` field.
-    #[allow(clippy::too_many_arguments)]
-    fn append_move_to_sequence(
-        &mut self,
-        actor_handle: i32,
-        action: OrderType,
-        mut source: (f32, f32),
-        mut source_sector: crate::position_interface::SectorHandle,
-        mut _source_layer: u16,
-        goal: (f32, f32),
-        goal_sector: crate::position_interface::SectorHandle,
-        goal_layer: u16,
-        victim: Option<EntityId>,
-        tolerance: f32,
-        initial_flags: crate::sequence::MoveFlags,
-        speed_factor: f32,
-    ) -> bool {
+    fn append_move_to_sequence(&mut self, request: SequenceMoveRequest) -> bool {
+        let SequenceMoveRequest {
+            actor_handle,
+            action,
+            source:
+                SequenceMovePoint {
+                    position: mut source,
+                    sector: mut source_sector,
+                    layer: mut source_layer,
+                },
+            goal:
+                SequenceMovePoint {
+                    position: goal,
+                    sector: goal_sector,
+                    layer: goal_layer,
+                },
+            victim,
+            tolerance,
+            initial_flags,
+            speed_factor,
+        } = request;
         use crate::element::Command;
         use crate::gate::{
             find_path_gates_with_sector_indices, find_path_into_door_with_sector_index,
@@ -1085,7 +1100,7 @@ impl NativeContext<'_, '_> {
         {
             source = (adapted_source.x, adapted_source.y);
             source_sector = adapted_sector;
-            _source_layer = adapted_layer;
+            source_layer = adapted_layer;
         }
 
         source_sector = resolve_script_position_sector(
@@ -1093,7 +1108,7 @@ impl NativeContext<'_, '_> {
             &self.script_domains.interactables.doors,
             source_sector,
             to_pt(source),
-            _source_layer,
+            source_layer,
         );
         let goal_sector = resolve_script_position_sector(
             &self.fast_grid.level,
@@ -1103,11 +1118,8 @@ impl NativeContext<'_, '_> {
             goal_layer,
         );
 
-        // Counter for `record_seq_step`: the very first emission stays
-        // at the caller-provided recording level; every subsequent
-        // emission bumps the level (sequence-element count increments
-        // once per sub-element).
-        let mut emit_count: u32 = 0;
+        // The root emission uses the current recording level. All following
+        // gate and trailing movement elements are recorded as child steps.
 
         // ── Same-sector fast path ──
         if script_sector_identities_match(source_sector, goal_sector) {
@@ -1129,7 +1141,7 @@ impl NativeContext<'_, '_> {
                 *sf = speed_factor;
                 *layer = goal_layer;
             }
-            self.record_seq_step(elem, emit_count == 0);
+            self.record_seq_step(elem, true);
             return true;
         }
 
@@ -1146,8 +1158,7 @@ impl NativeContext<'_, '_> {
             *element = owner;
             *sf = speed_factor;
         }
-        self.record_seq_step(leader, emit_count == 0);
-        emit_count += 1;
+        self.record_seq_step(leader, true);
 
         // ── Find the gate path ──
         let auth = self.get_entity(actor_handle).map(|e| e.actor_auth_info());
@@ -1362,8 +1373,7 @@ impl NativeContext<'_, '_> {
                 if cur_size != first_gate_size {
                     let mut w = SequenceElement::new_generic(0, Command::WaitTimer, owner);
                     w.set_property(Field::Timer, FieldValue::Integer(50));
-                    self.record_seq_step(w, emit_count == 0);
-                    emit_count += 1;
+                    self.record_seq_step(w, false);
                 }
                 // Random 0..30: source uses `rand() & 15 + rand() & 15`.
                 // Script recording receives the engine's explicit simulation
@@ -1380,8 +1390,7 @@ impl NativeContext<'_, '_> {
                 );
                 let mut w = SequenceElement::new_generic(0, Command::WaitTimer, owner);
                 w.set_property(Field::Timer, FieldValue::Integer(r));
-                self.record_seq_step(w, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(w, false);
 
                 // CHANGE_POSITION teleport.
                 let dx = shot.exit.x - shot.entry.x;
@@ -1406,8 +1415,7 @@ impl NativeContext<'_, '_> {
                     *direction = dir;
                     *sf = speed_factor;
                 }
-                self.record_seq_step(cp, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(cp, false);
             } else {
                 // MOVE to gate entry + ASSERT_POSITION.
                 let mut m = SequenceElement::new_movement(0, Command::Move, owner, entry_action);
@@ -1426,8 +1434,7 @@ impl NativeContext<'_, '_> {
                     *flags = gate_flags;
                     *sf = speed_factor;
                 }
-                self.record_seq_step(m, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(m, false);
 
                 let mut ap =
                     SequenceElement::new_movement(0, Command::AssertPosition, owner, entry_action);
@@ -1444,8 +1451,7 @@ impl NativeContext<'_, '_> {
                     *tol = 10.0;
                     *sf = speed_factor;
                 }
-                self.record_seq_step(ap, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(ap, false);
             }
 
             if shot.is_jump {
@@ -1465,8 +1471,8 @@ impl NativeContext<'_, '_> {
                 let mut jump_elem = SequenceElement::new_generic(0, Command::JumpCmd, owner);
                 jump_elem.set_property(Field::JumplineSource, FieldValue::LineId(src));
                 jump_elem.set_property(Field::JumplineDestination, FieldValue::LineId(dst));
-                self.record_seq_step(jump_elem, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(jump_elem, false);
+
                 prev_sector = shot.new_sector;
                 last_new_sector = shot.new_sector;
                 continue;
@@ -1483,13 +1489,11 @@ impl NativeContext<'_, '_> {
                         y: cam_pt.y,
                     },
                 );
-                self.record_seq_step(turn, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(turn, false);
 
                 let mut unlock = SequenceElement::new_generic(0, Command::UnlockDoor, owner);
                 unlock.set_property(Field::Door, FieldValue::DoorId(shot.door_index));
-                self.record_seq_step(unlock, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(unlock, false);
 
                 ended_early = true;
                 last_new_sector = shot.new_sector;
@@ -1511,8 +1515,7 @@ impl NativeContext<'_, '_> {
                     *gate_id = Some(shot.door_index);
                     *sf = speed_factor;
                 }
-                self.record_seq_step(wait, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(wait, false);
             }
 
             // ── PASS_DOOR ──
@@ -1539,8 +1542,7 @@ impl NativeContext<'_, '_> {
                 *direction = i16::from(shot.direct);
                 *sf = speed_factor;
             }
-            self.record_seq_step(pass, emit_count == 0);
-            emit_count += 1;
+            self.record_seq_step(pass, false);
 
             // ── ASSERT post-pass ──
             let mut ap =
@@ -1558,8 +1560,7 @@ impl NativeContext<'_, '_> {
                 *tol = 10.0;
                 *sf = speed_factor;
             }
-            self.record_seq_step(ap, emit_count == 0);
-            emit_count += 1;
+            self.record_seq_step(ap, false);
 
             prev_sector = shot.new_sector;
             last_new_sector = shot.new_sector;
@@ -1592,8 +1593,7 @@ impl NativeContext<'_, '_> {
                     *sf = speed_factor;
                     *layer = goal_layer;
                 }
-                self.record_seq_step(m, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(m, false);
             }
 
             // SEEK + last sector is building → trailing MOVE back to
@@ -1628,12 +1628,10 @@ impl NativeContext<'_, '_> {
                     *sf = speed_factor;
                     *layer = goal_layer;
                 }
-                self.record_seq_step(m, emit_count == 0);
-                emit_count += 1;
+                self.record_seq_step(m, false);
             }
         }
 
-        let _ = emit_count;
         true
     }
 
@@ -3219,6 +3217,25 @@ impl NativeContext<'_, '_> {
             _ => unreachable!("Freeze target was validated as human"),
         }
     }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SequenceMovePoint {
+    position: (f32, f32),
+    sector: crate::position_interface::SectorHandle,
+    layer: u16,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SequenceMoveRequest {
+    actor_handle: i32,
+    action: OrderType,
+    source: SequenceMovePoint,
+    goal: SequenceMovePoint,
+    victim: Option<EntityId>,
+    tolerance: f32,
+    initial_flags: crate::sequence::MoveFlags,
+    speed_factor: f32,
 }
 
 impl HostFunctions for NativeContext<'_, '_> {

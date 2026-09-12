@@ -1027,20 +1027,24 @@ fn recorded_direct_gate_route_retains_pass_door_direction() {
             &host.bindings,
             &capabilities,
         );
-        assert!(context.append_move_to_sequence(
-            actor,
-            crate::order::OrderType::WalkingUpright,
-            (876.0, 879.0),
-            crate::position_interface::SectorHandle::new(103).unwrap(),
-            4,
-            (859.0, 897.0),
-            crate::position_interface::SectorHandle::new(98).unwrap(),
-            3,
-            None,
-            0.0,
-            MoveFlags::CALLED_BY_SCRIPT,
-            1.0,
-        ));
+        assert!(context.append_move_to_sequence(SequenceMoveRequest {
+            actor_handle: actor,
+            action: crate::order::OrderType::WalkingUpright,
+            source: SequenceMovePoint {
+                position: (876.0, 879.0),
+                sector: crate::position_interface::SectorHandle::new(103).unwrap(),
+                layer: 4
+            },
+            goal: SequenceMovePoint {
+                position: (859.0, 897.0),
+                sector: crate::position_interface::SectorHandle::new(98).unwrap(),
+                layer: 3
+            },
+            victim: None,
+            tolerance: 0.0,
+            initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+            speed_factor: 1.0
+        }));
     }
 
     let pass = host
@@ -1133,34 +1137,42 @@ fn recorded_move_recovers_exact_source_before_same_sector_comparison() {
             &host.bindings,
             &capabilities,
         );
-        assert!(context.append_move_to_sequence(
-            actor,
-            crate::order::OrderType::RunningUpright,
-            (10.0, 10.0),
-            source,
-            0,
-            (20.0, 20.0),
-            goal,
-            0,
-            None,
-            0.0,
-            MoveFlags::CALLED_BY_SCRIPT,
-            1.0,
-        ));
-        assert!(context.append_move_to_sequence(
-            actor,
-            crate::order::OrderType::RunningUpright,
-            (20.0, 20.0),
-            goal,
-            0,
-            (30.0, 30.0),
-            source,
-            0,
-            None,
-            0.0,
-            MoveFlags::CALLED_BY_SCRIPT,
-            1.0,
-        ));
+        assert!(context.append_move_to_sequence(SequenceMoveRequest {
+            actor_handle: actor,
+            action: crate::order::OrderType::RunningUpright,
+            source: SequenceMovePoint {
+                position: (10.0, 10.0),
+                sector: source,
+                layer: 0
+            },
+            goal: SequenceMovePoint {
+                position: (20.0, 20.0),
+                sector: goal,
+                layer: 0
+            },
+            victim: None,
+            tolerance: 0.0,
+            initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+            speed_factor: 1.0
+        }));
+        assert!(context.append_move_to_sequence(SequenceMoveRequest {
+            actor_handle: actor,
+            action: crate::order::OrderType::RunningUpright,
+            source: SequenceMovePoint {
+                position: (20.0, 20.0),
+                sector: goal,
+                layer: 0
+            },
+            goal: SequenceMovePoint {
+                position: (30.0, 30.0),
+                sector: source,
+                layer: 0
+            },
+            victim: None,
+            tolerance: 0.0,
+            initial_flags: MoveFlags::CALLED_BY_SCRIPT,
+            speed_factor: 1.0
+        }));
     }
 
     let elements = &host

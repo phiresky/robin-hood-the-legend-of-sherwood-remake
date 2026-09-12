@@ -203,6 +203,7 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
 /// The numeric layout is preserved so savegame compatibility is possible
 /// if needed.
 #[derive(
+    Default,
     Debug,
     Clone,
     Copy,
@@ -220,6 +221,7 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
 #[allow(non_camel_case_types)] // preserve original naming for clarity
 pub enum Substate {
     // -- Sleeping substates --
+    #[default]
     StartSleepingSubstates = 0,
 
     SleepingForever,

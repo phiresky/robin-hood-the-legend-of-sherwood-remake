@@ -402,18 +402,13 @@ pub(crate) fn soldier_detects_target_360(
         viewer_ground_z,
     );
     let target_ground = crate::coordinates::GroundPoint::from_map_and_z(target_xy, target_ground_z);
-    let dx = target_ground.x - viewer_ground.x;
-    let dy = (target_ground.y - viewer_ground.y) * INVERSE_ASPECT_RATIO;
-    let dz = target_z - viewer_z;
-    if dx * dx + dy * dy + dz * dz > (viewer_radius as f32).powi(2) {
-        return false;
-    }
-    crate::sight_obstacle::is_reachable_3d(
+    detection_360_geometry(
+        crate::coordinates::WorldPoint3D::new(viewer_ground.x, viewer_ground.y, viewer_z),
+        crate::coordinates::WorldPoint3D::new(target_ground.x, target_ground.y, target_z),
+        (viewer_radius as f32).powi(2),
         obstacles,
-        [viewer_ground.x, viewer_ground.y, viewer_z],
-        [target_ground.x, target_ground.y, target_z],
-        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
     )
+    .1
 }
 
 pub fn soldier_is_able_to_help_state(
@@ -605,7 +600,7 @@ pub struct FighterSnapshot {
     /// `AttackingApproachingNewEnemy` or `AttackingMovingAroundOldEnemy`, the
     /// scorer treats the fighter as moving toward `position`; otherwise it
     /// scores at `seek_position`.
-    pub current_substate: u32,
+    pub current_substate: Substate,
     /// The handle of the archer hiding behind this shield bearer, or 0.
     /// Derived during snapshot building from the reverse
     /// `shield_bearer_before_me` link so archers can't double-claim a
@@ -656,12 +651,12 @@ pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
 
 /// Dot product of two 2D vectors.
 pub(super) fn dot2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.0 + a.1 * b.1
+    crate::geo2d::dot(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// 2D determinant (cross product Z component): positive if b is to the left of a.
 pub(super) fn det2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    a.0 * b.1 - a.1 * b.0
+    crate::geo2d::cross(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
 }
 
 /// Max-norm (Chebyshev distance) of a 2D vector.
@@ -944,59 +939,40 @@ pub fn propose_good_step_back_goal(
     None
 }
 
-/// Check if a fighter's substate (as u32) is one of the 13 stationary/observing
+/// Check if a fighter's substate is one of the 13 stationary/observing
 /// combat substates used by combat-observation step selection.
 /// Only friends in these substates contribute to the left/right dispersion
 /// calculation.
-pub(super) fn is_observing_combat_substate(substate: u32) -> bool {
+pub(super) fn is_observing_combat_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingObserve as u32
-            || s == Substate::AttackingObserveAndMove as u32
-            || s == Substate::AttackingProtectingWithShield as u32
-            || s == Substate::AttackingAdvancingWithShield as u32
-            || s == Substate::AttackingBowRunningBehindShieldBearer as u32
-            || s == Substate::AttackingBowCorrectingPosition as u32
-            || s == Substate::AttackingPhalanx as u32
-            || s == Substate::AttackingRunningToPhalanx as u32
-            || s == Substate::AttackingBowShooting as u32
-            || s == Substate::AttackingBowLoading as u32
-            || s == Substate::AttackingBowAiming as u32
-            || s == Substate::AttackingBowObserving as u32
-            || s == Substate::AttackingBowObservingLoading as u32
-    )
-}
-
-/// u32-keyed mirror of `Substate::is_any_swordfight`. Used by
-/// swordfight observation reconsideration to bump multiplicity for allies
-/// actively committed to a swordfight against their primary target.
-pub(crate) fn is_any_swordfight_substate(substate: u32) -> bool {
-    use crate::ai::Substate;
-    matches!(
-        substate,
-        s if s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
-            || s == Substate::AttackingSwordfight as u32
-            || s == Substate::AttackingSwordfightSpecialStrike as u32
-            || s == Substate::AttackingSwordfightParade as u32
-            || s == Substate::AttackingApproachingNewEnemy as u32
-            || s == Substate::AttackingSwordfightStepBack as u32
-            || s == Substate::AttackingMovingAroundOldEnemy as u32
+        Substate::AttackingObserve
+            | Substate::AttackingObserveAndMove
+            | Substate::AttackingProtectingWithShield
+            | Substate::AttackingAdvancingWithShield
+            | Substate::AttackingBowRunningBehindShieldBearer
+            | Substate::AttackingBowCorrectingPosition
+            | Substate::AttackingPhalanx
+            | Substate::AttackingRunningToPhalanx
+            | Substate::AttackingBowShooting
+            | Substate::AttackingBowLoading
+            | Substate::AttackingBowAiming
+            | Substate::AttackingBowObserving
+            | Substate::AttackingBowObservingLoading
     )
 }
 
 /// The three substates the attack-opportunity gate in
 /// swordfight observation reconsideration checks: a friend already approaching
 /// the same target preempts our opportunistic charge.
-pub(super) fn is_walking_running_charging_substate(substate: u32) -> bool {
+pub(super) fn is_walking_running_charging_substate(substate: Substate) -> bool {
     use crate::ai::Substate;
     matches!(
         substate,
-        s if s == Substate::AttackingWalkingToEnemy as u32
-            || s == Substate::AttackingRunningToEnemy as u32
-            || s == Substate::AttackingChargingEnemy as u32
+        Substate::AttackingWalkingToEnemy
+            | Substate::AttackingRunningToEnemy
+            | Substate::AttackingChargingEnemy
     )
 }
 
@@ -1576,3 +1552,26 @@ mod required_combat_input_tests;
 
 #[cfg(test)]
 mod swordfight_substate_tests;
+
+#[track_caller]
+pub(super) fn detection_360_geometry(
+    viewer: crate::coordinates::WorldPoint3D,
+    target: crate::coordinates::WorldPoint3D,
+    sq_radius: f32,
+    obstacles: crate::sight_obstacle::ObstacleList<'_>,
+) -> (f32, bool) {
+    let dx = target.x - viewer.x;
+    let dy = (target.y - viewer.y) * INVERSE_ASPECT_RATIO;
+    let dz = target.z - viewer.z;
+    let sq_distance = dx * dx + dy * dy + dz * dz;
+    if sq_distance > sq_radius {
+        return (sq_distance, false);
+    }
+    let visible = crate::sight_obstacle::is_reachable_3d(
+        obstacles,
+        [viewer.x, viewer.y, viewer.z],
+        [target.x, target.y, target.z],
+        crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
+    );
+    (sq_distance, visible)
+}

@@ -653,7 +653,7 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 )
             });
 
-            let Some(ratio) = ratio_3d else {
+            let Some((r, ratio)) = impact_3d.zip(ratio_3d) else {
                 trajectory.push(TrajectoryPoint {
                     position: new_position,
                     time: TIME_FLYSEGMENT,
@@ -663,7 +663,6 @@ pub(super) fn compute_trajectory_ballistic_impl(
                 last_impact = None;
                 continue;
             };
-            let r = impact_3d.unwrap();
             let impact_obstacle = r.obstacle_index;
             let obstacle = r
                 .obstacle_index

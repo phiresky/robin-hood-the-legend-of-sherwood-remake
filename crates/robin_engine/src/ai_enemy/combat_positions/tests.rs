@@ -148,7 +148,7 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
         handle: 132,
         is_friendly: true,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingProtectingWithShield as u32,
+        current_substate: Substate::AttackingProtectingWithShield,
         left_combat_neighbour: Some(AiEntityHandle::new(130)),
         right_combat_neighbour: Some(AiEntityHandle::new(129)),
         position: Position {
@@ -170,7 +170,7 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
             handle: 129,
             is_friendly: true,
             is_shield_bearer: true,
-            current_substate: Substate::AttackingRunningToPhalanx as u32,
+            current_substate: Substate::AttackingRunningToPhalanx,
             left_combat_neighbour: Some(AiEntityHandle::new(133)),
             shield_bearer_direction: 8,
             position: Position {
@@ -197,7 +197,7 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
             handle: 133,
             is_friendly: true,
             is_shield_bearer: true,
-            current_substate: Substate::AttackingPhalanx as u32,
+            current_substate: Substate::AttackingPhalanx,
             left_combat_neighbour: Some(AiEntityHandle::new(130)),
             right_combat_neighbour: Some(AiEntityHandle::new(129)),
             position: Position {
@@ -219,7 +219,7 @@ fn nescafe_phalanx_uses_raw_body_distance_then_ai_facing_chain_anchors() {
             handle: 130,
             is_friendly: true,
             is_shield_bearer: true,
-            current_substate: Substate::AttackingPhalanx as u32,
+            current_substate: Substate::AttackingPhalanx,
             right_combat_neighbour: Some(AiEntityHandle::new(133)),
             position: Position {
                 x: 1359.2433,
@@ -441,7 +441,7 @@ fn already_in_cover_position_does_not_require_reachability() {
         handle: 58,
         position: position(1144.9557, 408.22668),
         direction: 7,
-        current_substate: Substate::AttackingProtectingWithShield as u32,
+        current_substate: Substate::AttackingProtectingWithShield,
         ..FighterSnapshot::default()
     });
     let archer_position = position(1123.7424, 396.0593);
@@ -465,7 +465,7 @@ fn shield_bearer_cover_preserves_original_aspect_then_distance_rounding() {
         handle: 82,
         position: position(1_072.624_8, 70.348_755),
         direction: 10,
-        current_substate: Substate::AttackingProtectingWithShield as u32,
+        current_substate: Substate::AttackingProtectingWithShield,
         ..FighterSnapshot::default()
     });
 
@@ -500,7 +500,7 @@ fn nearest_shield_bearer_includes_inactive_running_to_phalanx_soldier() {
         is_friendly: true,
         is_able_to_fight: true,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingPhalanx as u32,
+        current_substate: Substate::AttackingPhalanx,
         ..FighterSnapshot::default()
     };
     let inactive_bearer = FighterSnapshot {
@@ -510,7 +510,7 @@ fn nearest_shield_bearer_includes_inactive_running_to_phalanx_soldier() {
         is_friendly: true,
         is_able_to_fight: false,
         is_shield_bearer: true,
-        current_substate: Substate::AttackingRunningToPhalanx as u32,
+        current_substate: Substate::AttackingRunningToPhalanx,
         ..FighterSnapshot::default()
     };
     tick.fighter_registry.push(active_bearer.clone());
@@ -628,7 +628,7 @@ fn arrow_protection_sees_reciprocal_unlink_emitted_by_same_think() {
         is_friendly: true,
         is_shield_bearer: true,
         ai_state: AiState::Attacking,
-        current_substate: Substate::AttackingPhalanx as u32,
+        current_substate: Substate::AttackingPhalanx,
         archer_behind_me: Some(AiEntityHandle::new(86)),
         ..FighterSnapshot::default()
     });
