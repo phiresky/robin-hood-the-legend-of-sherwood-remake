@@ -2387,7 +2387,6 @@ impl EngineInner {
         let real_half_aperture = viewer.real_half_aperture;
         let view_lean_out = viewer.view_lean_out;
         let entity_sector = viewer.sector;
-        let viewer_blipped = viewer.blipped;
         let me_ground_position = viewer.ground_position;
 
         // Resolve the viewer's building sector from the entity's
@@ -2614,6 +2613,31 @@ impl EngineInner {
                 ai_vision::BASE_VIEW_SPEED
             };
 
+            let view = ViewContext {
+                ground_position: me_ground_position,
+                viewer_inside_building,
+                hostile_to_player: viewer_hostile_to_player,
+                eye,
+                eye_world,
+                dir,
+                layer,
+                view_forward,
+                view_radius,
+                real_half_aperture,
+                viewer_in_building,
+                viewer_building_sector,
+                is_night_or_fog,
+                view_radius_cache,
+                eye_status,
+                view_speed,
+                modified_frame,
+                universal_frame,
+                original_creation_order,
+                golden_eye,
+                sight_obstacles: &sight_obstacles,
+                fast_grid: &self.world.fast_grid,
+            };
+
             for det in detectables.iter_mut() {
                 let target_id = det
                     .element
@@ -2629,11 +2653,6 @@ impl EngineInner {
                         )
                     });
 
-                // Original's outer detection-refresh box gate precedes
-                // visibility calculation and its cadence. A previously visible
-                // target and every target while indoors still enter; all
-                // others must lie in the ground-position world-X/Y
-                // radius/aspect bounding box.
                 let scan_decision = refresh_detection_scans_target(
                     det.last_visibility,
                     viewer_inside_building,
@@ -2641,327 +2660,20 @@ impl EngineInner {
                     view_radius,
                     target.ground_position,
                 );
-                let debug_visibility_stage = visibility_stage_debug_enabled(
-                    universal_frame,
-                    original_creation_order,
-                    target_id,
-                );
                 entered_outer_scan.push(scan_decision);
-                if debug_visibility_stage {
-                    eprintln!(
-                        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
-                        npc_id.index(),
-                        target_id.index(),
-                        det.last_visibility.to_bits(),
-                        me_ground_position.x.to_bits(),
-                        me_ground_position.y.to_bits(),
-                        target.ground_position.x.to_bits(),
-                        target.ground_position.y.to_bits(),
-                    );
-                }
-                if !scan_decision {
-                    tracing::trace!(
-                        observer = ?npc_id,
-                        target = ?target_id,
-                        view_radius,
-                        viewer_x = me_ground_position.x,
-                        viewer_y = me_ground_position.y,
-                        target_x = target.ground_position.x,
-                        target_y = target.ground_position.y,
-                        "Enemy detectable outside detection-refresh box"
-                    );
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
-
-                // Visibility calculation returns zero for blind eyes before either
-                // camp's cadence branch. Clear the cached sample too so a
-                // closed cadence cannot resurrect a formerly visible target.
-                if eye_status.is_blind() {
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
-                // Do not reject a target merely because its logical movement
-                // layer differs. The original game's human-visibility check compares
-                // the full 3D eye/detection points and lets detection queries
-                // decide line of sight; actors on visible stairs, roofs, and
-                // adjoining elevations can therefore be seen cross-layer.
-                // The original game's Lacklandist visibility calculation rejects HollowMan
-                // targets before its PC-vs-soldier cadence branch. Keep the
-                // detectable (cleanup only removes dead enemies),
-                // but clear both live visibility and the cached sample.
-                if viewer_hostile_to_player && target.hollow_man {
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
-
-                // The original game's Lacklandist player-only blip and guard gates run
-                // before the PC cadence decision. They invalidate the cached
-                // sample even when this frame would otherwise reuse it.
-                if viewer_hostile_to_player
-                    && target.is_pc
-                    && viewer_blipped
-                    && !viewer_inside_building
-                {
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
-                if viewer_hostile_to_player
-                    && target.is_pc
-                    && !det.seen_last_frame
-                    && target.guarded
-                {
-                    det.seen_now = false;
-                    det.last_visibility = 0.0;
-                    continue;
-                }
-
-                let frequency = if target.is_soldier || viewer_player_aligned {
-                    ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
-                } else {
-                    ai_vision::DETECTION_FREQUENCY_ENEMY_PC
-                };
-                let gate_open = modified_frame.is_multiple_of(frequency)
-                    || (viewer_hostile_to_player && lacklandist_refresh_always);
-                tracing::trace!(
-                    observer = ?npc_id,
-                    target = ?target_id,
-                    modified_frame,
-                    frequency,
-                    gate_open,
-                    camp = ?viewer.camp,
-                    lacklandist_refresh_always,
-                    "Enemy detection cadence gate"
-                );
-
-                // Only compute visibility when the
-                // detection-frequency gate is open.  On closed-gate
-                // frames the cached post-multiplied value from the
-                // most recent gate-open frame is reused, so the
-                // sharpness accumulator decays smoothly instead of
-                // dropping to 0 every non-gate tick.  The gate-open
-                // branch stores the post-multiplied value into
-                // `det.last_visibility` (see the assignment after
-                // the multiplications below), and the closed-gate
-                // branch just reuses it.
-                let visibility_raw = if gate_open {
-                    // Same-building rule:
-                    //   if viewer in building:
-                    //     if target in same building AND target
-                    //       alive / conscious / NOT passing door → 0.5
-                    //     else → 0.0
-                    // Dead PCs are filtered upstream at
-                    // `pc_snapshots` build-time; unconscious and
-                    // door-passing targets are still in the
-                    // snapshot and must be gated here.
-                    let target_in_same_building =
-                        viewer_in_building && viewer_building_sector == target.building_sector;
-                    // Posture-based Z offsets for the 3D close-range
-                    // distance check (see
-                    // `ai_vision::compute_visibility`).  The LOS
-                    // raycast itself is still 2D until sight-obstacle
-                    // data carries Z.
-                    //
-                    let target_obstacle_handle = target.obstacle_idx;
-                    let target_obstacle = target_obstacle_handle.map(|handle| {
-                        sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
-                            panic!(
-                                "Enemy visibility target {} requires missing obstacle {}",
-                                target_id.index(),
-                                handle
-                            )
-                        })
-                    });
-                    let q = ai_vision::VisibilityQuery {
-                        viewer_los: eye,
-                        viewer_world: eye_world,
-                        viewer_direction: dir,
-                        view_forward,
-                        view_radius,
-                        viewer_eye_status: eye_status,
-                        real_half_aperture,
-                        viewer_in_building,
-                        target_in_same_building,
-                        forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
-                            is_forest_level,
-                            viewer_player_aligned,
-                        ),
-                        golden_eye_mode: golden_eye,
-                        // Resolved lazily below at Original's
-                        // view-radius calculation boundary.
-                        effective_view_radius: view_radius as f32,
-                        target_is_active_and_outside_building: target.active
-                            && target.building_sector.is_none(),
-                        target_los: crate::stealth::detection_point_xy(
-                            target.position,
-                            target.posture,
-                            target.direction,
-                        ),
-                        target_world: target.detection_point.unwrap_or_else(|| {
-                            panic!(
-                                "live Enemy target {} for NPC {} has no detection point",
-                                target_id.index(),
-                                npc_id.index()
-                            )
-                        }),
-                        target_posture: target.posture,
-                        target_action_state: target.action_state,
-                        target_is_pc: target.is_pc,
-                        cloak_deception_applies: target.posture == crate::element::Posture::Cloaked
-                            && viewer.camp.is_hostile_to(target.camp),
-                        cloak_remembers_target: det.seen_last_frame
-                            || viewer.primary_target
-                                == Some(crate::ai::AiEntityHandle::new(target_id.index()))
-                            || viewer.remembered_targets.contains(&target_id.index()),
-                        // TODO(cloak-authoring): connect this only when an
-                        // explicit modded profile schema supplies detector data.
-                        cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
-                        sight_obstacles,
-                        fast_grid: &self.world.fast_grid,
-                        layer,
-                        target_unconscious: target.unconscious,
-                        target_passing_door: target.passing_door,
-                    };
-                    let effective_view_radius = std::cell::Cell::new(None);
-                    let visibility =
-                        ai_vision::compute_visibility_with_effective_radius(&q, || {
-                            let radius =
-                                view_radius_cache.get_or_compute(target_obstacle_handle, || {
-                                    ai_vision::compute_view_radius(
-                                        q.viewer_world,
-                                        view_radius,
-                                        view_forward,
-                                        real_half_aperture,
-                                        is_night_or_fog,
-                                        &self.world.fast_grid,
-                                        sight_obstacles,
-                                        target_obstacle,
-                                    )
-                                });
-                            effective_view_radius.set(Some(radius));
-                            radius
-                        });
-                    if debug_visibility_stage {
-                        let dx = q.target_world.x - q.viewer_world.x;
-                        let dy = q.target_world.y - q.viewer_world.y;
-                        let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
-                        let dz = q.target_world.z - q.viewer_world.z;
-                        let square_distance = dx * dx + stretched_y * stretched_y;
-                        let square_distance_3d = square_distance + dz * dz;
-                        let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
-                        eprintln!(
-                            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
-                            npc_id.index(),
-                            target_id.index(),
-                            q.viewer_world.x.to_bits(),
-                            q.viewer_world.y.to_bits(),
-                            q.viewer_world.z.to_bits(),
-                            q.target_world.x.to_bits(),
-                            q.target_world.y.to_bits(),
-                            q.target_world.z.to_bits(),
-                            q.viewer_direction,
-                            q.view_forward.0.to_bits(),
-                            q.view_forward.1.to_bits(),
-                            q.real_half_aperture.to_bits(),
-                            q.viewer_eye_status as u8,
-                            q.viewer_in_building,
-                            q.target_in_same_building,
-                            q.target_is_active_and_outside_building,
-                            target.dead,
-                            q.target_unconscious,
-                            q.target_passing_door,
-                            q.target_posture as u8,
-                            q.target_action_state as u8,
-                            dx.to_bits(),
-                            dy.to_bits(),
-                            stretched_y.to_bits(),
-                            dz.to_bits(),
-                            square_distance.to_bits(),
-                            square_distance_3d.to_bits(),
-                            view_dot.to_bits(),
-                            q.view_radius,
-                            effective_view_radius
-                                .get()
-                                .map_or(-1, |radius| i64::from(radius.to_bits())),
-                            visibility.to_bits(),
-                        );
-                    }
-                    tracing::trace!(
-                        observer = ?npc_id,
-                        target = ?target_id,
-                        modified_frame,
-                        effective_view_radius = ?effective_view_radius.get(),
-                        visibility,
-                        viewer_x = q.viewer_world.x,
-                        viewer_y = q.viewer_world.y,
-                        viewer_z = q.viewer_world.z,
-                        target_x = q.target_world.x,
-                        target_y = q.target_world.y,
-                        target_z = q.target_world.z,
-                        "Enemy optical visibility refresh"
-                    );
-                    visibility
-                } else {
-                    0.0
-                };
-                // Multiply by the frequency so that the averaged
-                // sharpness over time matches a per-frame call.
-                //
-                // For PC targets (non-soldier), scale further by the
-                // PC's profile-level forest/city detection-speed
-                // percentage.  A stealthy hero (e.g. a scout profile
-                // with a low detection speed) is slower to spot; a
-                // loud hero is faster.  Only apply this inside the
-                // refresh gate — the cached `last_visibility` value
-                // already has it baked in.
-                let mut visibility = if gate_open {
-                    let detection_speed_factor = if target.is_pc && viewer_hostile_to_player {
-                        let detection_speed_pct = if is_forest_level {
-                            target.detection_speed_in_forest
-                        } else {
-                            target.detection_speed_in_city
-                        };
-                        0.01 * detection_speed_pct as f32
-                    } else {
-                        1.0
-                    };
-                    frequency as f32 * visibility_raw * detection_speed_factor
-                } else {
-                    // Closed-gate frame — reuse the cached post-
-                    // multiplied value from the last refresh so the
-                    // sharpness accumulator decays smoothly instead
-                    // of dropping to 0 every non-gate tick.
-                    det.last_visibility
-                };
-
-                // "Did you know that a certain Stuteley sometimes
-                // dresses up as beggar?"  When the NPC has not yet
-                // learned the beggar trick and the PC is currently
-                // visible, gate on the PC's running animation:
-                //   * SimulatingBeggar (resting beggar pose) → return 0;
-                //     the NPC just sees an old beggar, not the disguised
-                //     hero.
-                //   * Transition WaitingUpright↔SimulatingBeggar (mid-
-                //     change) → the NPC catches the swap and learns the
-                //     trick (`got_the_beggar_trick = true`).  Visibility
-                //     stays > 0 so the sighting still commits this frame.
-                // Once the flag is true the NPC sees through future
-                // beggar disguises permanently (per-NPC, not global).
-                visibility = apply_enemy_beggar_disguise_with_relationship(
-                    viewer_hostile_to_player,
-                    target.is_pc,
+                let Some(sharpness) = scan_enemy_detectable(
+                    det,
+                    target,
+                    &viewer,
+                    &view,
+                    npc_id,
+                    scan_decision,
+                    viewer_player_aligned,
+                    is_forest_level,
                     &mut got_beggar_trick,
-                    target.order_type,
-                    visibility,
-                );
-
-                // Sharpness depends on posture.  Leaning out uses
-                // 10x faster detection (200 vs 20).
-                let sharpness = detection_sharpness(view_speed, visibility);
+                ) else {
+                    continue;
+                };
                 let is_visible = sharpness > 0;
                 if achievement_observation_sample(
                     is_visible,
@@ -2970,26 +2682,6 @@ impl EngineInner {
                 ) {
                     achievement_observed_pcs.push(target_id);
                 }
-                tracing::trace!(
-                    npc = ?npc_id,
-                    target = ?target_id,
-                    gate_open,
-                    visibility_raw,
-                    visibility,
-                    sharpness,
-                    is_visible,
-                    prev_seen_last_frame = det.seen_last_frame,
-                    npc_dir = dir,
-                    view_forward_x = view_forward.0,
-                    view_forward_y = view_forward.1,
-                    real_half_aperture,
-                    viewer_x = eye.x,
-                    viewer_y = eye.y,
-                    target_x = target.position.x,
-                    target_y = target.position.y,
-                    "visibility check"
-                );
-
                 // Accumulate sharpness until EVENT_VIEW has been
                 // dispatched for this detectable.  `seen_last_frame`
                 // is a separate latch that only flips true inside
@@ -3026,14 +2718,6 @@ impl EngineInner {
                     }
                 }
 
-                // Single-field update.  Next frame's edge-trigger
-                // reads this value directly.
-                det.seen_now = is_visible;
-                // Original's outer detection-refresh loop writes the final
-                // wrapper result on every scanned entry. Eligible closed
-                // cadence reuses the same value, while the beggar-disguise
-                // post-filter must be able to replace that cached value by 0.
-                det.last_visibility = visibility;
                 // The original game updates maximal visibility from the integer
                 // sharpness returned after visibility calculation has reused a
                 // detectable's cached visibility on closed-cadence frames.
@@ -6113,4 +5797,392 @@ fn build_enemy_detection_tick_data(
     }
 
     tick_data
+}
+
+/// One Enemy-bucket optical sample, preserving the exact outer gate, camp
+/// cadence, cache and disguise order. Aggregation remains in detectable order
+/// in the caller; None means an early gate cleared this sample.
+#[allow(clippy::too_many_arguments)]
+fn scan_enemy_detectable(
+    det: &mut Detectable,
+    target: &EnemyOpticalTarget,
+    viewer: &SoldierSightContext,
+    view: &ViewContext<'_>,
+    npc_id: EntityId,
+    scan_decision: bool,
+    viewer_player_aligned: bool,
+    is_forest_level: bool,
+    got_beggar_trick: &mut bool,
+) -> Option<u16> {
+    let target_id = target.id;
+    let viewer_blipped = viewer.blipped;
+    let lacklandist_refresh_always =
+        lacklandist_visibility_refresh_always(viewer.eye_status, viewer.alert_status);
+    let ViewContext {
+        ground_position: me_ground_position,
+        viewer_inside_building,
+        hostile_to_player: viewer_hostile_to_player,
+        eye,
+        eye_world,
+        dir,
+        layer,
+        view_forward,
+        view_radius,
+        real_half_aperture,
+        viewer_in_building,
+        viewer_building_sector,
+        is_night_or_fog,
+        view_radius_cache,
+        eye_status,
+        view_speed,
+        modified_frame,
+        universal_frame,
+        original_creation_order,
+        golden_eye,
+        sight_obstacles,
+        fast_grid,
+    } = *view;
+    let sight_obstacles = *sight_obstacles;
+    // Original's outer detection-refresh box gate precedes
+    // visibility calculation and its cadence. A previously visible
+    // target and every target while indoors still enter; all
+    // others must lie in the ground-position world-X/Y
+    // radius/aspect bounding box.
+    let debug_visibility_stage =
+        visibility_stage_debug_enabled(universal_frame, original_creation_order, target_id);
+    if debug_visibility_stage {
+        eprintln!(
+            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
+            npc_id.index(),
+            target_id.index(),
+            det.last_visibility.to_bits(),
+            me_ground_position.x.to_bits(),
+            me_ground_position.y.to_bits(),
+            target.ground_position.x.to_bits(),
+            target.ground_position.y.to_bits(),
+        );
+    }
+    if !scan_decision {
+        tracing::trace!(
+            observer = ?npc_id,
+            target = ?target_id,
+            view_radius,
+            viewer_x = me_ground_position.x,
+            viewer_y = me_ground_position.y,
+            target_x = target.ground_position.x,
+            target_y = target.ground_position.y,
+            "Enemy detectable outside detection-refresh box"
+        );
+        det.seen_now = false;
+        det.last_visibility = 0.0;
+        return None;
+    }
+
+    // Visibility calculation returns zero for blind eyes before either
+    // camp's cadence branch. Clear the cached sample too so a
+    // closed cadence cannot resurrect a formerly visible target.
+    if eye_status.is_blind() {
+        det.seen_now = false;
+        det.last_visibility = 0.0;
+        return None;
+    }
+    // Do not reject a target merely because its logical movement
+    // layer differs. The original game's human-visibility check compares
+    // the full 3D eye/detection points and lets detection queries
+    // decide line of sight; actors on visible stairs, roofs, and
+    // adjoining elevations can therefore be seen cross-layer.
+    // The original game's Lacklandist visibility calculation rejects HollowMan
+    // targets before its PC-vs-soldier cadence branch. Keep the
+    // detectable (cleanup only removes dead enemies),
+    // but clear both live visibility and the cached sample.
+    if viewer_hostile_to_player && target.hollow_man {
+        det.seen_now = false;
+        det.last_visibility = 0.0;
+        return None;
+    }
+
+    // The original game's Lacklandist player-only blip and guard gates run
+    // before the PC cadence decision. They invalidate the cached
+    // sample even when this frame would otherwise reuse it.
+    if viewer_hostile_to_player && target.is_pc && viewer_blipped && !viewer_inside_building {
+        det.seen_now = false;
+        det.last_visibility = 0.0;
+        return None;
+    }
+    if viewer_hostile_to_player && target.is_pc && !det.seen_last_frame && target.guarded {
+        det.seen_now = false;
+        det.last_visibility = 0.0;
+        return None;
+    }
+
+    let frequency = if target.is_soldier || viewer_player_aligned {
+        ai_vision::DETECTION_FREQUENCY_ENEMY_NPC
+    } else {
+        ai_vision::DETECTION_FREQUENCY_ENEMY_PC
+    };
+    let gate_open = modified_frame.is_multiple_of(frequency)
+        || (viewer_hostile_to_player && lacklandist_refresh_always);
+    tracing::trace!(
+        observer = ?npc_id,
+        target = ?target_id,
+        modified_frame,
+        frequency,
+        gate_open,
+        camp = ?viewer.camp,
+        lacklandist_refresh_always,
+        "Enemy detection cadence gate"
+    );
+
+    // Only compute visibility when the
+    // detection-frequency gate is open.  On closed-gate
+    // frames the cached post-multiplied value from the
+    // most recent gate-open frame is reused, so the
+    // sharpness accumulator decays smoothly instead of
+    // dropping to 0 every non-gate tick.  The gate-open
+    // branch stores the post-multiplied value into
+    // `det.last_visibility` (see the assignment after
+    // the multiplications below), and the closed-gate
+    // branch just reuses it.
+    let visibility_raw = if gate_open {
+        // Same-building rule:
+        //   if viewer in building:
+        //     if target in same building AND target
+        //       alive / conscious / NOT passing door → 0.5
+        //     else → 0.0
+        // Dead PCs are filtered upstream at
+        // `pc_snapshots` build-time; unconscious and
+        // door-passing targets are still in the
+        // snapshot and must be gated here.
+        let target_in_same_building =
+            viewer_in_building && viewer_building_sector == target.building_sector;
+        // Posture-based Z offsets for the 3D close-range
+        // distance check (see
+        // `ai_vision::compute_visibility`).  The LOS
+        // raycast itself is still 2D until sight-obstacle
+        // data carries Z.
+        //
+        let target_obstacle_handle = target.obstacle_idx;
+        let target_obstacle = target_obstacle_handle.map(|handle| {
+            sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
+                panic!(
+                    "Enemy visibility target {} requires missing obstacle {}",
+                    target_id.index(),
+                    handle
+                )
+            })
+        });
+        let q = ai_vision::VisibilityQuery {
+            viewer_los: eye,
+            viewer_world: eye_world,
+            viewer_direction: dir,
+            view_forward,
+            view_radius,
+            viewer_eye_status: eye_status,
+            real_half_aperture,
+            viewer_in_building,
+            target_in_same_building,
+            forest_180_degree_view: forest_180_degree_view_enabled_with_relationship(
+                is_forest_level,
+                viewer_player_aligned,
+            ),
+            golden_eye_mode: golden_eye,
+            // Resolved lazily below at Original's
+            // view-radius calculation boundary.
+            effective_view_radius: view_radius as f32,
+            target_is_active_and_outside_building: target.active
+                && target.building_sector.is_none(),
+            target_los: crate::stealth::detection_point_xy(
+                target.position,
+                target.posture,
+                target.direction,
+            ),
+            target_world: target.detection_point.unwrap_or_else(|| {
+                panic!(
+                    "live Enemy target {} for NPC {} has no detection point",
+                    target_id.index(),
+                    npc_id.index()
+                )
+            }),
+            target_posture: target.posture,
+            target_action_state: target.action_state,
+            target_is_pc: target.is_pc,
+            cloak_deception_applies: target.posture == crate::element::Posture::Cloaked
+                && viewer.camp.is_hostile_to(target.camp),
+            cloak_remembers_target: det.seen_last_frame
+                || viewer.primary_target == Some(crate::ai::AiEntityHandle::new(target_id.index()))
+                || viewer.remembered_targets.contains(&target_id.index()),
+            // TODO(cloak-authoring): connect this only when an
+            // explicit modded profile schema supplies detector data.
+            cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
+            sight_obstacles,
+            fast_grid: fast_grid,
+            layer,
+            target_unconscious: target.unconscious,
+            target_passing_door: target.passing_door,
+        };
+        let effective_view_radius = std::cell::Cell::new(None);
+        let visibility = ai_vision::compute_visibility_with_effective_radius(&q, || {
+            let radius = view_radius_cache.get_or_compute(target_obstacle_handle, || {
+                ai_vision::compute_view_radius(
+                    q.viewer_world,
+                    view_radius,
+                    view_forward,
+                    real_half_aperture,
+                    is_night_or_fog,
+                    fast_grid,
+                    sight_obstacles,
+                    target_obstacle,
+                )
+            });
+            effective_view_radius.set(Some(radius));
+            radius
+        });
+        if debug_visibility_stage {
+            let dx = q.target_world.x - q.viewer_world.x;
+            let dy = q.target_world.y - q.viewer_world.y;
+            let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
+            let dz = q.target_world.z - q.viewer_world.z;
+            let square_distance = dx * dx + stretched_y * stretched_y;
+            let square_distance_3d = square_distance + dz * dz;
+            let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
+            eprintln!(
+                "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
+                npc_id.index(),
+                target_id.index(),
+                q.viewer_world.x.to_bits(),
+                q.viewer_world.y.to_bits(),
+                q.viewer_world.z.to_bits(),
+                q.target_world.x.to_bits(),
+                q.target_world.y.to_bits(),
+                q.target_world.z.to_bits(),
+                q.viewer_direction,
+                q.view_forward.0.to_bits(),
+                q.view_forward.1.to_bits(),
+                q.real_half_aperture.to_bits(),
+                q.viewer_eye_status as u8,
+                q.viewer_in_building,
+                q.target_in_same_building,
+                q.target_is_active_and_outside_building,
+                target.dead,
+                q.target_unconscious,
+                q.target_passing_door,
+                q.target_posture as u8,
+                q.target_action_state as u8,
+                dx.to_bits(),
+                dy.to_bits(),
+                stretched_y.to_bits(),
+                dz.to_bits(),
+                square_distance.to_bits(),
+                square_distance_3d.to_bits(),
+                view_dot.to_bits(),
+                q.view_radius,
+                effective_view_radius
+                    .get()
+                    .map_or(-1, |radius| i64::from(radius.to_bits())),
+                visibility.to_bits(),
+            );
+        }
+        tracing::trace!(
+            observer = ?npc_id,
+            target = ?target_id,
+            modified_frame,
+            effective_view_radius = ?effective_view_radius.get(),
+            visibility,
+            viewer_x = q.viewer_world.x,
+            viewer_y = q.viewer_world.y,
+            viewer_z = q.viewer_world.z,
+            target_x = q.target_world.x,
+            target_y = q.target_world.y,
+            target_z = q.target_world.z,
+            "Enemy optical visibility refresh"
+        );
+        visibility
+    } else {
+        0.0
+    };
+    // Multiply by the frequency so that the averaged
+    // sharpness over time matches a per-frame call.
+    //
+    // For PC targets (non-soldier), scale further by the
+    // PC's profile-level forest/city detection-speed
+    // percentage.  A stealthy hero (e.g. a scout profile
+    // with a low detection speed) is slower to spot; a
+    // loud hero is faster.  Only apply this inside the
+    // refresh gate — the cached `last_visibility` value
+    // already has it baked in.
+    let mut visibility = if gate_open {
+        let detection_speed_factor = if target.is_pc && viewer_hostile_to_player {
+            let detection_speed_pct = if is_forest_level {
+                target.detection_speed_in_forest
+            } else {
+                target.detection_speed_in_city
+            };
+            0.01 * detection_speed_pct as f32
+        } else {
+            1.0
+        };
+        frequency as f32 * visibility_raw * detection_speed_factor
+    } else {
+        // Closed-gate frame — reuse the cached post-
+        // multiplied value from the last refresh so the
+        // sharpness accumulator decays smoothly instead
+        // of dropping to 0 every non-gate tick.
+        det.last_visibility
+    };
+
+    // "Did you know that a certain Stuteley sometimes
+    // dresses up as beggar?"  When the NPC has not yet
+    // learned the beggar trick and the PC is currently
+    // visible, gate on the PC's running animation:
+    //   * SimulatingBeggar (resting beggar pose) → return 0;
+    //     the NPC just sees an old beggar, not the disguised
+    //     hero.
+    //   * Transition WaitingUpright↔SimulatingBeggar (mid-
+    //     change) → the NPC catches the swap and learns the
+    //     trick (`got_the_beggar_trick = true`).  Visibility
+    //     stays > 0 so the sighting still commits this frame.
+    // Once the flag is true the NPC sees through future
+    // beggar disguises permanently (per-NPC, not global).
+    visibility = apply_enemy_beggar_disguise_with_relationship(
+        viewer_hostile_to_player,
+        target.is_pc,
+        got_beggar_trick,
+        target.order_type,
+        visibility,
+    );
+
+    // Sharpness depends on posture.  Leaning out uses
+    // 10x faster detection (200 vs 20).
+    let sharpness = detection_sharpness(view_speed, visibility);
+    let is_visible = sharpness > 0;
+    tracing::trace!(
+        npc = ?npc_id,
+        target = ?target_id,
+        gate_open,
+        visibility_raw,
+        visibility,
+        sharpness,
+        is_visible,
+        prev_seen_last_frame = det.seen_last_frame,
+        npc_dir = dir,
+        view_forward_x = view_forward.0,
+        view_forward_y = view_forward.1,
+        real_half_aperture,
+        viewer_x = eye.x,
+        viewer_y = eye.y,
+        target_x = target.position.x,
+        target_y = target.position.y,
+        "visibility check"
+    );
+
+    // Single-field update.  Next frame's edge-trigger
+    // reads this value directly.
+    det.seen_now = is_visible;
+    // Original's outer detection-refresh loop writes the final
+    // wrapper result on every scanned entry. Eligible closed
+    // cadence reuses the same value, while the beggar-disguise
+    // post-filter must be able to replace that cached value by 0.
+    det.last_visibility = visibility;
+
+    Some(sharpness)
 }
