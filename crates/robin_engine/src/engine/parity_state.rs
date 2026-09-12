@@ -522,7 +522,7 @@ impl Engine {
                 info: info,
             }
         };
-        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Value {
+        let patrol_stimulus = |stimulus: Option<&crate::ai::Stimulus>| -> Option<projections::Stimulus> {
             use crate::ai::{StimulusInfo, StimulusType};
             let stimulus = stimulus?;
             let is_default = stimulus.stimulus_type == StimulusType::NoEvent
