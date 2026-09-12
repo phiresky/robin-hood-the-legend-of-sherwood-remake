@@ -252,30 +252,19 @@ pub fn load_from_datadir_with_files(
     shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
     files: Arc<SbFileSystem>,
 ) -> Result<ActorNames, LoadError> {
-    let profiles = shipping
-        .as_ref()
-        .and_then(|datadir| datadir.profiles.clone())
-        .map(Ok)
-        .unwrap_or_else(|| load_profile_manager(datadir, &files))?;
+    let loaded_profiles;
+    let profiles = if let Some(profiles) = shipping.and_then(|datadir| datadir.profiles.as_ref()) {
+        profiles
+    } else {
+        loaded_profiles = load_profile_manager(datadir, &files)?;
+        &loaded_profiles
+    };
 
     let mission_profile = profiles
         .missions
         .iter()
         .find(|m| m.mission_filename == mission_filename)
         .ok_or_else(|| LoadError::MissionNotFound(mission_filename.to_owned()))?;
-    let proto_filename = mission_profile.proto_level_filename.clone();
-
-    // Build `is_beggar` from civilian profile types — required by the
-    // binary .rhm parser to decide whether to expect beggar scroll sets.
-    let civ_is_beggar: Vec<bool> = profiles
-        .civilians
-        .iter()
-        .map(|c| c.civilian_type == CivilianType::Beggar)
-        .collect();
-    let is_beggar = |idx: u32| civ_is_beggar.get(idx as usize).copied().unwrap_or(false);
-
-    let level_dir = datadir.join("Data").join("Levels");
-    let level_dir_str = level_dir.to_string_lossy().into_owned();
     let loaded = if let Some(shipping) = shipping.as_ref() {
         shipping.loaded_level(mission_filename).ok_or_else(|| {
             LoadError::Level(format!(
@@ -283,10 +272,19 @@ pub fn load_from_datadir_with_files(
             ))
         })?
     } else {
+        // The binary .rhm parser needs civilian types to recognize beggar
+        // scroll sets. Prepared shipping levels have already been parsed.
+        let is_beggar = |idx: u32| {
+            profiles
+                .civilians
+                .get(idx as usize)
+                .is_some_and(|civilian| civilian.civilian_type == CivilianType::Beggar)
+        };
+        let level_dir = datadir.join("Data").join("Levels");
         load_level_with_files(
             mission_filename,
-            &proto_filename,
-            &level_dir_str,
+            &mission_profile.proto_level_filename,
+            &level_dir.to_string_lossy(),
             &is_beggar,
             &mut |_| (),
             &files,
@@ -294,7 +292,7 @@ pub fn load_from_datadir_with_files(
         .map_err(|e| LoadError::Level(format!("{e:?}")))?
     };
 
-    let mut names = build_names(&loaded, &profiles);
+    let mut names = build_names(&loaded, profiles);
     // Best-effort text loading — failures are logged and leave the
     // name table with empty `popup_texts`/`short_briefing_texts`.
     load_mission_texts(datadir, mission_profile.id, &mut names, shipping, files);
@@ -315,19 +313,22 @@ fn load_mission_texts(
 
     // Resolve the `.red` level-descriptor file.
     let red_name = crate::res_descr::red_filename(mission_id);
+    let loaded_descriptors;
     let descriptors = if let Some(dd) = shipping.as_ref()
         && let Some(d) = dd.localized_level_descriptors(&red_name)
     {
-        d.clone()
+        d
     } else {
         let red_path = data_dir.join("Text").join(&red_name);
-        match crate::res_descr::load_with_files(&red_path.to_string_lossy(), &files) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::debug!("{}: {e}", red_path.display());
-                return;
-            }
-        }
+        loaded_descriptors =
+            match crate::res_descr::load_with_files(&red_path.to_string_lossy(), &files) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::debug!("{}: {e}", red_path.display());
+                    return;
+                }
+            };
+        &loaded_descriptors
     };
 
     // Resolve `Data/Text/Level.res`. Locale varies (`2047` = neutral, `1031`
@@ -729,7 +730,46 @@ mod tests {
             proto_level_filename: "FixtureProto".into(),
             ..Default::default()
         });
+        let fallback_profiles =
+            serde_json::to_vec(&robin_engine::content_patch::profile_document(&profiles).unwrap())
+                .unwrap();
+        let configuration = data.join("Configuration");
+        std::fs::create_dir(&configuration).unwrap();
+        let profile_path = configuration.join("profile.cpf.json");
+        // Prepared shipping profiles must take precedence over loose profiles.
+        std::fs::write(&profile_path, b"invalid JSON must not be read").unwrap();
         decoded.profiles = Some(profiles);
+        let mut descriptors = crate::res_descr::LevelDescriptors::default();
+        descriptors.popup_text.text_table_id = 7;
+        descriptors.short_briefing.text_table_id = 9;
+        decoded
+            .red_files
+            .insert(crate::res_descr::red_filename(0), descriptors);
+        // Real TEXT entries exercise the borrowed descriptor's two distinct IDs.
+        let mut text_bytes = b"SRES".to_vec();
+        text_bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        text_bytes.extend_from_slice(&2u32.to_le_bytes());
+        for (id, text) in [(7u32, b'P'), (9u32, b'B')] {
+            text_bytes.extend_from_slice(b"TEXT");
+            text_bytes.extend_from_slice(&id.to_le_bytes());
+            text_bytes.extend_from_slice(&0u32.to_le_bytes()); // flags
+            text_bytes.extend_from_slice(&1u16.to_le_bytes()); // string count
+            text_bytes.extend_from_slice(&1u16.to_le_bytes()); // UTF-16 length
+            text_bytes.extend_from_slice(&u16::from(text).to_le_bytes());
+        }
+        let text_vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        text_vfs
+            .install_preloaded_asset("text-fixture.res", text_bytes)
+            .unwrap();
+        let mut text_resources = crate::resource_manager::ResourceManager::with_files(Arc::new(
+            SbFileSystem::new(text_vfs),
+        ));
+        text_resources
+            .attach_resource_file("text-fixture.res")
+            .unwrap();
+        decoded
+            .res_files
+            .insert("Text/Level.res".into(), text_resources);
         decoded.raw.insert(marker.clone(), vec![42]);
         decoded.missions.insert(
             "Fixture".into(),
@@ -762,9 +802,25 @@ mod tests {
         // mission publication, and prepared text/resource lookup. Repeated calls
         // must not collide with an earlier process-global shipping installation.
         for _ in 0..2 {
-            load_from_datadir(root.path(), "Fixture").unwrap();
+            let names = load_from_datadir(root.path(), "Fixture").unwrap();
+            assert_eq!(names.popup_texts, ["P"]);
+            assert_eq!(names.short_briefing_texts, ["B"]);
             assert!(robin_util::asset_fs::global().read(&marker).is_err());
         }
+
+        // Without prepared profiles, the same shipping level uses the owned
+        // JSON fallback while still borrowing its shipping text descriptors.
+        decoded.profiles = None;
+        std::fs::write(&profile_path, fallback_profiles).unwrap();
+        std::fs::write(
+            data.join("datadir.bin"),
+            zstd_max_compress(&encode_native(&decoded)).unwrap(),
+        )
+        .unwrap();
+        let names = load_from_datadir(root.path(), "Fixture").unwrap();
+        assert_eq!(names.popup_texts, ["P"]);
+        assert_eq!(names.short_briefing_texts, ["B"]);
+        assert!(robin_util::asset_fs::global().read(&marker).is_err());
     }
 
     #[test]
