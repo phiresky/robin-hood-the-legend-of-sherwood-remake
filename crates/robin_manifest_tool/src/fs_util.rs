@@ -102,6 +102,52 @@ pub(crate) fn valid_relative_path(value: &str) -> bool {
             .all(|part| !part.is_empty() && !matches!(part, "." | ".."))
 }
 
+/// Unpinned staging-tree inventory only. Activation/publication authority uses
+/// its descriptor-retaining walker instead; callers must not substitute this
+/// path-based helper at an acceptance or destructive-consumption boundary.
+pub(crate) fn walk_regular_tree(
+    root: &Path,
+) -> Result<(
+    Vec<(std::path::PathBuf, std::path::PathBuf)>,
+    std::collections::BTreeSet<std::path::PathBuf>,
+)> {
+    let mut pending = vec![std::path::PathBuf::new()];
+    let mut files = std::collections::BTreeMap::new();
+    let mut directories = std::collections::BTreeSet::new();
+    while let Some(relative_root) = pending.pop() {
+        for entry in fs::read_dir(root.join(&relative_root))? {
+            let entry = entry?;
+            let relative = relative_root.join(entry.file_name());
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            ensure!(
+                !metadata.file_type().is_symlink(),
+                "tree contains forbidden symlink {}",
+                path.display()
+            );
+            if metadata.is_dir() {
+                ensure!(
+                    directories.insert(relative.clone()),
+                    "tree repeats directory {}",
+                    relative.display()
+                );
+                pending.push(relative);
+            } else {
+                ensure!(
+                    metadata.is_file(),
+                    "tree contains non-regular entry {}",
+                    path.display()
+                );
+                ensure!(
+                    files.insert(relative, path).is_none(),
+                    "tree repeats a file"
+                );
+            }
+        }
+    }
+    Ok((files.into_iter().collect(), directories))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -520,6 +520,13 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    #[test]
+    fn debug_string_reports_invalid_utf8_instead_of_empty_data() {
+        let lua = mlua::Lua::new();
+        let value = mlua::Value::String(lua.create_string([0xff]).unwrap());
+        assert_eq!(format_lua_value(&value), "<invalid utf8>");
+    }
+
     fn make_state() -> (MissionLuaState, TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let state = MissionLuaState::new(dir.path()).expect("new");

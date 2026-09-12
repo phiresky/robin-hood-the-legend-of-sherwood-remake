@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 #[cfg(target_os = "linux")]
 mod linux {
     use std::ffi::OsString;

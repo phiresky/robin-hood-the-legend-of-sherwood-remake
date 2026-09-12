@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Deterministic operator tooling for verified-run release manifests.
 //!
 //! Ranked content identities are engine-owned simulation projections, not
@@ -23,7 +24,7 @@ pub mod vps_release_v2;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, BufWriter, Read as _, Write as _};
+use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
@@ -1077,33 +1078,7 @@ fn resolve_mounted_file(root: &Path, relative: &Path) -> Result<PathBuf> {
 }
 
 fn walk_regular_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
-    let mut pending = vec![(PathBuf::new(), root.to_path_buf())];
-    let mut files = Vec::new();
-    while let Some((relative_root, absolute_root)) = pending.pop() {
-        let mut entries = fs::read_dir(&absolute_root)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries.into_iter().rev() {
-            let metadata = fs::symlink_metadata(entry.path())?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "tree contains forbidden symlink {}",
-                entry.path().display()
-            );
-            let relative = relative_root.join(entry.file_name());
-            if metadata.is_dir() {
-                pending.push((relative, entry.path()));
-            } else {
-                ensure!(
-                    metadata.is_file(),
-                    "tree contains non-regular entry {}",
-                    entry.path().display()
-                );
-                files.push((relative, entry.path()));
-            }
-        }
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(files)
+    Ok(fs_util::walk_regular_tree(root)?.0)
 }
 
 fn path_to_manifest(path: &Path) -> Result<String> {

@@ -435,7 +435,6 @@ fn build_verifier_job_config_catalog_v1(
     Ok(catalog)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn validate_profile_rules_tuple(
     profile: &CatalogAdmissionProfileV1,
     content_digest: Digest32,
@@ -1015,34 +1014,18 @@ fn validate_verifier_bundles(
 }
 
 fn tree_inventory(root: &Path) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)> {
-    let mut files = BTreeSet::new();
-    let mut directories = BTreeSet::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)?;
-            ensure!(
-                !metadata.file_type().is_symlink(),
-                "authority tree contains a symlink"
-            );
-            let relative = path.strip_prefix(root)?.to_path_buf();
-            ensure_safe_relative_path(&relative)?;
-            if metadata.is_dir() {
-                ensure!(
-                    directories.insert(relative),
-                    "authority tree repeats a directory"
-                );
-                pending.push(path);
-            } else if metadata.is_file() {
-                ensure!(files.insert(relative), "authority tree repeats a file");
-            } else {
-                bail!("authority tree contains a special filesystem node");
-            }
-        }
+    let (files, directories) = crate::fs_util::walk_regular_tree(root)?;
+    for relative in files
+        .iter()
+        .map(|(relative, _)| relative)
+        .chain(&directories)
+    {
+        ensure_safe_relative_path(relative)?;
     }
-    Ok((files, directories))
+    Ok((
+        files.into_iter().map(|(relative, _)| relative).collect(),
+        directories,
+    ))
 }
 
 fn parent_directories(files: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
