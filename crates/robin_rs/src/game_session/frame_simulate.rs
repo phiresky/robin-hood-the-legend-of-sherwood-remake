@@ -162,7 +162,6 @@ struct SimulationVisualRefresh<'a> {
     dev: &'a mut robin_engine::engine::DevState,
     presentation: &'a mut MissionPresentation,
     resources: &'a mut MissionResources,
-    window: &'a GameWindow,
 }
 
 impl SimulationVisualRefresh<'_> {
@@ -175,7 +174,6 @@ impl SimulationVisualRefresh<'_> {
             dev,
             presentation,
             resources,
-            window,
         } = self;
 
         let dynamic_visuals = host
@@ -614,7 +612,6 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> SimulationModalState {
-        let window = &mut *services.window;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
@@ -671,7 +668,6 @@ impl InteractiveFrameSimulation {
             dev,
             presentation,
             resources,
-            window,
         }
         .run();
 
