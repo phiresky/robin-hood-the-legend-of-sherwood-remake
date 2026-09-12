@@ -1018,43 +1018,30 @@ pub(super) async fn setup_multiplayer_session(
                     format!("multiplayer: cannot select authoritative speech timing: {error}")
                 })?;
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
-            let started = if let Some(encoded) = args.pending_distributed_mod.as_ref() {
-                let content =
+            let content = args
+                .pending_distributed_mod
+                .as_ref()
+                .map(|encoded| {
                     HostedModContent::from_encoded(encoded.to_vec()).map_err(|error| {
                         format!("multiplayer: invalid hosted full-mod package: {error}")
-                    })?;
-                start_server_in_campaign(
-                    campaign,
-                    nickname.clone(),
-                    authoritative_mission_id.to_string(),
-                    authoritative_rng_seed,
-                    authoritative_sim_config,
-                    speech_timing_locale.clone(),
-                    in_tx,
-                    out_rx,
-                    frame_cursor,
-                    snapshot_slot,
-                    args.mp_expected_players.unwrap_or(1),
-                    Some(content),
-                    publish_browser_links,
-                )
-            } else {
-                start_server_in_campaign(
-                    campaign,
-                    nickname.clone(),
-                    authoritative_mission_id.to_string(),
-                    authoritative_rng_seed,
-                    authoritative_sim_config,
-                    speech_timing_locale.clone(),
-                    in_tx,
-                    out_rx,
-                    frame_cursor,
-                    snapshot_slot,
-                    args.mp_expected_players.unwrap_or(1),
-                    None,
-                    publish_browser_links,
-                )
-            };
+                    })
+                })
+                .transpose()?;
+            let started = start_server_in_campaign(
+                campaign,
+                nickname.clone(),
+                authoritative_mission_id.to_string(),
+                authoritative_rng_seed,
+                authoritative_sim_config,
+                speech_timing_locale.clone(),
+                in_tx,
+                out_rx,
+                frame_cursor,
+                snapshot_slot,
+                args.mp_expected_players.unwrap_or(1),
+                content,
+                publish_browser_links,
+            );
             match started {
                 Ok(handle) => {
                     channels

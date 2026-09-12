@@ -105,7 +105,7 @@ mod native;
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub use native::{
     ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerHandle, connect_client,
-    connect_client_in_campaign, start_server, start_server_in_campaign, start_server_with_content,
+    connect_client_in_campaign, start_server_in_campaign,
 };
 
 #[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
@@ -183,7 +183,7 @@ pub struct NetChannels {
 
 impl NetChannels {
     /// Build an unattached channel bundle. The caller must attach the runtime
-    /// returned by [`start_server`] or [`connect_client`] before publishing the
+    /// returned by [`start_server_in_campaign`] or [`connect_client`] before publishing the
     /// bundle to the game loop.
     pub fn new() -> (
         Self,
