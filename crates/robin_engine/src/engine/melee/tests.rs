@@ -3028,8 +3028,6 @@ fn completed_missed_sword_strike_adds_tiredness_once() {
 
 #[test]
 fn empty_true_circle_sweep_advances_until_rotation_complete() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -3053,7 +3051,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
         });
     }
 
-    engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
+    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -3065,7 +3063,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
         "true-circle sweep with no victims must still rotate instead of clearing immediately"
     );
 
-    engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
+    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -3077,7 +3075,7 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
         "the tick that reaches the final angle must retain it for the terminal Execute call"
     );
 
-    engine.tick_sweep_for(sim, &LevelAssets::default(), attacker, false);
+    engine.tick_sweep_for(&LevelAssets::default(), attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -3092,8 +3090,6 @@ fn empty_true_circle_sweep_advances_until_rotation_complete() {
 
 #[test]
 fn circle_done_initialization_advances_without_rotating_or_hitting() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -3135,7 +3131,7 @@ fn circle_done_initialization_advances_without_rotating_or_hitting() {
         .unwrap()
         .current_angle;
 
-    engine.tick_sweep_for(sim, &assets, attacker, true);
+    engine.tick_sweep_for(&assets, attacker, true);
 
     let attacker_entity = engine.get_entity(attacker).unwrap();
     let sweep = attacker_entity
@@ -3199,7 +3195,7 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
         .as_ref()
         .unwrap()
         .current_angle;
-    engine.tick_sweep_for(sim, &assets, attacker, true);
+    engine.tick_sweep_for(&assets, attacker, true);
 
     let current = engine
         .get_entity(attacker)
@@ -3542,7 +3538,7 @@ fn interrupted_lateral_sweep_is_retained_and_rebound_by_next_strike() {
     assert_eq!(soldier_life(&engine, victim), 50);
 
     engine.rebind_retained_sweep_to_active_strike(&assets, attacker);
-    engine.tick_sweep_for(sim, &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
 
     let retained_after_hit = engine
         .get_entity(attacker)
@@ -3985,7 +3981,7 @@ fn interrupted_h_circle_runs_replacement_i_effect_without_advancing_geometry() {
         );
         assert_ne!(sprite.current_frame, sprite.action_done_frame);
     }
-    engine.tick_selected_sweep_phase(sim, &assets, attacker, strikes::SweepTickPhase::InProgress);
+    engine.tick_selected_sweep_phase(&assets, attacker, strikes::SweepTickPhase::InProgress);
 
     let queued_damage: Vec<&crate::sequence::SequenceElement> = engine
         .orders
@@ -4416,7 +4412,7 @@ fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
         crate::profiles::WeaponThrustKind::Lateral
     );
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
     assert!(
         engine
             .get_entity(attacker)
@@ -4495,7 +4491,7 @@ fn saved_empty_true_circle_sweep_is_rehydrated_and_rotates() {
     assert!(sweep.pending_victims.is_empty());
     assert_eq!(sweep.current_angle.to_bits(), current_angle.to_bits());
 
-    engine.tick_sweep_for(&crate::sim_rng::test_context(), &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
     assert_eq!(
         engine
             .get_entity(attacker)
@@ -4648,8 +4644,6 @@ fn terminated_lateral_sweep_cannot_rehydrate_into_a_fresh_strike() {
 
 #[test]
 fn later_circle_frame_tests_existing_angle_before_tail_advance() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -4701,7 +4695,7 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
             .count()
     };
 
-    engine.tick_sweep_for(sim, &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
     assert_eq!(
         queued_damage_count(&engine),
         0,
@@ -4717,7 +4711,7 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
         .expect("pending final-sector victim must keep the sweep alive");
     assert!((sweep.current_angle - std::f32::consts::FRAC_PI_2).abs() < f32::EPSILON);
 
-    engine.tick_sweep_for(sim, &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
     assert_eq!(
         queued_damage_count(&engine),
         1,
@@ -4727,8 +4721,6 @@ fn later_circle_frame_tests_existing_angle_before_tail_advance() {
 
 #[test]
 fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -4768,7 +4760,7 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
         strike_kind: crate::profiles::WeaponThrustKind::FalseHalfCircle,
     });
 
-    engine.tick_sweep_for(sim, &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)
@@ -4787,8 +4779,6 @@ fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
 
 #[test]
 fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
-    let sim_context = crate::sim_rng::test_context();
-    let sim = &sim_context;
     let mut engine = make_engine();
     let attacker = engine.add_entity(make_pc(
         WorldPoint3D {
@@ -4826,7 +4816,7 @@ fn lateral_advance_is_raw_and_does_not_use_circle_final_clamping() {
         strike_kind: crate::profiles::WeaponThrustKind::Lateral,
     });
 
-    engine.tick_sweep_for(sim, &assets, attacker, false);
+    engine.tick_sweep_for(&assets, attacker, false);
 
     let current = engine
         .get_entity(attacker)
@@ -5076,7 +5066,6 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
         },
         None,
     ));
-    let assets = assets_with_sword_profile(7, 30);
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -5084,9 +5073,7 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
         .unwrap()
         .tiredness = 11;
 
-    crate::sim_rng::with_seed(1, |sim| {
-        engine.queue_sword_damage(sim, &assets, victim, attacker, SwordStrike::A, 1);
-    });
+    engine.queue_sword_damage(victim, attacker, SwordStrike::A, 1);
 
     assert_eq!(
         engine

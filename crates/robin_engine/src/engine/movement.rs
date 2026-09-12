@@ -5640,14 +5640,7 @@ impl EngineInner {
                 .expect("active charge must remain installed through synchronous damage")
                 .pending_victims
                 .retain(|pending| *pending != victim_id);
-            self.queue_sword_damage(
-                sim,
-                assets,
-                victim_id,
-                rider_id,
-                SwordStrike::Charge,
-                weapon_profile_id,
-            );
+            self.queue_sword_damage(victim_id, rider_id, SwordStrike::Charge, weapon_profile_id);
         }
 
         let completion_order_id = if last_frame {

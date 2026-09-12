@@ -302,16 +302,12 @@ impl EngineInner {
     /// before the damage interrupts it.
     pub(crate) fn queue_sword_damage(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,
         attacker_profile_idx: u32,
     ) {
         self.queue_scaled_sword_damage(
-            _sim,
-            _assets,
             victim_id,
             attacker_id,
             sword_strike,
@@ -322,11 +318,10 @@ impl EngineInner {
 
     /// Queue sword damage with the deterministic multiplier already resolved
     /// by the input command and retained on the active strike element.
-    #[allow(clippy::too_many_arguments)]
+    /// Registration needs no RNG or profile access; damage execution happens
+    /// later at the sequence-manager boundary.
     pub(crate) fn queue_scaled_sword_damage(
         &mut self,
-        _sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
         victim_id: EntityId,
         attacker_id: EntityId,
         sword_strike: SwordStrike,

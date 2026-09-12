@@ -460,7 +460,7 @@ impl EngineInner {
             SweepTickPhase::Dormant
         };
         if self.selected_melee_identity_is_live(attacker_id, selected) {
-            self.tick_selected_sweep_phase(sim, assets, attacker_id, sweep_phase);
+            self.tick_selected_sweep_phase(assets, attacker_id, sweep_phase);
         }
     }
 
@@ -789,7 +789,6 @@ impl EngineInner {
 
         if hit {
             self.resolve_straight_melee_hit(
-                sim,
                 assets,
                 attacker_id,
                 target_id,
@@ -813,7 +812,6 @@ impl EngineInner {
 
     fn resolve_straight_melee_hit(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         victim_id: EntityId,
@@ -876,8 +874,6 @@ impl EngineInner {
         if in_range {
             if let Some(profile_idx) = profile_idx {
                 self.queue_scaled_sword_damage(
-                    sim,
-                    assets,
                     victim_id,
                     attacker_id,
                     strike,
@@ -1067,7 +1063,7 @@ impl EngineInner {
             };
             self.tick_straight_melee_for(sim, assets, actor_id, selected);
             let sweep_phase = self.tick_nonstraight_melee_for(sim, assets, actor_id, selected);
-            self.tick_selected_sweep_phase(sim, assets, actor_id, sweep_phase);
+            self.tick_selected_sweep_phase(assets, actor_id, sweep_phase);
         }
     }
 
@@ -1348,8 +1344,6 @@ impl EngineInner {
                 for victim_id in &all_victims {
                     if let Some(profile_idx) = hit.attacker_profile_idx {
                         self.queue_scaled_sword_damage(
-                            sim,
-                            assets,
                             *victim_id,
                             hit.attacker_id,
                             hit.strike,
@@ -1365,7 +1359,6 @@ impl EngineInner {
                 }
             } else {
                 self.resolve_straight_melee_hit(
-                    sim,
                     assets,
                     hit.attacker_id,
                     hit.victim_id,
@@ -1397,7 +1390,6 @@ impl EngineInner {
 
     pub(super) fn tick_selected_sweep_phase(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         phase: SweepTickPhase,
@@ -1421,7 +1413,7 @@ impl EngineInner {
         match phase {
             SweepTickPhase::Dormant | SweepTickPhase::Start => {}
             SweepTickPhase::Initialized => {
-                self.tick_sweep_for(sim, assets, attacker_id, true);
+                self.tick_sweep_for(assets, attacker_id, true);
             }
             SweepTickPhase::InProgress => {
                 // Circle sword-strike execution advances its retained angles only
@@ -1497,11 +1489,11 @@ impl EngineInner {
                     // the retained victim/angle geometry, but rebind the
                     // payload and direction to the replacement strike.
                     self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
-                    self.tick_sweep_for_mode(sim, assets, attacker_id, false, true);
+                    self.tick_sweep_for_mode(assets, attacker_id, false, true);
                     return;
                 }
                 self.rebind_retained_sweep_to_active_strike(assets, attacker_id);
-                self.tick_sweep_for(sim, assets, attacker_id, false);
+                self.tick_sweep_for(assets, attacker_id, false);
             }
         }
     }
@@ -1854,17 +1846,15 @@ impl EngineInner {
     ///
     pub(crate) fn tick_sweep_for(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
     ) {
-        self.tick_sweep_for_mode(sim, assets, attacker_id, initialized_this_hourglass, false);
+        self.tick_sweep_for_mode(assets, attacker_id, initialized_this_hourglass, false);
     }
 
     fn tick_sweep_for_mode(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         attacker_id: EntityId,
         initialized_this_hourglass: bool,
@@ -2016,8 +2006,6 @@ impl EngineInner {
             for victim_id in hit_victim_ids {
                 if let Some(profile_idx) = active.sweep.attacker_profile_idx {
                     self.queue_scaled_sword_damage(
-                        sim,
-                        assets,
                         victim_id,
                         active.attacker_id,
                         active.sweep.strike,

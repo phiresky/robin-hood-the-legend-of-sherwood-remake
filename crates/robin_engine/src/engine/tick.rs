@@ -6142,7 +6142,7 @@ impl EngineInner {
         self.drain_hidden_titbit_removals(hidden_titbit_removals);
         self.drain_beggar_wait_handoffs(sim, assets, beggar_wait_handoffs);
         self.drain_beggar_coin_flags(beggar_coin_flags);
-        self.drain_smalltalk_strikes(sim, assets, smalltalk_strikes);
+        self.drain_smalltalk_strikes(assets, smalltalk_strikes);
         self.drain_killed_at_bottom(killed_at_bottom);
         self.drain_deactivate_entities(deactivate_entities);
         self.drain_pc_target_activations(pc_target_activations);
