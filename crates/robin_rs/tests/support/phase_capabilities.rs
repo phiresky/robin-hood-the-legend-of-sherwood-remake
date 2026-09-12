@@ -5,6 +5,18 @@
 use super::source_syntax::{item_fn, item_struct, parsed};
 use syn::visit::{self, Visit};
 
+// Transport authority moved into these modules; ownership guards must inspect
+// implementations as well as the root's type declarations and re-exports.
+const HTTP_AUTHORITY_SOURCES: &[&str] = &[
+    include_str!("../../src/http_server.rs"),
+    include_str!("../../src/http_server/dispatch.rs"),
+    include_str!("../../src/http_server/ingress.rs"),
+    include_str!("../../src/http_server/native_routes.rs"),
+    include_str!("../../src/http_server/native_transport.rs"),
+    include_str!("../../src/http_server/request_decode.rs"),
+    include_str!("../../src/http_server/request_lifetime.rs"),
+];
+
 #[test]
 fn rendering_entrypoint_requires_the_explicit_presentation_view() {
     let syntax = parsed(include_str!("../../src/game_session/render.rs"));
@@ -183,7 +195,7 @@ fn mission_journals_and_sprite_publication_are_private() {
             ][..],
         ),
         (
-            include_str!("../../src/host.rs"),
+            include_str!("../../src/host/frontend.rs"),
             "FrontendResources",
             &["frame_holder", "frame_holder_opacity"][..],
         ),
@@ -273,9 +285,13 @@ fn replay_authority_has_no_process_singleton() {
     }
     ReplayStatics.visit_file(&parsed(include_str!("../../src/replay_service.rs")));
     ReplayStatics.visit_file(&parsed(include_str!("../../src/mission_replays.rs")));
-    ReplayStatics.visit_file(&parsed(include_str!(
-        "../../src/game_session/replay_init.rs"
-    )));
+    for source in [
+        include_str!("../../src/game_session/replay_init.rs"),
+        include_str!("../../src/game_session/replay_launch.rs"),
+        include_str!("../../src/game_session/mission_launch.rs"),
+    ] {
+        ReplayStatics.visit_file(&parsed(source));
+    }
 }
 
 #[test]
@@ -343,7 +359,9 @@ fn http_transport_does_not_own_replay_storage() {
             visit::visit_item_struct(self, item);
         }
     }
-    StorageDeclarations.visit_file(&parsed(include_str!("../../src/http_server.rs")));
+    for &source in HTTP_AUTHORITY_SOURCES {
+        StorageDeclarations.visit_file(&parsed(source));
+    }
 }
 
 #[test]
@@ -370,8 +388,8 @@ fn diagnostic_and_image_builders_do_not_own_rpc_lifetimes() {
         }
     }
     for source in [
-        include_str!("../../src/rpc_diagnostics.rs"),
-        include_str!("../../src/rpc_screenshot.rs"),
+        include_str!("../../src/http_server/diagnostics.rs"),
+        include_str!("../../src/http_server/screenshot.rs"),
     ] {
         Boundaries.visit_file(&parsed(source));
     }
@@ -532,10 +550,7 @@ fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
             visit::visit_item_static(self, item);
         }
     }
-    for source in [
-        include_str!("../../src/http_server.rs"),
-        include_str!("../../src/http_server/ingress.rs"),
-    ] {
+    for &source in HTTP_AUTHORITY_SOURCES {
         let syntax = parsed(source);
         StaticTypes.visit_file(&syntax);
         for item in &syntax.items {
@@ -558,7 +573,7 @@ fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
 
 #[test]
 fn frontend_policy_and_observation_owners_remain_private() {
-    let host = parsed(include_str!("../../src/host.rs"));
+    let host = parsed(include_str!("../../src/host/frontend.rs"));
     let structure =
         |name: &str| item_struct(&host, name).unwrap_or_else(|| panic!("missing owner {name}"));
     let frontend = structure("HostFrontend");
