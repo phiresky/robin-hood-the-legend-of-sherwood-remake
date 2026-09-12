@@ -987,3 +987,42 @@ mod tests {
         assert!(entities[PcId(0)].is_none());
     }
 }
+
+impl Entities {
+    /// Required AI controller, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_ai_controller_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::ai::AiController {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_controller_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required AI controller"))
+    }
+    /// Required enemy AI, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_enemy_ai_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::ai_enemy::EnemyAi {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .enemy_ai_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required enemy AI"))
+    }
+    /// Required NPC actor state, borrowing only the entity arena for split-domain dispatch.
+    #[track_caller]
+    pub(crate) fn expect_ai_actor_data_mut(
+        &mut self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::element::AiActorData {
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_actor_data_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
+    }
+}

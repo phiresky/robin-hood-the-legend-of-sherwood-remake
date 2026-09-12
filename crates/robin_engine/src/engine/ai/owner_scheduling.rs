@@ -268,14 +268,13 @@ impl EngineInner {
         if finish_macro {
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                .expect_ai_controller_mut(
+                    npc_id,
+                    format_args!(
                         "post-reentrant macro owner {} lost its AI controller",
                         npc_id.index()
-                    )
-                })
+                    ),
+                )
                 .finish_patrol_macro();
         }
         launched_moves
@@ -358,17 +357,13 @@ impl EngineInner {
         // recursively entered EVENT_AFTER_SCRIPT_GO_ON resets that latch in
         // handler entry, exactly as original-game evaluation does.
         {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "waypoint-script owner {} lost its AI before ReachPoint",
-                        npc_id.index()
-                    )
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!(
+                    "waypoint-script owner {} lost its AI before ReachPoint",
+                    npc_id.index()
+                ),
+            );
             ai.think_recursion_depth = ai
                 .think_recursion_depth
                 .checked_add(1)
@@ -551,14 +546,13 @@ impl EngineInner {
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "route-arrival continuation owner {} lost its AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .resume_goto_route_reach_point(sim, &ctx);
 
         // The original game initializes patrol inline, immediately after the
@@ -588,14 +582,10 @@ impl EngineInner {
         // (notably ResumeReturnToDutyAfterPatrolInit) stays nested ahead of
         // that caller tail instead of being appended after it.
         let later_owner_work = {
-            let ai = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!("virtual ReturnToDuty owner {} lost its AI", npc_id.index())
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("virtual ReturnToDuty owner {} lost its AI", npc_id.index()),
+            );
             std::mem::take(&mut ai.outbox.reentrant.owner_work)
         };
         let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
@@ -631,14 +621,13 @@ impl EngineInner {
             let tick = self.build_npc_tick_data(sim, npc_id, assets);
             self.world
                 .entities
-                .get_mut(npc_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                .expect_enemy_ai_mut(
+                    npc_id,
+                    format_args!(
                         "virtual ReturnToDuty enemy owner {} lost its AI",
                         npc_id.index()
-                    )
-                })
+                    ),
+                )
                 .return_to_duty(sim, flags, &ctx, &tick);
         } else {
             self.world
@@ -656,14 +645,13 @@ impl EngineInner {
 
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "virtual ReturnToDuty owner {} lost its AI after override",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .outbox
             .reentrant
             .owner_work
@@ -718,14 +706,13 @@ impl EngineInner {
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         self.world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_enemy_ai_mut(
+                npc_id,
+                format_args!(
                     "return-to-duty continuation owner {} lost its Enemy AI",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .resume_return_to_duty_after_patrol_init(sim, flags, &ctx, high_recursion_failsafe);
     }
 
@@ -939,17 +926,13 @@ impl EngineInner {
 
         let patrol_ids: Vec<_> = sorted.into_iter().map(|(id, _)| id).collect();
         {
-            let ai = self
-                .world
-                .entities
-                .get_mut(chief_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "synchronous patrol initialization owner {} lost its AI",
-                        chief_id.index()
-                    )
-                });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                chief_id,
+                format_args!(
+                    "synchronous patrol initialization owner {} lost its AI",
+                    chief_id.index()
+                ),
+            );
             ai.needs_patrol_reinit = false;
             ai.patrol = patrol_ids.clone();
             ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
@@ -957,15 +940,14 @@ impl EngineInner {
         for member in patrol_ids {
             self.world
                 .entities
-                .get_mut(member)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                .expect_ai_controller_mut(
+                    member,
+                    format_args!(
                         "patrol member {} admitted by owner {} lost its AI",
                         member.index(),
                         chief_id.index()
-                    )
-                })
+                    ),
+                )
                 .patrol_chief = Some(chief_id);
         }
     }

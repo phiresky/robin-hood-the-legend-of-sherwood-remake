@@ -3637,14 +3637,10 @@ impl EngineInner {
         // Keep this after every rejection/launch path, but before returning
         // to the dispatcher's owner-work drain.
         for owner in pending_considerations {
-            let ai = self
-                .world
-                .entities
-                .get_mut(owner)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!("sword-strike consideration owner {owner:?} lost Enemy AI")
-                });
+            let ai = self.world.entities.expect_enemy_ai_mut(
+                owner,
+                format_args!("sword-strike consideration owner {owner:?} lost Enemy AI"),
+            );
             if std::mem::take(&mut ai.pending_combat_insult_after_strike_consideration)
                 && ai.base.current_substate == crate::ai::Substate::AttackingSwordfight
                 && !ai.pending_special_strike

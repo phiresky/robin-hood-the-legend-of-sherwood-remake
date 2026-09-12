@@ -52,18 +52,14 @@ impl EngineInner {
 
         for member in members.iter().copied() {
             let should_return = {
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(member)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "RemoveAllSubordinates chief {} references missing NPC member {}",
-                            chief.index(),
-                            member.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    member,
+                    format_args!(
+                        "RemoveAllSubordinates chief {} references missing NPC member {}",
+                        chief.index(),
+                        member.index()
+                    ),
+                );
                 ai.patrol_chief = None;
                 ai.current_state == crate::ai::AiState::Default
             };
@@ -259,14 +255,13 @@ impl EngineInner {
         let deafness = self
             .world
             .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_actor_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_actor_data_mut(
+                npc_id,
+                format_args!(
                     "one-shot noise listener {} lost its required AI actor state",
                     npc_id.index()
-                )
-            })
+                ),
+            )
             .get_deafness(frame, cover_volume);
 
         let subjective = subjective_hear_volume(modified_volume, distance, deafness);
@@ -953,17 +948,13 @@ impl EngineInner {
         // engine-owned AI actor record before draining its other synchronous
         // effects. Locked, frozen, script-filtered, and handler-rejected VIEWs
         // never set the flag.
-        let mark_alerted = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "handled Think recipient {} lost its entity or AI controller before drain",
-                    npc_id.index()
-                )
-            });
+        let mark_alerted = self.world.entities.expect_ai_controller_mut(
+            npc_id,
+            format_args!(
+                "handled Think recipient {} lost its entity or AI controller before drain",
+                npc_id.index()
+            ),
+        );
         let mark_alerted = std::mem::take(&mut mark_alerted.outbox.detection.mark_alerted);
         if mark_alerted {
             let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
@@ -1231,17 +1222,13 @@ impl EngineInner {
             }
 
             let deferred = {
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "synchronous action source {} lost its AI controller",
-                            source_id.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    source_id,
+                    format_args!(
+                        "synchronous action source {} lost its AI controller",
+                        source_id.index()
+                    ),
+                );
                 std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions)
             };
             let mut deferred = deferred;
@@ -1485,30 +1472,22 @@ impl EngineInner {
                 // already queued, C closes before B. Isolate A's generated
                 // work, recursively drain it, then continue the saved batch.
                 self.process_synchronous_reentrant_actions_for(sim, source_id, assets);
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(source_id)
-                    .and_then(Entity::ai_controller_mut)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "synchronous action source {} lost its AI controller",
-                            source_id.index()
-                        )
-                    });
-                deferred.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
-            }
-            let ai = self
-                .world
-                .entities
-                .get_mut(source_id)
-                .and_then(Entity::ai_controller_mut)
-                .unwrap_or_else(|| {
-                    panic!(
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    source_id,
+                    format_args!(
                         "synchronous action source {} lost its AI controller",
                         source_id.index()
-                    )
-                });
+                    ),
+                );
+                deferred.extend(std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions));
+            }
+            let ai = self.world.entities.expect_ai_controller_mut(
+                source_id,
+                format_args!(
+                    "synchronous action source {} lost its AI controller",
+                    source_id.index()
+                ),
+            );
             ai.outbox.reentrant.cross_npc_actions = deferred;
         }
     }
@@ -1520,14 +1499,13 @@ impl EngineInner {
     ) {
         self.world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
+            .expect_ai_controller_mut(
+                source_id,
+                format_args!(
                     "synchronous action source {} lost its AI controller",
                     source_id.index()
-                )
-            })
+                ),
+            )
             .outbox
             .reentrant
             .cross_npc_actions
@@ -1740,17 +1718,13 @@ impl EngineInner {
         logical_think_depth: u8,
         operation: &str,
     ) -> u8 {
-        let ai = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .and_then(Entity::ai_controller_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "cross-NPC {operation} {} lost its AI controller",
-                    target_id.index()
-                )
-            });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            target_id,
+            format_args!(
+                "cross-NPC {operation} {} lost its AI controller",
+                target_id.index()
+            ),
+        );
         std::mem::replace(&mut ai.think_recursion_depth, logical_think_depth)
     }
 
@@ -2095,14 +2069,10 @@ impl EngineInner {
         if call_instruction && !self.soldier_stands_in_phalanx(target_id) {
             return;
         }
-        let enemy = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .and_then(Entity::enemy_ai_mut)
-            .unwrap_or_else(|| {
-                panic!("InstructGatherPosition target human {target} has no EnemyAi")
-            });
+        let enemy = self.world.entities.expect_enemy_ai_mut(
+            target_id,
+            format_args!("InstructGatherPosition target human {target} has no EnemyAi"),
+        );
         enemy.gather_position = position;
         enemy.gather_direction = direction;
         enemy.gather_position_instructed = true;
