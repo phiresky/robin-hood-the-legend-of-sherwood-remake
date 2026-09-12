@@ -25,6 +25,8 @@ pub mod secure_fs;
 pub mod service;
 pub mod storage_admission;
 mod submission;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod verifier;
 pub mod web;
 

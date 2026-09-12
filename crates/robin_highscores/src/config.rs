@@ -2673,7 +2673,7 @@ mod tests {
     #[test]
     fn manifestctl_split_ruleset_layout_loads_and_cross_binds() {
         let directory = empty_manifest_registry_directory();
-        let published = crate::web::tests::published_ruleset_fixture();
+        let published = crate::test_support::published_ruleset_fixture();
         let digest = published.ruleset_manifest_sha256;
         std::fs::write(
             directory
@@ -2708,7 +2708,7 @@ mod tests {
     #[test]
     fn build_registry_preserves_exact_v2_identity_and_separate_semantics() {
         let directory = empty_manifest_registry_directory();
-        let build = crate::web::tests::viewer_build_v2();
+        let build = crate::test_support::viewer_build_v2();
         let document = VersionedBuildManifest::V2(build.clone());
         let public_digest = document.canonical_digest().unwrap();
         let semantic = document.backend_visible_v1().unwrap();
@@ -2730,7 +2730,7 @@ mod tests {
 
     #[test]
     fn build_registry_rejects_wrong_filename_private_fields_and_duplicate_semantics() {
-        let build = crate::web::tests::viewer_build_v2();
+        let build = crate::test_support::viewer_build_v2();
         let document = VersionedBuildManifest::V2(build.clone());
         let public_digest = document.canonical_digest().unwrap();
 
@@ -2796,13 +2796,13 @@ mod tests {
 
     #[test]
     fn current_ranked_build_requires_v2_and_stale_build_requires_quarantine() {
-        let build_v2 = crate::web::tests::viewer_build_v2();
+        let build_v2 = crate::test_support::viewer_build_v2();
         let mut build = LoadedBuildManifest::new(VersionedBuildManifest::V2(build_v2)).unwrap();
         assert_eq!(
             build.semantics().save_schema_version,
             robin_run_protocol::CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1
         );
-        let published = crate::web::tests::published_ruleset_fixture();
+        let published = crate::test_support::published_ruleset_fixture();
         validate_current_ranked_build(&build, &published).unwrap();
 
         assert_eq!(
@@ -2837,9 +2837,10 @@ mod tests {
         };
         validate_current_ranked_build(&build, &quarantined).unwrap();
 
-        let historical =
-            LoadedBuildManifest::new(VersionedBuildManifest::V1(crate::web::tests::viewer_build()))
-                .unwrap();
+        let historical = LoadedBuildManifest::new(VersionedBuildManifest::V1(
+            crate::test_support::viewer_build(),
+        ))
+        .unwrap();
         assert!(validate_current_ranked_build(&historical, &quarantined).is_ok());
         quarantined.operational_status = RulesetOperationalStatusV1::Active;
         assert!(validate_current_ranked_build(&historical, &quarantined).is_err());
