@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # Atomically rewrite one immutable snapshot of native parity traces with the
 # block geometry compiled into an authenticated runner.  The runner itself
 # owns the hard-link/binding recovery protocol and proves semantic equality
@@ -22,15 +25,6 @@ jobs=${NATIVE_REBLOCK_JOBS:-8}
 timeout_seconds=${NATIVE_REBLOCK_TIMEOUT_SECONDS:-7200}
 outer_lock=${NATIVE_REBLOCK_OUTER_LOCK:-/srv/robinhood/locks/robin-parity-runner.lock}
 
-fail() { printf 'error: %s\n' "$*" >&2; exit 2; }
-write_atomic() {
-    local destination=$1 temporary
-    temporary=$(mktemp "${destination}.tmp.XXXXXX") || return 1
-    if ! cat >"$temporary" || ! mv -f -- "$temporary" "$destination"; then
-        rm -f -- "$temporary"
-        return 1
-    fi
-}
 
 [[ "$corpus" == "$workspace"/* ]] || fail 'corpus is outside workspace'
 if [[ -d "$corpus/traces" ]]; then
