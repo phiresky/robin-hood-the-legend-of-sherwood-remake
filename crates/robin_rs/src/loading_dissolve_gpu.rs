@@ -1,6 +1,5 @@
 use crate::loading_screen::HeightField;
 use crate::renderer::{Renderer, rgb565_to_rgb8};
-use crate::window::GpuContext;
 
 pub struct LoadingDissolveTextures {
     _initial_texture: wgpu::Texture,
