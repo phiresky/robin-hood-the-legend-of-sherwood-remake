@@ -7,7 +7,7 @@
 
 use robin_engine::engine::GlobalOptions;
 use robin_engine::profiles::ProfileManager;
-use robin_engine::sbfile::SbFileSystem;
+use robin_engine::sbfile::{SbFileError, SbFileSystem};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProfileLoadError {
@@ -18,7 +18,10 @@ pub enum ProfileLoadError {
         source: robin_engine::profiles::ProfileJsonLoadError,
     },
     #[error("cannot open legacy profile catalog {path}: file status {status}")]
-    Open { path: &'static str, status: i32 },
+    Open {
+        path: &'static str,
+        status: SbFileError,
+    },
     #[error("cannot decode legacy profile catalog {path}: {message}")]
     Decode { path: &'static str, message: String },
 }
