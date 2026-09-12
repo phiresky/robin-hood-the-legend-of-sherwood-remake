@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) trait LegacyWire: Sized {
     fn legacy_json(&self) -> String;
-    fn legacy_from_json(json: &str) -> Self;
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64);
     fn legacy_hash(&self) -> u64;
     fn legacy_native_bytes(&self) -> Vec<u8>;
 }
@@ -316,130 +316,9 @@ impl LegacyWire for AiController {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyAiController::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyAiController = serde_json::from_str(json).unwrap();
-        Self {
-            me: legacy.me,
-            owner_entity_id: legacy.owner_entity_id,
-            path_id: legacy.path_id,
-            alert_path_id: legacy.alert_path_id,
-            current_state: legacy.current_state,
-            current_substate: legacy.current_substate,
-            old_state: legacy.old_state,
-            current_music_alert_status: legacy.current_music_alert_status,
-            view_alert_status: legacy.view_alert_status,
-            substate_at_last_timer_launch: legacy.substate_at_last_timer_launch,
-            attitude: legacy.attitude,
-            blood_alcohol: legacy.blood_alcohol,
-            initial_action: legacy.initial_action,
-            number_of_looks: legacy.number_of_looks,
-            has_patrol_path: legacy.has_patrol_path,
-            patrol_path: legacy.patrol_path,
-            detached_patrol_path_status: legacy.detached_patrol_path_status,
-            can_move: legacy.can_move,
-            stop_before_end_of_path: legacy.stop_before_end_of_path,
-            use_max_norm_to_stop_before_end_of_path: legacy.use_max_norm_to_stop_before_end_of_path,
-            stop_before_end_of_path_distance: legacy.stop_before_end_of_path_distance,
-            think_recursion_depth: legacy.think_recursion_depth,
-            open_end_think_frames: legacy.open_end_think_frames,
-            engine_deferred_end_think_frames: legacy.engine_deferred_end_think_frames,
-            engine_completion_verdict_resolved: legacy.engine_completion_verdict_resolved,
-            macro_command: legacy.macro_command,
-            macro_command_offset: legacy.macro_command_offset,
-            macro_command_waypoint: legacy.macro_command_waypoint,
-            number_of_remaining_macro_bytes: legacy.number_of_remaining_macro_bytes,
-            macro_in_progress: legacy.macro_in_progress,
-            macro_started_in_this_frame: legacy.macro_started_in_this_frame,
-            primary_target: legacy.primary_target,
-            friend_in_trouble: legacy.friend_in_trouble,
-            detected_body: legacy.detected_body,
-            interesting_object: legacy.interesting_object,
-            antagonist: legacy.antagonist,
-            last_stimulus_actor: legacy.last_stimulus_actor,
-            timer_is_running: legacy.timer_is_running,
-            when_does_timer_ring: legacy.when_does_timer_ring,
-            macro_timer_is_running: legacy.macro_timer_is_running,
-            when_does_macro_timer_ring: legacy.when_does_macro_timer_ring,
-            standing_around_timer: legacy.standing_around_timer,
-            sorrow_level: legacy.sorrow_level,
-            last_stimulus: legacy.last_stimulus,
-            last_stimulus_multiplicity: legacy.last_stimulus_multiplicity,
-            is_master: legacy.is_master,
-            master: legacy.master,
-            seek_position: legacy.seek_position,
-            alert_soldiers_point: legacy.alert_soldiers_point,
-            first_try: legacy.first_try,
-            panic_center_x: legacy.panic_center_x,
-            panic_center_y: legacy.panic_center_y,
-            lasting_panic_runs: legacy.lasting_panic_runs,
-            directed_panic: legacy.directed_panic,
-            list_us: legacy.list_us,
-            list_alerted_us: legacy.list_alerted_us,
-            list_staying_us: legacy.list_staying_us,
-            couldnt_reachpoint: legacy.couldnt_reachpoint,
-            already_on_point: legacy.already_on_point,
-            already_turned: legacy.already_turned,
-            completion_latch_inside_think: legacy.completion_latch_inside_think,
-            likes_to_sit_around: legacy.likes_to_sit_around,
-            special_action: legacy.special_action,
-            remaining_tequila_gulps: legacy.remaining_tequila_gulps,
-            friends_are_alerted: legacy.friends_are_alerted,
-            is_stay_at_home: legacy.is_stay_at_home,
-            locks_flag_field: legacy.locks_flag_field,
-            was_busy: legacy.was_busy,
-            stimulus_queue: legacy.stimulus_queue,
-            script_locked: legacy.script_locked,
-            remember_events: legacy.remember_events,
-            leave_house_number: legacy.leave_house_number,
-            last_hint_actuality: legacy.last_hint_actuality,
-            last_hint_subject: legacy.last_hint_subject,
-            my_door_index: legacy.my_door_index,
-            looking_for_help_because_enemy_seen: legacy.looking_for_help_because_enemy_seen,
-            forgotten_objects: legacy.forgotten_objects,
-            object_of_desire: legacy.object_of_desire,
-            checkpoint_charly: legacy.checkpoint_charly,
-            synchronize_charly: legacy.synchronize_charly,
-            synchronize_index: legacy.synchronize_index,
-            delta_sorrow_level: legacy.delta_sorrow_level,
-            missed_in_action: legacy.missed_in_action,
-            frame_when_enemy_detected: legacy.frame_when_enemy_detected,
-            inside_halt_method: legacy.inside_halt_method,
-            synchronizing_actors: legacy.synchronizing_actors,
-            default_path_walking_flags: legacy.default_path_walking_flags,
-            forbidden_remark_ids: legacy.forbidden_remark_ids,
-            initial_view_cone: legacy.initial_view_cone,
-            current_remark: legacy.current_remark,
-            current_remark_flags: legacy.current_remark_flags,
-            next_macro_rand: legacy.next_macro_rand,
-            next_macro_rand_forecasted: legacy.next_macro_rand_forecasted,
-            current_emoticon_type: legacy.current_emoticon_type,
-            emoticon_expiration_date: legacy.emoticon_expiration_date,
-            emoticon_has_expiration_date: legacy.emoticon_has_expiration_date,
-            my_reconnaissance_report: legacy.my_reconnaissance_report,
-            knocked_out_in_money_fight: legacy.knocked_out_in_money_fight,
-            looted_after_money_fight: legacy.looted_after_money_fight,
-            patrol_chief: legacy.patrol_chief,
-            patrol: legacy.patrol,
-            missed_patrol_members: legacy.missed_patrol_members,
-            theoretical_patrol: legacy.theoretical_patrol,
-            patrol_stopped: legacy.patrol_stopped,
-            patrol_direction: legacy.patrol_direction,
-            needs_patrol_reinit: legacy.needs_patrol_reinit,
-            got_the_beggar_trick: legacy.got_the_beggar_trick,
-            ai_log: legacy.ai_log,
-            debug_view_cone_enabled: legacy.debug_view_cone_enabled,
-            last_goto_destination: legacy.last_goto_destination,
-            last_goto_flags: legacy.last_goto_flags,
-            stuck_counter: legacy.stuck_counter,
-            outbox: legacy.outbox,
-            has_script_filter_override: legacy.has_script_filter_override,
-            last_synced_focus_target: legacy.last_synced_focus_target,
-            initial_position: legacy.initial_position,
-            initial_view_direction: legacy.initial_view_direction,
-            max_visibility: legacy.max_visibility,
-            cached_frame: legacy.cached_frame,
-            cached_in_building: legacy.cached_in_building,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -529,39 +408,9 @@ impl LegacyWire for AiGlobalState {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyAiGlobalState::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyAiGlobalState = serde_json::from_str(json).unwrap();
-        Self {
-            green_alert_soldiers: legacy.green_alert_soldiers,
-            yellow_alert_soldiers: legacy.yellow_alert_soldiers,
-            red_alert_soldiers: legacy.red_alert_soldiers,
-            soldier_camps: legacy.soldier_camps,
-            stupid_soldiers_cheat: legacy.stupid_soldiers_cheat,
-            freeze: legacy.freeze,
-            overall_alert_status: legacy.overall_alert_status,
-            overall_villain_alert_status: legacy.overall_villain_alert_status,
-            ambush_points: legacy.ambush_points,
-            seek_points: legacy.seek_points,
-            archery_sectors: legacy.archery_sectors,
-            saved_random_seed: legacy.saved_random_seed,
-            remarks_forbidden_till_frame: legacy.remarks_forbidden_till_frame,
-            forbidden_remarks: legacy.forbidden_remarks,
-            screen_remarks: legacy.screen_remarks,
-            attribute_display: legacy.attribute_display,
-            speech_display: legacy.speech_display,
-            golden_eye_mode: legacy.golden_eye_mode,
-            ezekiel_2517: legacy.ezekiel_2517,
-            current_speech_variant: legacy.current_speech_variant,
-            repulsive_points: legacy.repulsive_points,
-            next_repulsive_point_id: legacy.next_repulsive_point_id,
-            door_seek_infos: legacy.door_seek_infos,
-            reinforcement_doors: legacy.reinforcement_doors,
-            houses: legacy.houses,
-            door_rally_points: legacy.door_rally_points,
-            all_soldier_handles: legacy.all_soldier_handles,
-            primary_target_multiplicity_scratch: legacy.primary_target_multiplicity_scratch,
-            primary_target_multiplicity_initialized: legacy.primary_target_multiplicity_initialized,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -599,12 +448,9 @@ impl LegacyWire for QueuedSelfStimulus {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyQueuedSelfStimulus::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyQueuedSelfStimulus = serde_json::from_str(json).unwrap();
-        Self {
-            stimulus_type: legacy.stimulus_type,
-            origin: legacy.origin,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -654,15 +500,9 @@ impl LegacyWire for Stimulus {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyStimulus::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyStimulus = serde_json::from_str(json).unwrap();
-        Self {
-            stimulus_type: legacy.stimulus_type,
-            info: legacy.info,
-            owner: legacy.owner,
-            to_whole_patrol: legacy.to_whole_patrol,
-            self_origin: legacy.self_origin,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -699,16 +539,9 @@ impl LegacyWire for AiOutbox {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyAiOutbox::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyAiOutbox = serde_json::from_str(json).unwrap();
-        Self {
-            patrol: legacy.patrol,
-            detection: legacy.detection,
-            reentrant: legacy.reentrant,
-            actor: legacy.actor,
-            recovery: legacy.recovery,
-            music: legacy.music,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -737,12 +570,9 @@ impl LegacyWire for AiDetectionOutbox {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyAiDetectionOutbox::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyAiDetectionOutbox = serde_json::from_str(json).unwrap();
-        Self {
-            stimuli: legacy.stimuli,
-            mark_alerted: legacy.mark_alerted,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -810,28 +640,9 @@ impl LegacyWire for AiReentrantOutbox {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyAiReentrantOutbox::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyAiReentrantOutbox = serde_json::from_str(json).unwrap();
-        Self {
-            engine_drains_after_script_go_on: legacy.engine_drains_after_script_go_on,
-            cross_npc_actions: legacy.cross_npc_actions,
-            self_stimuli: legacy.self_stimuli,
-            finish_macro_after_self_stimuli: legacy.finish_macro_after_self_stimuli,
-            owner_work: legacy.owner_work,
-            reconsider_approach_completion_pending: legacy.reconsider_approach_completion_pending,
-            reconsider_approach_replaced_path_waiter: legacy
-                .reconsider_approach_replaced_path_waiter,
-            battle_observe_completion_pending: legacy.battle_observe_completion_pending,
-            look_for_help_completion_pending: legacy.look_for_help_completion_pending,
-            waypoint_script_reach_point: legacy.waypoint_script_reach_point,
-            alert_soldier_completion_pending: legacy.alert_soldier_completion_pending,
-            dead_body_alert_completion_pending: legacy.dead_body_alert_completion_pending,
-            tower_guard_alert_officer_completion_pending: legacy
-                .tower_guard_alert_officer_completion_pending,
-            civilian_report_alert_officer_completion_pending: legacy
-                .civilian_report_alert_officer_completion_pending,
-            brawl_hitting_completion_pending: legacy.brawl_hitting_completion_pending,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -1119,123 +930,9 @@ impl LegacyWire for EnemyAi {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyEnemyAi::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyEnemyAi = serde_json::from_str(json).unwrap();
-        Self {
-            base: legacy.base,
-            pending_special_strike: legacy.pending_special_strike,
-            pending_sword_strike_consideration: legacy.pending_sword_strike_consideration,
-            pending_combat_insult_after_strike_consideration: legacy
-                .pending_combat_insult_after_strike_consideration,
-            missed_pc: legacy.missed_pc,
-            pc_missed: legacy.pc_missed,
-            pc_gone_away_in_this_direction: legacy.pc_gone_away_in_this_direction,
-            frame_when_missed_charly: legacy.frame_when_missed_charly,
-            heard_nets: legacy.heard_nets,
-            detected_something_there: legacy.detected_something_there,
-            investigating_distraction: legacy.investigating_distraction,
-            last_seek_direction_index: legacy.last_seek_direction_index,
-            beggar_to_examine: legacy.beggar_to_examine,
-            beggar_is_npc: legacy.beggar_is_npc,
-            current_task_priority: legacy.current_task_priority,
-            minimal_task_priority: legacy.minimal_task_priority,
-            new_task_priority: legacy.new_task_priority,
-            number_of_different_checkpoints: legacy.number_of_different_checkpoints,
-            thirsty: legacy.thirsty,
-            position_change_locked_for_test: legacy.position_change_locked_for_test,
-            other_bodies_to_examine: legacy.other_bodies_to_examine,
-            beggars_to_control: legacy.beggars_to_control,
-            positions_of_beggars_to_control: legacy.positions_of_beggars_to_control,
-            seen_dead_body: legacy.seen_dead_body,
-            seeking_charly: legacy.seeking_charly,
-            my_seek_points: legacy.my_seek_points,
-            personal_seek_point_1: legacy.personal_seek_point_1,
-            personal_seek_point_2: legacy.personal_seek_point_2,
-            seek_center: legacy.seek_center,
-            actual_seek_point: legacy.actual_seek_point,
-            seek_point_view_directions: legacy.seek_point_view_directions,
-            seek_flags: legacy.seek_flags,
-            old_odds: legacy.old_odds,
-            gather_position: legacy.gather_position,
-            gather_direction: legacy.gather_direction,
-            gather_position_instructed: legacy.gather_position_instructed,
-            search_charly_way: legacy.search_charly_way,
-            officers_position: legacy.officers_position,
-            previous_state: legacy.previous_state,
-            previous_substate: legacy.previous_substate,
-            reported_to_officer: legacy.reported_to_officer,
-            missed_soldier_timer: legacy.missed_soldier_timer,
-            old_money: legacy.old_money,
-            other_seen_money: legacy.other_seen_money,
-            other_seen_ale: legacy.other_seen_ale,
-            money_fight_enemies: legacy.money_fight_enemies,
-            money_fight_victims: legacy.money_fight_victims,
-            archer_behind_me: legacy.archer_behind_me,
-            shield_bearer_before_me: legacy.shield_bearer_before_me,
-            shield_bearer_direction: legacy.shield_bearer_direction,
-            phalanx_aborted: legacy.phalanx_aborted,
-            changed_to_alert_path: legacy.changed_to_alert_path,
-            already_seen_bodies: legacy.already_seen_bodies,
-            alerted_us: legacy.alerted_us,
-            pending_alert_soldier_candidates: legacy.pending_alert_soldier_candidates,
-            pending_group_instruction_candidates: legacy.pending_group_instruction_candidates,
-            pending_group_instruction_seek_flags: legacy.pending_group_instruction_seek_flags,
-            pending_group_instruction_clear_location_after_accept: legacy
-                .pending_group_instruction_clear_location_after_accept,
-            my_shooting_point: legacy.my_shooting_point,
-            my_archery_sector: legacy.my_archery_sector,
-            my_archery_sector_index: legacy.my_archery_sector_index,
-            my_archery_point_index: legacy.my_archery_point_index,
-            my_archery_point_increment: legacy.my_archery_point_increment,
-            enemy_seen_below: legacy.enemy_seen_below,
-            enemy_had_this_elevation: legacy.enemy_had_this_elevation,
-            known_enemy_strike_1: legacy.known_enemy_strike_1,
-            known_enemy_strike_2: legacy.known_enemy_strike_2,
-            known_enemy_strike_3: legacy.known_enemy_strike_3,
-            return_to_patrol_point: legacy.return_to_patrol_point,
-            fleeing_seen_enemy_counter: legacy.fleeing_seen_enemy_counter,
-            last_stimulus_dispatched_to_patrol: legacy.last_stimulus_dispatched_to_patrol,
-            character_id: legacy.character_id,
-            old_life_points: legacy.old_life_points,
-            initial_life_points: legacy.initial_life_points,
-            list_them: legacy.list_them,
-            ambush_point_array_reset: legacy.ambush_point_array_reset,
-            ambush_point_status: legacy.ambush_point_status,
-            forced_next_battle_decision: legacy.forced_next_battle_decision,
-            reset_battle_decision: legacy.reset_battle_decision,
-            soldier_profile_iq: legacy.soldier_profile_iq,
-            soldier_profile_courage: legacy.soldier_profile_courage,
-            soldier_profile_shooting: legacy.soldier_profile_shooting,
-            soldier_profile_vip: legacy.soldier_profile_vip,
-            soldier_profile_bee_time: legacy.soldier_profile_bee_time,
-            soldier_profile_pride: legacy.soldier_profile_pride,
-            soldier_profile_hearing_factor: legacy.soldier_profile_hearing_factor,
-            soldier_profile_rank: legacy.soldier_profile_rank,
-            soldier_profile_initiative: legacy.soldier_profile_initiative,
-            soldier_profile_beer: legacy.soldier_profile_beer,
-            ale_reliable_distraction: legacy.ale_reliable_distraction,
-            soldier_profile_money: legacy.soldier_profile_money,
-            soldier_profile_apple: legacy.soldier_profile_apple,
-            soldier_profile_whistle: legacy.soldier_profile_whistle,
-            soldier_profile_duty: legacy.soldier_profile_duty,
-            soldier_profile_endurance: legacy.soldier_profile_endurance,
-            is_vip: legacy.is_vip,
-            sword_range: legacy.sword_range,
-            hth_weapon_id: legacy.hth_weapon_id,
-            sword_is_charge_weapon: legacy.sword_is_charge_weapon,
-            next_sword_strike_frame: legacy.next_sword_strike_frame,
-            company_number: legacy.company_number,
-            left_combat_neighbour: legacy.left_combat_neighbour,
-            right_combat_neighbour: legacy.right_combat_neighbour,
-            attentive: legacy.attentive,
-            will_be_attentive: legacy.will_be_attentive,
-            forced_attentive: legacy.forced_attentive,
-            guarded_pc: legacy.guarded_pc,
-            my_line_jump: legacy.my_line_jump,
-            tower_guard: legacy.tower_guard,
-            combat_trainer: legacy.combat_trainer,
-            is_archer_unit: legacy.is_archer_unit,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }
 
@@ -1272,15 +969,8 @@ impl LegacyWire for FriendlyAi {
     fn legacy_native_bytes(&self) -> Vec<u8> {
         bitcode::encode(&LegacyFriendlyAi::capture(self))
     }
-    fn legacy_from_json(json: &str) -> Self {
+    fn legacy_decoded_bytes_and_hash(json: &str) -> (Vec<u8>, u64) {
         let legacy: LegacyFriendlyAi = serde_json::from_str(json).unwrap();
-        Self {
-            base: legacy.base,
-            beggar_dont_talk_counter: legacy.beggar_dont_talk_counter,
-            fleeing_seen_enemy_counter: legacy.fleeing_seen_enemy_counter,
-            wants_to_talk: legacy.wants_to_talk,
-            last_talk_partner: legacy.last_talk_partner,
-            can_go_away: legacy.can_go_away,
-        }
+        (bitcode::encode(&legacy), compute(&legacy))
     }
 }

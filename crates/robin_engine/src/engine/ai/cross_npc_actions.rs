@@ -1046,7 +1046,7 @@ impl EngineInner {
             // Any condolations the drain above queued (sequences that
             // got preempted by the side effects) fire here — which may
             // push EventDone / EventImpossible into pending_self_stimuli.
-            self.dispatch_condolations_for_npc(sim, npc_id, assets);
+            self.dispatch_condolations(sim, assets);
 
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.

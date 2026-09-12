@@ -6,6 +6,9 @@ use legacy::LegacyWire;
 // The test-only legacy declarations are independent of the projections.
 // Check field order, optional-handle tags, defaults, native layout and hash
 // semantics without putting a serializer on the capture path.
+// Compare decoded oracle values directly, without another mapping into the
+// runtime. Production capture remains exhaustive over runtime fields; the
+// tests below separately assert reconstruction of skipped runtime-only state.
 macro_rules! assert_projection_matches_wire {
     ($runtime:expr, $persisted:ty, $live:ty) => {{
         let runtime = $runtime;
@@ -16,16 +19,14 @@ macro_rules! assert_projection_matches_wire {
         let persisted = <$persisted>::capture(&runtime);
         assert_eq!(serde_json::to_string(&persisted).unwrap(), json);
         let restored = persisted.into_runtime();
-        let legacy = <$live as LegacyWire>::legacy_from_json(&json);
+        let (legacy_bytes, legacy_hash) =
+            <$live as LegacyWire>::legacy_decoded_bytes_and_hash(&json);
         assert_eq!(serde_json::to_string(&restored).unwrap(), json);
-        assert_eq!(bitcode::encode(&restored), bitcode::encode(&legacy));
+        assert_eq!(bitcode::encode(&restored), legacy_bytes);
         assert_eq!(bitcode::encode(&restored), bitcode::encode(&runtime));
-        assert_eq!(compute(&restored), compute(&legacy));
+        assert_eq!(compute(&restored), legacy_hash);
         let dto: $persisted = serde_json::from_str(&json).unwrap();
-        assert_eq!(
-            bitcode::encode(&dto.into_runtime()),
-            bitcode::encode(&legacy)
-        );
+        assert_eq!(bitcode::encode(&dto.into_runtime()), legacy_bytes);
         restored
     }};
 }
