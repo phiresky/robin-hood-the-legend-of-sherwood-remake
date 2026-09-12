@@ -1221,14 +1221,17 @@ impl EngineInner {
         };
 
         // Read the entity's current sector before the change.
-        let current_sector = self
+        let (current_sector, is_pc) = self
             .get_entity(entity_id)
             .map(|entity| {
+                (
                     entity.element_data().sector().unwrap_or_else(|| {
                         panic!(
                             "PassDoor callback for {entity_id:?}, door {door_index} has no source sector"
                         )
-                    })
+                    }),
+                    entity.is_pc(),
+                )
             })
             .unwrap_or_else(|| {
                 panic!("PassDoor callback for door {door_index} lost owner {entity_id:?}")

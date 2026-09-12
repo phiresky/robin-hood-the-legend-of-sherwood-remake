@@ -711,6 +711,12 @@ pub struct MinimapDisplayRequest {
     pub restore_position: bool,
 }
 
+impl robin_util::state_hash::StateHash for MinimapDisplayRequest {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.show, self.restore_position).state_hash(state);
+    }
+}
+
 impl From<(bool, bool)> for MinimapDisplayRequest {
     fn from((show, restore_position): (bool, bool)) -> Self {
         Self {
@@ -729,6 +735,8 @@ impl From<MinimapDisplayRequest> for (bool, bool) {
 #[cfg(test)]
 mod minimap_display_request_tests {
     use super::MinimapDisplayRequest;
+    use robin_util::state_hash::StateHash;
+    use std::hash::Hasher;
 
     #[test]
     fn named_flags_retain_tuple_json_and_native_bytes() {
@@ -739,6 +747,11 @@ mod minimap_display_request_tests {
                 let json = serde_json::to_string(&request).unwrap();
                 assert_eq!(json, serde_json::to_string(&tuple).unwrap());
                 assert_eq!(bitcode::encode(&request), bitcode::encode(&tuple));
+                let mut named_hash = std::collections::hash_map::DefaultHasher::new();
+                let mut tuple_hash = std::collections::hash_map::DefaultHasher::new();
+                request.state_hash(&mut named_hash);
+                tuple.state_hash(&mut tuple_hash);
+                assert_eq!(named_hash.finish(), tuple_hash.finish());
                 let decoded: MinimapDisplayRequest = serde_json::from_str(&json).unwrap();
                 assert_eq!((decoded.show, decoded.restore_position), tuple);
             }
