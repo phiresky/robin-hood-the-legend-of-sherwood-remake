@@ -148,14 +148,21 @@ fn decode_group(group: Group) -> Result<Vec<RuntimeSprite>> {
 }
 
 pub fn read(path: &Path) -> Result<HackableRhsCache> {
-    let compressed = std::fs::read(path).with_context(|| path.display().to_string())?;
+    let compressed = admission::read_compressed(path)?;
     read_bytes(&compressed, &path.display().to_string())
 }
 
 pub fn read_bytes(compressed: &[u8], source: &str) -> Result<HackableRhsCache> {
-    let bytes = zstd::stream::decode_all(compressed)?;
+    let bytes = admission::decompress(compressed)?;
     ensure!(bytes.starts_with(MAGIC), "unsupported custom VQ format");
     let mut bundle: Bundle = bitcode::decode(&bytes[MAGIC.len()..])?;
+    drop(bytes);
+    admission::validate_frames(
+        bundle
+            .groups
+            .iter()
+            .flat_map(|group| group.sizes.iter().copied()),
+    )?;
     ensure!(
         matches!(bundle.metadata.version, 2 | HACKABLE_RHS_CACHE_VERSION),
         "unsupported VQ profile metadata version"
@@ -240,6 +247,30 @@ pub fn encode_custom_sprite_dir(source: &Path, destination: &Path) -> Result<usi
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundle_rejects_oversized_frames_before_decoding_groups() {
+        let bundle = Bundle {
+            metadata: HackableRhsCache {
+                version: HACKABLE_RHS_CACHE_VERSION,
+                manifest_hash: [0; 32],
+                sources: Vec::new(),
+                frames: Vec::new(),
+                profiles: Vec::new(),
+            },
+            groups: vec![Group {
+                dictionary: vec![[0; 4]],
+                sizes: vec![(u16::MAX, u16::MAX)],
+                // Deliberately invalid: admission must fail before the codec.
+                blob: Vec::new(),
+            }],
+        };
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend(bitcode::encode(&bundle));
+        let compressed = zstd::stream::encode_all(bytes.as_slice(), 1).unwrap();
+        let error = read_bytes(&compressed, "oversized fixture").unwrap_err();
+        assert!(error.to_string().contains("pixels"), "{error:#}");
+    }
 
     #[test]
     fn portable_bundle_loads_without_source_pngs_or_manifest() {
