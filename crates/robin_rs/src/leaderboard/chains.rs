@@ -49,6 +49,7 @@ impl CampaignChainStore {
         }
     }
 
+    #[cfg(test)]
     pub fn receipts(&self) -> &[CampaignChainReceiptV1] {
         &self.receipts
     }

@@ -682,6 +682,7 @@ impl MissionEndLeaderboardBackground {
         }
     }
 
+    #[cfg(test)]
     pub fn active_count(&self) -> usize {
         self.active.len()
     }
