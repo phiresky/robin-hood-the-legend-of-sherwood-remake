@@ -468,7 +468,11 @@ mod tests {
             let mut manual_pause = manual;
             let input = MissionInput::new(
                 crate::input::ThreadedInput::new(),
-                crate::input_translator::InputTranslator::new(640.0, 480.0),
+                crate::input_translator::InputTranslator::new(
+                    640.0,
+                    480.0,
+                    &crate::key_config::KeyConfig::default_preset(),
+                ),
             );
             let prepared = finalize_pre_tick(
                 MissionPreTickPhase {

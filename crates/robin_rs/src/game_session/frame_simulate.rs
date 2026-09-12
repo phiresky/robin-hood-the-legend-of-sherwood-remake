@@ -1106,7 +1106,7 @@ impl InteractiveFrameSimulation {
                             let height_u16 = logical_height as u16;
                             host.frontend.viewport.set_screen_size(width, height);
                             game.set_resolution(width_u16, height_u16);
-                            input.resize(logical_width, logical_height, &result.key_config);
+                            input.resize(logical_width, logical_height);
                             hud.resize(logical_width, logical_height);
                             if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
                                 dispatch_local_command(
@@ -1126,7 +1126,8 @@ impl InteractiveFrameSimulation {
                                 );
                             }
                             game.reshow_campaign_map();
-                        } else if result.key_config_changed {
+                        }
+                        if result.key_config_changed {
                             input
                                 .translator
                                 .load_bindings_from_keyconfig(&result.key_config);

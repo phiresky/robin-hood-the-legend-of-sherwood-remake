@@ -25,7 +25,6 @@ use crate::hud_text::HudFonts;
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::input::ThreadedInput;
 use crate::input_translator::InputTranslator;
-use crate::key_config::KeyConfig;
 use crate::menu::CampaignMapState;
 use crate::renderer::Renderer;
 use crate::sherwood_hud::{
@@ -60,13 +59,14 @@ impl MissionInput {
         }
     }
 
-    pub(super) fn resize(&mut self, width: u32, height: u32, key_config: &KeyConfig) {
+    /// Resize viewport geometry without interrupting held keys or session bindings.
+    pub(super) fn resize(&mut self, width: u32, height: u32) {
         let width = width as f32;
         let height = height as f32;
         self.threaded
             .set_clipping(ScreenBBox::from_coords(0.0, 0.0, width, height));
-        self.translator = InputTranslator::new(width, height);
-        self.translator.load_bindings_from_keyconfig(key_config);
+        self.translator.screen_width = width;
+        self.translator.screen_height = height;
         self.translator.install_hud_dead_zones();
     }
 
@@ -937,7 +937,151 @@ pub(super) struct InteractiveMission {
 
 #[cfg(test)]
 mod tests {
+    use super::MissionInput;
     use super::{CameraPresentationPose, MissionUi, RenderViewState};
+    use crate::input::ThreadedInput;
+    use crate::input_translator::{GameAction, GameKey, InputTranslator, TranslationFlags};
+    use crate::key_config::KeyConfig;
+    use std::collections::BTreeSet;
+    use winit::keyboard::KeyCode;
+
+    fn mission_input() -> MissionInput {
+        let mut translator = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
+        translator.install_hud_dead_zones();
+        MissionInput::new(ThreadedInput::new(), translator)
+    }
+
+    #[test]
+    fn resize_preserves_held_key_edges_and_releases() {
+        let mut input = mission_input();
+        let held = BTreeSet::from([KeyCode::ShiftLeft, KeyCode::NumpadAdd]);
+        assert!(
+            input
+                .translator
+                .translate_keyboard(&held, TranslationFlags::ALL)
+                .contains(&GameAction::KeyShift)
+        );
+        input.resize(1280, 960);
+        assert!(!input.translator.was_key_pressed(KeyCode::ShiftLeft, &held));
+        assert!(
+            input
+                .translator
+                .translate_keyboard(&held, TranslationFlags::ALL)
+                .is_empty()
+        );
+        assert!(
+            input
+                .translator
+                .was_key_released(KeyCode::ShiftLeft, &BTreeSet::new())
+        );
+        let released = input
+            .translator
+            .translate_keyboard(&BTreeSet::new(), TranslationFlags::ALL);
+        assert!(released.contains(&GameAction::KeyReleaseShift));
+        assert!(released.contains(&GameAction::ZoomIn));
+        assert!(
+            input
+                .translator
+                .translate_keyboard(&BTreeSet::new(), TranslationFlags::ALL)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn resize_preserves_deity_bindings_and_user_lock() {
+        let mut input = mission_input();
+        input.translator.deity_call();
+        input.translator.set_user_locked(true);
+        input.resize(1280, 960);
+        assert_eq!(
+            input.translator.get_binding(GameKey::SlowMotion),
+            Some(KeyCode::ScrollLock)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::Teleport),
+            Some(KeyCode::Home)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::RequestInfo),
+            Some(KeyCode::End)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::RecordMovie),
+            Some(KeyCode::NumpadEnter)
+        );
+        assert!(input.translator.translate_mouse(0.0, 400.0, 1).is_empty());
+        assert!(
+            input
+                .translator
+                .translate_keyboard(&BTreeSet::from([KeyCode::ArrowLeft]), TranslationFlags::ALL)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn resize_moves_hud_dead_zones_to_new_edges() {
+        let mut input = mission_input();
+        input.resize(1280, 960);
+        for (x, y) in [
+            (0.0, 930.0),
+            (30.0, 959.0),
+            (1250.0, 959.0),
+            (1279.0, 930.0),
+        ] {
+            assert!(
+                input.translator.translate_mouse(x, y, 0).is_empty(),
+                "HUD edge at {x}, {y}"
+            );
+        }
+        // The old bottom-left strip must no longer suppress the new viewport's left edge.
+        assert!(
+            input
+                .translator
+                .translate_mouse(0.0, 738.0, 0)
+                .contains(&GameAction::ScrollLeft)
+        );
+        assert!(
+            input
+                .translator
+                .translate_mouse(1279.0, 400.0, 0)
+                .contains(&GameAction::ScrollRight)
+        );
+        assert!(
+            input
+                .translator
+                .translate_mouse(640.0, 959.0, 0)
+                .contains(&GameAction::ScrollDown)
+        );
+    }
+
+    #[test]
+    fn options_can_resize_and_reload_bindings_without_resetting_session_state() {
+        let mut input = mission_input();
+        input.translator.deity_call();
+        input.translator.set_user_locked(true);
+        input.resize(1280, 960);
+        input
+            .translator
+            .load_bindings_from_keyconfig(&KeyConfig::alternate_preset());
+        assert_eq!(input.translator.screen_width, 1280.0);
+        assert_eq!(
+            input.translator.get_binding(GameKey::ShowDoors),
+            Some(KeyCode::ShiftRight)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::DisplayMap),
+            Some(KeyCode::NumpadMultiply)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::SlowMotion),
+            Some(KeyCode::ScrollLock)
+        );
+        assert_eq!(
+            input.translator.get_binding(GameKey::DisplayMenu),
+            Some(KeyCode::Escape)
+        );
+        assert!(input.translator.translate_mouse(0.0, 400.0, 1).is_empty());
+    }
 
     #[test]
     fn mission_ui_starts_with_all_blocking_surfaces_closed() {
