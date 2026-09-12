@@ -2475,333 +2475,9 @@ impl AiController {
                 };
                 self.debug_macro_lifecycle(ctx, "opcode_started", opcode);
 
-                match opcode {
-                    MacroOpcode::ReversePath => {
-                        if let Some(ref mut path) = self.patrol_path {
-                            path.flip_forward_movement();
-                        }
-                        continue 'vm;
-                    }
-
-                    MacroOpcode::SkipPoint => {
-                        if let Some(ref mut path) = self.patrol_path {
-                            path.advance();
-                        }
-                        // Last command — return to patrol.
-                        self.number_of_remaining_macro_bytes = 0;
-                        continue 'vm;
-                    }
-
-                    MacroOpcode::GotoPoint => {
-                        let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro_debug(ctx, "goto_point_truncated");
-                            return;
-                        };
-                        if let Some(ref mut path) = self.patrol_path {
-                            // index == current would be a level-designer
-                            // bug; log and continue.
-                            if path.current_waypoint_index as u16 == index {
-                                tracing::warn!(
-                                    "NPC {}: CMD_GOTO_POINT → same waypoint {}",
-                                    self.me,
-                                    index
-                                );
-                            }
-                            path.set_current_index(index as u8);
-                        }
-                        self.number_of_remaining_macro_bytes = 0;
-                        point_already_set = true;
-                        continue 'vm;
-                    }
-
-                    MacroOpcode::FaceTo => {
-                        let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "face_to_truncated");
-                            return;
-                        };
-                        self.current_substate = Substate::DefaultInMacroWaitingForDone;
-                        self.face_direction(direction, ctx);
-                        return;
-                    }
-
-                    MacroOpcode::Wait => {
-                        let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "wait_truncated");
-                            return;
-                        };
-                        self.launch_macro_timer(frames as u32, ctx.frame);
-                        self.debug_macro_lifecycle(ctx, "timer_started", "wait");
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::Check4 => {
-                        let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "check4_friend_truncated");
-                            return;
-                        };
-                        let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "check4_frames_truncated");
-                            return;
-                        };
-                        // Civilians/royalists log a warning but still
-                        // initialize the friend check and exit.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!("NPC {}: CMD_CHECK_4 is illegal for civilians", self.me);
-                        }
-                        self.initialize_friend_check(sim, friend_id, frames, u16::MAX, ctx);
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::Check4Sync => {
-                        let Some(friend_id) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "check4_sync_friend_truncated");
-                            return;
-                        };
-                        let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "check4_sync_frames_truncated");
-                            return;
-                        };
-                        let Some(index) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "check4_sync_index_truncated");
-                            return;
-                        };
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_CHECK_4_SYNC is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.initialize_friend_check(sim, friend_id, frames, index, ctx);
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::StayHere => {
-                        // CMD_STAY_HERE → clear the patrol path
-                        // then exit. The helper already handles
-                        // Macro interruption + initial-position snapshot +
-                        // EventReturnToDuty dispatch, so just exit
-                        // after. (Falling through to the out-of-bytes
-                        // branch would re-run path-advance on top of
-                        // the reset, which is wrong.)
-                        self.assign_new_patrol_path(
-                            PatrolAssignment::ClearPath,
-                            ctx.position,
-                            ctx.direction,
-                            &ctx.hiking_paths,
-                        );
-                        return;
-                    }
-
-                    MacroOpcode::ChangeWay => {
-                        let Some(index) = self.peek_macro_u16() else {
-                            self.break_macro_debug(ctx, "change_way_truncated");
-                            return;
-                        };
-                        // The helper runs break_macro + bounds check
-                        // + gated EventReturnToDuty.  Out-of-range
-                        // indices bail without further effect.
-                        let assignment = match PathId::new(index) {
-                            Some(pid) => PatrolAssignment::Index(pid),
-                            None => PatrolAssignment::ClearPath,
-                        };
-                        let self_stimuli_before = self.outbox.reentrant.self_stimuli.len();
-                        self.assign_new_patrol_path(
-                            assignment,
-                            ctx.position,
-                            ctx.direction,
-                            &ctx.hiking_paths,
-                        );
-                        // CMD_CHANGE_WAY does not stop after
-                        // patrol-path assignment, which synchronously calls
-                        // Think(EVENT_RETURN_TO_DUTY), then the opcode itself
-                        // redundantly breaks the macro and requests
-                        // return to duty again. New patrol assignment's macro cancellation
-                        // has already performed the same state mutation, but
-                        // its nested Think must finish before this second
-                        // actor-specific callback launches its observable movement.
-                        let owner_boundary_positions = ctx
-                            .entity_views
-                            .iter()
-                            .map(|(&handle, view)| (handle, view.position))
-                            .collect();
-                        let assignment_callback =
-                            if self.outbox.reentrant.self_stimuli.len() > self_stimuli_before {
-                                let callback = self
-                                    .outbox
-                                    .reentrant
-                                    .self_stimuli
-                                    .pop()
-                                    .expect("ChangeWay assignment callback disappeared");
-                                assert_eq!(callback, StimulusType::EventReturnToDuty);
-                                Some(callback.stimulus_type)
-                            } else {
-                                None
-                            };
-                        self.outbox.reentrant.owner_work.push(
-                            AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
-                                assignment_callback,
-                                owner_position_before_callback: ctx.position,
-                                owner_boundary_positions,
-                            },
-                        );
-                        self.debug_macro_lifecycle(
-                            ctx,
-                            "owner_work_queued",
-                            "change_way_assignment_tail",
-                        );
-                        return;
-                    }
-
-                    MacroOpcode::Run => {
-                        self.default_path_walking_flags |= GotoFlags::RUN;
-                        // Original recurses before sanitising civilian flags.
-                        // The nested path-completion movement therefore snapshots
-                        // the raw flags into `last_goto_flags`, even though
-                        // movement setup masks them before issuing the movement.
-                        self.execute_next_macro_command(sim, ctx);
-                        if !ctx.self_is_soldier
-                            && self
-                                .default_path_walking_flags
-                                .intersects(GotoFlags::FORBIDDEN_CIVILIANS)
-                        {
-                            tracing::warn!(
-                                me = self.me,
-                                "civilian CMD_RUN with forbidden movement flags — masking",
-                            );
-                            self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
-                        }
-                        return;
-                    }
-
-                    MacroOpcode::Walk => {
-                        self.default_path_walking_flags -= GotoFlags::RUN;
-                        // Same post-recursion sanitation boundary as CMD_RUN.
-                        self.execute_next_macro_command(sim, ctx);
-                        if !ctx.self_is_soldier
-                            && self
-                                .default_path_walking_flags
-                                .intersects(GotoFlags::FORBIDDEN_CIVILIANS)
-                        {
-                            tracing::warn!(
-                                me = self.me,
-                                "civilian CMD_WALK with forbidden movement flags — masking",
-                            );
-                            self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
-                        }
-                        return;
-                    }
-
-                    MacroOpcode::LookLeft => {
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_LOOK_LEFT is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.outbox.actor.look_sidewards = Some(LookDirection::Left);
-                        self.current_substate = Substate::DefaultInMacroWaitingForDone;
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::LookRight => {
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_LOOK_RIGHT is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.outbox.actor.look_sidewards = Some(LookDirection::Right);
-                        self.current_substate = Substate::DefaultInMacroWaitingForDone;
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::Bend => {
-                        let Some(frames) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "bend_truncated");
-                            return;
-                        };
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!("NPC {}: CMD_BEND is illegal for civilians", self.me);
-                        }
-                        self.outbox.actor.look_sidewards = Some(LookDirection::Down);
-                        self.launch_macro_timer(frames as u32, ctx.frame);
-                        self.debug_macro_lifecycle(ctx, "timer_started", "bend");
-                        self.macro_started_in_this_frame = false;
-                        return;
-                    }
-
-                    MacroOpcode::PatrolStop => {
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_PATROL_STOP is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.patrol_stopped = true;
-                        if ctx.self_rank == crate::profiles::ProfileRank::Officer {
-                            self.say(Remark::OfficerStopsPatrol);
-                        }
-                        continue 'vm;
-                    }
-
-                    MacroOpcode::PatrolDirection => {
-                        let Some(direction) = self.read_macro_u16() else {
-                            self.break_macro_debug(ctx, "patrol_direction_truncated");
-                            return;
-                        };
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_PATROL_DIRECTION is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.instruct_patrol_direction_to_patrol_members(direction);
-                        continue 'vm;
-                    }
-
-                    MacroOpcode::PatrolStart => {
-                        // Log-and-proceed for civilians.
-                        if !ctx.self_is_soldier {
-                            tracing::warn!(
-                                "NPC {}: CMD_PATROL_START is illegal for civilians",
-                                self.me
-                            );
-                        }
-                        self.patrol_stopped = false;
-                        if ctx.self_rank == crate::profiles::ProfileRank::Officer {
-                            self.say(Remark::OfficerStartsPatrol);
-                        }
-                        // The original game initializes the patrol synchronously before
-                        // next-macro-command execution. Patrol admission needs the
-                        // engine's entity table, so suspend the macro at the
-                        // owner boundary and resume it after the inline rebuild.
-                        self.outbox.reentrant.owner_work.push(
-                            AiOwnerWork::ResumeMacroAfterPatrolInit {
-                                owner_boundary_positions: ctx
-                                    .entity_views
-                                    .iter()
-                                    .map(|(&handle, view)| (handle, view.position))
-                                    .collect(),
-                            },
-                        );
-                        self.debug_macro_lifecycle(
-                            ctx,
-                            "owner_work_queued",
-                            "resume_macro_after_patrol_init",
-                        );
-                        return;
-                    }
+                match self.execute_macro_opcode(opcode, &mut point_already_set, sim, ctx) {
+                    std::ops::ControlFlow::Continue(()) => continue 'vm,
+                    std::ops::ControlFlow::Break(()) => return,
                 }
             } else {
                 // -- Out of macro bytes: path-advance branch. -------
@@ -5992,5 +5668,323 @@ impl AiController {
             self.outbox.actor.panic_seek_fallback = true;
         }
         false
+    }
+}
+
+impl AiController {
+    /// Execute one decoded patrol opcode, retaining recursive Run/Walk tails.
+    fn execute_macro_opcode(
+        &mut self,
+        opcode: MacroOpcode,
+        point_already_set: &mut bool,
+        sim: &crate::sim_rng::SimulationContext,
+        ctx: &AiContext,
+    ) -> std::ops::ControlFlow<()> {
+        match opcode {
+            MacroOpcode::ReversePath => {
+                if let Some(ref mut path) = self.patrol_path {
+                    path.flip_forward_movement();
+                }
+                return std::ops::ControlFlow::Continue(());
+            }
+
+            MacroOpcode::SkipPoint => {
+                if let Some(ref mut path) = self.patrol_path {
+                    path.advance();
+                }
+                // Last command — return to patrol.
+                self.number_of_remaining_macro_bytes = 0;
+                return std::ops::ControlFlow::Continue(());
+            }
+
+            MacroOpcode::GotoPoint => {
+                let Some(index) = self.peek_macro_u16() else {
+                    self.break_macro_debug(ctx, "goto_point_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                if let Some(ref mut path) = self.patrol_path {
+                    // index == current would be a level-designer
+                    // bug; log and continue.
+                    if path.current_waypoint_index as u16 == index {
+                        tracing::warn!("NPC {}: CMD_GOTO_POINT → same waypoint {}", self.me, index);
+                    }
+                    path.set_current_index(index as u8);
+                }
+                self.number_of_remaining_macro_bytes = 0;
+                *point_already_set = true;
+                return std::ops::ControlFlow::Continue(());
+            }
+
+            MacroOpcode::FaceTo => {
+                let Some(direction) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "face_to_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                self.current_substate = Substate::DefaultInMacroWaitingForDone;
+                self.face_direction(direction, ctx);
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Wait => {
+                let Some(frames) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "wait_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                self.launch_macro_timer(frames as u32, ctx.frame);
+                self.debug_macro_lifecycle(ctx, "timer_started", "wait");
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Check4 => {
+                let Some(friend_id) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "check4_friend_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                let Some(frames) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "check4_frames_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                // Civilians/royalists log a warning but still
+                // initialize the friend check and exit.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_CHECK_4 is illegal for civilians", self.me);
+                }
+                self.initialize_friend_check(sim, friend_id, frames, u16::MAX, ctx);
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Check4Sync => {
+                let Some(friend_id) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "check4_sync_friend_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                let Some(frames) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "check4_sync_frames_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                let Some(index) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "check4_sync_index_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_CHECK_4_SYNC is illegal for civilians", self.me);
+                }
+                self.initialize_friend_check(sim, friend_id, frames, index, ctx);
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::StayHere => {
+                // CMD_STAY_HERE → clear the patrol path
+                // then exit. The helper already handles
+                // Macro interruption + initial-position snapshot +
+                // EventReturnToDuty dispatch, so just exit
+                // after. (Falling through to the out-of-bytes
+                // branch would re-run path-advance on top of
+                // the reset, which is wrong.)
+                self.assign_new_patrol_path(
+                    PatrolAssignment::ClearPath,
+                    ctx.position,
+                    ctx.direction,
+                    &ctx.hiking_paths,
+                );
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::ChangeWay => {
+                let Some(index) = self.peek_macro_u16() else {
+                    self.break_macro_debug(ctx, "change_way_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                // The helper runs break_macro + bounds check
+                // + gated EventReturnToDuty.  Out-of-range
+                // indices bail without further effect.
+                let assignment = match PathId::new(index) {
+                    Some(pid) => PatrolAssignment::Index(pid),
+                    None => PatrolAssignment::ClearPath,
+                };
+                let self_stimuli_before = self.outbox.reentrant.self_stimuli.len();
+                self.assign_new_patrol_path(
+                    assignment,
+                    ctx.position,
+                    ctx.direction,
+                    &ctx.hiking_paths,
+                );
+                // CMD_CHANGE_WAY does not stop after
+                // patrol-path assignment, which synchronously calls
+                // Think(EVENT_RETURN_TO_DUTY), then the opcode itself
+                // redundantly breaks the macro and requests
+                // return to duty again. New patrol assignment's macro cancellation
+                // has already performed the same state mutation, but
+                // its nested Think must finish before this second
+                // actor-specific callback launches its observable movement.
+                let owner_boundary_positions = ctx
+                    .entity_views
+                    .iter()
+                    .map(|(&handle, view)| (handle, view.position))
+                    .collect();
+                let assignment_callback =
+                    if self.outbox.reentrant.self_stimuli.len() > self_stimuli_before {
+                        let callback = self
+                            .outbox
+                            .reentrant
+                            .self_stimuli
+                            .pop()
+                            .expect("ChangeWay assignment callback disappeared");
+                        assert_eq!(callback, StimulusType::EventReturnToDuty);
+                        Some(callback.stimulus_type)
+                    } else {
+                        None
+                    };
+                self.outbox.reentrant.owner_work.push(
+                    AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
+                        assignment_callback,
+                        owner_position_before_callback: ctx.position,
+                        owner_boundary_positions,
+                    },
+                );
+                self.debug_macro_lifecycle(ctx, "owner_work_queued", "change_way_assignment_tail");
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Run => {
+                self.default_path_walking_flags |= GotoFlags::RUN;
+                // Original recurses before sanitising civilian flags.
+                // The nested path-completion movement therefore snapshots
+                // the raw flags into `last_goto_flags`, even though
+                // movement setup masks them before issuing the movement.
+                self.execute_next_macro_command(sim, ctx);
+                if !ctx.self_is_soldier
+                    && self
+                        .default_path_walking_flags
+                        .intersects(GotoFlags::FORBIDDEN_CIVILIANS)
+                {
+                    tracing::warn!(
+                        me = self.me,
+                        "civilian CMD_RUN with forbidden movement flags — masking",
+                    );
+                    self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
+                }
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Walk => {
+                self.default_path_walking_flags -= GotoFlags::RUN;
+                // Same post-recursion sanitation boundary as CMD_RUN.
+                self.execute_next_macro_command(sim, ctx);
+                if !ctx.self_is_soldier
+                    && self
+                        .default_path_walking_flags
+                        .intersects(GotoFlags::FORBIDDEN_CIVILIANS)
+                {
+                    tracing::warn!(
+                        me = self.me,
+                        "civilian CMD_WALK with forbidden movement flags — masking",
+                    );
+                    self.default_path_walking_flags -= GotoFlags::FORBIDDEN_CIVILIANS;
+                }
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::LookLeft => {
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_LOOK_LEFT is illegal for civilians", self.me);
+                }
+                self.outbox.actor.look_sidewards = Some(LookDirection::Left);
+                self.current_substate = Substate::DefaultInMacroWaitingForDone;
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::LookRight => {
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_LOOK_RIGHT is illegal for civilians", self.me);
+                }
+                self.outbox.actor.look_sidewards = Some(LookDirection::Right);
+                self.current_substate = Substate::DefaultInMacroWaitingForDone;
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::Bend => {
+                let Some(frames) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "bend_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_BEND is illegal for civilians", self.me);
+                }
+                self.outbox.actor.look_sidewards = Some(LookDirection::Down);
+                self.launch_macro_timer(frames as u32, ctx.frame);
+                self.debug_macro_lifecycle(ctx, "timer_started", "bend");
+                self.macro_started_in_this_frame = false;
+                return std::ops::ControlFlow::Break(());
+            }
+
+            MacroOpcode::PatrolStop => {
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_PATROL_STOP is illegal for civilians", self.me);
+                }
+                self.patrol_stopped = true;
+                if ctx.self_rank == crate::profiles::ProfileRank::Officer {
+                    self.say(Remark::OfficerStopsPatrol);
+                }
+                return std::ops::ControlFlow::Continue(());
+            }
+
+            MacroOpcode::PatrolDirection => {
+                let Some(direction) = self.read_macro_u16() else {
+                    self.break_macro_debug(ctx, "patrol_direction_truncated");
+                    return std::ops::ControlFlow::Break(());
+                };
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!(
+                        "NPC {}: CMD_PATROL_DIRECTION is illegal for civilians",
+                        self.me
+                    );
+                }
+                self.instruct_patrol_direction_to_patrol_members(direction);
+                return std::ops::ControlFlow::Continue(());
+            }
+
+            MacroOpcode::PatrolStart => {
+                // Log-and-proceed for civilians.
+                if !ctx.self_is_soldier {
+                    tracing::warn!("NPC {}: CMD_PATROL_START is illegal for civilians", self.me);
+                }
+                self.patrol_stopped = false;
+                if ctx.self_rank == crate::profiles::ProfileRank::Officer {
+                    self.say(Remark::OfficerStartsPatrol);
+                }
+                // The original game initializes the patrol synchronously before
+                // next-macro-command execution. Patrol admission needs the
+                // engine's entity table, so suspend the macro at the
+                // owner boundary and resume it after the inline rebuild.
+                self.outbox
+                    .reentrant
+                    .owner_work
+                    .push(AiOwnerWork::ResumeMacroAfterPatrolInit {
+                        owner_boundary_positions: ctx
+                            .entity_views
+                            .iter()
+                            .map(|(&handle, view)| (handle, view.position))
+                            .collect(),
+                    });
+                self.debug_macro_lifecycle(
+                    ctx,
+                    "owner_work_queued",
+                    "resume_macro_after_patrol_init",
+                );
+                return std::ops::ControlFlow::Break(());
+            }
+        }
     }
 }

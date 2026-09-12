@@ -1820,9 +1820,9 @@ impl EnemyAi {
                         .find_fighter(archer_behind_me, tick)
                         .map(|f| {
                             let s = f.current_substate;
-                            s == Substate::AttackingBowShooting as u32
-                                || s == Substate::AttackingBowLoading as u32
-                                || s == Substate::AttackingBowAiming as u32
+                            s == Substate::AttackingBowShooting
+                                || s == Substate::AttackingBowLoading
+                                || s == Substate::AttackingBowAiming
                         })
                         .unwrap_or_else(|| {
                             panic!(
