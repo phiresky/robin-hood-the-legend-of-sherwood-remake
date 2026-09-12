@@ -30,6 +30,11 @@
 //! rANS: rANS emits symbols last-in-first-out, which fights adaptive
 //! context models (the decoder must see updates in encode order), while a
 //! range coder is FIFO and pairs with adaptation naturally.
+//! The encoder's five-shift flush is mandatory, including for empty grids.
+//! Decoders consume the entire stream and require a zero final code; no
+//! implicit padding or trailing bytes are accepted. This detects malformed
+//! coding boundaries, not arbitrary corruption (integrity hashes belong to
+//! the enclosing asset format).
 //!
 //! Measured on `datadirs/fullgame_linux` (see COMPRESSION.md): ~-33% vs
 //! zstd-22 standalone, ~3.9x on family variants coded against their base;
@@ -128,6 +133,9 @@ impl RangeEncoder {
         self.low = (self.low << 8) & 0xFFFF_FFFF;
     }
 
+    // Five shifts emit the initial zero cache byte plus four bytes of the
+    // final low value. Together with normalization bytes this is a complete
+    // stream: the decoder never needs implicit padding, even for zero tiles.
     fn finish(mut self) -> Vec<u8> {
         for _ in 0..5 {
             self.shift_low();
@@ -145,33 +153,65 @@ struct RangeDecoder<'a> {
     last_r: u32,
     input: &'a [u8],
     pos: usize,
+    invalid: bool,
 }
 
 impl<'a> RangeDecoder<'a> {
-    fn new(input: &'a [u8]) -> Self {
+    fn new(input: &'a [u8]) -> Result<Self> {
+        if input.len() < 5 || input[0] != 0 {
+            return Err(anyhow!(
+                "invalid range stream: missing five-byte header or nonzero initial cache byte"
+            ));
+        }
         let mut d = Self {
             range: u32::MAX,
             code: 0,
             last_r: 0,
             input,
             pos: 1, // first byte is the encoder's initial cache byte (0)
+            invalid: false,
         };
         for _ in 0..4 {
             d.code = (d.code << 8) | d.next_byte() as u32;
         }
-        d
+        Ok(d)
     }
 
     fn next_byte(&mut self) -> u8 {
-        let b = self.input.get(self.pos).copied().unwrap_or(0);
+        let Some(&b) = self.input.get(self.pos) else {
+            // Defer propagation through the model's hot internal helpers to
+            // the enclosing tile boundary. No output from a failed tile is
+            // returned, and a truncated stream cannot keep decoding tiles.
+            self.invalid = true;
+            return 0;
+        };
         self.pos += 1;
         b
+    }
+
+    fn check(&self) -> Result<()> {
+        if self.invalid {
+            return Err(anyhow!(
+                "invalid or truncated range stream at byte {}",
+                self.pos
+            ));
+        }
+        Ok(())
+    }
+
+    fn finish(&self) -> Result<()> {
+        self.check()?;
+        if self.pos != self.input.len() || self.code != 0 {
+            return Err(anyhow!("invalid range stream termination"));
+        }
+        Ok(())
     }
 
     /// Decoder mirror of [`RangeEncoder::encode_bit`]: same probability
     /// state, same update, multiply-only.
     #[inline]
     fn decode_bit(&mut self, p: &mut u16) -> bool {
+        self.invalid |= self.code >= self.range;
         let bound = (self.range >> PROB_BITS) * (*p as u32);
         let bit = if self.code < bound {
             self.range = bound;
@@ -193,9 +233,12 @@ impl<'a> RangeDecoder<'a> {
     /// Returns a value in `[0, total)`; caller finds the symbol whose
     /// interval contains it and confirms with `commit`.
     fn decode_target(&mut self, total: u32) -> u32 {
+        self.invalid |= self.code >= self.range;
         let r = self.range / total;
         self.last_r = r;
-        (self.code / r).min(total - 1)
+        let target = self.code / r;
+        self.invalid |= target >= total;
+        target.min(total - 1)
     }
 
     /// Must directly follow the [`Self::decode_target`] call whose `total`
@@ -1549,7 +1592,7 @@ pub fn decode_grids_auxref(
             dims.len()
         ));
     }
-    let mut dec = RangeDecoder::new(blob);
+    let mut dec = RangeDecoder::new(blob)?;
     let mut model = Model::new(alphabet, false, aux.iter().any(Option::is_some));
     let mut out = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
@@ -1566,9 +1609,11 @@ pub fn decode_grids_auxref(
             let left = if i % cols > 0 { g[i - 1] } else { EDGE };
             let a = aux_tile(&aux[gi], i, cols);
             g.push(model.decode_sym_aux(&mut dec, a, above, left));
+            dec.check()?;
         }
         out.push(g);
     }
+    dec.finish()?;
     Ok(out)
 }
 
@@ -1712,7 +1757,7 @@ pub fn decode_grids_shipping(
             ));
         }
     }
-    let mut dec = RangeDecoder::new(blob);
+    let mut dec = RangeDecoder::new(blob)?;
     let mut model = Model::new(
         alphabet,
         base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
@@ -1773,10 +1818,12 @@ pub fn decode_grids_shipping(
                     _ => model.decode_sym_aux(&mut dec, aux_tile_at(&aux, col, row), above, left),
                 };
                 g.push(x);
+                dec.check()?;
             }
         }
         out.push(g);
     }
+    dec.finish()?;
     Ok(out)
 }
 
@@ -1822,7 +1869,7 @@ pub fn decode_grids_multi(
             ));
         }
     }
-    let mut dec = RangeDecoder::new(blob);
+    let mut dec = RangeDecoder::new(blob)?;
     let mut model = Model::new(
         alphabet,
         base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
@@ -1854,15 +1901,168 @@ pub fn decode_grids_multi(
                 _ => model.decode_sym(&mut dec, above, left),
             };
             g.push(x);
+            dec.check()?;
         }
         out.push(g);
     }
+    dec.finish()?;
     Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_stream_requires_explicit_header_and_complete_flush() {
+        let blob = encode_grids(8, &[], None).unwrap();
+        assert_eq!(blob, [0; 5]);
+        assert!(decode_grids(8, &[], None, &blob).unwrap().is_empty());
+        for len in 0..blob.len() {
+            assert!(decode_grids(8, &[], None, &blob[..len]).is_err());
+            assert!(decode_grids_auxref(8, &[], &[], &blob[..len]).is_err());
+            assert!(decode_grids_shipping(8, &[], None, None, &[], &blob[..len]).is_err());
+        }
+        for bad in [&[1, 0, 0, 0, 0][..], &[0, 0, 0, 0, 1], &[0; 6]] {
+            assert!(decode_grids(8, &[], None, bad).is_err());
+        }
+        assert!(decode_grids(8, &[(1, 1)], None, &[0, 255, 255, 255, 255]).is_err());
+    }
+
+    #[test]
+    fn all_grid_decoders_reject_every_truncated_prefix() {
+        let indices: Vec<u16> = (0..128).map(|i| ((i * 37 + i / 7) % 251) as u16).collect();
+        let grids = [SpriteGrid {
+            cols: 16,
+            rows: 8,
+            indices: &indices,
+        }];
+        let dims = [(16, 8)];
+        let plain = encode_grids(251, &grids, None).unwrap();
+        let aux = encode_grids_auxref(251, &grids, &[None]).unwrap();
+        let shipping = encode_grids_shipping(251, &grids, None, None, &[None]).unwrap();
+        assert_eq!(
+            decode_grids(251, &dims, None, &plain).unwrap(),
+            [indices.clone()]
+        );
+        assert_eq!(
+            decode_grids_auxref(251, &dims, &[None], &aux).unwrap(),
+            [indices.clone()]
+        );
+        assert_eq!(
+            decode_grids_shipping(251, &dims, None, None, &[None], &shipping).unwrap(),
+            [indices]
+        );
+        for len in 0..plain.len() {
+            assert!(
+                decode_grids(251, &dims, None, &plain[..len]).is_err(),
+                "plain prefix {len}"
+            );
+        }
+        for len in 0..aux.len() {
+            assert!(
+                decode_grids_auxref(251, &dims, &[None], &aux[..len]).is_err(),
+                "aux prefix {len}"
+            );
+        }
+        for len in 0..shipping.len() {
+            assert!(
+                decode_grids_shipping(251, &dims, None, None, &[None], &shipping[..len]).is_err(),
+                "shipping prefix {len}"
+            );
+        }
+    }
+
+    #[test]
+    fn complete_flush_roundtrips_across_alphabets_and_reference_modes() {
+        let mut state = 0x120c0de_u64;
+        for alphabet in [1, 2, 3, 251, 256, 4096, u16::MAX] {
+            for (cols, rows) in [(0, 0), (1, 1), (7, 9), (17, 13)] {
+                let values: Vec<Vec<u16>> = (0..3)
+                    .map(|_| {
+                        (0..usize::from(cols) * usize::from(rows))
+                            .map(|_| {
+                                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                                ((state >> 32) % u64::from(alphabet)) as u16
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let grids: Vec<_> = values
+                    .iter()
+                    .map(|indices| SpriteGrid {
+                        cols,
+                        rows,
+                        indices,
+                    })
+                    .collect();
+                let dims = [(cols, rows); 3];
+                let base = [None, Some(values[0].as_slice()), Some(values[0].as_slice())];
+                let base2 = [None, None, Some(values[1].as_slice())];
+                for references in [false, true] {
+                    let b1 = references.then_some(base.as_slice());
+                    let b2 = references.then_some(base2.as_slice());
+                    let blob = encode_grids_multi(alphabet, &grids, b1, b2).unwrap();
+                    assert_eq!(
+                        decode_grids_multi(alphabet, &dims, b1, b2, &blob).unwrap(),
+                        values
+                    );
+                }
+                let aux = [
+                    None,
+                    Some(AuxRef {
+                        indices: &values[0],
+                        cols,
+                        rows,
+                        dtx: 1,
+                        dy: -1,
+                    }),
+                    Some(AuxRef {
+                        indices: &values[1],
+                        cols,
+                        rows,
+                        dtx: -1,
+                        dy: 1,
+                    }),
+                ];
+                let blob = encode_grids_auxref(alphabet, &grids, &aux).unwrap();
+                assert_eq!(
+                    decode_grids_auxref(alphabet, &dims, &aux, &blob).unwrap(),
+                    values
+                );
+                let shipping_base = [None, None, Some(values[0].as_slice())];
+                let selfref = [
+                    None,
+                    Some(SelfRef {
+                        grid: 0,
+                        dtx: -1,
+                        dy: 1,
+                    }),
+                    None,
+                ];
+                let blob = encode_grids_shipping(
+                    alphabet,
+                    &grids,
+                    Some(&shipping_base),
+                    Some(&base2),
+                    &selfref,
+                )
+                .unwrap();
+                assert_eq!(
+                    decode_grids_shipping(
+                        alphabet,
+                        &dims,
+                        Some(&shipping_base),
+                        Some(&base2),
+                        &selfref,
+                        &blob
+                    )
+                    .unwrap(),
+                    values
+                );
+            }
+        }
+    }
 
     #[test]
     fn singleton_hit_and_escape_preserve_the_following_range_interval() {
@@ -1884,7 +2084,7 @@ mod tests {
                 }
             }
             let blob = enc.finish();
-            let mut dec = RangeDecoder::new(&blob);
+            let mut dec = RangeDecoder::new(&blob).unwrap();
             let mut decode_see = See::new();
             let mut excl = Excl::new(4096);
             for &count in &counts {
@@ -1906,6 +2106,7 @@ mod tests {
                 }
             }
             assert_eq!(encode_see.prob, decode_see.prob);
+            dec.finish().unwrap();
         }
     }
 
