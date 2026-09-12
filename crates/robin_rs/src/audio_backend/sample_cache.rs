@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// Cache retention is bounded; active Kira voices own independent Arc clones.
 /// Eviction releases cache ownership without interrupting playback.
+/// Diagnostic serialization retains only the configured budget; restored caches
+/// begin empty and cannot recreate mixer resources or extend voice lifetimes.
 #[derive(Serialize, Deserialize)]
 pub(super) struct SampleCache {
     // Entry count is unbounded here because residency is governed by bytes.
@@ -32,6 +34,8 @@ impl SampleCache {
         let bytes = std::mem::size_of_val(sample.frames.as_ref());
         // A replacement invalidates the old value even when the new sample
         // is too large to retain. Never serve stale audio under the same key.
+        // Unlike browser content-addressed buffers, native path keys can name
+        // changed content, so a duplicate cannot simply return the old sample.
         if let Some(old) = self.samples.pop(&key) {
             self.resident_bytes -= std::mem::size_of_val(old.frames.as_ref());
         }

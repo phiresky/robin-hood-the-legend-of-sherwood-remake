@@ -84,6 +84,9 @@ fn cache_buffer(
     buffer: AudioBuffer,
 ) -> Result<AudioBuffer, String> {
     session.with_audio(|audio| {
+        // Keys identify immutable content; concurrent decodes must converge on
+        // the resident buffer even if this candidate has a different size.
+        // Native path-keyed samples instead invalidate an old entry on replace.
         if let Some(existing) = audio.assets.buffers.get(&key) {
             return existing.buffer.clone();
         }
