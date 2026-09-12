@@ -186,6 +186,17 @@ class QualitySuitesTests(unittest.TestCase):
                     for name in names
                 ])
 
+    def test_demo_picture_fixture_explicitly_exercises_archive_adapters(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        self.run_suite("fixtures-demo")
+        selected = [call for call in self.calls()
+                    if "picture::tests::original_demo_dialogue_portraits" in call]
+        self.assertEqual(selected, [[
+            "test", "--locked", "-p", "robin_assets", "--features", "engine-adapters",
+            "--lib", "picture::tests::original_demo_dialogue_portraits",
+            "--", "--ignored", "--exact",
+        ]])
+
     def test_host_gate_enables_and_selects_the_real_backend(self):
         self.run_suite("host")
         call = self.calls()[0]
