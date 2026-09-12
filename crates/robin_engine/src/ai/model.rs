@@ -2287,46 +2287,7 @@ pub struct DoorCombatInfo {
 }
 
 #[cfg(test)]
-mod nullable_stimulus_reference_tests {
-    use super::*;
-
-    #[test]
-    fn current_door_adversary_rejects_legacy_bare_zero() {
-        let mut value = serde_json::to_value(DoorCombatInfo {
-            delay: 1,
-            goal: Position::default(),
-            direction: 2,
-            adversary: None,
-        })
-        .unwrap();
-        value["adversary"] = serde_json::json!(0);
-        assert!(serde_json::from_value::<DoorCombatInfo>(value).is_err());
-    }
-
-    #[test]
-    fn door_adversary_slot_zero_round_trips_as_live() {
-        let info = DoorCombatInfo {
-            delay: 1,
-            goal: Position::default(),
-            direction: 2,
-            adversary: Some(AiEntityHandle::new(0)),
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        assert!(json.contains(r#""adversary":{"entity":0}"#));
-        let restored: DoorCombatInfo = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.adversary, Some(AiEntityHandle::new(0)));
-    }
-
-    #[test]
-    fn stimulus_owner_slot_zero_round_trips_as_live() {
-        let mut stimulus = Stimulus::new(StimulusType::NoEvent);
-        stimulus.owner = Some(AiEntityHandle::new(0));
-        let json = serde_json::to_string(&stimulus).unwrap();
-        assert!(json.contains(r#""owner":{"entity":0}"#));
-        let restored: Stimulus = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
-    }
-}
+mod nullable_stimulus_reference_tests;
 
 /// The payload of a [`Stimulus`].
 #[derive(
@@ -2780,47 +2741,7 @@ impl SeekPoint {
 }
 
 #[cfg(test)]
-mod seek_point_tests {
-    use super::{Position, SeekPoint, SeekPointDirection};
-
-    fn direction(x: f32, y: f32, value: u16) -> SeekPointDirection {
-        SeekPointDirection {
-            position: Position {
-                x,
-                y,
-                ..Position::default()
-            },
-            direction: value,
-        }
-    }
-
-    #[test]
-    fn add_if_near_handles_duplicate_without_growing_unique_directions() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(point.add_if_near(&direction(110.0, 190.0, 7)));
-        assert_eq!(point.directions, vec![7]);
-    }
-
-    #[test]
-    fn add_if_near_appends_distinct_direction() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(point.add_if_near(&direction(110.0, 190.0, 12)));
-        assert_eq!(point.directions, vec![7, 12]);
-    }
-
-    #[test]
-    fn add_if_near_rejects_direction_outside_tolerance() {
-        let first = direction(100.0, 200.0, 7);
-        let mut point = SeekPoint::from_direction(&first);
-
-        assert!(!point.add_if_near(&direction(111.0, 200.0, 12)));
-        assert_eq!(point.directions, vec![7]);
-    }
-}
+mod seek_point_tests;
 
 /// A seek-point direction from the level file (position + facing).
 #[derive(
@@ -3107,27 +3028,7 @@ impl DoorSeekInfo {
 }
 
 #[cfg(test)]
-mod door_seek_schema_tests {
-    use super::*;
-
-    #[test]
-    fn current_door_seek_schema_requires_exact_sector_provenance_field() {
-        let info = DoorSeekInfo {
-            door_index: crate::gate::DoorIndex::new(1).unwrap(),
-            door_type: crate::gate::DoorType::Default,
-            point_out: MapPoint::new(1.0, 2.0),
-            position_in: Position::default(),
-            sector_out: 3,
-            sector_out_index: crate::fast_find_grid::SectorIndex::new(4),
-            sector_in: 5,
-            layer_out: 6,
-            npc_villain_authorized_direct: true,
-        };
-        let mut value = serde_json::to_value(info).unwrap();
-        value.as_object_mut().unwrap().remove("sector_out_index");
-        assert!(serde_json::from_value::<DoorSeekInfo>(value).is_err());
-    }
-}
+mod door_seek_schema_tests;
 
 /// Build the static authorization cached by [`DoorSeekInfo`].
 ///

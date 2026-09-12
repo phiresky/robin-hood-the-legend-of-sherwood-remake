@@ -1219,9 +1219,10 @@ pub fn tick_arrows(
         entities,
         sight_obstacles,
         None,
-        None,
-        false,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: None,
+            primed_segment_already_advanced: false,
+        },
         None,
         None,
     )
@@ -1243,9 +1244,10 @@ pub(crate) fn tick_arrow(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         None,
         None,
     )
@@ -1264,9 +1266,10 @@ pub(crate) fn tick_arrow_in_actor_order(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         Some(actor_order),
         None,
     )
@@ -1284,9 +1287,10 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(arrow_id),
-        true,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(arrow_id),
+            primed_segment_already_advanced: true,
+        },
         Some(actor_order),
         Some(diplomacy),
     )
@@ -1294,7 +1298,7 @@ pub(crate) fn tick_arrow_in_actor_order_with_diplomacy(
 
 /// Advance one projectile already present in the engine element array.
 ///
-/// Unlike [`tick_arrow`], this does not treat the projectile's spawn-time
+/// Unlike a spawn-time projectile tick, this does not treat the projectile's spawn-time
 /// priming step as its current-frame advancement. It is used by the engine's
 /// creation-ordered entity pass so projectile and PC hourglasses can retain
 /// their relative element-array order.
@@ -1308,9 +1312,10 @@ pub fn tick_existing_projectile(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(projectile_id),
-        false,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(projectile_id),
+            primed_segment_already_advanced: false,
+        },
         None,
         None,
     )
@@ -1330,24 +1335,33 @@ pub(crate) fn tick_existing_projectile_in_actor_order(
         entities,
         sight_obstacles,
         obstacle_check,
-        Some(projectile_id),
-        false,
-        &[],
+        ArrowTickOptions {
+            only_arrow_id: Some(projectile_id),
+            primed_segment_already_advanced: false,
+        },
         Some(actor_order),
         Some(diplomacy),
     )
+}
+
+#[derive(Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ArrowTickOptions {
+    only_arrow_id: Option<EntityId>,
+    primed_segment_already_advanced: bool,
 }
 
 fn tick_arrows_matching(
     entities: &mut Entities,
     sight_obstacles: crate::sight_obstacle::ObstacleList<'_>,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
-    only_arrow_id: Option<EntityId>,
-    primed_segment_already_advanced: bool,
-    skip_arrow_ids: &[EntityId],
+    options: ArrowTickOptions,
     actor_order: Option<&[EntityId]>,
     diplomacy: Option<&crate::diplomacy::DiplomacyState>,
 ) -> Vec<ArrowTickResult> {
+    let ArrowTickOptions {
+        only_arrow_id,
+        primed_segment_already_advanced,
+    } = options;
     let mut results = Vec::new();
 
     // Snapshot living humans for line-segment hit detection.  Computes
@@ -1569,9 +1583,6 @@ fn tick_arrows_matching(
         if let Some(only_arrow_id) = only_arrow_id
             && only_arrow_id != arrow_id
         {
-            continue;
-        }
-        if skip_arrow_ids.contains(&arrow_id) {
             continue;
         }
         if !entity.element.active {
