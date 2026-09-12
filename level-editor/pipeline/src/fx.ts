@@ -10,6 +10,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { datadirPath } from "./env.ts";
+import { readDocument } from "./inputs.ts";
+import { isMissing } from "./provider-cache.ts";
 
 /**
  * The hackable converter currently exports sprite-bank frames with the RGB565
@@ -57,27 +59,43 @@ export interface RhsProfile {
 
 interface Manifest {
   profiles: RhsProfile[];
+  directory: string;
 }
 
-const manifestCache = new Map<string, Manifest | null>();
-
 async function loadManifest(ambiance: string, bank: string): Promise<Manifest | null> {
-  const key = `${ambiance}/${bank}`;
-  if (manifestCache.has(key)) return manifestCache.get(key)!;
   const dir = path.join(datadirPath(), "Data", "Animations", ambiance);
-  let result: Manifest | null = null;
+  let entries: string[];
   try {
-    const entries = await fs.readdir(dir);
-    const hit = entries.find((e) => e.toLowerCase() === `${bank.toLowerCase()}.rhs.d`);
-    if (hit) {
-      result = JSON.parse(await fs.readFile(path.join(dir, hit, "manifest.json"), "utf8"));
-      (result as Manifest & { _dir?: string })._dir = path.join(dir, hit);
-    }
-  } catch {
-    result = null;
+    entries = await fs.readdir(dir);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw new Error(`cannot read sprite bank directory ${dir}`, { cause: error });
   }
-  manifestCache.set(key, result);
-  return result;
+  const hit = entries.find((e) => e.toLowerCase() === `${bank.toLowerCase()}.rhs.d`);
+  if (!hit) return null;
+  const directory = path.join(dir, hit);
+  const file = path.join(directory, "manifest.json");
+  const value = await readDocument(file, true);
+  if (!value || typeof value !== "object" || !("profiles" in value) || !Array.isArray(value.profiles))
+    throw new Error(`invalid sprite manifest ${file}: expected profiles array`);
+  for (const p of value.profiles) {
+    if (!p || typeof p.name !== "string" || !Array.isArray(p.rows) ||
+        ![p.center_x, p.center_y, p.width, p.height].every(Number.isFinite))
+      throw new Error(`invalid sprite profile in ${file}`);
+    for (const row of p.rows) {
+      if (!row || typeof row.action !== "string" || typeof row.path !== "string" ||
+          ![row.hotspot_x, row.hotspot_y].every(Number.isFinite) || !Array.isArray(row.frames))
+        throw new Error(`invalid sprite row in ${file}`);
+      for (const frame of row.frames) {
+        if (!frame || typeof frame.file !== "string" ||
+            ![frame.offset_x, frame.offset_y].every(Number.isFinite))
+          throw new Error(`invalid sprite frame in ${file}`);
+      }
+    }
+  }
+  // Do not cache authored files globally: changes and previous absence must be
+  // visible to the next operation, including when the datadir changes.
+  return { profiles: value.profiles, directory };
 }
 
 export interface FxSprite {
@@ -108,13 +126,15 @@ export async function loadFxSprite(
   const row = profile.rows[0];
   const frame = row?.frames[0];
   if (!row || !frame) return null;
-  const dir = (manifest as Manifest & { _dir?: string })._dir!;
+  const dir = manifest.directory;
   // single-profile banks store frames directly under <bank>.rhs.d/<row.path>/
   let framePath = path.join(dir, profileName, row.path, frame.file);
   try {
     await fs.access(framePath);
-  } catch {
+  } catch (error) {
+    if (!isMissing(error)) throw new Error(`cannot access sprite frame ${framePath}`, { cause: error });
     framePath = path.join(dir, row.path, frame.file);
+    await fs.access(framePath);
   }
   return {
     framePath,

@@ -2,7 +2,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor } from "@rle/shared";
+import { readAssetDescriptor } from "./library.ts";
 import { expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 import { libraryDir, workDir } from "./env.ts";
 
@@ -18,9 +18,7 @@ async function main() {
   const specs: WallSegmentSpec[] = [];
   const imgs = new Map<string, { path: string; w: number; h: number }>();
   for (const id of SEGS) {
-    const a: AssetDescriptor = JSON.parse(
-      await fs.readFile(path.join(libraryDir, id, "asset.json"), "utf8"),
-    );
+    const a = await readAssetDescriptor(path.join(libraryDir, id, "asset.json"));
     const p = path.join(libraryDir, id, "day.png");
     const m = await sharp(p).metadata();
     specs.push({

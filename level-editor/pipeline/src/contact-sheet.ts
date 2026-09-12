@@ -4,10 +4,9 @@
 //
 //   node src/contact-sheet.ts --map york [--cell 220] [--cols 8]
 //   -> work/<map>-scene/contact.png
-import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
+import { readAssetDescriptor, readLibraryIndex } from "./library.ts";
 import { libraryDir, workDir } from "./env.ts";
 import { fileExists } from "./mesh.ts";
 
@@ -22,15 +21,11 @@ async function main() {
   const cell = Number(get("cell") ?? 220);
   const cols = Number(get("cols") ?? 8);
 
-  const index: LibraryIndexEntry[] = JSON.parse(
-    await fs.readFile(path.join(libraryDir, "index.json"), "utf8"),
-  );
+  const index = await readLibraryIndex(libraryDir, true);
   const items: { id: string; iou: number; tilt: number; panel: Buffer }[] = [];
   for (const e of index) {
     if (e.source_map.toLowerCase() !== map.toLowerCase()) continue;
-    const desc: AssetDescriptor = JSON.parse(
-      await fs.readFile(path.join(libraryDir, e.id, "asset.json"), "utf8"),
-    );
+    const desc = await readAssetDescriptor(path.join(libraryDir, e.id, "asset.json"));
     if (!desc.model) continue;
     const sheet = path.join(workDir, e.id, "fit.png");
     if (!(await fileExists(sheet))) continue;

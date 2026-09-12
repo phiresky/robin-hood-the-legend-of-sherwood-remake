@@ -1,6 +1,116 @@
 import type { Level3D } from "./level3d.ts";
 import type { ProtoLevel } from "./level.ts";
 import type { SceneDoc } from "./scene.ts";
+import type { AssetDescriptor } from "./asset.ts";
+import type { TerrainSpec } from "./terrain.ts";
+
+export function parseTerrainSpec(value: unknown): TerrainSpec {
+  const d = object(value, "terrain");
+  const points = (v: unknown, path: string) =>
+    array(v, path).forEach((p, i) => tuple(p, 2, `${path}[${i}]`));
+  for (const [i, road] of array(d.roads === undefined ? [] : d.roads, "terrain.roads").entries()) {
+    object(road, "road");
+    points(road.points, `terrain.roads[${i}].points`);
+    finite(road.width, "road.width");
+    check(road.width > 0, "road.width", "must be positive");
+  }
+  for (const region of array(d.regions === undefined ? [] : d.regions, "terrain.regions")) {
+    object(region, "region");
+    check(["grass", "dirt", "canopy", "water"].includes(region.material), "region.material", "unsupported material");
+    points(region.polygon, "region.polygon");
+  }
+  for (const wall of array(d.walls === undefined ? [] : d.walls, "terrain.walls")) {
+    object(wall, "wall");
+    text(wall.asset, "wall.asset");
+    points(wall.points, "wall.points");
+    if (wall.segment_set !== undefined)
+      array(wall.segment_set, "wall.segment_set").forEach((id) => text(id, "wall.segment_set[]"));
+    if (wall.spacing !== undefined) {
+      finite(wall.spacing, "wall.spacing");
+      check(wall.spacing > 0, "wall.spacing", "must be positive");
+    }
+  }
+  if (d.swatches !== undefined) {
+    for (const [role, id] of Object.entries(object(d.swatches, "terrain.swatches"))) {
+      check(["grass", "dirt", "road", "canopy", "water"].includes(role), "terrain.swatches", `unknown role ${role}`);
+      text(id, `terrain.swatches.${role}`);
+    }
+  }
+  return value as TerrainSpec;
+}
+
+/** Validate fields used by library transforms while preserving exporter extras. */
+export function parseAssetDescriptor(value: unknown): AssetDescriptor {
+  const d = object(value, "asset");
+  for (const key of ["id", "name"]) text(d[key], `asset.${key}`);
+  check(!/[\\/\0]/.test(d.id) && d.id !== "." && d.id !== "..", "asset.id", "expected filename component");
+  array(d.tags, "asset.tags").forEach((tag) => text(tag, "asset.tags[]"));
+  check(["unique", "variant", "spline-segment", "texture"].includes(d.scale_class), "asset.scale_class", "unsupported scale class");
+  tuple(d.origin, 2, "asset.origin");
+  tuple(d.anchor, 2, "asset.anchor");
+  const source = object(d.source, "asset.source");
+  text(source.map, "asset.source.map");
+  text(source.ambiance, "asset.source.ambiance");
+  tuple(source.bbox, 4, "asset.source.bbox");
+  check(source.bbox[2] > 0 && source.bbox[3] > 0, "asset.source.bbox", "dimensions must be positive");
+  text(object(source.extraction, "asset.source.extraction").tool, "asset.source.extraction.tool");
+  const images = object(d.images, "asset.images");
+  for (const key of ["day", "mask"]) text(images[key], `asset.images.${key}`);
+  for (const key of ["fog", "night"])
+    if (images[key] !== undefined) text(images[key], `asset.images.${key}`);
+  const volumes = object(d.volumes, "asset.volumes");
+  array(volumes.sight_obstacles, "asset.volumes.sight_obstacles").forEach((v) => {
+    object(v, "volume");
+    for (const key of ["opaque", "solid"]) check(typeof v[key] === "boolean", `volume.${key}`, "expected boolean");
+    array(v.points, "volume.points").forEach((p) => {
+      object(p, "volume.point");
+      for (const key of ["x", "y", "z_bottom", "z_top"]) finite(p[key], `volume.point.${key}`);
+    });
+  });
+  const motion = object(d.motion, "asset.motion");
+  for (const key of ["obstacles", "walkable"]) array(motion[key], `asset.motion.${key}`).forEach((v) => {
+    object(v, "motion polygon");
+    finite(v.layer, "motion.layer");
+    array(object(v.polygon, "motion.polygon").points, "motion.polygon.points").forEach((p) => tuple(p, 2, "motion.point"));
+  });
+  if (d.wall_direction_deg !== undefined) finite(d.wall_direction_deg, "asset.wall_direction_deg");
+  if (d.fx !== undefined) {
+    const fx = object(d.fx, "asset.fx");
+    for (const key of ["bank", "profile", "action"]) text(fx[key], `asset.fx.${key}`);
+    tuple(fx.position, 2, "asset.fx.position");
+    tuple(fx.hotspot, 2, "asset.fx.hotspot");
+    finite(fx.elevation, "asset.fx.elevation");
+    check(Number.isInteger(fx.frame_count) && fx.frame_count > 0, "asset.fx.frame_count", "expected positive frame count");
+  }
+  if (d.merged_from !== undefined) array(d.merged_from, "asset.merged_from").forEach((id) => text(id, "asset.merged_from[]"));
+  for (const model of [d.model, ...Object.values(d.alt_models === undefined ? {} : object(d.alt_models, "asset.alt_models"))]) {
+    if (model === undefined) continue;
+    const m = object(model, "asset.model");
+    text(m.glb, "model.glb");
+    check(typeof m.textured === "boolean", "model.textured", "expected boolean");
+    if (m.pose_l2c !== undefined) {
+      const pose = object(m.pose_l2c, "model.pose_l2c");
+      tuple(pose.rotation, 4, "model.pose_l2c.rotation");
+      tuple(pose.translation, 3, "model.pose_l2c.translation");
+      tuple(pose.scale, 3, "model.pose_l2c.scale");
+    }
+    finite(m.fit_iou, "model.fit_iou");
+    if (m.fit_appearance !== undefined) finite(m.fit_appearance, "model.fit_appearance");
+    const bounds = object(m.bounds_local, "model.bounds_local");
+    tuple(bounds.min, 3, "model.bounds_local.min");
+    tuple(bounds.max, 3, "model.bounds_local.max");
+    const p = object(m.placement, "model.placement");
+    text(p.asset, "model.placement.asset");
+    tuple(p.position, 3, "model.placement.position");
+    tuple(p.rotation, 4, "model.placement.rotation");
+    finite(p.scale, "model.placement.scale");
+    check(p.scale > 0, "model.placement.scale", "must be positive");
+    const extraction = object(m.extraction, "model.extraction");
+    text(extraction.tool, "model.extraction.tool");
+    tuple(extraction.crop, 4, "model.extraction.crop");
+  }
+  return value as AssetDescriptor;
+}
 
 function object(v: unknown, path: string): Record<string, any> {
   if (!v || typeof v !== "object" || Array.isArray(v))

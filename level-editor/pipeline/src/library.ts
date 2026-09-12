@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
+import { parseAssetDescriptor } from "@rle/shared";
+import { readDocument } from "./inputs.ts";
 import { libraryDir } from "./env.ts";
 import { isMissing } from "./provider-cache.ts";
 
@@ -101,6 +103,18 @@ function requireFilename(value: string, label: string): void {
     throw new Error(`Invalid ${label}: ${value}`);
 }
 
+export async function readAssetDescriptor(file: string): Promise<AssetDescriptor>;
+export async function readAssetDescriptor(file: string, required: false): Promise<AssetDescriptor | undefined>;
+export async function readAssetDescriptor(file: string, required = true): Promise<AssetDescriptor | undefined> {
+  const value = await readDocument(file, required);
+  if (value === undefined) return undefined;
+  try {
+    return parseAssetDescriptor(value);
+  } catch (error) {
+    throw new Error(`invalid asset descriptor ${file}`, { cause: error });
+  }
+}
+
 function indexEntry(desc: AssetDescriptor): LibraryIndexEntry {
   return {
     id: desc.id,
@@ -147,13 +161,14 @@ function validateIndex(value: unknown): asserts value is LibraryIndexEntry[] {
  * holding the writer lease across expensive extraction/provider work. */
 export async function readLibraryIndex(
   directory = libraryDir,
+  required = false,
 ): Promise<LibraryIndexEntry[]> {
   const file = path.join(directory, "index.json");
   let text: string;
   try {
     text = await fs.readFile(file, "utf8");
   } catch (error) {
-    if (isMissing(error)) return [];
+    if (!required && isMissing(error)) return [];
     throw new Error(`Cannot read library index ${file}`, { cause: error });
   }
   try {

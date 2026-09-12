@@ -7,10 +7,10 @@
 // asset.alt_models[*]) the placed model over the crop from the map camera
 // (unlit) above an orbit view (shaded), labelled with fit IoU, colour
 // agreement, triangle count, request time and price.
-import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor, AssetModel, MapCamera } from "@rle/shared";
+import type { AssetModel, MapCamera } from "@rle/shared";
+import { readAssetDescriptor } from "./library.ts";
 import { libraryDir, workDir } from "./env.ts";
 import { loadProtoLevel, mapImageSource } from "./asset-writer.ts";
 import { fitMapCamera } from "./map-camera.ts";
@@ -34,9 +34,7 @@ async function main() {
   const rows: { id: string; tiles: sharp.OverlayOptions[]; labels: string[]; table: string[] }[] = [];
   let map = "";
   for (const id of ids) {
-    const desc: AssetDescriptor = JSON.parse(
-      await fs.readFile(path.join(libraryDir, id, "asset.json"), "utf8"),
-    );
+    const desc = await readAssetDescriptor(path.join(libraryDir, id, "asset.json"));
     map = desc.source.map;
     let lv = levels.get(map);
     if (!lv) {

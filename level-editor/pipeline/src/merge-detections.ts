@@ -18,6 +18,8 @@ import sharp from "sharp";
 import type { Bbox } from "./clip.ts";
 import { findMapPng } from "./asset-writer.ts";
 import type { Detection, DetectionsFile } from "./reconstruct.ts";
+import { parseDetections } from "./reconstruct.ts";
+import { readDocument } from "./inputs.ts";
 
 interface Loaded extends Detection {
   data: Uint8Array;
@@ -78,7 +80,7 @@ async function main() {
   const maxMembers = Number(get("max-members") ?? 4);
   const maxSide = Number(get("max-side") ?? 900);
 
-  const det: DetectionsFile = JSON.parse(await fs.readFile(file, "utf8"));
+  const det = parseDetections(await readDocument(file, true));
   const items: Loaded[] = [];
   for (const d of det.detections) {
     const { data } = await sharp(path.join(dir, d.mask)).extractChannel(0).raw().toBuffer({ resolveWithObject: true });

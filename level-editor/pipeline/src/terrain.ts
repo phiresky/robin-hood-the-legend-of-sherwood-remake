@@ -9,20 +9,24 @@ import {
   type TerrainSpec,
 } from "@rle/shared";
 import { libraryDir } from "./env.ts";
+import { readOptionalImage } from "./inputs.ts";
 
 export type { TerrainSpec, Road, TerrainRegion } from "@rle/shared";
 
-export async function loadSwatch(id: string): Promise<SwatchData | null> {
+export async function loadSwatch(id: string, directory = libraryDir): Promise<SwatchData | null> {
+  const file = path.join(directory, id, "day.png");
+  const bytes = await readOptionalImage(file);
+  if (bytes === undefined) return null;
   try {
-    const img = sharp(path.join(libraryDir, id, "day.png")).removeAlpha();
-    const { width, height } = await img.metadata();
+    const { data, info } = await sharp(bytes).removeAlpha().toColourspace("srgb")
+      .raw().toBuffer({ resolveWithObject: true });
     return {
-      data: new Uint8Array(await img.raw().toBuffer()),
-      width: width!,
-      height: height!,
+      data: new Uint8Array(data),
+      width: info.width,
+      height: info.height,
     };
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`cannot decode terrain swatch ${file}`, { cause: error });
   }
 }
 

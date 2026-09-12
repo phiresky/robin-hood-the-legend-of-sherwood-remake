@@ -40,6 +40,8 @@ import {
   type ScenePlacement,
 } from "@rle/shared";
 import { libraryDir, workDir } from "./env.ts";
+import { readAssetDescriptor } from "./library.ts";
+import { readDocument, pathComponent } from "./inputs.ts";
 import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer.ts";
 import { EXTRACT_DEFAULTS, runExtraction, slugify } from "./extract-core.ts";
 import type { Bbox } from "./clip.ts";
@@ -487,7 +489,7 @@ export async function reconstructAsset(
   opts: ReconstructOptions,
 ): Promise<{ model: AssetModel; sheet: string }> {
   const dir = path.join(libraryDir, assetId);
-  const desc: AssetDescriptor = JSON.parse(await fs.readFile(path.join(dir, "asset.json"), "utf8"));
+  const desc = await readAssetDescriptor(path.join(dir, "asset.json"));
   const map = desc.source.map;
   const [ax, ay, aw, ah] = desc.source.bbox;
   const { data: maskRaw, info } = await sharp(path.join(dir, desc.images.mask))
@@ -717,6 +719,32 @@ export interface DetectionsFile {
   detections: Detection[];
 }
 
+export function parseDetections(value: unknown): DetectionsFile {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid detections document: expected object");
+  const doc = value as Record<string, unknown>;
+  if (typeof doc.map !== "string" || typeof doc.apply_patches !== "boolean" || !Array.isArray(doc.detections))
+    throw new Error("invalid detections document header");
+  pathComponent(doc.map, "detection map");
+  const ids = new Set<string>();
+  for (const d of doc.detections) {
+    if (!d || typeof d.id !== "string" || typeof d.name !== "string" || typeof d.prompt !== "string" ||
+        typeof d.mask !== "string" || !d.mask ||
+        !(d.score === null || (typeof d.score === "number" && Number.isFinite(d.score))) ||
+        !Array.isArray(d.bbox) || d.bbox.length !== 4 || !d.bbox.every(Number.isFinite) ||
+        d.bbox[2] <= 0 || d.bbox[3] <= 0)
+      throw new Error("invalid detection entry");
+    pathComponent(d.id, "detection ID");
+    if (ids.has(d.id)) throw new Error(`duplicate detection ID ${d.id}`);
+    ids.add(d.id);
+    for (const key of ["tags", "members"]) {
+      if (d[key] !== undefined && (!Array.isArray(d[key]) || !d[key].every((v: unknown) => typeof v === "string")))
+        throw new Error(`invalid detection ${d.id}.${key}`);
+    }
+  }
+  return value as DetectionsFile;
+}
+
 async function reconstructDetections(
   file: string,
   only: Set<string> | null,
@@ -725,7 +753,7 @@ async function reconstructDetections(
   parallel: number,
   opts: ReconstructOptions,
 ) {
-  const det: DetectionsFile = JSON.parse(await fs.readFile(file, "utf8"));
+  const det = parseDetections(await readDocument(file, true));
   const level = await levelFor(det.map);
   await cameraFor(det.map);
   const results: { id: string; iou?: number; error?: string; skipped?: string }[] = [];
@@ -735,16 +763,10 @@ async function reconstructDetections(
     if (only && !only.has(d.id)) continue;
     if (queue.length >= limit) break;
     if (skipExisting) {
-      try {
-        const existing: AssetDescriptor = JSON.parse(
-          await fs.readFile(path.join(libraryDir, d.id, "asset.json"), "utf8"),
-        );
-        if (existing.model) {
-          results.push({ id: d.id, skipped: "already reconstructed" });
-          continue;
-        }
-      } catch {
-        // no asset yet
+      const existing = await readAssetDescriptor(path.join(libraryDir, d.id, "asset.json"), false);
+      if (existing?.model) {
+        results.push({ id: d.id, skipped: "already reconstructed" });
+        continue;
       }
     }
     queue.push(d);

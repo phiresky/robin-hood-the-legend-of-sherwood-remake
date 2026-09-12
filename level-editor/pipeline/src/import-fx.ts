@@ -3,11 +3,9 @@
 // sprites. One asset per element (animations + patches from the proto level).
 //
 //   pnpm exec node src/import-fx.ts Leicester
-import fs from "node:fs/promises";
-import path from "node:path";
 import sharp from "sharp";
-import type { AssetDescriptor, ProtoLevel } from "@rle/shared";
-import { datadirPath } from "./env.ts";
+import type { AssetDescriptor } from "@rle/shared";
+import { loadProtoLevel } from "./asset-writer.ts";
 import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx.ts";
 import { writeAsset } from "./library.ts";
 import { slugify } from "./extract-core.ts";
@@ -16,10 +14,7 @@ async function main() {
   const map = process.argv[2];
   if (!map) throw new Error("usage: node src/import-fx.ts <MapName>");
 
-  const levelsDir = path.join(datadirPath(), "Data", "Levels");
-  const level: ProtoLevel = JSON.parse(
-    await fs.readFile(path.join(levelsDir, `${map}.rhp.json`), "utf8"),
-  );
+  const level = await loadProtoLevel(map);
 
   interface Item {
     bank: string;
