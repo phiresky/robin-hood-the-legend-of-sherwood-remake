@@ -1678,7 +1678,7 @@ async fn submission_offer(
                     schema_version: SCHEMA_VERSION_V1,
                     upload_challenge_id: OpaqueId::new(challenge.id.clone())
                         .map_err(|error| crate::db::DbError::ResultInvariant(error.to_string()))?,
-                    upload_challenge_nonce: ChallengeNonce32::from_bytes(challenge.nonce),
+                    upload_challenge_nonce: challenge.nonce,
                     expires_at_unix_ms: challenge.expires_at_ms,
                     max_concurrent_players: request.max_concurrent_players,
                     participant_instance_count: request.participant_instance_count,
@@ -2010,7 +2010,7 @@ async fn submission_owner_status_challenge(
     let challenge = SubmissionOwnerStatusChallengeV1 {
         schema_version: SCHEMA_VERSION_V1,
         owner_status_challenge_id: opaque(&issued.id)?,
-        owner_status_challenge_nonce: ChallengeNonce32::from_bytes(issued.nonce),
+        owner_status_challenge_nonce: issued.nonce,
         expires_at_unix_ms: issued.expires_at_ms,
         controller_public_key: request.controller_public_key,
         submission_id: request.submission_id,
@@ -2949,7 +2949,7 @@ async fn username_challenge(
         Json(UsernameChallengeV1 {
             schema_version: SCHEMA_VERSION_V1,
             username_challenge_id: opaque(&challenge.id)?,
-            username_challenge_nonce: ChallengeNonce32::from_bytes(challenge.nonce),
+            username_challenge_nonce: challenge.nonce,
             expires_at_unix_ms: challenge.expires_at_ms,
         }),
     ))
@@ -3215,7 +3215,7 @@ async fn deletion_challenge(
     let challenge = DeletionChallengeV1 {
         schema_version: SCHEMA_VERSION_V1,
         deletion_challenge_id: opaque(&issued.id)?,
-        deletion_challenge_nonce: ChallengeNonce32::from_bytes(issued.nonce),
+        deletion_challenge_nonce: issued.nonce,
         expires_at_unix_ms: issued.expires_at_ms,
         public_key: request.public_key,
         target: request.target,
@@ -6006,7 +6006,12 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, public_key, username)
+            .apply_username_update(
+                &challenge.id,
+                challenge.nonce.into_bytes(),
+                public_key,
+                username,
+            )
             .await
             .unwrap();
     }
@@ -6530,7 +6535,7 @@ mod tests {
             .await
             .unwrap();
         database
-            .apply_username_update(&challenge.id, challenge.nonce, key, "Tuck")
+            .apply_username_update(&challenge.id, challenge.nonce.into_bytes(), key, "Tuck")
             .await
             .unwrap();
         let (report_id, _) = database
