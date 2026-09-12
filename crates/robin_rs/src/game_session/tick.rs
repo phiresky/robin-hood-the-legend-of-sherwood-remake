@@ -840,6 +840,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // raw-checkpoint transition, not the save/load projection protocol.
         timeline.begin_recording(&mut transaction, record_live_input);
         transaction.admit_inline_transaction();
+        let history_input = append_history.then(|| simulation_frame.clone());
         let tick_exit_code = game.run_engine_tick(
             &mut host.frontend,
             &mut host.audio,
@@ -849,7 +850,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
             assets,
             engine,
             dev,
-            simulation_frame.clone(),
+            simulation_frame,
             false,
             false,
         );
@@ -865,7 +866,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
 
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
-            timeline.commit_history_frame(simulation_frame, engine);
+            timeline.commit_history_frame(
+                history_input.expect("appending history retains the admitted input"),
+                engine,
+            );
         }
         advanced += after
             .number()
@@ -1386,6 +1390,11 @@ mod tests {
         assert_eq!(timeline.frame_number(), 5);
         assert_eq!(timeline.retained_history().next_record_frame(), 5);
         let expected = state_hash(&manager.engine);
+        let retained_inputs: Vec<_> = (0..5)
+            .map(|frame| {
+                serde_json::to_value(timeline.retained_history().frame_for(frame).unwrap()).unwrap()
+            })
+            .collect();
         // Existing backwards controls remain available during recording.
         // Replaying the retained future must not append old timeline frames
         // to the recorder's already-committed dense ordinal frontier.
@@ -1428,6 +1437,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state_hash(&manager.engine), expected);
+        assert_eq!(timeline.retained_history().next_record_frame(), 5);
+        for (frame, input) in retained_inputs.iter().enumerate() {
+            assert_eq!(
+                &serde_json::to_value(timeline.retained_history().frame_for(frame as u32).unwrap())
+                    .unwrap(),
+                input,
+                "buffered stepping must retain the original history input"
+            );
+        }
         timeline.seal_test_recorder();
         let replay = ReplayData::from_file(&path).unwrap();
         assert_eq!(replay.frame_count(), 6);
@@ -1477,6 +1495,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state_hash(&playback_manager.engine), expected);
+        // Replay admission wins over buffered input, but the rewind slots
+        // are still retained. Re-cross the recorded final frame through this
+        // separate source path without appending or replacing its history.
+        rewind_to_frame(
+            &mut playback_manager,
+            &mut playback_host,
+            &assets,
+            &mut playback,
+            4,
+        )
+        .unwrap();
+        assert_eq!(playback.playback().unwrap().current_frame(), 5);
+        assert_eq!(playback.retained_history().next_record_frame(), 5);
+        let (advanced, _) = run_forward_ticks(
+            &mut playback_manager,
+            &mut playback_host,
+            &assets,
+            &mut playback_dev,
+            &mut playback_game,
+            &mut playback,
+            1,
+            &mut Default::default(),
+        )
+        .unwrap();
+        assert_eq!(advanced, 1);
+        assert_eq!(state_hash(&playback_manager.engine), expected);
+        assert_eq!(playback.frame_number(), 5);
+        assert_eq!(playback.playback().unwrap().current_frame(), 6);
+        assert_eq!(playback.retained_history().next_record_frame(), 5);
+        for (frame, input) in retained_inputs.iter().enumerate() {
+            assert_eq!(
+                &serde_json::to_value(playback.retained_history().frame_for(frame as u32).unwrap())
+                    .unwrap(),
+                input,
+                "replay stepping must retain the original history input"
+            );
+        }
         rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 4).unwrap();
         run_forward_ticks(
             &mut manager,
