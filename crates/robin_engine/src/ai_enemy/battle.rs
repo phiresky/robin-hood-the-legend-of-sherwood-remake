@@ -621,96 +621,12 @@ impl EnemyAi {
         // Compute decision-local aggregates in this registry scan. They are
         // not caller inputs: nearby-fighter geometry keeps its separate
         // combat-position and swordfight semantics, without cloning the tick.
-        let mut friends_lower_company = 0_u16;
-        let mut soldiers_lower_pride = false;
-        let mut simple_soldiers_near = false;
         let debug_them = super::them_lifecycle_debug_matches(ctx);
-
-        self.base.list_us.clear();
-        self.base.list_us.push(self.base.me);
-        // Fighter lookup walks the camp's single append-only fighter
-        // registry. PCs and soldiers therefore have to remain interleaved:
-        // every admitted candidate performs an opaque visibility query, and
-        // changing that query order changes the spatial visibility cache.
-        for fighter in battle_fighter_candidates(&tick.fighter_registry, self.base.me) {
-            let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
-                panic!(
-                    "battle-planning camp fighter {} is absent from the AI entity view",
-                    fighter.handle
-                )
-            });
-            let (position_world, direction) = if fighter.is_soldier {
-                let friend = tick
-                    .camp_soldiers
-                    .iter()
-                    .find(|friend| friend.handle == fighter.handle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "able camp soldier {} is absent from camp_soldiers",
-                            fighter.handle
-                        )
-                    });
-                (friend.position_world, friend.direction)
-            } else {
-                (target.detection_position_world, target.direction)
-            };
-            // The original game evaluates full-circle detection here,
-            // after the cheap able-to-fight gate and before the soldier-state
-            // switch, and only when
-            // battle planning actually runs. Do not use the historical
-            // snapshot bit: populating it eagerly issued O(N²) opaque-LOS
-            // queries on every detection-refresh pass and changed both trace
-            // ordering and the visibility cache before any battle decision.
-            if !battle_friend_detected_360(
-                ctx,
-                self.base.me,
-                fighter.handle,
-                position_world,
-                direction,
-                target,
-            ) {
-                continue;
-            }
-            if fighter.is_pc {
-                self.base.list_us.push(fighter.handle);
-                if self.company_number > 0 {
-                    friends_lower_company = friends_lower_company.saturating_add(1);
-                }
-                continue;
-            }
-            let friend = tick
-                .camp_soldiers
-                .iter()
-                .find(|friend| friend.handle == fighter.handle)
-                .expect("soldier metadata was resolved above");
-            if !matches!(
-                friend.ai_state,
-                AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
-            ) {
-                continue;
-            }
-            if debug_them {
-                eprintln!(
-                    "[THEM frame={} co={:?} me={} phase=battle_friend_after_360 friend={} state={:?} substate={:?} primary_target={:?}]",
-                    ctx.frame,
-                    ctx.original_creation_order,
-                    self.base.me,
-                    friend.handle,
-                    friend.ai_state,
-                    friend.ai_substate,
-                    friend.primary_target,
-                );
-            }
-            self.base.list_us.push(friend.handle);
-            if self.company_number > friend.company_number
-                && (self.base.current_substate == Substate::AttackingReactiontime
-                    || friend.ai_state == AiState::Attacking)
-            {
-                friends_lower_company = friends_lower_company.saturating_add(1);
-            }
-            soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
-            simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
-        }
+        let BattleFriendSummary {
+            friends_lower_company,
+            soldiers_lower_pride,
+            simple_soldiers_near,
+        } = self.prepare_battle_friends(ctx, tick, debug_them);
 
         // The original game's battle decision snapshots the current substate into a
         // stack-local `oldSubstate` before performing any decision work.
@@ -4697,5 +4613,118 @@ impl EnemyAi {
             return std::ops::ControlFlow::Continue(Decision::Shoot);
         }
         std::ops::ControlFlow::Break(true)
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct BattleFriendSummary {
+    friends_lower_company: u16,
+    soldiers_lower_pride: bool,
+    simple_soldiers_near: bool,
+}
+
+impl EnemyAi {
+    /// Rebuild the admitted camp-fighter list in original registry order.
+    fn prepare_battle_friends(
+        &mut self,
+        ctx: &AiContext,
+        tick: &AiPerTickData,
+        debug_them: bool,
+    ) -> BattleFriendSummary {
+        let mut friends_lower_company = 0_u16;
+        let mut soldiers_lower_pride = false;
+        let mut simple_soldiers_near = false;
+
+        self.base.list_us.clear();
+        self.base.list_us.push(self.base.me);
+        // Fighter lookup walks the camp's single append-only fighter
+        // registry. PCs and soldiers therefore have to remain interleaved:
+        // every admitted candidate performs an opaque visibility query, and
+        // changing that query order changes the spatial visibility cache.
+        for fighter in battle_fighter_candidates(&tick.fighter_registry, self.base.me) {
+            let target = ctx.entity_view(fighter.handle).unwrap_or_else(|| {
+                panic!(
+                    "battle-planning camp fighter {} is absent from the AI entity view",
+                    fighter.handle
+                )
+            });
+            let (position_world, direction) = if fighter.is_soldier {
+                let friend = tick
+                    .camp_soldiers
+                    .iter()
+                    .find(|friend| friend.handle == fighter.handle)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "able camp soldier {} is absent from camp_soldiers",
+                            fighter.handle
+                        )
+                    });
+                (friend.position_world, friend.direction)
+            } else {
+                (target.detection_position_world, target.direction)
+            };
+            // The original game evaluates full-circle detection here,
+            // after the cheap able-to-fight gate and before the soldier-state
+            // switch, and only when
+            // battle planning actually runs. Do not use the historical
+            // snapshot bit: populating it eagerly issued O(N²) opaque-LOS
+            // queries on every detection-refresh pass and changed both trace
+            // ordering and the visibility cache before any battle decision.
+            if !battle_friend_detected_360(
+                ctx,
+                self.base.me,
+                fighter.handle,
+                position_world,
+                direction,
+                target,
+            ) {
+                continue;
+            }
+            if fighter.is_pc {
+                self.base.list_us.push(fighter.handle);
+                if self.company_number > 0 {
+                    friends_lower_company = friends_lower_company.saturating_add(1);
+                }
+                continue;
+            }
+            let friend = tick
+                .camp_soldiers
+                .iter()
+                .find(|friend| friend.handle == fighter.handle)
+                .expect("soldier metadata was resolved above");
+            if !matches!(
+                friend.ai_state,
+                AiState::Default | AiState::Wondering | AiState::Seeking | AiState::Attacking
+            ) {
+                continue;
+            }
+            if debug_them {
+                eprintln!(
+                    "[THEM frame={} co={:?} me={} phase=battle_friend_after_360 friend={} state={:?} substate={:?} primary_target={:?}]",
+                    ctx.frame,
+                    ctx.original_creation_order,
+                    self.base.me,
+                    friend.handle,
+                    friend.ai_state,
+                    friend.ai_substate,
+                    friend.primary_target,
+                );
+            }
+            self.base.list_us.push(friend.handle);
+            if self.company_number > friend.company_number
+                && (self.base.current_substate == Substate::AttackingReactiontime
+                    || friend.ai_state == AiState::Attacking)
+            {
+                friends_lower_company = friends_lower_company.saturating_add(1);
+            }
+            soldiers_lower_pride |= self.soldier_profile_pride > friend.pride;
+            simple_soldiers_near |= friend.rank == ProfileRank::Soldier;
+        }
+
+        BattleFriendSummary {
+            friends_lower_company,
+            soldiers_lower_pride,
+            simple_soldiers_near,
+        }
     }
 }
