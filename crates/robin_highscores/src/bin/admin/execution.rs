@@ -549,7 +549,7 @@ where
         (*verified.release_identity()) == *release_identity,
         "verified backup release identity differs from the active installed release"
     );
-    if fs2::available_space(backup_root)? < config.minimum_storage_free_bytes {
+    if robin_highscores::secure_fs::available_space(backup_root)? < config.minimum_storage_free_bytes {
         remove_owned_partial_backup(backup_root, &partial)?;
         anyhow::bail!("completed backup would violate the configured storage floor");
     }

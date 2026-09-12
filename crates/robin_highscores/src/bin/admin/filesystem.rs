@@ -349,7 +349,7 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
             "backup operation lock has the wrong owner, mode, link count, or path identity"
         );
     }
-    fs2::FileExt::try_lock_exclusive(&file)
+    robin_highscores::secure_fs::file_lock::try_lock_exclusive(&file)
         .map_err(|error| anyhow::anyhow!("another backup operation is active: {error}"))?;
     Ok(file)
 }
