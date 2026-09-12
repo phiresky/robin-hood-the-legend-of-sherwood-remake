@@ -837,22 +837,22 @@ fn populated_manager_schemas_match_original_encoders() {
     order.flight_vector = [3.0, 4.0];
     movement.orders.push_back(order);
     sequence.append_element(movement);
-    sequence.append_element(SequenceElement::new(1, Command::AssertPosition, None));
+    sequence.append_element(SequenceElement::new(3, Command::AssertPosition, None));
     sequence.append_element(SequenceElement::new_interaction(
-        2,
+        4,
         Command::AssertPosition,
         Some(b),
         Some(a),
     ));
     sequence.append_element(SequenceElement::new_damage(
-        2,
+        4,
         Command::AssertPosition,
         Some(a),
         Some(b),
         77,
         19,
     ));
-    let mut generic = SequenceElement::new_generic(1, Command::AssertPosition, Some(a));
+    let mut generic = SequenceElement::new_generic(5, Command::AssertPosition, Some(a));
     for (field, value) in [
         (Field::Timer, FieldValue::Integer(17)),
         (Field::ActionAvailable, FieldValue::Bool(true)),
