@@ -973,9 +973,17 @@ impl Engine {
             original_rng_replay,
             sim_config,
         } = args;
+        // This checkpoint precedes mission initialization and is not the final
+        // engine campaign. Preserve it for the run identity.
         let starting_campaign = campaign.clone();
-        let projection_loaded_level = loaded.clone();
-        let projection_ground_mark = ground_mark_sprite.clone();
+        // Capture only authored values that construction consumes. Defer any
+        // projection error until construction completes, preserving its error
+        // precedence and the initialized campaign returned on projection failure.
+        let authored_projection = crate::simulation_inputs::AuthoredSimulationInputs::capture(
+            &loaded,
+            ground_mark_sprite.as_ref(),
+            &titbit_row_frame_counts,
+        );
         let projection_original_rng_replay = original_rng_replay.clone();
 
         let engine = Self::construct_preserving_campaign(EngineArgs {
@@ -988,19 +996,19 @@ impl Engine {
                 bg_pixel_dims,
             },
             ground_mark_sprite,
-            titbit_row_frame_counts: titbit_row_frame_counts.clone(),
+            titbit_row_frame_counts,
             rng_seed,
             original_rng_replay,
             sim_config,
         })?;
 
-        let static_projection = match crate::simulation_inputs::SimulationContentProjectionV1::from_prepared_engine_inputs(
-            &projection_loaded_level,
-            assets,
-            bg_pixel_dims,
-            projection_ground_mark.as_ref(),
-            &titbit_row_frame_counts,
-        ) {
+        let static_projection = match authored_projection.and_then(|authored| {
+            crate::simulation_inputs::SimulationContentProjectionV1::from_prepared_engine_inputs(
+                authored,
+                assets,
+                bg_pixel_dims,
+            )
+        }) {
             Ok(projection) => projection,
             Err(error) => {
                 let campaign = engine.into_campaign();
