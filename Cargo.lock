@@ -5921,6 +5921,7 @@ dependencies = [
  "robin_content",
  "robin_data_io",
  "robin_engine",
+ "robin_test_support",
  "robin_util",
  "serde",
  "serde_json",
@@ -5970,6 +5971,7 @@ dependencies = [
  "enum-map",
  "fastrand",
  "geo",
+ "hex",
  "i_overlay 8.1.1",
  "indexmap",
  "json-patch",
@@ -5980,6 +5982,7 @@ dependencies = [
  "robin_data_io",
  "robin_run_protocol",
  "robin_state_hash_derive",
+ "robin_test_support",
  "robin_util",
  "serde",
  "serde-big-array",
@@ -6116,6 +6119,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "robin_assets",
+ "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6355,6 +6359,10 @@ dependencies = [
  "serde_json",
  "syn 3.0.5",
 ]
+
+[[package]]
+name = "robin_test_support"
+version = "0.0.0"
 
 [[package]]
 name = "robin_util"
