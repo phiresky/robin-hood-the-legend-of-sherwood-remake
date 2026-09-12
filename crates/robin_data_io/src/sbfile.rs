@@ -139,7 +139,9 @@ impl std::fmt::Debug for SbFileSystem {
 
 static GLOBAL_FILE_SYSTEM: OnceLock<SbFileSystem> = OnceLock::new();
 
-fn global_file_system() -> &'static SbFileSystem {
+/// Compatibility reader used by the static `SbFile` entry points. Applications
+/// with an owned reader should use that instance, including for fallible probes.
+pub fn global_file_system() -> &'static SbFileSystem {
     GLOBAL_FILE_SYSTEM.get_or_init(|| SbFileSystem::new(robin_util::asset_fs::global().clone()))
 }
 
