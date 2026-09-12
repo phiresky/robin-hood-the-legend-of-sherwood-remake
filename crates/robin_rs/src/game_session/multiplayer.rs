@@ -122,7 +122,6 @@ fn attach_snapshot_spellforge_runtime(
 /// Native and browser disconnects remain synchronized only while their real
 /// transport reconnect loops are active. Both abandon the old prediction
 /// future and wait for an authoritative replacement snapshot.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn drain_net_inputs(
     host: &mut Host,
     manager: &mut engine_manager_api::EngineManager,
@@ -818,7 +817,6 @@ pub(super) fn drain_net_inputs(
 /// responsible for applying returned inputs and recording them in its own
 /// frame, so graphical and true-headless drivers keep their distinct input
 /// contracts without duplicating admission state.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn drain_mission_network(
     timeline: &mut super::runtime::TimelineRuntime,
     host: &mut Host,

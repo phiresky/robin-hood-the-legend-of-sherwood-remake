@@ -215,42 +215,86 @@ pub async fn show_host_distribution_attestation(
             4 * 1024,
         )?;
     }
-    let transform = MenuTransform::centered(
-        renderer.screen_width() as i32,
-        renderer.screen_height() as i32,
-    );
-    let (button_w, button_h) = resources.button_dimensions();
-    let back_label = resources.menu_text.get(MT_BTN_BACK);
-    let labels = [
-        (
-            localized_text(application_context, PortTextKey::SpellforgeHostAndAttest),
-            true,
-        ),
-        (back_label.as_str(), true),
-    ];
-    let bottom = align_bottom_right(&labels, button_w, button_h);
-    let mut frame = FrameWnd::interactive();
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_ACCEPT,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
-    let mut input = ModalInputState::from_window(event_pump, transform);
+    let mut state =
+        HostDistributionAttestationState::new(application_context, event_pump, renderer, resources);
     loop {
+        let io = widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: cursor.as_ref(),
+        };
+        match state.tick(application_context, io, launch, host_endpoint_id)? {
+            std::ops::ControlFlow::Break(outcome) => return Ok(outcome),
+            std::ops::ControlFlow::Continue(()) => crate::window::sleep_ui_frame().await,
+        }
+    }
+}
+
+// Owns live input/capture state, not a restorable screen document.
+struct HostDistributionAttestationState {
+    frame: FrameWnd,
+    input: ModalInputState,
+}
+
+impl HostDistributionAttestationState {
+    fn new(
+        application_context: &ApplicationContext,
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+    ) -> Self {
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let (button_w, button_h) = resources.button_dimensions();
+        let back_label = resources.menu_text.get(MT_BTN_BACK);
+        let labels = [
+            (
+                localized_text(application_context, PortTextKey::SpellforgeHostAndAttest),
+                true,
+            ),
+            (back_label.as_str(), true),
+        ];
+        let bottom = align_bottom_right(&labels, button_w, button_h);
+        let mut frame = FrameWnd::interactive();
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_ACCEPT,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+        let input = ModalInputState::from_window(event_pump, transform);
+        Self { frame, input }
+    }
+
+    fn tick(
+        &mut self,
+        application_context: &ApplicationContext,
+        io: widget_bridge::ModalScreenIo<'_, '_>,
+        launch: &crate::main_menu::custom_missions::CustomMissionLaunch,
+        host_endpoint_id: &str,
+    ) -> Result<std::ops::ControlFlow<Option<String>>, String> {
+        let widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor,
+        } = io;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input.update_from_event(&event, transform);
+            self.input.update_from_event(&event, transform);
             if matches!(
                 event,
                 GameEvent::Quit
@@ -259,27 +303,29 @@ pub async fn show_host_distribution_attestation(
                         ..
                     }
             ) {
-                return Ok(None);
+                return Ok(std::ops::ControlFlow::Break(None));
             }
         }
-        let events = input.process_frame(&mut frame);
+        let events = self.input.process_frame(&mut self.frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
-                ID_CANCEL => return Ok(None),
+                ID_CANCEL => return Ok(std::ops::ControlFlow::Break(None)),
                 ID_ACCEPT => {
-                    return Ok(Some(if launch.license.trim().is_empty() {
-                        localized_format(
-                            application_context,
-                            PortTextKey::SpellforgeHostAttestation,
-                            &[
-                                ("host", host_endpoint_id),
-                                ("title", &launch.mod_title),
-                                ("source", &launch.source_url),
-                            ],
-                        )
-                    } else {
-                        launch.license.clone()
-                    }));
+                    return Ok(std::ops::ControlFlow::Break(Some(
+                        if launch.license.trim().is_empty() {
+                            localized_format(
+                                application_context,
+                                PortTextKey::SpellforgeHostAttestation,
+                                &[
+                                    ("host", host_endpoint_id),
+                                    ("title", &launch.mod_title),
+                                    ("source", &launch.source_url),
+                                ],
+                            )
+                        } else {
+                            launch.license.clone()
+                        },
+                    )));
                 }
                 _ => {}
             }
@@ -359,12 +405,12 @@ pub async fn show_host_distribution_attestation(
                 );
             }
         }
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
         if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &input);
+            cursor.draw(renderer, transform, &self.input);
         }
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+        Ok(std::ops::ControlFlow::Continue(()))
     }
 }
 
@@ -389,44 +435,103 @@ pub async fn show_spellforge_consent(
         return Ok(SpellforgeConsentOutcome::AlreadyTrusted);
     }
 
-    let transform = MenuTransform::centered(
-        renderer.screen_width() as i32,
-        renderer.screen_height() as i32,
+    let mut state = SpellforgeConsentState::new(
+        application_context,
+        event_pump,
+        renderer,
+        resources,
+        key,
+        metadata,
     );
-    let (button_w, button_h) = resources.button_dimensions();
-    let back_label = resources.menu_text.get(MT_BTN_BACK);
-    let labels = [
-        (
-            localized_text(application_context, PortTextKey::SpellforgeTrustExactMod),
-            true,
-        ),
-        (back_label.as_str(), true),
-    ];
-    let bottom = align_bottom_right(&labels, button_w, button_h);
-    let mut frame = FrameWnd::interactive();
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_ACCEPT,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
-    let mut input = ModalInputState::from_window(event_pump, transform);
-    let mut status = String::new();
-
     loop {
+        let io = widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: cursor.as_ref(),
+        };
+        match state.tick(application_context, io)? {
+            std::ops::ControlFlow::Break(outcome) => return Ok(outcome),
+            std::ops::ControlFlow::Continue(()) => crate::window::sleep_ui_frame().await,
+        }
+    }
+}
+
+// Trust metadata is ordinary data; pending keyboard/capture ownership is not.
+struct SpellforgeConsentState {
+    frame: FrameWnd,
+    input: ModalInputState,
+    status: String,
+    key: SpellforgeTrustKey,
+    metadata: SpellforgeTrustMetadata,
+}
+
+impl SpellforgeConsentState {
+    fn new(
+        application_context: &ApplicationContext,
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        key: SpellforgeTrustKey,
+        metadata: SpellforgeTrustMetadata,
+    ) -> Self {
+        let transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
+        let (button_w, button_h) = resources.button_dimensions();
+        let back_label = resources.menu_text.get(MT_BTN_BACK);
+        let labels = [
+            (
+                localized_text(application_context, PortTextKey::SpellforgeTrustExactMod),
+                true,
+            ),
+            (back_label.as_str(), true),
+        ];
+        let bottom = align_bottom_right(&labels, button_w, button_h);
+        let mut frame = FrameWnd::interactive();
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_ACCEPT,
+            &bottom[0].label,
+            bottom[0].x,
+            bottom[0].y,
+            bottom[0].w,
+            bottom[0].h,
+        ));
+        frame.add_widget_absolute(widget_bridge::make_button(
+            ID_CANCEL,
+            &bottom[1].label,
+            bottom[1].x,
+            bottom[1].y,
+            bottom[1].w,
+            bottom[1].h,
+        ));
+        let input = ModalInputState::from_window(event_pump, transform);
+        let status = String::new();
+
+        Self {
+            frame,
+            input,
+            status,
+            key,
+            metadata,
+        }
+    }
+
+    fn tick(
+        &mut self,
+        application_context: &ApplicationContext,
+        io: widget_bridge::ModalScreenIo<'_, '_>,
+    ) -> Result<std::ops::ControlFlow<SpellforgeConsentOutcome>, String> {
+        let widget_bridge::ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor,
+        } = io;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input.update_from_event(&event, transform);
+            self.input.update_from_event(&event, transform);
             if matches!(
                 event,
                 GameEvent::Quit
@@ -435,26 +540,36 @@ pub async fn show_spellforge_consent(
                         ..
                     }
             ) {
-                return Ok(SpellforgeConsentOutcome::Cancelled);
+                return Ok(std::ops::ControlFlow::Break(
+                    SpellforgeConsentOutcome::Cancelled,
+                ));
             }
             // Deliberately no Return/KpEnter approval accelerator.
         }
-        let events = input.process_frame(&mut frame);
+        let events = self.input.process_frame(&mut self.frame);
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
-                ID_CANCEL => return Ok(SpellforgeConsentOutcome::Cancelled),
+                ID_CANCEL => {
+                    return Ok(std::ops::ControlFlow::Break(
+                        SpellforgeConsentOutcome::Cancelled,
+                    ));
+                }
                 ID_ACCEPT => {
                     let result = current_unix_seconds().and_then(|approved_unix_seconds| {
                         application_context.grant_spellforge_content_trust(
-                            key,
-                            metadata.clone(),
+                            self.key,
+                            self.metadata.clone(),
                             approved_unix_seconds,
                         )
                     });
                     match result {
-                        Ok(()) => return Ok(SpellforgeConsentOutcome::Approved),
+                        Ok(()) => {
+                            return Ok(std::ops::ControlFlow::Break(
+                                SpellforgeConsentOutcome::Approved,
+                            ));
+                        }
                         Err(error) => {
-                            status = localized_format(
+                            self.status = localized_format(
                                 application_context,
                                 PortTextKey::SpellforgeApprovalNotPersisted,
                                 &[("error", &error)],
@@ -482,39 +597,40 @@ pub async fn show_spellforge_consent(
             );
         }
         if let Some(font) = resources.label_font_any() {
-            let package_hash = key
+            let package_hash = self
+                .key
                 .package_sha256
                 .map(|hash| robin_engine::spellforge::hex_hash(&hash))
                 .unwrap_or_else(|| {
                     localized_text(application_context, PortTextKey::SpellforgeVanillaPackage)
                         .to_owned()
                 });
-            let full_hash = robin_engine::spellforge::hex_hash(&key.full_mod_sha256);
+            let full_hash = robin_engine::spellforge::hex_hash(&self.key.full_mod_sha256);
             let mut y = CONSENT_BODY_START_Y;
             for (field_key, value, lines) in [
                 (
                     PortTextKey::SpellforgeMissionField,
-                    metadata.title.as_str(),
+                    self.metadata.title.as_str(),
                     1,
                 ),
                 (
                     PortTextKey::SpellforgeClaimedAuthorField,
-                    metadata.claimed_author.as_str(),
+                    self.metadata.claimed_author.as_str(),
                     1,
                 ),
                 (
                     PortTextKey::SpellforgeVersionField,
-                    metadata.version.as_str(),
+                    self.metadata.version.as_str(),
                     1,
                 ),
                 (
                     PortTextKey::SpellforgeLicensePermissionField,
-                    metadata.license.as_str(),
+                    self.metadata.license.as_str(),
                     1,
                 ),
                 (
                     PortTextKey::SpellforgeSourceField,
-                    metadata.source_url.as_str(),
+                    self.metadata.source_url.as_str(),
                     1,
                 ),
             ] {
@@ -524,7 +640,7 @@ pub async fn show_spellforge_consent(
             let distributor_identity = localized_format(
                 application_context,
                 PortTextKey::SpellforgeDistributorKeyField,
-                &[("value", &metadata.host_endpoint_id)],
+                &[("value", &self.metadata.host_endpoint_id)],
             );
             render_complete_bounded_text(
                 renderer,
@@ -534,7 +650,7 @@ pub async fn show_spellforge_consent(
                 &mut y,
                 2,
             );
-            let bytes = metadata.compressed_bytes.to_string();
+            let bytes = self.metadata.compressed_bytes.to_string();
             let download = localized_format(
                 application_context,
                 PortTextKey::SpellforgeDownloadBytesField,
@@ -559,12 +675,12 @@ pub async fn show_spellforge_consent(
                 &mut y,
                 1,
             );
-            if key.package_sha256.is_some() {
+            if self.key.package_sha256.is_some() {
                 render_exact_hash(renderer, font, transform, &package_hash, &mut y);
             } else {
                 render_bounded_text(renderer, font, transform, &package_hash, &mut y, 1);
             }
-            let warning_key = if key.package_sha256.is_some() {
+            let warning_key = if self.key.package_sha256.is_some() {
                 PortTextKey::SpellforgeExecutableWarning
             } else {
                 PortTextKey::SpellforgeNonExecutableWarning
@@ -581,17 +697,17 @@ pub async fn show_spellforge_consent(
                 y <= CONSENT_STATUS_BOUNDARY_Y,
                 "consent content exceeded its fixed body budget"
             );
-            if !status.is_empty() {
+            if !self.status.is_empty() {
                 let mut status_y = 390;
-                render_bounded_text(renderer, font, transform, &status, &mut status_y, 1);
+                render_bounded_text(renderer, font, transform, &self.status, &mut status_y, 1);
             }
         }
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
         if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &input);
+            cursor.draw(renderer, transform, &self.input);
         }
         renderer.present();
-        crate::window::sleep_ui_frame().await;
+        Ok(std::ops::ControlFlow::Continue(()))
     }
 }
 

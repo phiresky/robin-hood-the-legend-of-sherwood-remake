@@ -615,7 +615,6 @@ pub enum ClimbResult {
 ///
 /// The order is pushed on the *climber*'s sequence element.  The first
 /// Execute later calls [`initialize_climb_on_shoulders_relationship`].
-#[allow(clippy::too_many_arguments)]
 pub fn begin_climb_on_shoulders(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,
@@ -1653,7 +1652,6 @@ pub fn begin_throw_stone_at_ground(
 /// antagonist entity is stored on `ActiveAbility.target` so the
 /// completion handler can compute the target's eyes / center as the
 /// trajectory endpoint.
-#[allow(clippy::too_many_arguments)]
 fn begin_throw_at_entity(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,

@@ -87,7 +87,6 @@ pub(crate) struct PendingPlayback {
 }
 
 impl PendingPlayback {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         id: u64,
         generation: u64,

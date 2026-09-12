@@ -104,7 +104,6 @@ impl LoadPickerModalState {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         event_pump: &mut crate::window::GameWindow,
@@ -633,7 +632,6 @@ fn clear_thumbnail_cache(
     widget.reset_alternate_picture();
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_preview(
     renderer: &mut Renderer,
     transform: MenuTransform,

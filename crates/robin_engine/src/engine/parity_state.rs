@@ -52,6 +52,7 @@ struct ParityEntityReference {
     index: u32,
 }
 
+#[cfg(test)]
 fn parity_entity_reference(id: EntityId) -> serde_json::Value {
     serde_json::to_value(typed_entity_reference(id))
         .expect("typed parity entity reference must serialize")
@@ -99,6 +100,7 @@ struct ParityMessengerState {
     selected_action: u32,
 }
 
+#[cfg(test)]
 fn parity_float(value: f32) -> serde_json::Value {
     serde_json::to_value(typed_float(value)).expect("typed parity float must serialize")
 }
@@ -139,9 +141,6 @@ impl Engine {
         id: EntityId,
         assets: &LevelAssets,
     ) -> serde_json::Value {
-        use serde_json::{Value, json};
-
-        let entity_ref = parity_entity_reference;
         let entity = self.inner.world.entities.get(id).unwrap_or_else(|| {
             panic!("parity runtime projection references missing entity {id:?}")
         });

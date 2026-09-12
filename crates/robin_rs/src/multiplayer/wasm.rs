@@ -260,7 +260,6 @@ async fn with_timeout<T>(millis: u32, future: impl Future<Output = T>) -> Result
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_client_io(
     ticket: BrowserJoinTicket,
     server_addr: EndpointAddr,
@@ -946,7 +945,6 @@ async fn resolve_reconnect(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn answer_ranked_join_challenge(
     challenge: RankedJoinChallenge,
     authenticated_host_endpoint: EndpointId,

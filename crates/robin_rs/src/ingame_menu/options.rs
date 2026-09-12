@@ -84,7 +84,6 @@ fn language_option_visible(allow_language_switching: bool, selector_visible: boo
 /// returns with changes, `sound.apply_volumes` runs.  Pass `None` for
 /// audio args from contexts with no live audio (e.g. the main-menu
 /// entry path).
-#[allow(clippy::too_many_arguments)]
 pub async fn show_options(
     application_context: &crate::host::ApplicationContext,
     allow_language_switching: bool,
@@ -103,7 +102,7 @@ pub async fn show_options(
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) -> OptionsOutcome {
-    let mut controller = OptionsController::new(
+    let controller = OptionsController::new(
         graphic_config.clone(),
         *sound_config,
         *gameplay_config,
@@ -111,14 +110,84 @@ pub async fn show_options(
         key_config.clone(),
         custom_key_config.clone(),
     );
-    let mut outcome = OptionsOutcome::default();
-    let mut input_state = ModalInputState::new();
 
-    // Outer re-display loop: on a resolution change the menu destroys
-    // itself and the outer loop re-enters at the new screen size. Here
-    // we re-layout everything against the fresh
-    // `renderer.screen_width()`/`screen_height()` on every iteration.
+    let mut state = OptionsModalState::new(
+        application_context,
+        allow_language_switching,
+        event_pump,
+        renderer,
+        resources,
+        controller,
+        OptionsOutcome::default(),
+        ModalInputState::new(),
+    );
     loop {
+        while !state.done {
+            state
+                .tick(
+                    application_context,
+                    event_pump,
+                    renderer,
+                    resources,
+                    &mut cursor,
+                    sherwood_trading_editable,
+                    &mut sound,
+                    &mut audio_backend,
+                    sample_loader,
+                )
+                .await;
+            // Closing frames were always drawn and paced before committing edits.
+            crate::window::sleep_ui_frame().await;
+        }
+        if state.outcome.language_changed || !state.re_display {
+            break;
+        }
+        // Rebuild only after resolution changes, keeping edits and live input.
+        state = OptionsModalState::new(
+            application_context,
+            allow_language_switching,
+            event_pump,
+            renderer,
+            resources,
+            state.controller,
+            state.outcome,
+            state.input_state,
+        );
+    }
+
+    *graphic_config = state.controller.graphic.working;
+    *sound_config = state.controller.sound.working;
+    *gameplay_config = state.controller.gameplay;
+    *multiplayer_config = state.controller.multiplayer;
+    *key_config = state.controller.keys;
+    *custom_key_config = state.controller.custom_keys;
+    state.outcome
+}
+
+/// Owns one options layout and its staged edits across nested sub-screen awaits.
+struct OptionsModalState {
+    controller: OptionsController,
+    outcome: OptionsOutcome,
+    input_state: ModalInputState,
+    frame: FrameWnd,
+    title: String,
+    info: String,
+    done: bool,
+    re_display: bool,
+}
+
+impl OptionsModalState {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        application_context: &crate::host::ApplicationContext,
+        allow_language_switching: bool,
+        event_pump: &crate::window::GameWindow,
+        renderer: &Renderer,
+        resources: &IngameMenuResources,
+        controller: OptionsController,
+        outcome: OptionsOutcome,
+        mut input_state: ModalInputState,
+    ) -> Self {
         let sw = renderer.screen_width() as i32;
         let sh = renderer.screen_height() as i32;
         let transform = MenuTransform::centered(sw, sh);
@@ -173,252 +242,261 @@ pub async fn show_options(
         let title = resources.menu_text.get(MT_TTL_OPTIONS);
         let info = hardware_description(&resources.menu_text);
 
-        let mut done = false;
-        let mut re_display = false;
+        let done = false;
+        let re_display = false;
         input_state.seed_mouse_from_window(event_pump, transform);
 
-        while !done {
-            let (events, transform) =
-                super::layout::poll_events_with_transform(event_pump, renderer);
-            for event in events {
-                input_state.update_from_event(&event, transform);
-                match event {
-                    GameEvent::Quit => done = true,
-                    // Escape → Back.  No Return/KpEnter accelerator
-                    // since there's no input field.
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    } => {
-                        done = true;
-                    }
-                    _ => {}
-                }
-            }
-
-            let widget_input = input_state.as_widget_input();
-            let events = frame.process_input(&widget_input);
-            input_state.end_frame();
-
-            if let Some(id) = widget_bridge::find_activated(&events) {
-                match id {
-                    BUTTON_GRAPHICS => {
-                        controller.enter_page(OptionsPage::Graphics);
-                        let (changed, _resolution_changed) = show_graphics(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut controller.graphic.working,
-                        )
-                        .await;
-                        let effects = controller.accept_page(changed);
-                        outcome.changed |= effects.profile_changed;
-                        if effects.resolution_changed {
-                            // Apply the selected 4:3 scale reference and
-                            // aspect policy together. This keeps pointer
-                            // conversion aligned while the Options dialog
-                            // rebuilds itself; the caller still owns engine,
-                            // HUD, and input-cache propagation on return.
-                            outcome.resolution_changed = true;
-                            event_pump.set_logical_resolution_policy(&controller.graphic.working);
-                            renderer.sync_window_size(event_pump);
-                            re_display = true;
-                            done = true;
-                        }
-                    }
-                    BUTTON_SOUNDS => {
-                        controller.enter_page(OptionsPage::Sounds);
-                        // Explicit reborrow: `Option<&mut dyn Trait>::as_deref_mut` infers
-                        // the returned reference's lifetime against the outer `&mut dyn`,
-                        // which the borrow checker won't accept across loop iterations.
-                        // `as_mut().map(|b| &mut **b as &mut dyn _)` re-expresses the
-                        // reborrow with the local `&mut` as the source lifetime, which
-                        // NLL happily shortens.
-                        let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
-                            .as_mut()
-                            .map(|b| &mut **b as &mut dyn AudioBackend);
-                        let changed = show_sounds(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut controller.sound.working,
-                            sound.as_deref_mut(),
-                            backend_reborrow,
-                            sample_loader,
-                        )
-                        .await;
-                        let effects = controller.accept_page(changed);
-                        outcome.changed |= effects.profile_changed;
-                        // When the sub-screen accepts edits, push the
-                        // new settings through `apply_sound_settings`
-                        // so slider/toggle changes take effect
-                        // immediately rather than at the next mission
-                        // load. The Rust port lacks a kira device
-                        // close/open round-trip but still updates
-                        // `use_3d_sound`, invalidates the sample cache,
-                        // and re-activates source pendings when the 3D
-                        // toggle changed.
-                        if changed && let Some(s) = sound.as_deref_mut() {
-                            let backend_for_apply: Option<&mut dyn AudioBackend> = audio_backend
-                                .as_mut()
-                                .map(|b| &mut **b as &mut dyn AudioBackend);
-                            if let Some(b) = backend_for_apply {
-                                s.apply_sound_settings(false, b, &controller.sound.working, None);
-                            } else {
-                                s.apply_volumes(&controller.sound.working);
-                            }
-                        }
-                    }
-                    BUTTON_SHORTCUTS => {
-                        controller.enter_page(OptionsPage::Shortcuts);
-                        let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
-                            .as_mut()
-                            .map(|b| &mut **b as &mut dyn AudioBackend);
-                        let accepted = show_shortcuts(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut controller.keys,
-                            &mut controller.custom_keys,
-                            sound.as_deref_mut(),
-                            backend_reborrow,
-                            sample_loader,
-                        )
-                        .await;
-                        // Shortcut edits do not propagate to the outer
-                        // changed flag. Only persist the dedicated
-                        // `KeyConfigStore` path here so editing only
-                        // shortcuts does not spuriously mark the
-                        // graphic/sound profile dirty.
-                        if accepted {
-                            outcome.key_config_changed |=
-                                controller.accept_page(false).keys_changed;
-                        } else {
-                            controller.cancel_page();
-                        }
-                    }
-                    BUTTON_GAMEPLAY => {
-                        controller.enter_page(OptionsPage::Gameplay);
-                        let changed = show_gameplay(
-                            application_context,
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut controller.gameplay,
-                            sherwood_trading_editable,
-                        )
-                        .await;
-                        outcome.changed |= controller.accept_page(changed).profile_changed;
-                    }
-                    BUTTON_LEADERBOARDS => match crate::leaderboard_preferences::load() {
-                        Ok(mut preferences) => {
-                            if show_leaderboard_settings(
-                                event_pump,
-                                renderer,
-                                resources,
-                                cursor.as_mut().map(|c| c.reborrow()),
-                                &mut preferences,
-                            )
-                            .await
-                                && let Err(error) =
-                                    crate::leaderboard_preferences::persist(&preferences)
-                            {
-                                tracing::error!("failed to persist leaderboard settings: {error}");
-                            }
-                        }
-                        Err(error) => {
-                            tracing::error!("failed to load leaderboard settings: {error}");
-                        }
-                    },
-                    #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
-                    BUTTON_MULTIPLAYER_PRIVACY => {
-                        controller.enter_page(OptionsPage::MultiplayerPrivacy);
-                        let changed = show_multiplayer_privacy(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut controller.multiplayer,
-                        )
-                        .await;
-                        outcome.changed |= controller.accept_page(changed).profile_changed;
-                    }
-                    BUTTON_LANGUAGE => {
-                        if show_language(
-                            application_context,
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                        )
-                        .await
-                        {
-                            outcome.language_changed = true;
-                            outcome.changed = true;
-                            done = true;
-                        }
-                    }
-                    #[cfg(all(
-                        feature = "dialogs",
-                        any(target_os = "windows", target_os = "linux", target_os = "macos")
-                    ))]
-                    BUTTON_GAME_DATA => {
-                        // Opens the native folder picker; the modal loop is
-                        // frozen while the OS dialog is up, which is fine —
-                        // both are modal. The new folder is remembered and
-                        // applies on the next launch (resources from the
-                        // old datadir are already loaded).
-                        crate::datadir_locator::change_datadir_interactive();
-                    }
-                    BUTTON_BACK => done = true,
-                    _ => {}
-                }
-            }
-
-            enter_modal_gpu_phase(renderer);
-            dim_screen(renderer);
-
-            if let Some(bg) = resources.menu_bg[2] {
-                draw_screen_background(renderer, &bg);
-            }
-
-            if let Some(font) = resources.title_font_any() {
-                render_text_virt_font(renderer, font, transform, &title, 20, 20);
-            }
-            if let Some(font) = resources.label_font_any() {
-                let mut y = 120;
-                for line in info.lines() {
-                    render_text_virt_font(renderer, font, transform, line, 40, y);
-                    y += font.height() as i32 + 4;
-                }
-            }
-
-            widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
-
-            if let Some(c) = &cursor {
-                c.draw(renderer, transform, &input_state);
-            }
-
-            renderer.present();
-            crate::window::sleep_ui_frame().await;
-        }
-
-        if outcome.language_changed || !re_display {
-            break;
+        Self {
+            controller,
+            outcome,
+            input_state,
+            frame,
+            title,
+            info,
+            done,
+            re_display,
         }
     }
 
-    *graphic_config = controller.graphic.working;
-    *sound_config = controller.sound.working;
-    *gameplay_config = controller.gameplay;
-    *multiplayer_config = controller.multiplayer;
-    *key_config = controller.keys;
-    *custom_key_config = controller.custom_keys;
-    outcome
+    #[allow(clippy::too_many_arguments)]
+    async fn tick(
+        &mut self,
+        application_context: &crate::host::ApplicationContext,
+        event_pump: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        cursor: &mut Option<ModalCursor<'_>>,
+        sherwood_trading_editable: bool,
+        sound: &mut Option<&mut SoundManager>,
+        audio_backend: &mut Option<&mut dyn AudioBackend>,
+        sample_loader: Option<&SampleLoader>,
+    ) {
+        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        for event in events {
+            self.input_state.update_from_event(&event, transform);
+            match event {
+                GameEvent::Quit => self.done = true,
+                // Escape → Back.  No Return/KpEnter accelerator
+                // since there's no input field.
+                GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => {
+                    self.done = true;
+                }
+                _ => {}
+            }
+        }
+
+        let widget_input = self.input_state.as_widget_input();
+        let events = self.frame.process_input(&widget_input);
+        self.input_state.end_frame();
+
+        if let Some(id) = widget_bridge::find_activated(&events) {
+            match id {
+                BUTTON_GRAPHICS => {
+                    self.controller.enter_page(OptionsPage::Graphics);
+                    let (changed, _resolution_changed) = show_graphics(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut self.controller.graphic.working,
+                    )
+                    .await;
+                    let effects = self.controller.accept_page(changed);
+                    self.outcome.changed |= effects.profile_changed;
+                    if effects.resolution_changed {
+                        // Apply the selected 4:3 scale reference and
+                        // aspect policy together. This keeps pointer
+                        // conversion aligned while the Options dialog
+                        // rebuilds itself; the caller still owns engine,
+                        // HUD, and input-cache propagation on return.
+                        self.outcome.resolution_changed = true;
+                        event_pump.set_logical_resolution_policy(&self.controller.graphic.working);
+                        renderer.sync_window_size(event_pump);
+                        self.re_display = true;
+                        self.done = true;
+                    }
+                }
+                BUTTON_SOUNDS => {
+                    self.controller.enter_page(OptionsPage::Sounds);
+                    // Explicit reborrow: `Option<&mut dyn Trait>::as_deref_mut` infers
+                    // the returned reference's lifetime against the outer `&mut dyn`,
+                    // which the borrow checker won't accept across loop iterations.
+                    // `as_mut().map(|b| &mut **b as &mut dyn _)` re-expresses the
+                    // reborrow with the local `&mut` as the source lifetime, which
+                    // NLL happily shortens.
+                    let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
+                        .as_mut()
+                        .map(|b| &mut **b as &mut dyn AudioBackend);
+                    let changed = show_sounds(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut self.controller.sound.working,
+                        sound.as_deref_mut(),
+                        backend_reborrow,
+                        sample_loader,
+                    )
+                    .await;
+                    let effects = self.controller.accept_page(changed);
+                    self.outcome.changed |= effects.profile_changed;
+                    // When the sub-screen accepts edits, push the
+                    // new settings through `apply_sound_settings`
+                    // so slider/toggle changes take effect
+                    // immediately rather than at the next mission
+                    // load. The Rust port lacks a kira device
+                    // close/open round-trip but still updates
+                    // `use_3d_sound`, invalidates the sample cache,
+                    // and re-activates source pendings when the 3D
+                    // toggle changed.
+                    if changed && let Some(s) = sound.as_deref_mut() {
+                        let backend_for_apply: Option<&mut dyn AudioBackend> = audio_backend
+                            .as_mut()
+                            .map(|b| &mut **b as &mut dyn AudioBackend);
+                        if let Some(b) = backend_for_apply {
+                            s.apply_sound_settings(false, b, &self.controller.sound.working, None);
+                        } else {
+                            s.apply_volumes(&self.controller.sound.working);
+                        }
+                    }
+                }
+                BUTTON_SHORTCUTS => {
+                    self.controller.enter_page(OptionsPage::Shortcuts);
+                    let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
+                        .as_mut()
+                        .map(|b| &mut **b as &mut dyn AudioBackend);
+                    let accepted = show_shortcuts(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut self.controller.keys,
+                        &mut self.controller.custom_keys,
+                        sound.as_deref_mut(),
+                        backend_reborrow,
+                        sample_loader,
+                    )
+                    .await;
+                    // Shortcut edits do not propagate to the outer
+                    // changed flag. Only persist the dedicated
+                    // `KeyConfigStore` path here so editing only
+                    // shortcuts does not spuriously mark the
+                    // graphic/sound profile dirty.
+                    if accepted {
+                        self.outcome.key_config_changed |=
+                            self.controller.accept_page(false).keys_changed;
+                    } else {
+                        self.controller.cancel_page();
+                    }
+                }
+                BUTTON_GAMEPLAY => {
+                    self.controller.enter_page(OptionsPage::Gameplay);
+                    let changed = show_gameplay(
+                        application_context,
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut self.controller.gameplay,
+                        sherwood_trading_editable,
+                    )
+                    .await;
+                    self.outcome.changed |= self.controller.accept_page(changed).profile_changed;
+                }
+                BUTTON_LEADERBOARDS => match crate::leaderboard_preferences::load() {
+                    Ok(mut preferences) => {
+                        if show_leaderboard_settings(
+                            event_pump,
+                            renderer,
+                            resources,
+                            cursor.as_mut().map(|c| c.reborrow()),
+                            &mut preferences,
+                        )
+                        .await
+                            && let Err(error) =
+                                crate::leaderboard_preferences::persist(&preferences)
+                        {
+                            tracing::error!("failed to persist leaderboard settings: {error}");
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!("failed to load leaderboard settings: {error}");
+                    }
+                },
+                #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
+                BUTTON_MULTIPLAYER_PRIVACY => {
+                    self.controller.enter_page(OptionsPage::MultiplayerPrivacy);
+                    let changed = show_multiplayer_privacy(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                        &mut self.controller.multiplayer,
+                    )
+                    .await;
+                    self.outcome.changed |= self.controller.accept_page(changed).profile_changed;
+                }
+                BUTTON_LANGUAGE => {
+                    if show_language(
+                        application_context,
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor.as_mut().map(|c| c.reborrow()),
+                    )
+                    .await
+                    {
+                        self.outcome.language_changed = true;
+                        self.outcome.changed = true;
+                        self.done = true;
+                    }
+                }
+                #[cfg(all(
+                    feature = "dialogs",
+                    any(target_os = "windows", target_os = "linux", target_os = "macos")
+                ))]
+                BUTTON_GAME_DATA => {
+                    // Opens the native folder picker; the modal loop is
+                    // frozen while the OS dialog is up, which is fine —
+                    // both are modal. The new folder is remembered and
+                    // applies on the next launch (resources from the
+                    // old datadir are already loaded).
+                    crate::datadir_locator::change_datadir_interactive();
+                }
+                BUTTON_BACK => self.done = true,
+                _ => {}
+            }
+        }
+
+        enter_modal_gpu_phase(renderer);
+        dim_screen(renderer);
+
+        if let Some(bg) = resources.menu_bg[2] {
+            draw_screen_background(renderer, &bg);
+        }
+
+        if let Some(font) = resources.title_font_any() {
+            render_text_virt_font(renderer, font, transform, &self.title, 20, 20);
+        }
+        if let Some(font) = resources.label_font_any() {
+            let mut y = 120;
+            for line in self.info.lines() {
+                render_text_virt_font(renderer, font, transform, line, 40, y);
+                y += font.height() as i32 + 4;
+            }
+        }
+
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
+
+        if let Some(c) = &cursor {
+            c.draw(renderer, transform, &self.input_state);
+        }
+
+        renderer.present();
+    }
 }
 
 /// Build the hardware description line shown on the options hub.

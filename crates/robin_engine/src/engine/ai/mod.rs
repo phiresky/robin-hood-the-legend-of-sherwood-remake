@@ -1481,7 +1481,6 @@ fn look_there_target_is_inside_radius(distance_squared: f32, radius_squared: f32
 /// omnidirectional detection. That variant builds both endpoints from the
 /// actors' literal stored 3-D positions. In particular, a door-passing member
 /// must not substitute the committed gate-side AI position here.
-#[allow(clippy::too_many_arguments)]
 fn patrol_member_visible_from_raw_world(
     chief_world: crate::coordinates::WorldPoint3D,
     chief_is_rider: bool,
@@ -3189,7 +3188,6 @@ impl EngineInner {
 /// position / state without a mutable engine borrow.  Callers grab
 /// the map from [`SimScratch`], built by
 /// [`EngineInner::build_sim_scratch`] before each dispatch pass.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_ai_context_from_entity(
     entity: &Entity,
     frame: u32,

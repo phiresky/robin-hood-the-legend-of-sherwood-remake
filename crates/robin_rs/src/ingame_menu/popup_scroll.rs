@@ -212,7 +212,6 @@ pub struct PopupScrollModalState {
 }
 
 impl PopupScrollModalState {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_pump: &crate::window::GameWindow,
         renderer: &mut Renderer,
@@ -284,7 +283,6 @@ impl PopupScrollModalState {
         state
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         event_pump: &mut crate::window::GameWindow,

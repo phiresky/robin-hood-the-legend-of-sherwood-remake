@@ -639,7 +639,6 @@ pub fn is_jumpable(
 /// This mirrors original-game nearest jump-line selection: candidate
 /// lines come from the hovered/clicked jump zone, while authorization
 /// rejects lines whose source sector is not the actor's current sector.
-#[allow(clippy::too_many_arguments)]
 pub fn get_nearest_jumpable_jump_line(
     fast_grid: &crate::fast_find_grid::FastFindGrid,
     doors: &[crate::gate::Door],

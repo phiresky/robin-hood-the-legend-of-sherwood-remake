@@ -572,7 +572,6 @@ impl InteractiveRendererAssembly {
     /// `cursor` and `menu_res` are the two `DEFAULT.RES` views produced by
     /// [`MissionProcessResources::take_interface`] — ideally already eagerly
     /// decoded on a worker while the level loaded.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn assemble_process_frontend(
         mut self,
         window: &mut crate::window::GameWindow,

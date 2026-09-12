@@ -281,7 +281,6 @@ pub struct MissionAttempt {
 }
 
 impl MissionAttempt {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn native(
         sequence: u64,
         outcome: MissionAttemptOutcome,

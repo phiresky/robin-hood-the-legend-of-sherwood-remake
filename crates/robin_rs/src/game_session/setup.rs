@@ -356,7 +356,6 @@ pub(super) struct LoadedInteractiveResources {
 /// Everything that needs the game renderer happens after the close.
 /// `.map` / `.min` and resource attachments happen well before the
 /// loading screen closes.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn pre_decode_maps_and_resources(
     mut event_pump: Option<&mut crate::window::GameWindow>,
     loading_screen: &mut Option<crate::loading_screen::LoadingScreenRenderer>,
@@ -1025,7 +1024,6 @@ diagnostic_stage_serde!(
     ConstructedMission
 );
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_mission(
     feedback: &mut MissionLoadFeedback<'_>,
     host: &mut Host,

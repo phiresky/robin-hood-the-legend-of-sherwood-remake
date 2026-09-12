@@ -228,7 +228,6 @@ struct ConvertedPc {
 }
 
 impl LegacyPcHumanAdoptionPlan {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn preflight(
         engine: &EngineInner,
         payloads: &LegacyElementPayloadStream,
@@ -541,7 +540,6 @@ fn convert_building_sector(
     Ok(engine.entity_building_sector(position_sector))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn convert_pc(
     saved: &LegacyPcPayload<LegacyHumanPayload, LegacyInlineSequence>,
     runtime: &PcData,

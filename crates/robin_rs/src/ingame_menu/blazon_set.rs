@@ -28,7 +28,6 @@ use super::resources::{
 ///
 /// `blinking` is the trailing-castle blink count; pass 0 when the
 /// one-shot blink latch is inactive.
-#[allow(clippy::too_many_arguments)]
 pub fn build_for_mission(
     campaign: &engine_campaign::Campaign,
     profiles: &engine_profiles::ProfileManager,

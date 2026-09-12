@@ -631,7 +631,6 @@ pub(super) fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u
     if identity == 0 { u64::MAX } else { identity }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn append_legacy_retained_terminal_success_repair(
     commands_before_hourglass: &mut Vec<PlayerCommand>,
     commands_after_hourglass: &mut Vec<PlayerCommand>,

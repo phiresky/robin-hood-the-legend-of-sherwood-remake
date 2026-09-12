@@ -215,7 +215,6 @@ impl EngineInner {
     ///    has a slot per global ambush point.
     /// 10. Dispatch to the subclass's `init_one_ai` for the
     ///     initial-action / state-transition / return-to-duty logic.
-    #[allow(clippy::too_many_arguments)]
     fn init_one_ai(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

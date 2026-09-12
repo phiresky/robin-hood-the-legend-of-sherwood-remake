@@ -17,7 +17,7 @@
 //!   - Animated JXL (character anims only) — one file containing all frames
 //!   - AV1 lossless via ffmpeg (character anims only)
 //!   - Original bytes (bank-packed + rhs header, for reference)
-#![allow(clippy::print_stdout, clippy::print_stderr, clippy::too_many_arguments)]
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::{
     fs,

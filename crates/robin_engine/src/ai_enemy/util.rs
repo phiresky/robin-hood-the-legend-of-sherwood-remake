@@ -338,7 +338,6 @@ pub struct CampSoldierInfo {
     pub eye_blind: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
 #[track_caller]
 /// The world-space half of all-around detection: the original game passes
 /// the upright eye point and detection point straight into the
@@ -369,7 +368,6 @@ pub(crate) fn soldier_detects_detection_point_360(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 #[track_caller]
 pub(crate) fn soldier_detects_target_360(
     viewer_position: Position,
@@ -1257,7 +1255,6 @@ fn evaluate_single_position(
 
 /// Full evaluation of a combat position considering own damage,
 /// friends' damage, and unengaged enemies.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn evaluate_combat_position_full(
     me_handle: HumanHandle,
     me_pos: &Position,

@@ -216,7 +216,6 @@ pub(super) fn post_render_engine_cleanup(
 /// (which enqueues the requests) and after the normal tick block (so
 /// any tick that just ran gets committed to the rewind buffer before
 /// we append more frames to it).
-#[allow(clippy::too_many_arguments)]
 pub(super) fn drain_steps(
     steps: Vec<crate::http_server::PendingStep>,
     mutation: super::runtime::MissionMutation<'_>,
@@ -636,7 +635,6 @@ fn begin_synchronized_step_resync(
 /// debriefing, sherwood report, mission-state popup) is resolved by that same
 /// request policy. The keyboard step path instead refuses to step while a
 /// modal is pending; that's a deliberate interactive-vs-scripted divergence.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn run_forward_ticks(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
@@ -712,7 +710,6 @@ impl ManualFrameSource {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn run_forward_ticks_with_session_modals(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,

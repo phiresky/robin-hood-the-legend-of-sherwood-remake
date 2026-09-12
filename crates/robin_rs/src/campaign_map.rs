@@ -236,7 +236,6 @@ pub(crate) struct CampaignMapModalState {
 }
 
 impl CampaignMapModalState {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         application_context: &ApplicationContext,
         renderer: &mut Renderer,
@@ -448,7 +447,6 @@ impl CampaignMapModalState {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn tick(
         &mut self,
         window: &mut crate::window::GameWindow,
@@ -2315,7 +2313,6 @@ fn detail_sections(
         ])
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_mission_details(
     renderer: &mut Renderer,
     transform: MenuTransform,
@@ -2760,7 +2757,6 @@ fn render_campaign_map(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_tooltip(
     renderer: &mut Renderer,
     transform: MenuTransform,

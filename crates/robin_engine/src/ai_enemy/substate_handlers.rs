@@ -3736,7 +3736,6 @@ impl EnemyAi {
     /// Resume the statement after the soldier-report branch's synchronous
     /// officer-alert call. A failed route is consumed by officer alerting and
     /// makes the caller seek around the retained civilian report position.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn resume_civilian_report_after_alert_officer(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

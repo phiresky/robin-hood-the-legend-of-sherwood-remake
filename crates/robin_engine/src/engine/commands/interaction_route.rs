@@ -668,7 +668,6 @@ impl EngineInner {
     /// target clicking: a coordinate SEEK at the recorded
     /// target position, with no movement flags and zero tolerance, followed
     /// by the recorded Turn and interaction elements.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn replay_recorded_target_interaction(
         &mut self,
         actor: EntityId,

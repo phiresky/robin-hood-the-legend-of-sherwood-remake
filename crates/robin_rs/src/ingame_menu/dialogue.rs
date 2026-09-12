@@ -237,7 +237,6 @@ fn dialogue_buttons(
 /// When `replay_result` is `Some`, the interactive loop is skipped and
 /// the pre-recorded result is returned immediately.  This is what lets
 /// replays dismiss modal briefings without a human at the keyboard.
-#[allow(clippy::too_many_arguments)]
 pub async fn show_dialogue(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
@@ -540,7 +539,6 @@ impl DialogueModalState {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn tick(
         &mut self,
         event_pump: &mut crate::window::GameWindow,
@@ -1024,7 +1022,6 @@ fn update_mouth(
 /// There is no scaled glyph — the dropped-initial region is purely a
 /// layout reservation so the portrait can sit in the top-right corner
 /// without the text running behind it.
-#[allow(clippy::too_many_arguments)]
 fn render_dropped_initial_text(
     renderer: &mut Renderer,
     font: &crate::native_font::Font,
@@ -1094,7 +1091,6 @@ fn render_dropped_initial_text(
 /// [`crate::renderer::Renderer::draw_surface_alpha`] — 0 skips the
 /// blit entirely, 100 uses the opaque fast path, and any value in
 /// between falls through to the alpha-modulated GPU blit.
-#[allow(clippy::too_many_arguments)]
 fn draw_portrait_frame_alpha(
     renderer: &mut Renderer,
     transform: MenuTransform,

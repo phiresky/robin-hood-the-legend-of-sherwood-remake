@@ -47,7 +47,6 @@ impl EngineInner {
     /// map point. Original-game jump landing, for example, asks the destination line's
     /// sector for the projection area at the line midpoint rather than at
     /// the exact landing point.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_special_move_position(
         &mut self,
         assets: &LevelAssets,
@@ -76,7 +75,6 @@ impl EngineInner {
     /// area. Original's synthetic ground projection is represented by no
     /// Rust obstacle, so a missing authored obstacle must clear the previous
     /// plane rather than preserve it.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_special_move_position_with_ground(
         &mut self,
         assets: &LevelAssets,
@@ -106,7 +104,6 @@ impl EngineInner {
     /// projection sector's topology. Door transition action points can select
     /// the far-side obstacle before the later explicit `PassingDoor` order
     /// changes layer/sector.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn finalize_special_move_position_using_projection_sector(
         &mut self,
         assets: &LevelAssets,
@@ -257,7 +254,6 @@ impl EngineInner {
     /// translator has selected the exact step. Selecting the successor does
     /// not execute it: posture/action-state changes belong to the successor's
     /// own actor slot and are therefore deliberately not applied here.
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn install_special_walk_order(
         &mut self,
         entity_id: EntityId,

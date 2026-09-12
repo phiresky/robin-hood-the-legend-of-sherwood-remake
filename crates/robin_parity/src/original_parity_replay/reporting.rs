@@ -98,7 +98,6 @@ impl DumpOptions {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn write_engine_dump_frame(
     writer: &mut BufWriter<File>,
     options: &DumpOptions,
@@ -166,7 +165,6 @@ pub(super) fn write_engine_dump_frame(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn write_engine_dump_snapshot_frame(
     writer: &mut BufWriter<File>,
     options: &DumpOptions,

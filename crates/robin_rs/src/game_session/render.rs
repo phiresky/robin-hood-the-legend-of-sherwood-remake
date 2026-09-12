@@ -1054,7 +1054,6 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
 /// same `new_cursor` id. Sim mutations such as
 /// `PlayerCommand::PerformOrientation` must run earlier in the frame,
 /// before rollback/replay command logging commits the tick.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn update_mouse_and_cursor(
     engine: &Engine,
     host: &mut Host,
@@ -1528,7 +1527,6 @@ fn render_world_pass(
     render_door_overlays(host, engine, assets, renderer, physical_shift_held);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_overlay_pass(
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,

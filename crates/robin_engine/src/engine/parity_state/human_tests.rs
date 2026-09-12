@@ -53,6 +53,10 @@ fn human_and_pc_records_match_frozen_encoder_with_populated_frontiers() {
         let mut pc = PcData {
             campaign_description_index: Some(0),
             profile_index: CharacterProfileIdx(0),
+            // The parity boundary describes initialized PCs, whose profile
+            // supplies exactly three permanent and temporary action slots.
+            disabled_actions: vec![false; 3],
+            disabled_actions_temp: vec![false; 3],
             ..Default::default()
         };
         if populated {

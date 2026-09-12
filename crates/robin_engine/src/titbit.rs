@@ -505,7 +505,6 @@ impl TitbitManager {
     ///
     /// `supplier_display_order` and `supplier_layer` should be provided
     /// when the element supplier is known.
-    #[allow(clippy::too_many_arguments)]
     pub fn add_titbit(
         &mut self,
         position: WorldPoint3D,
