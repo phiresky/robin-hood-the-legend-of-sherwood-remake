@@ -44,7 +44,7 @@ impl NativeContext<'_, '_> {
             find_path_gates_with_sector_indices, find_path_into_door_with_sector_index,
         };
         use crate::position_interface::SectorHandle;
-        use crate::sequence::{Field, FieldValue, MoveFlags, SequenceElement, SequenceElementData};
+        use crate::sequence::{MoveFlags, SequenceElement, SequenceElementData};
 
         debug_assert!(
             !initial_flags.contains(MoveFlags::STRAIGHT),

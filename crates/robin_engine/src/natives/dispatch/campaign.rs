@@ -251,7 +251,12 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
-                let occupants = self.zone_occupant_handles(loc).unwrap_or_default();
+                let Some(occupants) = self.zone_occupant_handles(loc) else {
+                    tracing::warn!(target: "script",
+                        "Script error: GetNumberOfActorsInSector missing zone for sector handle {loc}"
+                    );
+                    return 0;
+                };
                 if let Some(vm) = &self.script_vm_diagnostic {
                     self.simulation
                         .record_script_zone_query(vm, loc, occupants.clone());
@@ -282,7 +287,12 @@ impl NativeContext<'_, '_> {
                             0
                         }
                     }
-                    None => 0,
+                    None => {
+                        tracing::warn!(target: "script",
+                            "Script error: GetActorInSector missing zone for sector handle {loc}"
+                        );
+                        0
+                    }
                 }
             }
 
