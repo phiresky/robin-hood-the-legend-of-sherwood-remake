@@ -92,16 +92,16 @@ impl<'world> PresentationView<'world> {
         self.inner.pc_experience_snapshot(entity)
     }
 
-    pub fn is_zoom_possible(&self, _display: &HostDisplayState) -> bool {
-        self.inner.is_zoom_possible(_display)
+    pub fn is_zoom_possible(&self) -> bool {
+        self.inner.is_zoom_possible()
     }
 
-    pub fn is_zoom_up_in_progress(&self, _display: &HostDisplayState) -> bool {
-        self.inner.is_zoom_up_in_progress(_display)
+    pub fn is_zoom_up_in_progress(&self) -> bool {
+        self.inner.is_zoom_up_in_progress()
     }
 
-    pub fn is_zoom_down_in_progress(&self, _display: &HostDisplayState) -> bool {
-        self.inner.is_zoom_down_in_progress(_display)
+    pub fn is_zoom_down_in_progress(&self) -> bool {
+        self.inner.is_zoom_down_in_progress()
     }
 
     pub fn is_zoom_up_possible(&self) -> bool {

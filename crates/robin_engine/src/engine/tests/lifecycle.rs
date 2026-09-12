@@ -234,20 +234,19 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
 
 #[test]
 fn zoom_state_machine() {
-    let display = HostDisplayState::default();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
     engine.feedback.cutscene_camera.display.display_op = DisplayOpCode::NoBackgroundMove;
 
-    assert!(engine.is_zoom_possible(&display));
+    assert!(engine.is_zoom_possible());
     assert!(engine.is_zoom_up_possible());
     assert!(engine.is_zoom_down_possible());
-    assert!(!engine.is_zooming(&display));
+    assert!(!engine.is_zooming());
 
     // Trigger zoom up
     assert!(engine.change_state_with_camera_display(0, EngineStateRequest::ZoomingUp));
-    assert!(engine.is_zooming(&display));
-    assert!(!engine.is_zoom_possible(&display));
+    assert!(engine.is_zooming());
+    assert!(!engine.is_zoom_possible());
     assert_eq!(
         engine.feedback.cutscene_camera.display.display_op,
         DisplayOpCode::InitZoom

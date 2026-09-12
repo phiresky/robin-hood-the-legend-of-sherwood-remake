@@ -5791,7 +5791,7 @@ impl EngineInner {
         // here so the restored engine starts the next tick with a
         // clean zoom state, rather than relying on a host-driven
         // cache-validity hook.
-        if self.is_zooming(display) {
+        if self.is_zooming() {
             let zoom_up = self.is_zoom_up_possible() as u32;
             let zoom_down = self.is_zoom_down_possible() as u32;
             self.orders

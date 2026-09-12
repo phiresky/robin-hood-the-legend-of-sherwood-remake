@@ -56,13 +56,10 @@ impl ZoomButtonEnable {
     /// `is_zoom_possible`; we then re-open the specific direction
     /// that's active so its widget stays visually "pressed" for the
     /// duration.
-    pub fn from_engine(
-        engine: &engine_api::PresentationView<'_>,
-        display: &engine_api::HostDisplayState,
-    ) -> Self {
-        let gated = engine.is_zoom_possible(display);
-        let zoom_up_in_progress = engine.is_zoom_up_in_progress(display);
-        let zoom_down_in_progress = engine.is_zoom_down_in_progress(display);
+    pub fn from_engine(engine: &engine_api::PresentationView<'_>) -> Self {
+        let gated = engine.is_zoom_possible();
+        let zoom_up_in_progress = engine.is_zoom_up_in_progress();
+        let zoom_down_in_progress = engine.is_zoom_down_in_progress();
         Self {
             zoom_up: (gated && engine.is_zoom_up_possible()) || zoom_up_in_progress,
             zoom_down: (gated && engine.is_zoom_down_possible()) || zoom_down_in_progress,
@@ -429,7 +426,7 @@ mod tests {
     #[test]
     fn enable_mask_gates_on_is_zoom_possible() {
         use robin_engine::campaign::Campaign;
-        use robin_engine::engine::{EngineStateRequest, HostDisplayState, LevelAssets};
+        use robin_engine::engine::{EngineStateRequest, LevelAssets};
 
         let mut assets = LevelAssets::new();
         let mut engine = engine_api::Engine::new_for_test_with_level_size(
@@ -441,10 +438,9 @@ mod tests {
             4096.0,
         )
         .expect("engine");
-        let display = HostDisplayState::default();
 
         // Idle state: both directions available at zoom_factor = 1.0.
-        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view(), &display);
+        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view());
         assert!(mask.zoom_up);
         assert!(mask.zoom_down);
         assert!(!mask.selected_up);
@@ -462,7 +458,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("zoom command admission");
-        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view(), &display);
+        let mask = ZoomButtonEnable::from_engine(&engine.presentation_view());
         assert!(mask.zoom_up);
         assert!(mask.selected_up);
         assert!(!mask.zoom_down);
