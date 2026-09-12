@@ -30,6 +30,7 @@ use crate::save_file::{
     self, GameSaveFile, PreparedGameSave, ReplaySaveIdentity, SaveHeader, SaveProvenance, Thumbnail,
 };
 
+pub(crate) mod autosave_store;
 mod catalog;
 mod operation;
 mod persistence;
@@ -516,7 +517,8 @@ impl SaveGameManager {
         // This is not a fallback from a corrupt or unreadable persisted index.
         #[cfg(target_arch = "wasm32")]
         let mut manager = Self::new(dir_str);
-        crate::autosave::load_into_manager(&mut manager)
+        manager
+            .load_autosaves()
             .map_err(|error| format!("load autosave manifest: {error:#}"))?;
         Ok(manager)
     }
@@ -1137,9 +1139,9 @@ impl SaveGameManager {
             anyhow::bail!("session Restart checkpoint is unavailable");
         }
         if slot.is_autosave() {
-            return crate::autosave::read_payload(&self.save_directory, &slot.filename)
+            return autosave_store::read_payload(&self.save_directory, &slot.filename)
                 .and_then(|payload| {
-                    crate::autosave::validate_metadata_payload_binding(slot, &payload)?;
+                    autosave_store::validate_metadata_payload_binding(slot, &payload)?;
                     Ok(PreparedGameSave::from(payload))
                 })
                 .with_context(|| {
@@ -1760,7 +1762,7 @@ impl SaveGameManager {
     pub fn load_thumbnail(&self, index: usize) -> Option<Thumbnail> {
         let slot = self.catalog.get(index)?;
         let result = if slot.is_autosave() {
-            crate::autosave::read_thumbnail(&self.save_directory, &slot.filename)
+            autosave_store::read_thumbnail(&self.save_directory, &slot.filename)
         } else {
             Thumbnail::read_optional_from(&self.thumb_path(index))
         };
@@ -1823,7 +1825,7 @@ impl SaveGameManager {
         }
 
         if slot.is_autosave() {
-            return match crate::autosave::payload_exists(&self.save_directory, &slot.filename) {
+            return match autosave_store::payload_exists(&self.save_directory, &slot.filename) {
                 Ok(exists) => exists,
                 Err(error) => {
                     tracing::error!(
@@ -4339,5 +4341,28 @@ mod tests {
         assert!(mgr.remove(0).is_err());
         assert!(mgr.remove_by_filename("Autosave_1_0000").is_err());
         assert_eq!(mgr.count(), 1);
+    }
+}
+
+impl SaveGameManager {
+    /// Merge the independently committed autosave manifest into this manager.
+    pub(crate) fn load_autosaves(&mut self) -> Result<()> {
+        use autosave_store::*;
+        // The manifest owns menu metadata. Decode and validate only the selected
+        // payload on load, so opening the menu never reads every saved simulation.
+        let legacy_seed = AutosaveManifest {
+            version: AUTOSAVE_MANIFEST_VERSION,
+            saves: self
+                .saves()
+                .filter(|save| save.is_autosave())
+                .cloned()
+                .collect(),
+        };
+        self.replace_autosaves(Vec::new())?;
+        let manifest = load_manifest(self.save_directory())?.unwrap_or(legacy_seed);
+        manifest.validate()?;
+        garbage_collect_orphans(self.save_directory(), &manifest)?;
+        self.replace_autosaves(manifest.saves)?;
+        Ok(())
     }
 }
