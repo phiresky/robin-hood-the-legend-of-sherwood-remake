@@ -406,14 +406,11 @@ impl EngineInner {
                     // future in-game widget that grabs focus.
                     //
                     // The Rust port keeps the mouse focus gate on
-                    // host-owned `InputState`; `run_engine_tick_core`
-                    // consumes the side effect below and clears that
-                    // latch before later mouse dispatch can see it.
+                    // host-owned `InputState`; display-effect preparation
+                    // consumes the side effect below and clears that gate
+                    // before later mouse dispatch can see it.
                     MessageType::Simple(crate::messenger::SimpleMessage::UiHasFocus) => {
                         self.request_pc_info_overlay(assets, None);
-                        // Raise the host-side per-frame `ui_focus`
-                        // latch; the host clears it at end of
-                        // `update_mouse`.
                         self.feedback.pending_side_effects.ui_has_focus = true;
                     }
                     MessageType::Pc(crate::messenger::PcMessage::ShowPcInformation, pc) => {

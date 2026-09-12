@@ -3820,11 +3820,11 @@ pub struct SideEffects {
     /// is true, it flips `ignore_next_left_click`, `ignore_next_drag`,
     /// and `next_left_double_is_simple` on `InputState`.
     pub pending_swordfight_drag_ignore: bool,
-    /// Sim observed `SimpleMessage::UiHasFocus` on the messenger this
-    /// tick. A latch set by the UI-has-focus message and cleared every
-    /// frame as part of the messenger's per-frame sweep. Host drains
-    /// this by setting `host.ui_focus = true`; the host clears the
-    /// latch back to false at end of `update_mouse` each frame.
+    /// Sim observed `SimpleMessage::UiHasFocus` on the messenger this tick.
+    /// Host display preparation clears `InputState.controls.has_focus` before
+    /// later mouse dispatch. No separate host latch is needed by current code.
+    /// TODO: port the original RHDISPLAY_INITZOOM focus gate when implementing
+    /// that display path; preserve its per-frame message timing then.
     pub ui_has_focus: bool,
     /// New top-left of the deployed minimap when an accepted drag /
     /// resize / setup-time validation moved it this tick. The host
