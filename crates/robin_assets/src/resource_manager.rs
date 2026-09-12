@@ -21,6 +21,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+mod original;
+
+use original::{RES_VERSION_100, flagged_picture_count};
+
+#[cfg(test)]
+use original::{read_cursor, read_picture_collection, read_string_table};
+
 use crate::binary_reader::Reader;
 use crate::picture::Picture;
 use robin_data_io::sbfile::{SbFile, SbFileSystem};
@@ -246,174 +253,6 @@ struct ResourceFileEntry {
     file_path: String,
     file_offset: u64,
     resource_type: [u8; 4],
-}
-
-const RES_VERSION_100: u32 = 0x0100;
-
-// ---------------------------------------------------------------------------
-// Free reader functions — parse resource payloads from a checked byte reader
-// ---------------------------------------------------------------------------
-
-fn read_picture(reader: &mut Reader<'_>, context: &str) -> Result<Picture> {
-    // The original game reads the 12-byte
-    // header and then exactly `ulPackedSize` payload bytes.
-    let start = reader.position();
-    let header: [u8; 12] = reader
-        .take(12, format!("{context} Sixteen header"))?
-        .try_into()
-        .expect("the checked reader returned exactly 12 bytes");
-    let packed_size = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
-    reader.take(packed_size, format!("{context} Sixteen payload"))?;
-    let length = reader.position() - start;
-    let bytes = reader.range(start, length, format!("{context} Sixteen frame"))?;
-    Picture::load_original_sixteen_from_bytes(bytes)
-        .with_context(|| format!("{context} Sixteen frame"))
-}
-
-/// Read a single-picture resource (`PIC `).
-fn read_single_picture(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    let pic = read_picture(reader, &format!("{context} picture 0"))?;
-    Ok(vec![Some(pic)])
-}
-
-/// Read a picture-collection resource (`PICC`).
-fn read_picture_collection(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    read_picture_slots(reader, context)
-}
-
-fn read_picture_slots(reader: &mut Reader<'_>, context: &str) -> Result<Vec<Option<Picture>>> {
-    let count = reader.count_u32(format!("{context} picture count"), 12)?;
-    let mut pics = Vec::with_capacity(count);
-    for picture_index in 0..count {
-        pics.push(Some(read_picture(
-            reader,
-            &format!("{context} picture {picture_index}"),
-        )?));
-    }
-    Ok(pics)
-}
-
-fn flagged_picture_count(tag: &[u8; 4]) -> Option<usize> {
-    match tag {
-        b"BTTN" => Some(4),
-        b"TOGL" => Some(5),
-        b"NPTF" | b"SLID" => Some(6),
-        b"RDO " => Some(7),
-        _ => None,
-    }
-}
-
-/// Read a "flagged" picture resource (BTTN, TOGL, NPTF, SLID, RDO).
-/// `count` is the fixed number of sub-pictures for this widget type.
-/// A bitmask controls which sub-pictures are actually present in the stream.
-fn read_flagged_pictures(
-    reader: &mut Reader<'_>,
-    count: usize,
-    context: &str,
-) -> Result<Vec<Option<Picture>>> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    let bitmask = reader.u32(format!("{context} picture bitmask"))?;
-    let mut pics = Vec::with_capacity(count);
-    for i in 0..count {
-        if bitmask & (1 << i) != 0 {
-            pics.push(Some(read_picture(
-                reader,
-                &format!("{context} picture {i}"),
-            )?));
-        } else {
-            pics.push(None);
-        }
-    }
-    Ok(pics)
-}
-
-/// Read a cursor resource (`CUR `).
-fn read_cursor(
-    reader: &mut Reader<'_>,
-    context: &str,
-) -> Result<(MouseEntry, Vec<Option<Picture>>)> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    let mouse_flags = reader.u16(format!("{context} mouse flags"))?;
-    let x = reader.u16(format!("{context} hotspot x"))?;
-    let y = reader.u16(format!("{context} hotspot y"))?;
-    let frame_length = reader.u16(format!("{context} frame length"))?;
-    let pics = read_picture_slots(reader, context)?;
-
-    let entry = MouseEntry {
-        hotspot: CursorHotspot::new(x as f32, y as f32),
-        flags: mouse_flags,
-        frame_length,
-    };
-    Ok((entry, pics))
-}
-
-/// Read a string-table resource (`TEXT`).
-/// Strings are little-endian UTF-16 on disk; we convert to UTF-8.
-fn read_string_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    let count = reader.u16(format!("{context} string count"))? as usize;
-    reader.validate_count(
-        count,
-        2,
-        format!("{context} string count"),
-        reader.position() - 2,
-    )?;
-    let mut strings = Vec::with_capacity(count);
-
-    // The original game stores each TEXT entry as
-    // a 16-bit count followed by that many 16-bit code units.
-    for string_index in 0..count {
-        let char_count = reader.u16(format!("{context} string {string_index} length"))? as usize;
-        reader.validate_count(
-            char_count,
-            2,
-            format!("{context} string {string_index} UTF-16 data"),
-            reader.position() - 2,
-        )?;
-        let encoded = reader.take(
-            char_count * 2,
-            format!("{context} string {string_index} UTF-16 data"),
-        )?;
-        let code_units = encoded
-            .chunks_exact(2)
-            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]));
-        strings.push(
-            char::decode_utf16(code_units)
-                .collect::<std::result::Result<String, _>>()
-                .with_context(|| format!("{context} string {string_index}: invalid UTF-16"))?,
-        );
-    }
-    Ok(strings)
-}
-
-/// Read a wave-table resource (`WAVE`).
-/// Entries are narrow (ASCII) path strings on disk.
-fn read_wave_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>> {
-    let _flags = reader.u32(format!("{context} flags"))?;
-    let count = reader.u16(format!("{context} wave count"))? as usize;
-    reader.validate_count(
-        count,
-        2,
-        format!("{context} wave count"),
-        reader.position() - 2,
-    )?;
-    let mut waves = Vec::with_capacity(count);
-
-    for wave_index in 0..count {
-        let str_size = reader.u16(format!("{context} wave {wave_index} length"))? as usize;
-        let encoded = reader.take(str_size, format!("{context} wave {wave_index} path"))?;
-        // Original-game wave-table loading caps the materialized path at 4096 bytes
-        // while still advancing past the full declared range.
-        let buf = &encoded[..str_size.min(4096)];
-        if str_size > 4096 {
-            tracing::warn!("read_wave_table: string size {str_size} > 4096, truncating");
-        }
-        let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        waves.push(String::from_utf8_lossy(&buf[..end]).to_string());
-    }
-    Ok(waves)
 }
 
 // ---------------------------------------------------------------------------
@@ -713,108 +552,8 @@ impl ResourceManager {
     }
 
     fn attach_resource_bytes(&mut self, bytes: &[u8], path: &str) -> Result<()> {
-        let mut reader = Reader::new(bytes);
-
-        // Validate magic
-        let magic = reader.take_array::<4>("resource file magic")?;
-        if &magic != b"SRES" {
-            bail!(
-                "not a resource file (bad magic {:?})",
-                std::str::from_utf8(&magic).unwrap_or("????")
-            );
-        }
-
-        let version = reader.u32("resource file version")?;
-
-        let mut parsed = Self::new();
-        match version {
-            RES_VERSION_100 => parsed.load_file_resource_v100(&mut reader, path)?,
-            _ => bail!("unsupported resource file version: 0x{version:04X}"),
-        }
-        self.merge_resources(parsed.data, parsed.lifetime);
-        Ok(())
-    }
-
-    fn load_file_resource_v100(&mut self, reader: &mut Reader<'_>, file_path: &str) -> Result<()> {
-        let num_resources = reader.count_u32("resource file entry count", 8)?;
-
-        for resource_index in 0..num_resources {
-            let type_tag = reader.take_array::<4>(format!("resource {resource_index} type"))?;
-            let id = reader.u32(format!("resource {resource_index} id"))? as ResourceId;
-            let context = format!(
-                "resource {id} ({})",
-                std::str::from_utf8(&type_tag).unwrap_or("non-ASCII type")
-            );
-
-            // Record the payload start used to recover dismissed resources.
-            let offset = u64::try_from(reader.position())
-                .with_context(|| format!("{context}: payload offset does not fit u64"))?;
-            self.load_resource_data(reader, id, &type_tag)
-                .with_context(|| context.clone())?;
-
-            self.lifetime.references.insert(id, 0);
-            self.lifetime.file_entries.insert(
-                id,
-                ResourceFileEntry {
-                    file_path: file_path.to_string(),
-                    file_offset: offset,
-                    resource_type: type_tag,
-                },
-            );
-        }
-        Ok(())
-    }
-
-    /// Dispatch to the right reader based on the 4-byte type tag and store
-    /// the results in the appropriate map(s).
-    fn load_resource_data(
-        &mut self,
-        reader: &mut Reader<'_>,
-        id: ResourceId,
-        type_tag: &[u8; 4],
-    ) -> Result<()> {
-        let context = format!(
-            "resource {id} ({})",
-            std::str::from_utf8(type_tag).unwrap_or("non-ASCII type")
-        );
-        match type_tag {
-            b"PIC " => {
-                let pics = read_single_picture(reader, &context)?;
-                self.data.remove(id);
-                self.data.pictures.insert(id, pics);
-            }
-            b"PICC" => {
-                let pics = read_picture_collection(reader, &context)?;
-                self.data.remove(id);
-                self.data.pictures.insert(id, pics);
-            }
-            b"BTTN" | b"TOGL" | b"NPTF" | b"SLID" | b"RDO " => {
-                let count = flagged_picture_count(type_tag).expect("matched flagged picture tag");
-                let pics = read_flagged_pictures(reader, count, &context)?;
-                self.data.remove(id);
-                self.data.pictures.insert(id, pics);
-            }
-            b"CUR " => {
-                let (mouse, pics) = read_cursor(reader, &context)?;
-                self.data.remove(id);
-                self.data.pictures.insert(id, pics);
-                self.data.mouse_entries.insert(id, mouse);
-            }
-            b"TEXT" => {
-                let strs = read_string_table(reader, &context)?;
-                self.data.remove(id);
-                self.data.strings.insert(id, strs);
-            }
-            b"WAVE" => {
-                let w = read_wave_table(reader, &context)?;
-                self.data.remove(id);
-                self.data.waves.insert(id, w);
-            }
-            _ => bail!(
-                "unsupported resource type: {:?}",
-                std::str::from_utf8(type_tag).unwrap_or("????")
-            ),
-        }
+        let (data, lifetime) = original::parse(bytes, path)?;
+        self.merge_resources(data, lifetime);
         Ok(())
     }
 
@@ -867,7 +606,7 @@ impl ResourceManager {
             .context("resource recovery offset does not fit usize")?;
         let mut reader = Reader::new(&bytes);
         reader.seek(offset, format!("resource {id} recovery payload offset"))?;
-        self.load_resource_data(&mut reader, id, &entry.resource_type)
+        original::decode_resource(&mut self.data, &mut reader, id, &entry.resource_type)
     }
 
     fn decode_picture_slots(
@@ -1960,8 +1699,7 @@ mod tests {
             pictures.data.pictures.insert(42, vec![None; count]);
             let bytes = pictures.write_to_res_bytes(packing).unwrap();
             let mut restored = ResourceManager::new();
-            restored
-                .load_resource_data(&mut Reader::new(&bytes[20..]), 42, tag)
+            original::decode_resource(&mut restored.data, &mut Reader::new(&bytes[20..]), 42, tag)
                 .unwrap();
             assert_eq!(restored.pictures_raw(42).unwrap().len(), count);
         }
@@ -2340,6 +2078,95 @@ mod tests {
         bytes.extend_from_slice(&id.to_le_bytes());
         bytes.extend_from_slice(payload);
         bytes
+    }
+
+    #[test]
+    fn truncated_duplicate_archive_never_commits_partial_values_or_origins() {
+        let mut archive = resource_file(b"TEXT", 42, &[0; 6]);
+        archive[8..12].copy_from_slice(&2u32.to_le_bytes());
+        archive.extend_from_slice(&resource_file(b"TOGL", 42, &[0; 8])[12..]);
+
+        let mut manager = ResourceManager::new();
+        manager
+            .attach_resource_bytes(&resource_file(b"WAVE", 42, &[0; 6]), "resident.res")
+            .unwrap();
+        let before = serde_json::to_value(&manager).unwrap();
+        let identity = manager.cache_identity();
+        for end in 0..archive.len() {
+            assert!(
+                manager
+                    .attach_resource_bytes(&archive[..end], "partial.res")
+                    .is_err()
+            );
+            assert_eq!(
+                serde_json::to_value(&manager).unwrap(),
+                before,
+                "prefix {end}"
+            );
+            assert_eq!(manager.cache_identity(), identity, "prefix {end}");
+        }
+        manager
+            .attach_resource_bytes(&archive, "complete.res")
+            .unwrap();
+        assert!(manager.waves_raw(42).is_none());
+        assert_eq!(manager.pictures_raw(42).unwrap().len(), 5);
+        assert_eq!(manager.lifetime.file_entries[&42].file_offset, 34);
+        assert_eq!(manager.lifetime.file_entries[&42].file_path, "complete.res");
+    }
+
+    #[test]
+    fn duplicate_picture_recovery_uses_last_payload_and_preserves_sparse_slots() {
+        let picture = Picture {
+            width: 1,
+            height: 1,
+            pitch: 2,
+            pixel_format: crate::picture::PixelFormat::Rgb16,
+            data: vec![0x34, 0x12],
+            palette: None,
+        };
+        let mut payload = 0u32.to_le_bytes().to_vec();
+        payload.extend_from_slice(&0b10010u32.to_le_bytes());
+        let encoded = picture
+            .write_sixteen_to_bytes(crate::picture::SixteenPacking::None)
+            .unwrap();
+        payload.extend_from_slice(&encoded);
+        payload.extend_from_slice(&encoded);
+        let mut archive = resource_file(b"TEXT", 42, &[0; 6]);
+        archive[8..12].copy_from_slice(&2u32.to_le_bytes());
+        archive.extend_from_slice(&resource_file(b"TOGL", 42, &payload)[12..]);
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset("duplicate.res", archive.clone())
+            .unwrap();
+        let mut manager =
+            ResourceManager::with_files(Arc::new(SbFileSystem::new(assets).snapshot()));
+        manager.attach_resource_file("duplicate.res").unwrap();
+        assert!(manager.strings_raw(42).is_none());
+        let before = serde_json::to_value(&manager).unwrap();
+        manager.dismiss_resource(42);
+        let identity = manager.cache_identity();
+        let slots = manager.find_pictures(42).unwrap().unwrap();
+        assert_eq!(
+            slots.iter().map(Option::is_some).collect::<Vec<_>>(),
+            [false, true, false, false, true]
+        );
+        assert_eq!(slots[4].as_ref().unwrap().data, picture.data);
+        assert_eq!(serde_json::to_value(&manager).unwrap(), before);
+        assert_eq!(manager.cache_identity(), identity);
+
+        // Recovery decodes only the recorded payload, and commits it only
+        // after all present pictures have decoded successfully.
+        let broken_assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        archive.pop();
+        broken_assets
+            .install_preloaded_asset("duplicate.res", archive)
+            .unwrap();
+        manager.bind_files(Arc::new(SbFileSystem::new(broken_assets).snapshot()));
+        let identity = manager.cache_identity();
+        let error = manager.recover_resource(42).unwrap_err();
+        assert!(format!("{error:#}").contains("resource 42 (TOGL) picture 4"));
+        assert_eq!(serde_json::to_value(&manager).unwrap(), before);
+        assert_eq!(manager.cache_identity(), identity);
     }
 
     #[test]
