@@ -1145,7 +1145,7 @@ failure and are marked submitted only after a matching receipt.
 Open the in-game console (`~`) and enter `BUGREPORT description of the problem`
 to submit a manual report. Submission status and the report ID appear in the
 console. Reports include the engine commit, platform, panic backtrace, recent
-debug log (256 KiB), and active replay JSON files (up to 1 MiB). Missing or
+debug log (up to 32 MiB), and active replay JSON files (up to 224 MiB decoded). Missing or
 oversized replay attachments are explicitly reported. Logs and replays can
 contain player names, local paths and gameplay.
 
@@ -1156,16 +1156,22 @@ existing operator bearer token protects list, detail and deletion endpoints:
 `DELETE /api/v1/operator/diagnostics/{report_id}`.
 The latest 100 reports are listed. Identical payloads share a receipt, allowing
 safe retries. Admission limits are 10 reports per IP/hour, 100 globally/hour,
-2 MiB per request, and 512 MiB total stored payload. Entries older than 30 days
+20 MiB compressed per complete report, and 512 MiB total stored payload. The
+native client compresses JSON with zstd; browsers use their built-in gzip
+`CompressionStream`. Compression happens before upload and size validation.
+The VPS stores the original compressed bytes and counts that size toward its
+storage budget. A separate 256 MiB decoded limit bounds decompression memory.
+Entries older than 30 days
 are removed during the next successful submission transaction.
 
-Deployment requires database migration 0003 and a matching schema-version-3
+Deployment requires database migrations 0003–0004 and a matching schema-version-4
 VPS release. Existing nginx and Cloudflare API routing covers the new endpoints.
 
 The browser toolbar's **Report bug** button opens a report form. Unhandled
 JavaScript errors, rejected promises, Rust panic console messages and fatal boot
 errors also queue reports. Failed reports retry on reload or when connectivity
-returns. Browser storage holds at most ten pending reports; automatic capture is
+returns. The IndexedDB queue holds at most ten pending reports and migrates old
+localStorage entries; automatic capture is
 limited to three reports per page load. Browser reports include logs and build
 details, but do not yet include a replay attachment.
 

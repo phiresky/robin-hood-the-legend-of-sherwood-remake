@@ -3,7 +3,8 @@
 use anyhow::{Context, Result};
 use robin_run_protocol::diagnostics::{
     DiagnosticAttachmentV1, DiagnosticKindV1, DiagnosticReceiptV1, DiagnosticReportV1,
-    MAX_DIAGNOSTIC_ATTACHMENT_BYTES, MAX_DIAGNOSTIC_BODY_BYTES,
+    MAX_DIAGNOSTIC_ATTACHMENT_BYTES, MAX_DIAGNOSTIC_DECODED_BYTES, MAX_DIAGNOSTIC_LOG_BYTES,
+    compress_report,
 };
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -13,7 +14,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
-const LOG_LIMIT: usize = 256 * 1024;
+const LOG_LIMIT: usize = MAX_DIAGNOSTIC_LOG_BYTES;
 static LOG: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 static DROPPED_LOG_BYTES: AtomicUsize = AtomicUsize::new(0);
 static REPLAY: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -64,7 +65,7 @@ pub fn capture(
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
             .try_into()?,
-        backtrace: backtrace.map(|s| bound_text(s, 128 * 1024)),
+        backtrace: backtrace.map(|s| bound_text(s, MAX_DIAGNOSTIC_LOG_BYTES)),
         recent_log: String::new(),
         attachments: vec![],
         warnings: vec![],
@@ -177,9 +178,10 @@ fn persist(directory: &Path, report: &DiagnosticReportV1) -> Result<PathBuf> {
     report.validate().map_err(anyhow::Error::msg)?;
     let bytes = serde_json::to_vec(report)?;
     anyhow::ensure!(
-        bytes.len() <= MAX_DIAGNOSTIC_BODY_BYTES,
-        "encoded report exceeds upload limit"
+        bytes.len() <= MAX_DIAGNOSTIC_DECODED_BYTES,
+        "report exceeds decoded safety limit"
     );
+    compress_report(&bytes)?;
     std::fs::create_dir_all(directory)?;
     let mut temporary = tempfile::Builder::new()
         .prefix("report-")
@@ -245,7 +247,7 @@ fn upload_pending() -> Result<()> {
     }
     let _ = rustls::crypto::ring::default_provider().install_default();
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(120))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let endpoint = format!(
@@ -280,10 +282,10 @@ fn upload_one(
 ) -> Result<DiagnosticReceiptV1> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)?
-        .take(MAX_DIAGNOSTIC_BODY_BYTES as u64 + 1)
+        .take(MAX_DIAGNOSTIC_DECODED_BYTES as u64 + 1)
         .read_to_end(&mut bytes)?;
     anyhow::ensure!(
-        bytes.len() <= MAX_DIAGNOSTIC_BODY_BYTES,
+        bytes.len() <= MAX_DIAGNOSTIC_DECODED_BYTES,
         "queued report is too large"
     );
     let report: DiagnosticReportV1 = serde_json::from_slice(&bytes)?;
@@ -291,7 +293,8 @@ fn upload_one(
     let response = client
         .post(endpoint)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(bytes)
+        .header(reqwest::header::CONTENT_ENCODING, "zstd")
+        .body(compress_report(&bytes)?)
         .send()?;
     anyhow::ensure!(
         response.status() == reqwest::StatusCode::ACCEPTED,
@@ -350,6 +353,18 @@ mod tests {
         collect_replay(&mut report, Some(&root.path().join("missing")));
         assert!(report.warnings.iter().any(|s| s.contains("missing")));
     }
+
+    #[test]
+    fn large_compressible_replay_is_preserved_in_the_report() {
+        let root = tempfile::tempdir().unwrap();
+        let content = "{}\n".repeat(8 * 1024 * 1024);
+        std::fs::write(root.path().join("00000000.rhrec.jsonl"), &content).unwrap();
+        let mut report = report();
+        collect_replay(&mut report, Some(root.path()));
+        assert_eq!(report.attachments[0].content, content);
+        let path = persist(root.path(), &report).unwrap();
+        assert!(std::fs::metadata(path).unwrap().len() > 20 * 1024 * 1024);
+    }
 }
 
 #[cfg(test)]
@@ -383,8 +398,18 @@ mod upload_tests {
                     .unwrap()
                     .unwrap();
                 assert_eq!(request.url(), "/api/v1/diagnostics");
-                let mut body = String::new();
-                request.as_reader().read_to_string(&mut body).unwrap();
+                assert!(
+                    request
+                        .headers()
+                        .iter()
+                        .any(|h| h.field.equiv("Content-Encoding") && h.value.as_str() == "zstd")
+                );
+                let mut compressed = Vec::new();
+                request.as_reader().read_to_end(&mut compressed).unwrap();
+                let body = String::from_utf8(
+                    robin_run_protocol::diagnostics::decompress_report(&compressed).unwrap(),
+                )
+                .unwrap();
                 let decoded: DiagnosticReportV1 = serde_json::from_str(&body).unwrap();
                 assert_eq!(decoded.description, "stuck");
                 request

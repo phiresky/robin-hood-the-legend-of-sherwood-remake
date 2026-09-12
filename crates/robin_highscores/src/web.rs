@@ -7711,7 +7711,7 @@ async fn submit_diagnostic(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(report): Json<robin_run_protocol::diagnostics::DiagnosticReportV1>,
+    body: axum::body::Bytes,
 ) -> Result<
     (
         StatusCode,
@@ -7719,9 +7719,18 @@ async fn submit_diagnostic(
     ),
     ApiError,
 > {
-    report
-        .validate()
-        .map_err(|e| ApiError::BadRequest(e.into()))?;
+    let encoding = match headers
+        .get(axum::http::header::CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+    {
+        Some("zstd") => "zstd",
+        Some("gzip") => "gzip",
+        _ => {
+            return Err(ApiError::BadRequest(
+                "diagnostic uploads require Content-Encoding: zstd or gzip".into(),
+            ));
+        }
+    };
     let address = effective_client_ip(&state.config, peer, &headers)?;
     let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &state.cursor_hmac_key);
     let ip_hash = ring::hmac::sign(&key, address.to_string().as_bytes())
@@ -7730,7 +7739,16 @@ async fn submit_diagnostic(
         .map_err(|_| ApiError::Internal)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(state.database.insert_diagnostic(&report, ip_hash).await?),
+        Json(
+            state
+                .database
+                .insert_diagnostic(body.to_vec(), encoding, ip_hash)
+                .await
+                .map_err(|error| match error {
+                    crate::db::DbError::ResultInvariant(message) => ApiError::BadRequest(message),
+                    other => ApiError::from(other),
+                })?,
+        ),
     ))
 }
 async fn operator_diagnostics(
@@ -7815,8 +7833,14 @@ mod diagnostic_tests {
                         .method("POST")
                         .uri("/api/v1/diagnostics")
                         .header("content-type", "application/json")
+                        .header("content-encoding", "zstd")
                         .extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()))
-                        .body(Body::from(serde_json::to_vec(&report).unwrap()))
+                        .body(Body::from(
+                            robin_run_protocol::diagnostics::compress_report(
+                                &serde_json::to_vec(&report).unwrap(),
+                            )
+                            .unwrap(),
+                        ))
                         .unwrap(),
                 )
                 .await
@@ -7861,6 +7885,55 @@ mod diagnostic_tests {
             assert_eq!(response.status(), StatusCode::OK);
             assert_eq!(response.headers().get(CACHE_CONTROL).unwrap(), "no-store");
         }
+        // Both clients may upload reports larger than 20 MiB decoded. The
+        // receipt identifies JSON content, independent of compression format.
+        report.recent_log = "x".repeat(24 * 1024 * 1024);
+        report.occurred_at_unix_ms = 100;
+        let json = serde_json::to_vec(&report).unwrap();
+        let mut large_id = None;
+        for encoding in ["gzip", "zstd"] {
+            let compressed = if encoding == "zstd" {
+                robin_run_protocol::diagnostics::compress_report(&json).unwrap()
+            } else {
+                use std::io::Write as _;
+                let mut encoder =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(&json).unwrap();
+                encoder.finish().unwrap()
+            };
+            let response = application
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/diagnostics")
+                        .header("content-type", "application/json")
+                        .header("content-encoding", encoding)
+                        .extension(ConnectInfo("127.0.0.2:1234".parse::<SocketAddr>().unwrap()))
+                        .body(Body::from(compressed))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let receipt: DiagnosticReceiptV1 = serde_json::from_slice(&bytes).unwrap();
+            if let Some(id) = &large_id {
+                assert_eq!(&receipt.report_id, id);
+            }
+            large_id = Some(receipt.report_id);
+        }
+        assert_eq!(
+            database
+                .diagnostic_report(&large_id.unwrap())
+                .await
+                .unwrap()
+                .recent_log
+                .len(),
+            24 * 1024 * 1024
+        );
         let response = application
             .clone()
             .oneshot(
@@ -7868,6 +7941,7 @@ mod diagnostic_tests {
                     .method("POST")
                     .uri("/api/v1/diagnostics")
                     .header("content-type", "application/json")
+                    .header("content-encoding", "zstd")
                     .extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()))
                     .body(Body::from("x".repeat(
                         robin_run_protocol::diagnostics::MAX_DIAGNOSTIC_BODY_BYTES + 1,

@@ -8,6 +8,8 @@ publish.workspace = true
 name = "robin_run_protocol"
 
 [dependencies]
+zstd.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 ed25519-dalek = "3"
 bitcode.workspace = true
 serde = { workspace = true, features = ["derive"] }

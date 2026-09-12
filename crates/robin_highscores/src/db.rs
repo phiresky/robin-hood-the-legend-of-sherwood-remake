@@ -4835,8 +4835,8 @@ mod tests {
 
     #[test]
     fn migration_chain_is_one_canonical_production_schema() {
-        assert_eq!(CURRENT_SCHEMA_VERSION, 3);
-        assert_eq!(MIGRATOR.migrations.len(), 3);
+        assert_eq!(CURRENT_SCHEMA_VERSION, 4);
+        assert_eq!(MIGRATOR.migrations.len(), 4);
         let migration = &MIGRATOR.migrations[0];
         assert_eq!(migration.version, 1);
         assert_eq!(migration.description.as_ref(), "initial");

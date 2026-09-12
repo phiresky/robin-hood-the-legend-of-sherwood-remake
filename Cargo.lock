@@ -6011,6 +6011,7 @@ dependencies = [
  "clap",
  "command-fds",
  "ed25519-dalek",
+ "flate2",
  "fs2",
  "futures-util",
  "hex",
@@ -6313,12 +6314,14 @@ version = "0.0.0"
 dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
+ "flate2",
  "semver",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sha2 0.11.0",
  "thiserror 2.0.20",
+ "zstd",
 ]
 
 [[package]]

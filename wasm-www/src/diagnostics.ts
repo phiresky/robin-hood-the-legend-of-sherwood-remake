@@ -14,6 +14,50 @@ export interface DiagnosticReport {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const PREFIX = 'robin-diagnostic-v1:';
+export const MAX_COMPRESSED_REPORT_BYTES = 20 * 1024 * 1024;
+const MAX_DECODED_REPORT_BYTES = 256 * 1024 * 1024;
+const MAX_LOG_BYTES = 32 * 1024 * 1024;
+
+export interface QueuedDiagnostic { id: string; body: string }
+export interface DiagnosticQueue {
+    list(): Promise<QueuedDiagnostic[]>;
+    put(report: QueuedDiagnostic): Promise<void>;
+    remove(id: string): Promise<void>;
+}
+
+/** IndexedDB avoids localStorage's small quota for larger diagnostic reports. */
+export function diagnosticQueue(factory: IDBFactory): DiagnosticQueue {
+    const database = new Promise<IDBDatabase>((resolve, reject) => {
+        const request = factory.open('robin-diagnostics', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('reports', { keyPath: 'id' });
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+        request.onblocked = () => reject(new Error('Diagnostic storage upgrade is blocked'));
+    });
+    const operation = async <T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
+        const db = await database;
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction('reports', mode);
+            const request = action(transaction.objectStore('reports'));
+            transaction.oncomplete = () => resolve(request.result);
+            transaction.onabort = () => reject(transaction.error ?? new Error('Diagnostic storage transaction aborted'));
+            transaction.onerror = () => reject(transaction.error);
+        });
+    };
+    return {
+        list: () => operation('readonly', store => store.getAll()),
+        async put(report) { await operation('readwrite', store => store.put(report)); },
+        async remove(id) { await operation('readwrite', store => store.delete(id)); },
+    };
+}
+
+export async function compressDiagnostic(body: string): Promise<Blob> {
+    const raw = new Blob([body]);
+    if (raw.size > MAX_DECODED_REPORT_BYTES) throw new Error('Report exceeds decoded safety limit');
+    const compressed = await new Response(raw.stream().pipeThrough(new CompressionStream('gzip'))).blob();
+    if (compressed.size > MAX_COMPRESSED_REPORT_BYTES) throw new Error('Report exceeds 20 MiB compressed upload limit');
+    return compressed;
+}
 export function boundedText(text: string, limit: number): string {
     const bytes = encoder.encode(text);
     if (bytes.length <= limit) return text;
@@ -23,11 +67,11 @@ export function boundedText(text: string, limit: number): string {
     return decoder.decode(bytes.subarray(0, end));
 }
 export async function submitDiagnostic(body: string, fetcher: typeof fetch = fetch): Promise<string> {
-    if (encoder.encode(body).length > 2 * 1024 * 1024) throw new Error('Report exceeds upload limit');
+    const compressed = await compressDiagnostic(body);
     const response = await fetcher('/api/v1/diagnostics', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body, cache: 'no-store', redirect: 'error', credentials: 'omit',
-        signal: AbortSignal.timeout(15_000),
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' },
+        body: compressed, cache: 'no-store', redirect: 'error', credentials: 'omit',
+        signal: AbortSignal.timeout(120_000),
     });
     if (response.status !== 202) throw new Error(`Server returned HTTP ${response.status}`);
     if (response.body === null) throw new Error('Missing report receipt');
@@ -56,7 +100,7 @@ export async function submitDiagnostic(body: string, fetcher: typeof fetch = fet
     return expected;
 }
 
-export function installDiagnostics(): { log: (line: string) => void; failure: (error: unknown) => void; setBuild: (build: string) => void } {
+export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: string) => void; failure: (error: unknown) => void; setBuild: (build: string) => void } {
     const button = document.querySelector<HTMLButtonElement>('#report-bug');
     const dialog = document.querySelector<HTMLDialogElement>('#bug-report-dialog');
     const form = document.querySelector<HTMLFormElement>('#bug-report-form');
@@ -67,46 +111,56 @@ export function installDiagnostics(): { log: (line: string) => void; failure: (e
         throw new Error('Missing bug report controls');
     }
     let build = 'unavailable-before-engine-load';
-    let recentLog = '';
+    const logLines: Array<{ text: string; bytes: number }> = [];
+    let logHead = 0;
+    let logBytes = 0;
     let uploading = false;
     let automaticReports = 0;
+    // Open lazily inside the error-handled queue operations so denied storage
+    // reports a failure without preventing the game from starting.
+    const storage = (): DiagnosticQueue => queueStore ??= diagnosticQueue(window.indexedDB);
     const showStatus = (message: string): void => { status.textContent = message; button.title = message; };
     const flush = async (): Promise<void> => {
         if (uploading) return;
         uploading = true;
         try {
-            const storage = window.localStorage;
-            const keys = Object.keys(storage).filter(key => key.startsWith(PREFIX)).sort().slice(0, 10);
+            const legacy = window.localStorage;
+            const keys = Object.keys(legacy).filter(key => key.startsWith(PREFIX)).sort().slice(0, 10);
             for (const key of keys) {
-                const body = storage.getItem(key);
+                const body = legacy.getItem(key);
                 if (body === null) continue;
+                await storage().put({ id: key, body });
+                legacy.removeItem(key);
+            }
+            for (const { id: key, body } of (await storage().list()).slice(0, 10)) {
                 const id = await submitDiagnostic(body);
-                storage.removeItem(key);
+                await storage().remove(key);
                 showStatus(`Report submitted: ${id}`);
             }
         } catch (error) {
             showStatus(`Report remains queued: ${error instanceof Error ? error.message : String(error)}`);
         } finally { uploading = false; }
     };
-    const queue = (kind: DiagnosticReport['kind'], detail: string, stack: string | null): void => {
+    const queue = async (kind: DiagnosticReport['kind'], detail: string, stack: string | null): Promise<void> => {
         const report: DiagnosticReport = {
             schema_version: 1, kind, description: boundedText(detail, 16384),
             engine_commit: boundedText(build, 128), platform: 'wasm32-browser',
-            occurred_at_unix_ms: Date.now(), backtrace: stack === null ? null : boundedText(stack, 128 * 1024),
-            recent_log: recentLog, attachments: [], warnings: ['Browser replay attachment is not yet implemented.'],
+            occurred_at_unix_ms: Date.now(), backtrace: stack === null ? null : boundedText(stack, MAX_LOG_BYTES),
+            recent_log: logLines.slice(logHead).map(line => line.text).join(''),
+            attachments: [], warnings: ['Browser replay attachment is not yet implemented.'],
         };
-        const storage = window.localStorage;
-        if (Object.keys(storage).filter(key => key.startsWith(PREFIX)).length >= 10) throw new Error('Report queue is full; retry when online');
+        if ((await storage().list()).length >= 10) throw new Error('Report queue is full; retry when online');
         const body = JSON.stringify(report);
-        storage.setItem(PREFIX + Date.now() + '-' + crypto.randomUUID(), body);
+        await compressDiagnostic(body);
+        await storage().put({ id: PREFIX + Date.now() + '-' + crypto.randomUUID(), body });
         showStatus('Report queued for submission.');
         void flush();
     };
     const failure = (error: unknown): void => {
         if (automaticReports >= 3) return;
         automaticReports++;
-        try { queue('fatal_error', error instanceof Error ? error.message : String(error), error instanceof Error ? error.stack ?? null : null); }
-        catch (failure) { showStatus(`Could not queue crash report: ${String(failure)}`); }
+        void queue('fatal_error', error instanceof Error ? error.message : String(error), error instanceof Error ? error.stack ?? null : null)
+            .catch(failure => showStatus(`Could not queue crash report: ${String(failure)}`));
     };
     button.addEventListener('click', () => { dialog.showModal(); description.focus(); });
     document.querySelector('#bug-report-close')?.addEventListener('click', () => dialog.close());
@@ -114,9 +168,10 @@ export function installDiagnostics(): { log: (line: string) => void; failure: (e
         event.preventDefault();
         if (description.value.trim().length === 0) { description.focus(); return; }
         send.disabled = true;
-        try { queue('bug', description.value.trim(), null); description.value = ''; }
-        catch (error) { showStatus(`Could not queue report: ${String(error)}`); }
-        finally { send.disabled = false; }
+        void queue('bug', description.value.trim(), null)
+            .then(() => { description.value = ''; })
+            .catch(error => showStatus(`Could not queue report: ${String(error)}`))
+            .finally(() => { send.disabled = false; });
     });
     window.addEventListener('error', event => failure(event.error ?? event.message));
     window.addEventListener('unhandledrejection', event => failure(event.reason));
@@ -126,8 +181,18 @@ export function installDiagnostics(): { log: (line: string) => void; failure: (e
         setBuild(value) { build = value; },
         failure,
         log(line) {
-            // Keep the end of the log; cap JS storage as well as encoded bytes.
-            recentLog = boundedText((recentLog + line + '\n').slice(-64 * 1024), 256 * 1024);
+            // Bound UTF-8 bytes without copying the entire enlarged log every
+            // time the game logs an event. Join only when capturing a report.
+            const text = boundedText(line + '\n', MAX_LOG_BYTES);
+            const bytes = encoder.encode(text).length;
+            logLines.push({ text, bytes });
+            logBytes += bytes;
+            while (logBytes > MAX_LOG_BYTES) {
+                logBytes -= logLines[logHead]!.bytes;
+                // Release large evicted strings before the next array compaction.
+                logLines[logHead++] = { text: '', bytes: 0 };
+            }
+            if (logHead >= 1024) { logLines.splice(0, logHead); logHead = 0; }
             // Rust wasm panic hooks write to console.error before wasm traps.
             if (line.includes('panicked at')) failure(line);
         },
