@@ -421,9 +421,6 @@ impl EngineInner {
             .unwrap_or(1)
             .min(u16::MAX as u32) as u16;
 
-        // Drop the immutable entity borrow before any mutable self calls.
-        let _ = entity;
-
         // Process the ladder fall before the wasp-struggle orders are
         // queued; the soldier needs to leave the lift first and the
         // animation queue would otherwise be clobbered.
@@ -1538,7 +1535,7 @@ impl EngineInner {
 
         // Pick the unlocked door nearest to first_pos by maximum norm of
         // (door.point_in - first_pos).
-        let (point_in, point_out, point_mid, out_layer, out_sector_handle) = {
+        let (point_out, point_mid, out_layer, out_sector_handle) = {
             if self.scripts.mission.is_none() {
                 return;
             }
@@ -1586,14 +1583,12 @@ impl EngineInner {
                 "selected door {best_idx} has no exact outside-sector identity in an exact gate graph"
             );
             (
-                door.point_in,
                 door.point_out,
                 door.point_mid,
                 door.layer_out,
                 door_battle_outside_sector(door),
             )
         };
-        let _ = point_in;
 
         // Battle center = door.point_out; facing = sector(point_out -
         // point_mid) via `vector_to_sector_0_to_15_iso` on the door

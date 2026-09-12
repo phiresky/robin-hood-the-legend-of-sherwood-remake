@@ -5547,14 +5547,7 @@ impl EngineInner {
                 }
             };
 
-            self.settle_ai_owner_state_change(
-                sim,
-                assets,
-                owner,
-                policy,
-                work_index,
-                notification,
-            );
+            self.settle_ai_owner_state_change(sim, assets, owner, policy, work_index, notification);
         }
 
         let still_pending = self
