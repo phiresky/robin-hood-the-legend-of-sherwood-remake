@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# shellcheck source=scripts/lib/parity_common.sh
+source "$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/lib/parity_common.sh"
+
 # Validate completed schema-16 campaigns in the order supplied. This is kept
 # separate from the live capture ladder: it freezes each completed corpus and
 # proves every trace with one immutable parity-runner build before continuing
@@ -36,16 +39,7 @@ exact_eof_marker='parity trace matched every recorded frame'
 result_validator="$(dirname -- "$(realpath -- "${BASH_SOURCE[0]}")")/parity_result.py"
 unset LD_LIBRARY_PATH
 
-fail() {
-    printf 'error: %s\n' "$*" >&2
-    exit 2
-}
 
-sha256_file() {
-    local value
-    value=$(sha256sum -- "$1") || return 1
-    printf '%s\n' "${value%% *}"
-}
 
 verify_runner_bundle() {
     local bundle=$1 loader_proof_root=${2:-$1} manifest line path
@@ -143,14 +137,6 @@ verify_runner_bundle() {
         || { printf 'error: parity runner bundle checksum failure: %s\n' "$bundle" >&2; return 1; }
 }
 
-runner_bundle_digest() {
-    local bundle=$1 main_sha lib_sha value
-    main_sha=$(sha256_file "$bundle/SHA256SUMS") || return 1
-    lib_sha=$(sha256_file "$bundle/LIB_SHA256SUMS") || return 1
-    value=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$main_sha" "$lib_sha" | sha256sum) || return 1
-    printf '%s\n' "${value%% *}"
-}
 
 # Bind the stable logical `.jsonl.zst` identity to its normalized native bytes.
 # Any legacy source here means normalization raced with another writer or did

@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 PREFIX = "ROBIN_PARITY_RESULT "
+RESULT_VERSION = 1
 LEGACY_EOF_MARKER = "parity trace matched every recorded frame"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -23,7 +24,7 @@ def read_result(log: str) -> dict | None:
     if len(lines) != 1:
         raise ValueError("expected exactly one structured parity result")
     result = json.loads(lines[0])
-    if not isinstance(result, dict) or type(result.get("result_version")) is not int or result["result_version"] != 1:
+    if not isinstance(result, dict) or type(result.get("result_version")) is not int or result["result_version"] != RESULT_VERSION:
         raise ValueError("unsupported parity result version")
     for field in ("expected_frames", "processed_frames", "expected_final_frame", "final_frame", "divergent_frames"):
         if type(result.get(field)) is not int or not 0 <= result[field] < 2**64:

@@ -15,18 +15,20 @@ default = []
 client = ["dep:robin_rs"]
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-base64 = "0.23"
+clap = { workspace = true, features = ["derive"] }
+base64.workspace = true
+# Authoritative v68 trace bytes are frozen to this release independently of
+# the shipping codec's git revision. See docs/TESTING.md, "Wire format freezes".
 bitcode_parity = { package = "bitcode", version = "=0.6.9", features = ["serde"] }
-fs2 = "0.4"
-png = "0.18"
+fs2.workspace = true
+png.workspace = true
 robin_assets.workspace = true
 robin_util.workspace = true
 robin_engine = { workspace = true, features = ["original-parity"] }
 robin_rs = { path = "../robin_rs", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
-sha2 = "0.11"
+sha2.workspace = true
 hex.workspace = true
 tempfile.workspace = true
 tracing.workspace = true

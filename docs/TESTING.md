@@ -317,3 +317,24 @@ leaderboard eligibility and recorded post-restore hash validation are covered by
 ranked-resimulation and client archive tests. The fixture retains original
 prefix hashes only: persisted-load reconciliation can change the state, so a
 pre-save checkpoint must not be reused as a post-load expected hash.
+
+## Wire format freezes
+
+Native parity traces and shipping assets have independent codec contracts.
+`robin_parity` pins crates.io `bitcode` 0.6.9 for authoritative v68 traces;
+shipping assets pin the workspace `bitcode` git revision for datadir v16 and
+mission v8. Two sources are intentional: dependency deduplication must not
+silently change either format. Updating one codec requires checking its frozen
+contract independently, not assuming a matching package version is compatible.
+
+Shipping's independent frozen-layout checks live in
+`robin_assets/src/shipping_v16_contract.rs` and `shipping_v8_contract.rs` and run
+with `cargo test -p robin_assets`. Native trace checks run with
+`cargo test -p robin_parity`; validate real frozen replay evidence before
+changing its codec or layout. Runtime native readers accept v68 only; older
+artifacts require offline migration, never a fallback decode guess.
+
+Layout changes require an explicit version/magic bump and regeneration or an
+offline migration tool. Do not update frozen descriptors merely to make a
+changed live layout pass. Authored sprite envelopes use separately versioned,
+budget-preflighted JSON and do not relax the shipping or replay wire contracts.

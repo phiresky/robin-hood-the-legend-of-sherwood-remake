@@ -2,6 +2,8 @@
 use serde::{Deserialize, Serialize};
 
 pub const RESULT_PREFIX: &str = "ROBIN_PARITY_RESULT ";
+pub const RESULT_VERSION: u32 = 1;
+pub const LEGACY_EOF_MARKER: &str = "parity trace matched every recorded frame";
 
 /// Bundles invoke their pinned ELF loader explicitly. On Linux current_exe
 /// then identifies ld-linux, while argv[0] is the runner supplied to it.

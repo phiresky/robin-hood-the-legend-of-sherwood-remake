@@ -207,7 +207,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         .unwrap_or_else(|error| panic!("read result trace extent: {error}"));
     let executable = crate::result::executable_path();
     let mut result = crate::result::ReplayResult {
-        result_version: 1,
+        result_version: crate::result::RESULT_VERSION,
         trace_path: trace_path.to_string_lossy().into_owned(),
         native_trace_sha256: trace_content_sha256(&native_path),
         executable_path: executable.to_string_lossy().into_owned(),
@@ -1426,7 +1426,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     .into();
     result.publish();
     if divergent_frames == 0 {
-        println!("parity trace matched every recorded frame");
+        println!("{}", crate::result::LEGACY_EOF_MARKER);
         #[cfg(feature = "client")]
         if let Some(visual) = &mut visual {
             eprintln!("visual parity replay finished; close the window to exit");
