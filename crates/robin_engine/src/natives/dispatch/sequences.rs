@@ -419,12 +419,15 @@ impl NativeContext<'_, '_> {
                 // position.
                 let origin = self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
                 let action = Self::movement_style(style);
-                let pre_record_size = self
+                let Some(pre_record_size) = self
                     .script_state
                     .sequence_recorder
                     .as_ref()
                     .map(|r| r.current_size())
-                    .unwrap_or(0);
+                else {
+                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
+                    return 0;
+                };
                 // Expand the move into the sequence.
                 let (goal_layer, goal_sector) =
                     dest_layer_sector.expect("validated RecordMove point has no motion sector");
@@ -487,12 +490,15 @@ impl NativeContext<'_, '_> {
                 let dest_layer_sector = self.resolve_location_layer_sector_handle(loc);
                 let origin = self.update_motion_start_position(actor, (dx, dy), dest_layer_sector);
                 let action = Self::movement_style(style);
-                let pre_record_size = self
+                let Some(pre_record_size) = self
                     .script_state
                     .sequence_recorder
                     .as_ref()
                     .map(|r| r.current_size())
-                    .unwrap_or(0);
+                else {
+                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
+                    return 0;
+                };
                 let (goal_layer, goal_sector) =
                     dest_layer_sector.expect("validated RecordMoveNear point has no motion sector");
                 let (sx, sy, src_layer, src_sector) =
@@ -598,12 +604,15 @@ impl NativeContext<'_, '_> {
                     Some((door_layer, door_sector)),
                 );
                 let action = Self::movement_style(style);
-                let pre_record_size = self
+                let Some(pre_record_size) = self
                     .script_state
                     .sequence_recorder
                     .as_ref()
                     .map(|r| r.current_size())
-                    .unwrap_or(0);
+                else {
+                    tracing::warn!(target: "script", %native, "recorded movement requires an active Start/Thanx session");
+                    return 0;
+                };
                 // Drive the inner RecordMove tail call's
                 // `append_move_to_sequence`.  The goal point uses
                 // the door's interior (layer, sector).
