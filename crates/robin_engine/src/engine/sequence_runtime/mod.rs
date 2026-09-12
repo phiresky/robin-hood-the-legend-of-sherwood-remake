@@ -10,6 +10,7 @@ mod instruct_commands;
 mod owner_dispatch;
 mod phase;
 mod script_sync;
+mod teleport;
 
 use super::movement::MovePathOutcome;
 use super::*;
