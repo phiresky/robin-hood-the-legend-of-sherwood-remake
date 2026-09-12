@@ -191,7 +191,6 @@ mod suite {
         ));
         let outcome = engine.try_dispatch_move_path(
             &crate::sim_rng::test_context(),
-            &LevelAssets::new(),
             owner,
             postponed_id,
             0,

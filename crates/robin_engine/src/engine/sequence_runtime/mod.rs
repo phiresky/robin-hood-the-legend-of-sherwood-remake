@@ -111,14 +111,13 @@ impl EngineInner {
     fn dispatch_prepared_move_instruction(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
         dest: crate::coordinates::MapPoint,
         move_action: crate::order::OrderType,
     ) -> OwnerActionBarrier {
-        match self.try_dispatch_move_path(sim, assets, owner, seq_id, elem_idx, dest, move_action) {
+        match self.try_dispatch_move_path(sim, owner, seq_id, elem_idx, dest, move_action) {
             MovePathOutcome::Success | MovePathOutcome::Pending => OwnerActionBarrier::Reach,
             MovePathOutcome::ActorGone | MovePathOutcome::Refused => {
                 self.orders

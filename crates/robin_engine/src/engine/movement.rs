@@ -11556,7 +11556,6 @@ impl EngineInner {
     pub(crate) fn try_dispatch_move_path(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        _assets: &LevelAssets,
         owner: EntityId,
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,

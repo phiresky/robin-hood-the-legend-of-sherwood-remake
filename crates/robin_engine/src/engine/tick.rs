@@ -2885,9 +2885,8 @@ impl EngineInner {
             self.hourglass_phase_paths(sim, assets)
         });
 
-        let was_swordfighting = time_hourglass_phase(HourglassPhase::Entities, || {
-            self.hourglass_phase_entities(sim, assets)
-        });
+        let was_swordfighting =
+            time_hourglass_phase(HourglassPhase::Entities, || self.hourglass_phase_entities());
 
         let manager_fifo_before_entity_phase =
             self.orders.sequence_manager.deferred_elements_to_go();
