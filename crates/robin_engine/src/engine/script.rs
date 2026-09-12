@@ -4136,7 +4136,6 @@ impl EngineInner {
         completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         const MAX_OWNER_WORK: usize = 128;
-        let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
 
         for work_index in 0..MAX_OWNER_WORK {
             let work = {
@@ -5553,7 +5552,6 @@ impl EngineInner {
                 assets,
                 owner,
                 policy,
-                completion_boundary,
                 work_index,
                 notification,
             );
@@ -5580,7 +5578,6 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: EntityId,
         policy: crate::engine::ai::OwnerBoundaryPolicy,
-        completion_boundary: crate::engine::ai::CompletionBoundary,
         work_index: usize,
         notification: crate::ai::AiStateChangeNotification,
     ) {

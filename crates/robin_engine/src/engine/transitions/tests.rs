@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::element::{ActorData, Entity, HumanData, NpcData, SoldierData};
 use crate::element_kinds::{ActionState as AS, Posture as P};

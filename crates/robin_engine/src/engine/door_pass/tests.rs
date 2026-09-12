@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::element::{
     ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData, PcData,
