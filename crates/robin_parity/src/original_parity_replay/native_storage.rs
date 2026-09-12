@@ -1574,7 +1574,6 @@ pub(super) fn write_binary_record<T: bitcode::Encode + ?Sized>(
     Ok(())
 }
 
-#[cfg(test)]
 pub(super) fn read_binary_record<T: bitcode::DecodeOwned>(
     reader: &mut dyn Read,
     label: &str,
