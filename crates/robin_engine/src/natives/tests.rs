@@ -14,7 +14,11 @@ const TMP16: u16 = 0xC010;
 fn movement_recording_without_start_is_rejected() {
     for native in [NativeFn::RecordMove, NativeFn::RecordMoveNear] {
         let mut host = BoundScriptEffects::new();
-        host.entities.push(Some(native_test_soldier()));
+        let mut soldier = native_test_soldier();
+        soldier
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(0));
+        host.entities.push(Some(soldier));
         let actor = ScriptHandleCodec::actor_handle_from_index(0);
         let mut location_query = NativeStack::default();
         location_query.push_i32(actor);
