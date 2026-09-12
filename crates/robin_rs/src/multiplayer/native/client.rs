@@ -459,58 +459,15 @@ pub(super) async fn complete_content_admission(
         decision = outgoing_rx.recv() => decision.ok_or_else(|| "content admission channel closed".to_owned())?,
         _ = wait_for_cancel(cancellation) => return Err("content admission cancelled".to_owned()),
     };
-    let mut received = match decision {
-        NetOutbound::ContentRequest {
-            full_mod_sha256,
-            resume_offset,
-        } if full_mod_sha256 == offer.full_mod_sha256 && resume_offset <= offer.encoded_bytes => {
-            write_frame_with_timeout(
-                &mut session.send,
-                &NetMsg::ContentRequest {
-                    full_mod_sha256,
-                    resume_offset,
-                },
-                CONTENT_TRANSFER_IDLE_TIMEOUT,
-                "content request",
-            )
-            .await?;
-            resume_offset
-        }
-        NetOutbound::ContentRequest {
-            full_mod_sha256,
-            resume_offset,
-        } => {
-            return Err(format!(
-                "invalid content request for {} at offset {resume_offset}; offered {} with {} bytes",
-                robin_engine::spellforge::hex_hash(&full_mod_sha256),
-                robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
-                offer.encoded_bytes
-            ));
-        }
-        NetOutbound::ContentReject {
-            full_mod_sha256,
-            reason,
-        } if full_mod_sha256 == offer.full_mod_sha256 => {
-            write_frame_with_timeout(
-                &mut session.send,
-                &NetMsg::ContentReject {
-                    full_mod_sha256,
-                    reason: reason.clone(),
-                },
-                CONTENT_TRANSFER_IDLE_TIMEOUT,
-                "content rejection",
-            )
-            .await?;
-            return Err(format!(
-                "local player declined exact host content: {reason}"
-            ));
-        }
-        other => {
-            return Err(format!(
-                "expected local ContentRequest/ContentReject, got {other:?}"
-            ));
-        }
-    };
+    let decision = crate::multiplayer::content_transfer::ContentDecision::decode(offer, decision)?;
+    write_frame_with_timeout(
+        &mut session.send,
+        &decision.message(offer),
+        CONTENT_TRANSFER_IDLE_TIMEOUT,
+        decision.operation(),
+    )
+    .await?;
+    let mut received = decision.resume_offset()?;
 
     let transfer_deadline = tokio::time::Instant::now() + CONTENT_DECISION_TIMEOUT;
     while received < offer.encoded_bytes {
