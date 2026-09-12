@@ -905,6 +905,82 @@ impl ProfileManager {
         Self::default()
     }
 
+    /// Validate a complete authored catalog, after every table has been decoded.
+    /// Weapon IDs are one-based (zero means unarmed); character references are
+    /// zero-based slots, whereas mission prerequisites name mission IDs.
+    /// Keep this out of snapshot deserialization: snapshots are runtime state,
+    /// not an authored-content admission boundary.
+    pub fn validate(&self) -> Result<(), String> {
+        let characters = self.characters.iter().enumerate().map(|(index, p)| {
+            (
+                "characters",
+                index,
+                &p.filename,
+                p.hth_weapon_id,
+                p.shooting_weapon_id,
+            )
+        });
+        let soldiers = self.soldiers.iter().enumerate().map(|(index, p)| {
+            (
+                "soldiers",
+                index,
+                &p.filename,
+                p.hth_weapon_id,
+                p.shooting_weapon_id,
+            )
+        });
+        for (family, index, filename, hth, bow) in characters.chain(soldiers) {
+            for (field, id, count) in [
+                ("hth_weapon_id", hth, self.hth_weapons.len()),
+                ("shooting_weapon_id", bow, self.bows.len()),
+            ] {
+                if id as u64 > count as u64 {
+                    return Err(format!(
+                        "{family}[{index}] ({filename:?}).{field}: {id} is not 0 (no weapon) or a loaded weapon ID in 1..={count}"
+                    ));
+                }
+            }
+        }
+        for (index, soldier) in self.soldiers.iter().enumerate() {
+            for (field, value) in [
+                ("intelligence", soldier.intelligence),
+                ("courage", soldier.courage),
+                ("initiative", soldier.initiative),
+                ("pride", soldier.pride),
+                ("shooting", soldier.shooting),
+                ("fighting", soldier.fighting),
+                ("endurance", soldier.endurance),
+            ] {
+                if value > 100 {
+                    return Err(format!(
+                        "soldiers[{index}] ({:?}).{field}: {value} must be in 0..=100",
+                        soldier.filename
+                    ));
+                }
+            }
+        }
+        for (index, mission) in self.missions.iter().enumerate() {
+            for (slot, &character) in mission.required_character_indices.iter().enumerate() {
+                if character as u64 >= self.characters.len() as u64 {
+                    return Err(format!(
+                        "missions[{index}] ({:?}).required_character_indices[{slot}]: {character} is not a loaded character slot (count {})",
+                        mission.mission_filename,
+                        self.characters.len()
+                    ));
+                }
+            }
+        }
+        // Mission prerequisites are campaign-level IDs, not catalog-local
+        // slots. The shipped Leicester demo's Dem_Lei_MP references ID 23109,
+        // whose profile is absent from its two-mission catalog. Preserve such
+        // references; resolving them belongs to campaign eligibility evaluation.
+        // Action and material enums are already typed. CPF decoding deliberately
+        // normalizes known shipped-data quirks before reaching this validator.
+        // TODO: Validate external exclamation/resource/pathfinder references at
+        // the owning asset boundary, where the referenced catalogs are available.
+        Ok(())
+    }
+
     // ── Profile accessors ────────────────────────────────────────
 
     pub fn get_character(&self, id: impl Into<CharacterProfileIdx>) -> Option<&CharacterProfile> {
@@ -1673,6 +1749,15 @@ impl ProfileManager {
     pub fn load_all_legacy_cpf(&mut self, file: &mut SbFile) -> Result<(), LegacyIoError> {
         let mut reader = LegacyReader::new(file);
         let loaded = reader.scope("profiles", Self::read_all_legacy_cpf)?;
+        if let Err(message) = loaded.validate() {
+            let offset = reader.offset();
+            return Err(reader.invalid_value(
+                offset,
+                "profiles",
+                message,
+                "a valid complete profile catalog",
+            ));
+        }
         *self = loaded;
         Ok(())
     }
@@ -1791,6 +1876,171 @@ impl ProfileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn referenced_profiles() -> ProfileManager {
+        ProfileManager {
+            characters: vec![CharacterProfile {
+                filename: "Robin".into(),
+                hth_weapon_id: 1,
+                ..Default::default()
+            }],
+            soldiers: vec![SoldierProfile {
+                filename: "Archer".into(),
+                shooting_weapon_id: 1,
+                ..Default::default()
+            }],
+            hth_weapons: vec![HtHWeaponProfile::default()],
+            bows: vec![BowProfile::default()],
+            missions: vec![
+                MissionProfile {
+                    id: 700,
+                    mission_filename: "First".into(),
+                    required_character_indices: vec![0],
+                    missions_required_not_to_be_done: vec![900],
+                    ..Default::default()
+                },
+                MissionProfile {
+                    id: 900,
+                    mission_filename: "Second".into(),
+                    missions_required_to_be_done: vec![700],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn profile_validation_preserves_sentinels_and_noncontiguous_mission_ids() {
+        let mut profiles = referenced_profiles();
+        profiles.validate().unwrap();
+        profiles.characters[0].hth_weapon_id = 0;
+        profiles.soldiers[0].shooting_weapon_id = 0;
+        profiles.hth_weapons.clear();
+        profiles.bows.clear();
+        profiles.validate().unwrap();
+        crate::content_patch::profiles_from_document(
+            crate::content_patch::profile_document(&profiles).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn profile_validation_preserves_external_campaign_prerequisite_ids() {
+        let mut profiles = referenced_profiles();
+        profiles.missions[0].missions_required_to_be_done = vec![23109];
+        profiles.missions[1].missions_required_not_to_be_done = vec![0, 999];
+        profiles.validate().unwrap();
+        let document = crate::content_patch::profile_document(&profiles).unwrap();
+        let decoded = crate::content_patch::profiles_from_document(document).unwrap();
+        assert_eq!(
+            serde_json::to_value(profiles).unwrap(),
+            serde_json::to_value(decoded).unwrap()
+        );
+    }
+
+    #[test]
+    fn profile_admission_rejects_invalid_references_with_field_context() {
+        for (pointer, value, field) in [
+            ("/characters/Robin/hth_weapon_id", 2, "characters[0]"),
+            (
+                "/characters/Robin/shooting_weapon_id",
+                u32::MAX,
+                "shooting_weapon_id",
+            ),
+            ("/soldiers/Archer/hth_weapon_id", 2, "hth_weapon_id"),
+            ("/soldiers/Archer/shooting_weapon_id", 2, "soldiers[0]"),
+            (
+                "/missions/First/required_character_indices/0",
+                1,
+                "required_character_indices[0]",
+            ),
+            ("/soldiers/Archer/intelligence", 101, "intelligence"),
+        ] {
+            let base = crate::content_patch::profile_document(&referenced_profiles()).unwrap();
+            let patch = serde_json::to_vec(
+                &serde_json::json!([{ "op": "replace", "path": pointer, "value": value }]),
+            )
+            .unwrap();
+            let error = crate::content_patch::apply_profile_document(&base, &patch).unwrap_err();
+            assert!(error.contains(field), "{pointer}: {error}");
+            let mut invalid = base.clone();
+            *invalid.pointer_mut(pointer).unwrap() = value.into();
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            vfs.install_preloaded_asset("profiles.json", serde_json::to_vec(&invalid).unwrap())
+                .unwrap();
+            let files = crate::sbfile::SbFileSystem::new(vfs);
+            for error in [
+                ProfileManager::load_json_with_files("profiles.json", &files).unwrap_err(),
+                ProfileManager::load_json_document_with_files("profiles.json", &files).unwrap_err(),
+            ] {
+                assert!(matches!(error, ProfileJsonLoadError::Schema { .. }));
+                assert!(error.to_string().contains(field), "{error}");
+            }
+            assert_eq!(
+                base,
+                crate::content_patch::profile_document(&referenced_profiles()).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires Original data via ROBINHOOD_DATA_DIR; see docs/TESTING.md"]
+    fn original_cpf_and_exported_document_share_profile_validation() {
+        let root = original_data::data_directory("");
+        let path = [
+            "Data/Configuration/profile.cpf",
+            "DATA/Configuration/profile.cpf",
+        ]
+        .into_iter()
+        .map(|relative| root.join(relative))
+        .find(|path| path.is_file())
+        .expect("Original data must contain Configuration/profile.cpf");
+        let mut file = SbFile::open(path.to_str().unwrap()).unwrap();
+        let mut profiles = ProfileManager::new();
+        profiles.load_all_legacy_cpf(&mut file).unwrap();
+        let document = crate::content_patch::profile_document(&profiles).unwrap();
+        let decoded = crate::content_patch::profiles_from_document(document).unwrap();
+        assert_eq!(
+            serde_json::to_value(profiles).unwrap(),
+            serde_json::to_value(decoded).unwrap()
+        );
+    }
+
+    #[test]
+    fn invalid_cpf_weapon_reference_does_not_replace_loaded_profiles() {
+        // Minimal CPF: empty weapon/bow/character tables, one soldier with
+        // empty strings and zero scalar fields, then empty mission/civilian
+        // tables. The soldier's only nonzero field is its invalid weapon ID.
+        let mut bytes = vec![0; 12];
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&[0; 6]); // three u16-length empty strings
+        bytes.extend_from_slice(&[0; 10]); // life + four personality stats
+        bytes.push(0); // formation
+        bytes.extend_from_slice(&[0; 6]); // shooting, fighting, endurance
+        bytes.extend_from_slice(&[0; 10]); // rank, exclamation, bee_time
+        bytes.push(0); // packed flags
+        bytes.extend_from_slice(&[0; 8]); // inventory
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // invalid hth_weapon_id
+        bytes.extend_from_slice(&[0; 4]); // no bow
+        bytes.push(0); // pathfinder
+        bytes.extend_from_slice(&[0; 17]); // movement box (four f32 + bounds flag)
+        bytes.extend_from_slice(&[0; 8]); // sprite center (two f32)
+        bytes.extend_from_slice(&[0; 10]); // wake_up and materials
+        bytes.extend_from_slice(&[0; 8]); // missions + civilians counts
+        let mut file = SbFile::from_owned_bytes(bytes, "invalid-weapon.cpf");
+        let mut profiles = referenced_profiles();
+        let before = serde_json::to_value(&profiles).unwrap();
+        let error = profiles
+            .load_all_legacy_cpf(&mut file)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("soldiers[0]") && error.contains("hth_weapon_id"),
+            "{error}"
+        );
+        assert_eq!(serde_json::to_value(profiles).unwrap(), before);
+    }
 
     #[test]
     fn json_loading_retains_stage_path_and_decode_source() {
