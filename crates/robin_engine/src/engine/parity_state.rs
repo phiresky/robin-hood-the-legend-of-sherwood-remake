@@ -900,7 +900,7 @@ impl Engine {
                 crate::element::AiBrain::None => None,
             };
             state.subclass = subclass;
-            Some(serde_json::to_value(state).expect("typed NPC parity must serialize"))
+            Some(state)
         });
         let human_continuation = entity.human_data().map(|human| {
             json!({
