@@ -46,7 +46,6 @@ use crate::ingame_menu::layout::{
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, MissionEndLeaderboardScreen};
 use crate::renderer::Renderer;
-use crate::window::GameWindow;
 
 mod admission;
 pub(super) use admission::{
