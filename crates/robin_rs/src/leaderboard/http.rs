@@ -108,13 +108,7 @@ impl HttpRequest {
         }
     }
 
-    pub fn get_json_no_store(url: String) -> Self {
-        Self {
-            no_store: true,
-            ..Self::get_json(url)
-        }
-    }
-
+    #[cfg(test)]
     pub fn get_replay(url: String, expected_bytes: u64) -> Result<Self, HttpTransportError> {
         let expected_bytes = usize::try_from(expected_bytes).map_err(|error| {
             request_error(format!("replay length is not representable: {error}"))

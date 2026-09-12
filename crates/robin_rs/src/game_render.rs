@@ -477,7 +477,7 @@ fn fog_rasterization_preserves_holes_clipping_and_ring_orientation() {
             serde_json::from_value(serde_json::json!({"polygons": polygons})).unwrap();
         let mut alpha = vec![255; 8 * 6];
         for value in [165, 0] {
-            rasterize_fog_region(&mut alpha, 8, 6, MapSize::new(8.0, 6.0), &region, value);
+            fog::rasterize_fog_region(&mut alpha, 8, 6, MapSize::new(8.0, 6.0), &region, value);
             for (actual, row) in alpha.chunks_exact(8).zip(expected) {
                 let expected: Vec<u8> = row
                     .bytes()

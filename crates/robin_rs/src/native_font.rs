@@ -643,7 +643,9 @@ mod tests {
             )
             .unwrap();
             let files = SbFileSystem::new(vfs);
-            assert_eq!(files.set_presentation_locale(None, None, Some(locale)), 0);
+            files
+                .set_presentation_locale(None, None, Some(locale))
+                .expect("configure fixture locale");
             files
         };
         let config = parse_font_config("Default: choice.sbf, choice.tfn");
@@ -654,7 +656,9 @@ mod tests {
             let font = load_font_by_name_for_locale(&config, "Default", files).unwrap();
             assert_eq!(matches!(font, Font::TrueType(_)), truetype);
         }
-        international.set_presentation_locale(None, None, Some("en-US"));
+        international
+            .set_presentation_locale(None, None, Some("en-US"))
+            .expect("switch fixture presentation locale");
         assert!(matches!(
             load_font_by_name_for_locale(&config, "Default", &international).unwrap(),
             Font::Native(_)

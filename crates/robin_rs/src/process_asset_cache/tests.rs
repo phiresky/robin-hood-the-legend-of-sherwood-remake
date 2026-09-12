@@ -458,11 +458,15 @@ fn confining_an_existing_primary_reader_invalidates_all_cached_banks() {
         robin_util::asset_fs::AssetVfs::new(),
     )));
     let root = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
-    assert_eq!(files.set_primary_path(root.to_str().unwrap()), 0);
+    files
+        .set_primary_path(root.to_str().unwrap())
+        .expect("mount fixture asset directory");
     let before = CacheKey::capture(None, 0, &files);
     let state = ApplicationAssetCache::default();
     let unconfined = resolve(&state, || before.clone(), build_test);
-    assert_eq!(files.lock_ranked_verifier_primary_path(&root), 0);
+    files
+        .lock_ranked_verifier_primary_path(&root)
+        .expect("confine fixture asset lookup");
     let after = CacheKey::capture(None, 0, &files);
     assert_eq!(before.mounts.primary_path, after.mounts.primary_path);
     assert_ne!(before, after);
@@ -476,10 +480,14 @@ fn language_only_changes_retire_localized_banks_but_reuse_stable_assets() {
     let files = Arc::new(SbFileSystem::new(Arc::new(
         robin_util::asset_fs::AssetVfs::new(),
     )));
-    files.set_presentation_locale(None, None, Some("en-US"));
+    files
+        .set_presentation_locale(None, None, Some("en-US"))
+        .expect("configure initial fixture locale");
     let before = CacheKey::capture(None, 0, &files);
     let prepared = Arc::new(files.snapshot());
-    files.set_presentation_locale(None, None, Some("ja-JP"));
+    files
+        .set_presentation_locale(None, None, Some("ja-JP"))
+        .expect("change fixture locale");
     let after = CacheKey::capture(None, 0, &files);
     assert_ne!(before, after);
     assert!(before.same_stable_assets(&after));
@@ -503,7 +511,9 @@ fn explicit_readers_and_mount_changes_never_share_cache_entries() {
     let other = CacheKey::capture(None, 0, &second);
     assert_ne!(before, other);
     assert!(!before.same_stable_assets(&other));
-    assert_eq!(first.set_locale_paths(Some("1036"), Some("1033")), 0);
+    first
+        .set_locale_paths(Some("1036"), Some("1033"))
+        .expect("configure fixture locale");
     let localized = CacheKey::capture(None, 0, &first);
     assert_ne!(before, localized);
     assert!(before.same_stable_assets(&localized));
@@ -533,7 +543,8 @@ fn warmup_and_prepared_snapshot_reuse_banks_without_aliasing_other_readers() {
         build_test,
     );
     assert!(!Arc::ptr_eq(&warmup.stable, &other.stable));
-    assert_eq!(live.add_alternate_path("changed-root"), 0);
+    live.add_alternate_path("changed-root")
+        .expect("mount fixture asset directory");
     assert_ne!(
         CacheKey::capture(None, 0, &live),
         CacheKey::capture(None, 0, &prepared)

@@ -34,6 +34,8 @@ use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 
 mod frontend;
+#[cfg(test)]
+pub(crate) use frontend::{FrontendPreferenceEffects, QueueStripAnimations};
 pub use frontend::{
     FrontendPreferences, FrontendPresentation, FrontendResources, HostFrontend, HostTitbitPreview,
     InteractionReset, ItemEffectPreview, PrintScreenRequest, QueueStripAnimation,

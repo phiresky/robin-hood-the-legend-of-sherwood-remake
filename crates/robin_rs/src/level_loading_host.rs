@@ -1052,7 +1052,9 @@ mod tests {
         std::fs::create_dir_all(root.path().join("Day")).unwrap();
         std::fs::write(root.path().join("Day/Test.map"), [1, 0, 2, 0]).unwrap();
         let files = sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        assert_eq!(files.set_primary_path(root.path().to_str().unwrap()), 0);
+        files
+            .set_primary_path(root.path().to_str().unwrap())
+            .expect("mount fixture asset directory");
         assert_eq!(
             probe_background_map_dims_with_files("Test", "Night", ".", None, &files),
             None
@@ -1087,10 +1089,9 @@ mod tests {
                 std::fs::write(night.join("shared.min.png"), &bytes).unwrap();
                 let files =
                     sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-                assert_eq!(
-                    files.lock_ranked_verifier_primary_path(root.path()),
-                    sbfile::SBFILE_NO_ERROR
-                );
+                files
+                    .lock_ranked_verifier_primary_path(root.path())
+                    .expect("confine fixture asset lookup");
                 Arc::new(files.snapshot())
             })
             .collect();

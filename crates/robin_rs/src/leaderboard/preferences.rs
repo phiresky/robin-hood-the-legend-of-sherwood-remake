@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 pub const SAME_ORIGIN_API_BASE_PATH: &str = "/api/v1";
 pub const NATIVE_PRODUCTION_API_BASE_URL: &str = "https://robinhood.phiresky.xyz/api/v1";
-pub const LOCAL_API_BASE_URL: &str = "http://127.0.0.1:8787/api/v1";
 pub const API_BASE_URL_ENV: &str = "ROBINHOOD_LEADERBOARD_API_URL";
 const PREFERENCES_FILE: &str = "leaderboards.json";
 const BROWSER_PREFERENCES_KEY: &str = "robin-hood.leaderboards.v1";

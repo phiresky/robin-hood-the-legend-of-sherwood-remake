@@ -1400,8 +1400,8 @@ fn validate_preflighted_content(
 #[cfg(test)]
 mod tests {
     use super::{
-        MultiplayerAdmissionEvent, attach_snapshot_spellforge_runtime, drain_net_inputs,
-        resolve_publication_preference, rewind_from_recent_timeline_history,
+        MultiplayerAdmissionEvent, MultiplayerSessionError, attach_snapshot_spellforge_runtime,
+        drain_net_inputs, resolve_publication_preference, rewind_from_recent_timeline_history,
         validate_multiplayer_launch_args, validate_preflighted_content,
     };
     use crate::host::Host;

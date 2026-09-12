@@ -259,6 +259,7 @@ fn checked_start_epoch_ms(now_epoch_ms: u64) -> Result<u64, String> {
 pub use super::clock::current_epoch_ms;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 use super::clock::epoch_ms_at as native_epoch_ms_at;
+#[cfg(not(target_arch = "wasm32"))]
 use super::clock::try_current_epoch_ms;
 
 #[cfg(not(target_arch = "wasm32"))]

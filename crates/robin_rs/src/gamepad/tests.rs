@@ -24,14 +24,16 @@ fn client_gamepad_reads_its_own_selection_not_the_host_selection() {
                         pc_id: host_pc,
                         append: false,
                     },
-                ),
+                )
+                .into(),
                 PlayerInput::new(
                     client,
                     PlayerCommand::SelectPc {
                         pc_id: client_pc,
                         append: false,
                     },
-                ),
+                )
+                .into(),
             ])
             .with_hourglass(false),
         )

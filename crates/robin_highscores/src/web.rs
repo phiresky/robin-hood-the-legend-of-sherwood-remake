@@ -3793,7 +3793,7 @@ fn select_fresh_run_profile<'a>(
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            Ok(competition.admission_profile_id.as_str())
+            Ok::<_, ApiError>(competition.admission_profile_id.as_str())
         })
         .transpose()?;
     let profile = matching_admission_profiles(
@@ -3899,7 +3899,7 @@ fn select_continuation_preflight_profile<'a>(
             manifest
                 .validate_ranked_session(ranked)
                 .map_err(|error| ApiError::Conflict(error.to_string()))?;
-            Ok(competition.admission_profile_id.as_str())
+            Ok::<_, ApiError>(competition.admission_profile_id.as_str())
         })
         .transpose()?;
     let profile = matching_admission_profiles(
@@ -4649,19 +4649,18 @@ fn internal_json(error: serde_json::Error) -> ApiError {
 mod tests {
     use super::*;
     use crate::test_support::{
-        artifact, published_ruleset_fixture, viewer_build, viewer_build_v2,
-        viewer_content_manifest, viewer_profile,
+        published_ruleset_fixture, viewer_build, viewer_build_v2, viewer_content_manifest,
+        viewer_profile,
     };
     use bytes::Bytes;
     use ed25519_dalek::SigningKey;
     use futures_util::stream;
     use http_body_util::BodyExt as _;
     use robin_run_protocol::{
-        AnonymousParticipantPolicyV1, ArtifactRefV1, CanonicalCampaignStateKindV1,
-        CanonicalCampaignStatePinV1, CanonicalCampaignStateRequirementV1, ImmutablePolicyKindV1,
-        LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1,
-        OfficialContentEditionV1, OfficialContentSubjectV1, PublishedRulesetV1,
-        RulesConfigConstraintV1,
+        ArtifactRefV1, CanonicalCampaignStateKindV1, CanonicalCampaignStatePinV1,
+        CanonicalCampaignStateRequirementV1, LeaderboardCoSignInstanceV1,
+        LeaderboardCoSignPurposeV1, LeaderboardCoSignRequestV1, OfficialContentEditionV1,
+        OfficialContentSubjectV1, PublishedRulesetV1,
     };
     use sha2::Sha256;
     use std::sync::atomic::{AtomicBool, Ordering};
