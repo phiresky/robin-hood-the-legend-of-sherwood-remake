@@ -46,6 +46,15 @@ pub struct HttpTask {
 }
 
 impl HttpTask {
+    /// Attach a typed response decoder without another one-purpose task type.
+    /// Decoding remains lazy and nonblocking at the consumer's polling boundary.
+    pub fn map<T, E>(
+        self,
+        mut decode: impl FnMut(Result<HttpResponse, HttpTransportError>) -> Result<T, E>,
+    ) -> impl FnMut() -> Option<Result<T, E>> {
+        move || self.try_take().map(&mut decode)
+    }
+
     /// Non-blocking completion check intended to run once per graphical frame.
     pub fn try_take(&self) -> Option<Result<HttpResponse, HttpTransportError>> {
         match self.receiver.try_recv() {

@@ -1271,8 +1271,8 @@ fn cursor_for_stone(
                     host.frontend.input.feedback.focused_entity_id = Some(target_id);
                     let is_npc = engine
                         .get_entity(target_id)
-                        .map(|t| t.is_npc())
-                        .unwrap_or(false);
+                        .expect("same-frame stone focus must identify a live entity")
+                        .is_npc();
                     // Gate the double-status bar latch on
                     // `!is_recording_macro` (the
                     // recording-macro branch suppresses the
@@ -1896,42 +1896,17 @@ fn cursor_for_listen(
 mod tests {
     use super::*;
     use robin_engine::campaign::Campaign;
-    use robin_engine::element::{
-        ActorData, ActorPc, ElementData, ElementKind, HumanData, PcData, Posture,
-    };
+    use robin_engine::element::Posture;
     use robin_engine::player_command::PlayerCommand;
     use robin_engine::resource_ids::*;
 
-    fn fixture() -> (Engine, LevelAssets, Host) {
-        let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets)
-            .expect("test engine");
-        let host = Host::scratch(800.0, 600.0);
-        (engine, assets, host)
-    }
+    use crate::host::test_support::{add_pc_with_status, fixture};
 
     fn add_selected_pc(
         engine: &mut Engine,
         assets: &LevelAssets,
     ) -> robin_engine::element::EntityId {
-        let mut element = {
-            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-            initial_element.kind = ElementKind::ActorPc;
-            initial_element.active = true;
-            initial_element
-        };
-        element.set_position_map(MapPoint::new(10.0, 10.0));
-        element.sprite.position_iface.settle_current_position();
-        let pc = engine.test_add_entity(robin_engine::element::Entity::Pc(ActorPc {
-            element,
-            actor: ActorData::default(),
-            human: HumanData::default(),
-            pc: PcData {
-                life_points: 100,
-                playable: true,
-                ..Default::default()
-            },
-        }));
+        let pc = add_pc_with_status(engine, 10.0, 10.0, Posture::Upright, true, 100);
         engine
             .advance_frame(
                 assets,

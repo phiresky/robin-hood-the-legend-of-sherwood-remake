@@ -891,5 +891,5 @@ fn loading_version_text(datadir_kind: LoadingDatadirKind) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "loading_screen_tests.rs"]
+#[path = "loading_screen/tests.rs"]
 mod tests;

@@ -7,7 +7,7 @@
 //! Campaign-chain receipts are persisted only from an exact, authenticated
 //! terminal `Accepted` response.
 
-use crate::leaderboard_http::{HttpTask, HttpTransportError};
+use crate::leaderboard_http::HttpTransportError;
 use crate::leaderboard_preferences::LeaderboardPreferences;
 use crate::leaderboard_service::{
     LeaderboardApi, LeaderboardServiceError, decode_submission_owner_status,
@@ -36,9 +36,7 @@ const MAX_TRANSIENT_BACKOFF_MS: u64 = 5 * 60 * 1_000;
 const STORAGE_RETRY_MS: u64 = 5_000;
 const MAX_NOTICES: usize = 32;
 
-#[cfg(not(target_arch = "wasm32"))]
 const PENDING_STORE_FILE: &str = "leaderboard-pending-submissions.json";
-#[cfg(target_arch = "wasm32")]
 const BROWSER_PENDING_STORE_KEY: &str = "robin-hood.leaderboard-pending-submissions.v2";
 
 /// Exact owner context which must survive the mission UI and process lifetime.
@@ -225,27 +223,15 @@ pub enum ReceiptWatcherError {
     OwnerConflict,
     #[error("pending-submission retry window exceeds the bounded watcher lifetime")]
     RetryWindowExceeded,
-    #[error("failed to read pending-submission store from {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Storage(#[from] super::store::StoreError),
     #[error("failed to decode pending-submission store from {path}: {source}")]
     Decode {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("failed to persist pending-submission store to {path}: {source}")]
-    Persist {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[cfg(target_arch = "wasm32")]
-    #[error("browser pending-submission storage is unavailable: {0}")]
-    BrowserStorage(String),
+
     #[error("leaderboard watcher endpoint is unavailable: {0}")]
     Endpoint(String),
     #[error("system clock is before the Unix epoch")]
@@ -263,6 +249,27 @@ pub enum ReceiptWatcherOperationError {
 
 trait ReceiptWatcherTask<T>: Send {
     fn try_take(&mut self) -> Option<Result<T, ReceiptWatcherOperationError>>;
+}
+
+impl<T, F> ReceiptWatcherTask<T> for F
+where
+    F: FnMut() -> Option<Result<T, ReceiptWatcherOperationError>> + Send,
+{
+    fn try_take(&mut self) -> Option<Result<T, ReceiptWatcherOperationError>> {
+        self()
+    }
+}
+
+fn poll_validated<T>(
+    task: &mut dyn ReceiptWatcherTask<T>,
+    validate: impl FnOnce(&T) -> Result<(), String>,
+) -> Option<Result<T, ReceiptWatcherOperationError>> {
+    task.try_take().map(|result| {
+        result.and_then(|value| {
+            validate(&value).map_err(ReceiptWatcherOperationError::Permanent)?;
+            Ok(value)
+        })
+    })
 }
 
 trait ReceiptWatcherBackend: Send {
@@ -556,93 +563,76 @@ impl SubmissionReceiptWatcher {
                 key,
                 request,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Challenge { key, request, task });
-                }
-                Some(Ok(challenge)) => {
-                    if let Err(error) = validate_challenge(&request, &challenge) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(error),
-                            now_unix_ms,
-                        );
-                    } else {
-                        match self.backend.sign(challenge.clone()) {
-                            Ok(task) => {
-                                self.active = Some(ActiveReceiptWatcherTask::Sign {
-                                    key,
-                                    challenge,
-                                    task,
-                                });
-                            }
-                            Err(error) => self.record_operation_error(&key, error, now_unix_ms),
-                        }
+            } => {
+                match poll_validated(task.as_mut(), |challenge| {
+                    validate_challenge(&request, challenge)
+                }) {
+                    None => {
+                        self.active =
+                            Some(ActiveReceiptWatcherTask::Challenge { key, request, task })
                     }
+                    Some(Ok(challenge)) => match self.backend.sign(challenge.clone()) {
+                        Ok(task) => {
+                            self.active = Some(ActiveReceiptWatcherTask::Sign {
+                                key,
+                                challenge,
+                                task,
+                            })
+                        }
+                        Err(error) => self.record_operation_error(&key, error, now_unix_ms),
+                    },
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
             ActiveReceiptWatcherTask::Sign {
                 key,
                 challenge,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Sign {
-                        key,
-                        challenge,
-                        task,
-                    });
-                }
-                Some(Ok(envelope)) => {
-                    if let Err(error) = validate_envelope(&challenge, &envelope) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(error),
-                            now_unix_ms,
-                        );
-                    } else {
-                        match self.backend.status(envelope.clone()) {
-                            Ok(task) => {
-                                self.active = Some(ActiveReceiptWatcherTask::Status {
-                                    key,
-                                    envelope,
-                                    task,
-                                });
-                            }
-                            Err(error) => self.record_operation_error(&key, error, now_unix_ms),
-                        }
+            } => {
+                match poll_validated(task.as_mut(), |envelope| {
+                    validate_envelope(&challenge, envelope)
+                }) {
+                    None => {
+                        self.active = Some(ActiveReceiptWatcherTask::Sign {
+                            key,
+                            challenge,
+                            task,
+                        })
                     }
+                    Some(Ok(envelope)) => match self.backend.status(envelope.clone()) {
+                        Ok(task) => {
+                            self.active = Some(ActiveReceiptWatcherTask::Status {
+                                key,
+                                envelope,
+                                task,
+                            })
+                        }
+                        Err(error) => self.record_operation_error(&key, error, now_unix_ms),
+                    },
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
             ActiveReceiptWatcherTask::Status {
                 key,
                 envelope,
                 mut task,
-            } => match task.try_take() {
-                None => {
-                    self.active = Some(ActiveReceiptWatcherTask::Status {
-                        key,
-                        envelope,
-                        task,
-                    });
-                }
-                Some(Ok(response)) => {
-                    if let Err(error) = response.validate_against_envelope(&envelope) {
-                        self.record_operation_error(
-                            &key,
-                            ReceiptWatcherOperationError::Permanent(format!(
-                                "owner-status response mismatch: {error}"
-                            )),
-                            now_unix_ms,
-                        );
-                    } else {
-                        self.handle_status(key, response, now_unix_ms);
+            } => {
+                match poll_validated(task.as_mut(), |response| {
+                    response
+                        .validate_against_envelope(&envelope)
+                        .map_err(|error| format!("owner-status response mismatch: {error}"))
+                }) {
+                    None => {
+                        self.active = Some(ActiveReceiptWatcherTask::Status {
+                            key,
+                            envelope,
+                            task,
+                        })
                     }
+                    Some(Ok(response)) => self.handle_status(key, response, now_unix_ms),
+                    Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
                 }
-                Some(Err(error)) => self.record_operation_error(&key, error, now_unix_ms),
-            },
+            }
         }
     }
 
@@ -987,37 +977,6 @@ struct HttpReceiptWatcherBackend {
     api: LeaderboardApi,
 }
 
-struct ChallengeHttpTask {
-    task: HttpTask,
-    request: SubmissionOwnerStatusChallengeRequestV1,
-}
-
-impl ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1> for ChallengeHttpTask {
-    fn try_take(
-        &mut self,
-    ) -> Option<Result<SubmissionOwnerStatusChallengeV1, ReceiptWatcherOperationError>> {
-        self.task.try_take().map(|result| {
-            decode_submission_owner_status_challenge(result, &self.request)
-                .map_err(classify_service_error)
-        })
-    }
-}
-
-struct StatusHttpTask {
-    task: HttpTask,
-    envelope: SubmissionOwnerStatusEnvelopeV1,
-}
-
-impl ReceiptWatcherTask<SubmissionOwnerStatusResponseV1> for StatusHttpTask {
-    fn try_take(
-        &mut self,
-    ) -> Option<Result<SubmissionOwnerStatusResponseV1, ReceiptWatcherOperationError>> {
-        self.task.try_take().map(|result| {
-            decode_submission_owner_status(result, &self.envelope).map_err(classify_service_error)
-        })
-    }
-}
-
 struct SigningTask {
     receiver: async_channel::Receiver<
         Result<SubmissionOwnerStatusEnvelopeV1, ReceiptWatcherOperationError>,
@@ -1052,7 +1011,10 @@ impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
             .api
             .submission_owner_status_challenge(&request)
             .map_err(classify_service_error)?;
-        Ok(Box::new(ChallengeHttpTask { task, request }))
+        Ok(Box::new(task.map(move |result| {
+            decode_submission_owner_status_challenge(result, &request)
+                .map_err(classify_service_error)
+        })))
     }
 
     fn sign(
@@ -1078,7 +1040,9 @@ impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
             .api
             .submission_owner_status(&envelope)
             .map_err(classify_service_error)?;
-        Ok(Box::new(StatusHttpTask { task, envelope }))
+        Ok(Box::new(task.map(move |result| {
+            decode_submission_owner_status(result, &envelope).map_err(classify_service_error)
+        })))
     }
 }
 
@@ -1184,14 +1148,7 @@ pub fn now_unix_ms() -> Result<u64, ReceiptWatcherError> {
 }
 
 fn pending_store_path() -> PathBuf {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::save_file::default_save_directory().join(PENDING_STORE_FILE)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        PathBuf::from(BROWSER_PENDING_STORE_KEY)
-    }
+    super::store::display_path(PENDING_STORE_FILE, BROWSER_PENDING_STORE_KEY)
 }
 
 fn load_pending_store() -> Result<PendingSubmissionReceiptStore, ReceiptWatcherError> {
@@ -1216,39 +1173,19 @@ fn persist_pending_store(store: &PendingSubmissionReceiptStore) -> Result<(), Re
     write_pending_store(&encoded)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn read_pending_store() -> Result<Option<String>, ReceiptWatcherError> {
-    let path = pending_store_path();
-    crate::leaderboard_storage::read_private_utf8(&path)
-        .map_err(|source| ReceiptWatcherError::Read { path, source })
+    Ok(super::store::read(
+        PENDING_STORE_FILE,
+        BROWSER_PENDING_STORE_KEY,
+    )?)
 }
-
-#[cfg(not(target_arch = "wasm32"))]
 fn write_pending_store(encoded: &[u8]) -> Result<(), ReceiptWatcherError> {
-    let path = pending_store_path();
-    crate::leaderboard_storage::replace_private(&path, ".leaderboard-pending-", encoded)
-        .map_err(|source| ReceiptWatcherError::Persist { path, source })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn read_pending_store() -> Result<Option<String>, ReceiptWatcherError> {
-    browser_storage()?
-        .get_item(BROWSER_PENDING_STORE_KEY)
-        .map_err(|error| ReceiptWatcherError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn write_pending_store(encoded: &[u8]) -> Result<(), ReceiptWatcherError> {
-    let encoded = std::str::from_utf8(encoded)
-        .expect("serialized pending-submission store must be valid UTF-8");
-    browser_storage()?
-        .set_item(BROWSER_PENDING_STORE_KEY, encoded)
-        .map_err(|error| ReceiptWatcherError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, ReceiptWatcherError> {
-    crate::browser_storage::local_storage().map_err(ReceiptWatcherError::BrowserStorage)
+    Ok(super::store::write(
+        PENDING_STORE_FILE,
+        BROWSER_PENDING_STORE_KEY,
+        ".leaderboard-pending-",
+        encoded,
+    )?)
 }
 
 #[cfg(test)]

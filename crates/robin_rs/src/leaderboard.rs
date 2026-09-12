@@ -10,3 +10,4 @@ pub mod service;
 pub mod signing;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod storage;
+pub mod store;

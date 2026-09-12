@@ -12,17 +12,14 @@ use crate::leaderboard_preferences::{
     LeaderboardApiBaseUrl, LeaderboardPreferences, LeaderboardPreferencesError,
 };
 use robin_run_protocol::{
-    AbuseReportAcceptedV1, AbuseReportV1, CampaignContentManifestV1,
-    CampaignContinuationPreflightGrantV1, CampaignContinuationPreflightRequestV1,
-    CampaignSessionDetailV1, ContentManifestV1, DeletionChallengeRequestV1, DeletionChallengeV1,
-    DeletionReceiptV1, DeletionRequestEnvelopeV1, Digest32, FreshRunPreflightGrantV1,
+    CampaignContentManifestV1, CampaignContinuationPreflightGrantV1,
+    CampaignContinuationPreflightRequestV1, ContentManifestV1, Digest32, FreshRunPreflightGrantV1,
     FreshRunPreflightRequestV1, LeaderboardMetadataV1, LeaderboardPageV1, LeaderboardQueryV1,
-    OpaqueId, PlayerProfileV1, PublicKey32, PublishedRulesetV1, RANKED_CAMPAIGN_MEDIA_TYPE_V1,
-    RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1, RulesConfigIdentityV1, SignedSubmissionV1,
-    SubmissionAcceptedV1, SubmissionOfferRequestV1, SubmissionOfferV1,
-    SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1, UsernameChallengeRequestV1,
-    UsernameChallengeV1, UsernameUpdateEnvelopeV1, Validate, VersionedBuildManifest,
+    PublishedRulesetV1, RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1,
+    ReplayArtifactV1, RulesConfigIdentityV1, SignedSubmissionV1, SubmissionAcceptedV1,
+    SubmissionOfferRequestV1, SubmissionOfferV1, SubmissionOwnerStatusChallengeRequestV1,
+    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
+    SubmissionOwnerStatusResponseV1, Validate, VersionedBuildManifest,
 };
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
@@ -80,10 +77,6 @@ impl LeaderboardApi {
         }
     }
 
-    pub fn with_http_client(base_url: LeaderboardApiBaseUrl, http: LeaderboardHttpClient) -> Self {
-        Self { base_url, http }
-    }
-
     pub fn metadata(&self) -> Result<HttpTask, LeaderboardServiceError> {
         self.spawn(HttpRequest::get_json(self.route("leaderboard-metadata")?))
     }
@@ -119,51 +112,6 @@ impl LeaderboardApi {
             "{}?{query}",
             self.route("leaderboards")?
         )))
-    }
-
-    pub fn run_detail(&self, run_id: &OpaqueId) -> Result<HttpTask, LeaderboardServiceError> {
-        self.spawn(HttpRequest::get_json(
-            self.route(&format!("runs/{}", path_segment(run_id.as_str())))?,
-        ))
-    }
-
-    pub fn run_replay(
-        &self,
-        run_id: &OpaqueId,
-        expected: &ReplayArtifactV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        expected.validate().map_err(invalid_protocol)?;
-        self.spawn(HttpRequest::get_replay(
-            self.route(&format!("runs/{}/replay", path_segment(run_id.as_str())))?,
-            expected.artifact.byte_length,
-        )?)
-    }
-
-    pub fn campaign_session_detail(
-        &self,
-        aggregate_run_id: &OpaqueId,
-        ordinal: u32,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.spawn(HttpRequest::get_json(self.route(&format!(
-            "runs/{}/sessions/{ordinal}",
-            path_segment(aggregate_run_id.as_str())
-        ))?))
-    }
-
-    pub fn campaign_session_replay(
-        &self,
-        aggregate_run_id: &OpaqueId,
-        ordinal: u32,
-        expected: &ReplayArtifactV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        expected.validate().map_err(invalid_protocol)?;
-        self.spawn(HttpRequest::get_replay(
-            self.route(&format!(
-                "runs/{}/sessions/{ordinal}/replay",
-                path_segment(aggregate_run_id.as_str())
-            ))?,
-            expected.artifact.byte_length,
-        )?)
     }
 
     pub fn submission_offer(
@@ -243,65 +191,12 @@ impl LeaderboardApi {
         )
     }
 
-    pub fn player_profile(
-        &self,
-        public_key: PublicKey32,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.spawn(HttpRequest::get_json(
-            self.route(&format!("players/{public_key}"))?,
-        ))
-    }
-
-    pub fn username_challenge(
-        &self,
-        request: &UsernameChallengeRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("username-challenges", request)
-    }
-
-    pub fn update_username(
-        &self,
-        request: &UsernameUpdateEnvelopeV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        request.validate().map_err(invalid_protocol)?;
-        self.put_json(&format!("players/{}/username", request.public_key), request)
-    }
-
-    pub fn deletion_challenge(
-        &self,
-        request: &DeletionChallengeRequestV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("deletion-challenges", request)
-    }
-
-    pub fn delete_owned_run(
-        &self,
-        request: &DeletionRequestEnvelopeV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("deletion-requests", request)
-    }
-
-    pub fn report_abuse(
-        &self,
-        request: &AbuseReportV1,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.post_json("reports", request)
-    }
-
     fn post_json<T: serde::Serialize + Validate>(
         &self,
         route: &str,
         request: &T,
     ) -> Result<HttpTask, LeaderboardServiceError> {
         self.request_json(reqwest::Method::POST, route, request)
-    }
-
-    fn put_json<T: serde::Serialize + Validate>(
-        &self,
-        route: &str,
-        request: &T,
-    ) -> Result<HttpTask, LeaderboardServiceError> {
-        self.request_json(reqwest::Method::PUT, route, request)
     }
 
     fn immutable_document(
@@ -440,39 +335,14 @@ pub fn decode_board(
     Ok(page)
 }
 
-pub fn decode_run_detail(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected_run_id: &OpaqueId,
-) -> Result<robin_run_protocol::RunDetailV1, LeaderboardServiceError> {
-    let detail: robin_run_protocol::RunDetailV1 = decode_validated_json(result)?;
-    if &detail.run_id != expected_run_id {
-        return Err(LeaderboardServiceError::InvalidProtocol(
-            "run detail does not match its route id".to_owned(),
-        ));
-    }
-    Ok(detail)
-}
-
-pub fn decode_campaign_session_detail(
-    result: Result<HttpResponse, HttpTransportError>,
-    expected_aggregate_run_id: &OpaqueId,
-    expected_ordinal: u32,
-) -> Result<CampaignSessionDetailV1, LeaderboardServiceError> {
-    let detail: CampaignSessionDetailV1 = decode_validated_json(result)?;
-    if &detail.aggregate_run_id != expected_aggregate_run_id || detail.ordinal != expected_ordinal {
-        return Err(LeaderboardServiceError::InvalidProtocol(
-            "campaign session detail does not match its route".to_owned(),
-        ));
-    }
-    Ok(detail)
-}
-
+#[cfg(test)]
 #[derive(Clone)]
 pub struct CanonicalReplayDownload {
     pub bytes: Arc<[u8]>,
     pub engine_hash: String,
 }
 
+#[cfg(test)]
 impl std::fmt::Debug for CanonicalReplayDownload {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -483,7 +353,10 @@ impl std::fmt::Debug for CanonicalReplayDownload {
     }
 }
 
-pub fn decode_replay_download(
+// Preserve the exact artifact-boundary regression harness independently of
+// the retired, unwired replay-download UI flow.
+#[cfg(test)]
+fn decode_replay_download(
     result: Result<HttpResponse, HttpTransportError>,
     expected: &ReplayArtifactV1,
 ) -> Result<CanonicalReplayDownload, LeaderboardServiceError> {
@@ -567,36 +440,6 @@ pub fn decode_submission_owner_status(
         .validate_against_envelope(envelope)
         .map_err(invalid_protocol)?;
     Ok(response)
-}
-
-pub fn decode_username_challenge(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<UsernameChallengeV1, LeaderboardServiceError> {
-    decode_validated_json(result)
-}
-
-pub fn decode_player_profile(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<PlayerProfileV1, LeaderboardServiceError> {
-    decode_validated_json(result)
-}
-
-pub fn decode_deletion_challenge(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<DeletionChallengeV1, LeaderboardServiceError> {
-    decode_validated_json(result)
-}
-
-pub fn decode_deletion_receipt(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<DeletionReceiptV1, LeaderboardServiceError> {
-    decode_validated_json(result)
-}
-
-pub fn decode_abuse_report_accepted(
-    result: Result<HttpResponse, HttpTransportError>,
-) -> Result<AbuseReportAcceptedV1, LeaderboardServiceError> {
-    decode_validated_json_with_status(result, 202)
 }
 
 fn validate_canonical_replay_bytes(bytes: &[u8]) -> Result<String, LeaderboardServiceError> {

@@ -13,11 +13,10 @@ use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use robin_run_protocol::{
     CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
     CampaignContinuationPreflightRequestClaimV1, CampaignContinuationPreflightRequestV1,
-    CompetitionRunGrantRequestClaimV1, CompetitionRunGrantRequestV1, DeletionRequestEnvelopeV1,
+    CompetitionRunGrantRequestClaimV1, CompetitionRunGrantRequestV1,
     FreshRunPreflightRequestClaimV1, FreshRunPreflightRequestV1, LeaderboardCoSignRequestV1,
     ParticipantSignatureV1, PublicKey32, Signature64, SignatureAlgorithmV1, SubmissionEnvelopeV1,
-    SubmissionOfferV1, SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    UsernameUpdateEnvelopeV1, Validate,
+    SubmissionOfferV1, SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, Validate,
 };
 #[cfg(target_arch = "wasm32")]
 use robin_run_protocol::{
@@ -98,27 +97,6 @@ fn native_public_key(key: &SigningKey) -> PublicKey32 {
 #[cfg(not(target_arch = "wasm32"))]
 fn native_signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn sign_username_update(
-    envelope: UsernameUpdateEnvelopeV1,
-) -> Result<UsernameUpdateEnvelopeV1, LeaderboardSigningError> {
-    sign_username_update_with_key(envelope, &native_key()?)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn sign_username_update_with_key(
-    mut envelope: UsernameUpdateEnvelopeV1,
-    key: &SigningKey,
-) -> Result<UsernameUpdateEnvelopeV1, LeaderboardSigningError> {
-    envelope.validate_signing_claim().map_err(invalid_claim)?;
-    if envelope.public_key != native_public_key(key) {
-        return Err(LeaderboardSigningError::WrongIdentity);
-    }
-    envelope.signature = native_signature(key, &canonical(envelope.signing_bytes())?);
-    envelope.validate().map_err(invalid_claim)?;
-    Ok(envelope)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -319,27 +297,6 @@ pub fn sign_submission_owner_status(
     Ok(envelope)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn sign_deletion_request(
-    envelope: DeletionRequestEnvelopeV1,
-) -> Result<DeletionRequestEnvelopeV1, LeaderboardSigningError> {
-    sign_deletion_request_with_key(envelope, &native_key()?)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn sign_deletion_request_with_key(
-    mut envelope: DeletionRequestEnvelopeV1,
-    key: &SigningKey,
-) -> Result<DeletionRequestEnvelopeV1, LeaderboardSigningError> {
-    envelope.validate_signing_claim().map_err(invalid_claim)?;
-    if envelope.challenge.public_key != native_public_key(key) {
-        return Err(LeaderboardSigningError::WrongIdentity);
-    }
-    envelope.signature = native_signature(key, &canonical(envelope.signing_bytes())?);
-    envelope.validate().map_err(invalid_claim)?;
-    Ok(envelope)
-}
-
 fn canonical(
     result: Result<Vec<u8>, robin_run_protocol::CanonicalError>,
 ) -> Result<Vec<u8>, LeaderboardSigningError> {
@@ -507,25 +464,6 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub async fn browser_game_sign_username_update(
-    envelope: &UsernameUpdateEnvelopeV1,
-) -> Result<UsernameUpdateEnvelopeV1, LeaderboardSigningError> {
-    let signed = browser_signed_document("sign_username_update", envelope).await?;
-    let signed: UsernameUpdateEnvelopeV1 = signed;
-    if signed.schema_version != envelope.schema_version
-        || signed.username_challenge_id != envelope.username_challenge_id
-        || signed.username_challenge_nonce != envelope.username_challenge_nonce
-        || signed.public_key != envelope.public_key
-        || signed.username != envelope.username
-    {
-        return Err(LeaderboardSigningError::InvalidClaim(
-            "signer changed the username update claim".to_owned(),
-        ));
-    }
-    Ok(signed)
-}
-
-#[cfg(target_arch = "wasm32")]
 pub async fn browser_game_sign_competition_run_grant_request(
     claim: &CompetitionRunGrantRequestClaimV1,
 ) -> Result<CompetitionRunGrantRequestV1, LeaderboardSigningError> {
@@ -643,20 +581,6 @@ pub async fn browser_game_sign_submission_owner_status(
     if &signed.challenge != challenge {
         return Err(LeaderboardSigningError::InvalidClaim(
             "signer changed the owner-status challenge".to_owned(),
-        ));
-    }
-    Ok(signed)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub async fn browser_game_sign_deletion_request(
-    envelope: &DeletionRequestEnvelopeV1,
-) -> Result<DeletionRequestEnvelopeV1, LeaderboardSigningError> {
-    let signed = browser_signed_document("sign_deletion_request", envelope).await?;
-    let signed: DeletionRequestEnvelopeV1 = signed;
-    if signed.schema_version != envelope.schema_version || signed.challenge != envelope.challenge {
-        return Err(LeaderboardSigningError::InvalidClaim(
-            "signer changed the deletion request claim".to_owned(),
         ));
     }
     Ok(signed)
@@ -786,64 +710,7 @@ pub async fn create_browser_official_ranked_session(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use robin_run_protocol::{
-        ChallengeNonce32, DeletionChallengeV1, DeletionTargetV1, Digest32,
-        LeaderboardCoSignInstanceV1, OpaqueId,
-    };
-
-    fn id(value: &str) -> OpaqueId {
-        OpaqueId::new(value).unwrap()
-    }
-
-    #[test]
-    fn native_username_and_deletion_use_one_durable_key() {
-        let secret = SigningKey::from_bytes(&[0x41; 32]);
-        let key = native_public_key(&secret);
-        let username = UsernameUpdateEnvelopeV1 {
-            schema_version: 1,
-            username_challenge_id: id("username"),
-            username_challenge_nonce: ChallengeNonce32::from_bytes([7; 32]),
-            public_key: key,
-            username: "Robin".to_owned(),
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        let signed_username = sign_username_update_with_key(username, &secret).unwrap();
-        assert_eq!(signed_username.public_key, key);
-        assert!(!signed_username.signature.is_zero());
-
-        let deletion = DeletionRequestEnvelopeV1 {
-            schema_version: 1,
-            challenge: DeletionChallengeV1 {
-                schema_version: 1,
-                deletion_challenge_id: id("deletion"),
-                deletion_challenge_nonce: ChallengeNonce32::from_bytes([8; 32]),
-                expires_at_unix_ms: 1,
-                public_key: key,
-                target: DeletionTargetV1::Run { run_id: id("run") },
-            },
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        let signed_deletion = sign_deletion_request_with_key(deletion, &secret).unwrap();
-        assert_eq!(signed_deletion.challenge.public_key, key);
-        assert!(!signed_deletion.signature.is_zero());
-    }
-
-    #[test]
-    fn native_signing_rejects_another_identity() {
-        let secret = SigningKey::from_bytes(&[0x42; 32]);
-        let envelope = UsernameUpdateEnvelopeV1 {
-            schema_version: 1,
-            username_challenge_id: id("username"),
-            username_challenge_nonce: ChallengeNonce32::from_bytes([7; 32]),
-            public_key: PublicKey32::from_bytes([99; 32]),
-            username: "Marian".to_owned(),
-            signature: Signature64::from_bytes([0; 64]),
-        };
-        assert_eq!(
-            sign_username_update_with_key(envelope, &secret),
-            Err(LeaderboardSigningError::WrongIdentity)
-        );
-    }
+    use robin_run_protocol::{Digest32, LeaderboardCoSignInstanceV1};
 
     #[test]
     fn native_multiplayer_signer_signs_the_protocol_payload_verbatim() {

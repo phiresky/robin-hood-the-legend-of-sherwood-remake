@@ -183,11 +183,7 @@ impl DistributedModCache {
         }
         let key = hex_hash(&expected_full_mod_sha256);
         let had_prior = self.index.entries.contains_key(&key);
-        atomic_write(
-            &self.root,
-            &self.complete_path(&expected_full_mod_sha256),
-            &encoded,
-        )?;
+        atomic_write(&self.complete_path(&expected_full_mod_sha256), &encoded)?;
         let prior = self.index.clone();
         self.index.access_counter = self.index.access_counter.saturating_add(1);
         self.index.entries.insert(
@@ -817,7 +813,7 @@ impl DistributedModCache {
     fn save_index(&self) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(&self.index)
             .map_err(|error| format!("encode distributed-mod cache index: {error}"))?;
-        atomic_write(&self.root, &self.root.join(CACHE_INDEX_FILE), &bytes)
+        atomic_write(&self.root.join(CACHE_INDEX_FILE), &bytes)
     }
 
     fn complete_path(&self, hash: &[u8; 32]) -> PathBuf {
@@ -855,21 +851,13 @@ fn discard_partial_path(path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn atomic_write(directory: &Path, destination: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)
-        .map_err(|error| format!("create temporary cache file: {error}"))?;
-    temporary
-        .write_all(bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|error| format!("write temporary cache file: {error}"))?;
-    temporary.persist(destination).map_err(|error| {
+fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    crate::desktop_persistence::write_bytes(destination, bytes).map_err(|error| {
         format!(
-            "atomically replace cache file {}: {}",
-            destination.display(),
-            error.error
+            "atomically publish cache file {}: {error}",
+            destination.display()
         )
-    })?;
-    Ok(())
+    })
 }
 
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, String> {

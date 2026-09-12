@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 const STORE_SCHEMA_VERSION: u32 = 1;
-#[cfg(not(target_arch = "wasm32"))]
 const STORE_FILE: &str = "leaderboard-campaign-chains.json";
-#[cfg(target_arch = "wasm32")]
 const BROWSER_STORE_KEY: &str = "robin-hood.leaderboard-campaign-chains.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +27,18 @@ impl Default for CampaignChainStore {
     fn default() -> Self {
         Self::empty()
     }
+}
+
+/// Exact campaign identity shared by receipt selection and native byte admission.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CampaignContinuationKey {
+    pub expected_max_concurrent_players: u16,
+    pub participant_public_keys: Vec<PublicKey32>,
+    pub campaign_content_manifest_sha256: Digest32,
+    pub rules_config_sha256: Digest32,
+    pub ruleset_manifest_sha256: Digest32,
+    pub competition_manifest_sha256: Option<Digest32>,
+    pub campaign_controller_public_key: PublicKey32,
 }
 
 impl CampaignChainStore {
@@ -80,48 +90,23 @@ impl CampaignChainStore {
         self.validate()
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn continuation_for(
-        &self,
-        starting_campaign: &ArtifactRefV1,
-        expected_max_concurrent_players: u16,
-        participant_public_keys: &[PublicKey32],
-        campaign_content_manifest_sha256: Digest32,
-        rules_config_sha256: Digest32,
-        ruleset_manifest_sha256: Digest32,
-        competition_manifest_sha256: Option<Digest32>,
-        campaign_controller_public_key: PublicKey32,
-    ) -> Result<Option<&CampaignChainReceiptV1>, CampaignChainStoreError> {
-        self.continuation_for_policy(
-            starting_campaign,
-            expected_max_concurrent_players,
-            participant_public_keys,
-            CampaignRosterContinuityV1::ExactSameAuthenticatedKeysEverySession,
-            campaign_content_manifest_sha256,
-            rules_config_sha256,
-            ruleset_manifest_sha256,
-            competition_manifest_sha256,
-            campaign_controller_public_key,
-        )
-    }
-
     /// Resolve one exact active predecessor under the immutable ruleset's
     /// roster-continuity policy. Union-of-subsets campaigns may change the
     /// authenticated key subset between sessions, but every other campaign,
     /// controller, player-cap, ruleset, and artifact field remains exact.
-    #[allow(clippy::too_many_arguments)]
     pub fn continuation_for_policy(
         &self,
         starting_campaign: &ArtifactRefV1,
-        expected_max_concurrent_players: u16,
-        participant_public_keys: &[PublicKey32],
+        key: &CampaignContinuationKey,
         roster_continuity: CampaignRosterContinuityV1,
-        campaign_content_manifest_sha256: Digest32,
-        rules_config_sha256: Digest32,
-        ruleset_manifest_sha256: Digest32,
-        competition_manifest_sha256: Option<Digest32>,
-        campaign_controller_public_key: PublicKey32,
     ) -> Result<Option<&CampaignChainReceiptV1>, CampaignChainStoreError> {
+        let expected_max_concurrent_players = key.expected_max_concurrent_players;
+        let participant_public_keys = key.participant_public_keys.as_slice();
+        let campaign_content_manifest_sha256 = key.campaign_content_manifest_sha256;
+        let rules_config_sha256 = key.rules_config_sha256;
+        let ruleset_manifest_sha256 = key.ruleset_manifest_sha256;
+        let competition_manifest_sha256 = key.competition_manifest_sha256;
+        let campaign_controller_public_key = key.campaign_controller_public_key;
         self.validate()?;
         starting_campaign.validate()?;
         if starting_campaign.media_type != RANKED_CAMPAIGN_MEDIA_TYPE_V1
@@ -161,56 +146,14 @@ impl CampaignChainStore {
         Ok(first)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn continuation_for_exact_campaign(
-        &self,
-        exact_starting_campaign_bytes: &[u8],
-        expected_max_concurrent_players: u16,
-        participant_public_keys: &[PublicKey32],
-        campaign_content_manifest_sha256: Digest32,
-        rules_config_sha256: Digest32,
-        ruleset_manifest_sha256: Digest32,
-        competition_manifest_sha256: Option<Digest32>,
-        campaign_controller_public_key: PublicKey32,
-    ) -> Result<Option<&CampaignChainReceiptV1>, CampaignChainStoreError> {
-        let artifact = exact_campaign_artifact(exact_starting_campaign_bytes)?;
-        self.continuation_for(
-            &artifact,
-            expected_max_concurrent_players,
-            participant_public_keys,
-            campaign_content_manifest_sha256,
-            rules_config_sha256,
-            ruleset_manifest_sha256,
-            competition_manifest_sha256,
-            campaign_controller_public_key,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
     pub fn continuation_for_exact_campaign_policy(
         &self,
         exact_starting_campaign_bytes: &[u8],
-        expected_max_concurrent_players: u16,
-        participant_public_keys: &[PublicKey32],
+        key: &CampaignContinuationKey,
         roster_continuity: CampaignRosterContinuityV1,
-        campaign_content_manifest_sha256: Digest32,
-        rules_config_sha256: Digest32,
-        ruleset_manifest_sha256: Digest32,
-        competition_manifest_sha256: Option<Digest32>,
-        campaign_controller_public_key: PublicKey32,
     ) -> Result<Option<&CampaignChainReceiptV1>, CampaignChainStoreError> {
         let artifact = exact_campaign_artifact(exact_starting_campaign_bytes)?;
-        self.continuation_for_policy(
-            &artifact,
-            expected_max_concurrent_players,
-            participant_public_keys,
-            roster_continuity,
-            campaign_content_manifest_sha256,
-            rules_config_sha256,
-            ruleset_manifest_sha256,
-            competition_manifest_sha256,
-            campaign_controller_public_key,
-        )
+        self.continuation_for_policy(&artifact, key, roster_continuity)
     }
 }
 
@@ -242,27 +185,14 @@ pub enum CampaignChainStoreError {
     DuplicateReceipt,
     #[error("more than one verified campaign chain matches this exact mission start")]
     AmbiguousContinuation,
-    #[error("failed to read campaign-chain store from {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
+    #[error(transparent)]
+    Storage(#[from] super::store::StoreError),
     #[error("failed to decode campaign-chain store from {path}: {source}")]
     Decode {
         path: PathBuf,
         #[source]
         source: serde_json::Error,
     },
-    #[error("failed to persist campaign-chain store to {path}: {source}")]
-    Persist {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[cfg(target_arch = "wasm32")]
-    #[error("browser campaign-chain storage is unavailable: {0}")]
-    BrowserStorage(String),
 }
 
 pub fn load() -> Result<CampaignChainStore, CampaignChainStoreError> {
@@ -286,49 +216,19 @@ pub fn persist(store: &CampaignChainStore) -> Result<(), CampaignChainStoreError
 }
 
 fn display_path() -> PathBuf {
-    #[cfg(target_arch = "wasm32")]
-    {
-        PathBuf::from(BROWSER_STORE_KEY)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        crate::save_file::default_save_directory().join(STORE_FILE)
-    }
+    super::store::display_path(STORE_FILE, BROWSER_STORE_KEY)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn read_store() -> Result<Option<String>, CampaignChainStoreError> {
-    let path = display_path();
-    crate::leaderboard_storage::read_private_utf8(&path)
-        .map_err(|source| CampaignChainStoreError::Read { path, source })
+    Ok(super::store::read(STORE_FILE, BROWSER_STORE_KEY)?)
 }
-
-#[cfg(target_arch = "wasm32")]
-fn read_store() -> Result<Option<String>, CampaignChainStoreError> {
-    browser_storage()?
-        .get_item(BROWSER_STORE_KEY)
-        .map_err(|error| CampaignChainStoreError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
-    let path = display_path();
-    crate::leaderboard_storage::replace_private(&path, ".leaderboard-chains-", encoded)
-        .map_err(|source| CampaignChainStoreError::Persist { path, source })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
-    let encoded =
-        std::str::from_utf8(encoded).expect("serialized campaign-chain store must be valid UTF-8");
-    browser_storage()?
-        .set_item(BROWSER_STORE_KEY, encoded)
-        .map_err(|error| CampaignChainStoreError::BrowserStorage(format!("{error:?}")))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, CampaignChainStoreError> {
-    crate::browser_storage::local_storage().map_err(CampaignChainStoreError::BrowserStorage)
+    Ok(super::store::write(
+        STORE_FILE,
+        BROWSER_STORE_KEY,
+        ".leaderboard-chains-",
+        encoded,
+    )?)
 }
 
 #[cfg(test)]
@@ -358,15 +258,18 @@ mod tests {
         store: &'a CampaignChainStore,
         campaign: &[u8],
     ) -> Result<Option<&'a CampaignChainReceiptV1>, CampaignChainStoreError> {
-        store.continuation_for_exact_campaign(
+        store.continuation_for_exact_campaign_policy(
             campaign,
-            1,
-            &[PublicKey32::from_bytes([4; 32])],
-            Digest32::from_bytes([3; 32]),
-            Digest32::from_bytes([5; 32]),
-            Digest32::from_bytes([2; 32]),
-            None,
-            PublicKey32::from_bytes([4; 32]),
+            &CampaignContinuationKey {
+                expected_max_concurrent_players: 1,
+                participant_public_keys: (&[PublicKey32::from_bytes([4; 32])]).to_vec(),
+                campaign_content_manifest_sha256: Digest32::from_bytes([3; 32]),
+                rules_config_sha256: Digest32::from_bytes([5; 32]),
+                ruleset_manifest_sha256: Digest32::from_bytes([2; 32]),
+                competition_manifest_sha256: None,
+                campaign_controller_public_key: PublicKey32::from_bytes([4; 32]),
+            },
+            CampaignRosterContinuityV1::ExactSameAuthenticatedKeysEverySession,
         )
     }
 
@@ -409,14 +312,16 @@ mod tests {
         let lookup = |policy| {
             store.continuation_for_exact_campaign_policy(
                 campaign,
-                2,
-                &intended_roster,
+                &CampaignContinuationKey {
+                    expected_max_concurrent_players: 2,
+                    participant_public_keys: (&intended_roster).to_vec(),
+                    campaign_content_manifest_sha256: Digest32::from_bytes([3; 32]),
+                    rules_config_sha256: Digest32::from_bytes([5; 32]),
+                    ruleset_manifest_sha256: Digest32::from_bytes([2; 32]),
+                    competition_manifest_sha256: None,
+                    campaign_controller_public_key: controller,
+                },
                 policy,
-                Digest32::from_bytes([3; 32]),
-                Digest32::from_bytes([5; 32]),
-                Digest32::from_bytes([2; 32]),
-                None,
-                controller,
             )
         };
         assert!(
@@ -441,14 +346,16 @@ mod tests {
         assert!(matches!(
             store.continuation_for_exact_campaign_policy(
                 campaign,
-                2,
-                &intended_roster,
-                CampaignRosterContinuityV1::UnionOfVerifiedSessionSubsets,
-                Digest32::from_bytes([3; 32]),
-                Digest32::from_bytes([5; 32]),
-                Digest32::from_bytes([2; 32]),
-                None,
-                controller,
+                &CampaignContinuationKey {
+                    expected_max_concurrent_players: 2,
+                    participant_public_keys: (&intended_roster).to_vec(),
+                    campaign_content_manifest_sha256: Digest32::from_bytes([3; 32]),
+                    rules_config_sha256: Digest32::from_bytes([5; 32]),
+                    ruleset_manifest_sha256: Digest32::from_bytes([2; 32]),
+                    competition_manifest_sha256: None,
+                    campaign_controller_public_key: controller
+                },
+                CampaignRosterContinuityV1::UnionOfVerifiedSessionSubsets
             ),
             Err(CampaignChainStoreError::AmbiguousContinuation)
         ));
@@ -462,14 +369,16 @@ mod tests {
         assert!(matches!(
             store.continuation_for_exact_campaign_policy(
                 campaign,
-                1,
-                &[],
-                CampaignRosterContinuityV1::UnionOfVerifiedSessionSubsets,
-                Digest32::from_bytes([3; 32]),
-                Digest32::from_bytes([5; 32]),
-                Digest32::from_bytes([2; 32]),
-                None,
-                controller,
+                &CampaignContinuationKey {
+                    expected_max_concurrent_players: 1,
+                    participant_public_keys: (&[]).to_vec(),
+                    campaign_content_manifest_sha256: Digest32::from_bytes([3; 32]),
+                    rules_config_sha256: Digest32::from_bytes([5; 32]),
+                    ruleset_manifest_sha256: Digest32::from_bytes([2; 32]),
+                    competition_manifest_sha256: None,
+                    campaign_controller_public_key: controller
+                },
+                CampaignRosterContinuityV1::UnionOfVerifiedSessionSubsets
             ),
             Err(CampaignChainStoreError::InvalidParticipantPolicy)
         ));
