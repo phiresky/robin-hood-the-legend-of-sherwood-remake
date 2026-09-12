@@ -223,48 +223,8 @@ struct ConvertedHuman {
 #[derive(Debug)]
 struct ConvertedPc {
     character_index: usize,
-    profile_index: CharacterProfileIdx,
-    kind: Option<CharacterKind>,
-    has_lockpick: bool,
-    has_climb: bool,
-    has_jump: bool,
     status: PcStatus,
-    work_icon: WorkIcon,
-    playable: bool,
-    beam_me_index: i16,
-    already_selected: bool,
-    belt_seen: bool,
-    feet_seen: bool,
-    head_seen: bool,
-    immortal: bool,
-    fried_psykokwack: bool,
-    list_index: u8,
-    teleport_counter: u16,
-    current_action: Action,
-    saved_action: Action,
-    disabled_actions: Vec<bool>,
-    disabled_actions_temp: Vec<bool>,
-    interface_hidden: bool,
-    position_before_teleport: MapPoint,
-    quick_action_types: Vec<QuickAction>,
-    quick_action_sequences: Vec<Option<Sequence>>,
-    quick_seek_sequences: Vec<Option<Sequence>>,
-    quick_action_special_counts: Vec<u16>,
-    quick_action_buttons: Vec<u16>,
-    quick_action_interactors: Vec<Option<EntityId>>,
-    titbits: Vec<Option<crate::titbit::TitbitId>>,
-    portrait: PcPortraitState,
-    carried: Option<EntityId>,
-    carried_posture: u32,
-    shield_danger_point: WorldPoint3D,
-    shield_protected: Option<EntityId>,
-    shield_protector: Option<EntityId>,
-    guard: Option<EntityId>,
-    time_till_reinforcement: u32,
-    last_ammo_dropping_position: MapPoint,
-    last_dropped_ammo: Option<EntityId>,
-    update_last_dropped_ammo: bool,
-    last_dropping_direction: u8,
+    pc: PcData,
 }
 
 impl LegacyPcHumanAdoptionPlan {
@@ -319,7 +279,7 @@ impl LegacyPcHumanAdoptionPlan {
             )?;
             let pc = saved_pc
                 .map(|saved| {
-                    let Entity::Pc(_) = runtime else {
+                    let Entity::Pc(runtime_pc) = runtime else {
                         return Err(LegacyPcHumanAdoptError::ExpectedPc {
                             creation_order,
                             entity_id,
@@ -327,6 +287,7 @@ impl LegacyPcHumanAdoptionPlan {
                     };
                     convert_pc(
                         saved,
+                        &runtime_pc.pc,
                         creation_order,
                         entities,
                         sequence_topology,
@@ -364,7 +325,8 @@ impl LegacyPcHumanAdoptionPlan {
                 let Entity::Pc(pc) = entity else {
                     unreachable!("preflighted PC changed concrete kind");
                 };
-                apply_pc(&mut pc.pc, &saved);
+                pc.pc = saved.pc;
+                let loaded = &pc.pc;
                 let campaign_character = engine
                     .mission_domain
                     .campaign
@@ -376,24 +338,24 @@ impl LegacyPcHumanAdoptionPlan {
                 // that pointer. The leaf copy is therefore authoritative over
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
-                for slot in 0..saved.quick_action_sequences.len() {
-                    let titbit = saved.titbits.get(slot).copied().flatten();
-                    if let Some(action) = saved.quick_action_sequences[slot].clone() {
+                for slot in 0..loaded.quick_action_sequences.len() {
+                    let titbit = loaded.titbits.get(slot).copied().flatten();
+                    if let Some(action) = loaded.quick_action_sequences[slot].clone() {
                         engine.players.macro_store.adopt_legacy_sequence_slot(
                             record.entity_id,
                             slot,
                             action,
-                            saved.quick_seek_sequences[slot].clone(),
+                            loaded.quick_seek_sequences[slot].clone(),
                             titbit,
                         );
-                    } else if saved.quick_action_types[slot] != QuickAction::None {
+                    } else if loaded.quick_action_types[slot] != QuickAction::None {
                         engine.players.macro_store.adopt_legacy_quickito_slot(
                             record.entity_id,
                             slot,
                             crate::macro_store::LegacyQuickito {
-                                kind: saved.quick_action_types[slot],
-                                interactor: saved.quick_action_interactors[slot],
-                                button: saved.quick_action_buttons[slot],
+                                kind: loaded.quick_action_types[slot],
+                                interactor: loaded.quick_action_interactors[slot],
+                                button: loaded.quick_action_buttons[slot],
                             },
                             titbit,
                         );
@@ -582,6 +544,7 @@ fn convert_building_sector(
 #[allow(clippy::too_many_arguments)]
 fn convert_pc(
     saved: &LegacyPcPayload<LegacyHumanPayload, LegacyInlineSequence>,
+    runtime: &PcData,
     creation_order: u32,
     entities: &LegacyEntityFixups,
     sequence_topology: &LegacySequenceTopology,
@@ -739,16 +702,13 @@ fn convert_pc(
         &saved.pre_human.disabled_actions,
         &saved.pre_human.disabled_actions_temp,
     );
-    Ok(ConvertedPc {
-        character_index,
+    let mut pc = PcData {
         profile_index: CharacterProfileIdx(profile_index),
         kind,
         has_lockpick,
         has_climb,
         has_jump,
-        status,
         work_icon: work_icon(saved.pre_human.work_icon, creation_order)?,
-        playable: saved.pre_human.playable_member,
         beam_me_index: if saved.pre_human.beam_me_index == u16::MAX {
             -1
         } else {
@@ -769,6 +729,7 @@ fn convert_pc(
         fried_psykokwack: saved.pre_human.fried_psykokwack,
         list_index: saved.pre_human.list_index,
         teleport_counter: saved.pre_human.teleport_counter,
+        max_teleport_counter: saved.pre_human.teleport_counter,
         current_action,
         saved_action,
         disabled_actions: saved.pre_human.disabled_actions.to_vec(),
@@ -833,6 +794,29 @@ fn convert_pc(
         )?,
         update_last_dropped_ammo: saved.post_human.update_last_dropped_ammo,
         last_dropping_direction: saved.post_human.last_dropping_direction,
+        life_points: status.life_points,
+        campaign_description_index: Some(saved.pre_human.description.0),
+        ammo: PcAmmoData {
+            ales: status.num_ales,
+            arrows: status.num_arrows,
+            apples: status.num_apples,
+            rations: status.num_rations,
+            stones: status.num_stones,
+            wasp_nests: status.num_wasp_nests,
+            nets: status.num_nets,
+            plants: status.num_plants,
+            purses: status.num_purses,
+        },
+        trumpet_enabled: saved.portrait.trumpet_enabled,
+        // Preserve constructor-only identity/geometry and fields owned by
+        // other adoption sections, rather than fabricating their defaults.
+        ..runtime.clone()
+    };
+    restore_loaded_playable(&mut pc, saved.pre_human.playable_member);
+    Ok(ConvertedPc {
+        character_index,
+        status,
+        pc,
     })
 }
 
@@ -936,82 +920,6 @@ fn restore_saved_shield_obstacle(entity: &mut Entity) {
         .shield_obstacle = Some(crate::bow_shot::shield_obstacle_from_serialized_state(
         &serialized,
     ));
-}
-
-fn apply_pc(pc: &mut PcData, saved: &ConvertedPc) {
-    pc.life_points = saved.status.life_points;
-    pc.campaign_description_index = Some(
-        u32::try_from(saved.character_index)
-            .expect("saved campaign description index originated as an Original u32"),
-    );
-    // Player-character serialization restores the description and then replaces
-    // profile reference from that description. Profile-backed behavior follows the
-    // serialized description even when the mission constructor used another
-    // profile (notably PCs waiting to be rescued). Constructor-only `robin`
-    // and sprite geometry are deliberately retained.
-    pc.profile_index = saved.profile_index;
-    pc.kind = saved.kind;
-    pc.has_lockpick = saved.has_lockpick;
-    pc.has_climb = saved.has_climb;
-    pc.has_jump = saved.has_jump;
-    pc.ammo = PcAmmoData {
-        ales: saved.status.num_ales,
-        arrows: saved.status.num_arrows,
-        apples: saved.status.num_apples,
-        rations: saved.status.num_rations,
-        stones: saved.status.num_stones,
-        wasp_nests: saved.status.num_wasp_nests,
-        nets: saved.status.num_nets,
-        plants: saved.status.num_plants,
-        purses: saved.status.num_purses,
-    };
-    pc.work_icon = saved.work_icon;
-    restore_loaded_playable(pc, saved.playable);
-    pc.beam_me_index = saved.beam_me_index;
-    pc.already_selected = saved.already_selected;
-    pc.belt_seen = saved.belt_seen;
-    pc.feet_seen = saved.feet_seen;
-    pc.head_seen = saved.head_seen;
-    pc.immortal = saved.immortal;
-    pc.fried_psykokwack = saved.fried_psykokwack;
-    pc.list_index = saved.list_index;
-    pc.teleport_counter = saved.teleport_counter;
-    // Rust's max counter is a derived render denominator absent from the
-    // Original save. The remaining count is the only authoritative bound at
-    // load and avoids inventing an earlier teleport duration.
-    pc.max_teleport_counter = saved.teleport_counter;
-    pc.current_action = saved.current_action;
-    pc.saved_action = saved.saved_action;
-    pc.disabled_actions.clone_from(&saved.disabled_actions);
-    pc.disabled_actions_temp
-        .clone_from(&saved.disabled_actions_temp);
-    pc.interface_hidden = saved.interface_hidden;
-    pc.position_before_teleport = saved.position_before_teleport;
-    pc.quick_action_types.clone_from(&saved.quick_action_types);
-    pc.quick_action_sequences
-        .clone_from(&saved.quick_action_sequences);
-    pc.quick_seek_sequences
-        .clone_from(&saved.quick_seek_sequences);
-    pc.quick_action_special_counts
-        .clone_from(&saved.quick_action_special_counts);
-    pc.quick_action_buttons
-        .clone_from(&saved.quick_action_buttons);
-    pc.quick_action_interactors
-        .clone_from(&saved.quick_action_interactors);
-    pc.titbits.clone_from(&saved.titbits);
-    pc.portrait = saved.portrait.clone();
-    pc.trumpet_enabled = saved.portrait.trumpet_enabled;
-    pc.carried = saved.carried;
-    pc.carried_posture = saved.carried_posture;
-    pc.shield_danger_point = saved.shield_danger_point;
-    pc.shield_protected = saved.shield_protected;
-    pc.shield_protector = saved.shield_protector;
-    pc.guard = saved.guard;
-    pc.time_till_reinforcement = saved.time_till_reinforcement;
-    pc.last_ammo_dropping_position = saved.last_ammo_dropping_position;
-    pc.last_dropped_ammo = saved.last_dropped_ammo;
-    pc.update_last_dropped_ammo = saved.update_last_dropped_ammo;
-    pc.last_dropping_direction = saved.last_dropping_direction;
 }
 
 /// Restore the serialized playable flag through the same semantic

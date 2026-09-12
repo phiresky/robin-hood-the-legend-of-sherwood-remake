@@ -458,6 +458,7 @@ fn is_bonus_class(class: LegacyElementClass) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::legacy_save::test_support::{push_f32, push_u32};
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
@@ -477,15 +478,7 @@ mod tests {
 
     use crate::legacy_save::test_support::with_reader;
 
-    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
     fn push_f64(bytes: &mut Vec<u8>, value: f64) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 

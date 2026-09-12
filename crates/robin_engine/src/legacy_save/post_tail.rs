@@ -16,6 +16,7 @@
 //! is used.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::read_count_u16;
 use super::read_helpers::{hex16, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -680,26 +681,9 @@ fn read_time_t32(
     }
 }
 
-fn read_count_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let count = reader.read_u16(field)? as usize;
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::legacy_save::test_support::{push_f32, push_i32, push_u16, push_u32};
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
@@ -720,22 +704,6 @@ mod tests {
                 "no VM members when global_script_class is absent",
             ))
         }
-    }
-
-    fn push_u16(bytes: &mut Vec<u8>, value: u16) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_u32(bytes: &mut Vec<u8>, value: u32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_i32(bytes: &mut Vec<u8>, value: i32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    fn push_f32(bytes: &mut Vec<u8>, value: f32) {
-        bytes.extend_from_slice(&value.to_le_bytes());
     }
 
     fn minimal_tail() -> Vec<u8> {

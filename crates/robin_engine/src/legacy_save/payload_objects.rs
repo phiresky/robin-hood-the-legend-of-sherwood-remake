@@ -7,6 +7,7 @@
 //! exact `Serialize` call order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
+use super::read_helpers::read_count_u16 as read_bounded_u16;
 use super::read_helpers::{read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
@@ -558,25 +559,6 @@ pub struct LegacyAlePayload {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacySpyCapePayload {
     pub object: LegacyObjectPayload,
-}
-
-fn read_bounded_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    let offset = reader.offset();
-    let raw = reader.read_u16(field)?;
-    let count = usize::from(raw);
-    if count > maximum {
-        return Err(reader.invalid_value(
-            offset,
-            field,
-            count,
-            "item count within the caller-supplied limit",
-        ));
-    }
-    Ok(count)
 }
 
 #[cfg(test)]

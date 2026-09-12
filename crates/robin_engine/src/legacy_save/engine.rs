@@ -5,6 +5,7 @@
 //! byte skip is used to find that boundary.
 
 use super::read_helpers::DEFAULT_LIST_LIMIT;
+use super::read_helpers::{read_array, read_point2};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -95,9 +96,9 @@ impl LegacyEnginePreamble {
                 cheat_used_flags: reader.read_u32("cheat_used_flags")?,
                 shield_protected: reader.read_bool("shield_protected")?,
                 freeze_all: reader.read_bool("freeze_all")?,
-                view: LegacyPoint2::read(reader, "view")?,
+                view: read_point2(reader, "view")?,
                 zoom_factor: reader.read_f32("zoom_factor")?,
-                camera_slide: LegacyPoint2::read(reader, "camera_slide")?,
+                camera_slide: read_point2(reader, "camera_slide")?,
                 fixed_camera_speed: reader.read_u16("fixed_camera_speed")?,
                 speed: reader.read_f32("speed")?,
                 speed_index: reader.read_u16("speed_index")?,
@@ -110,7 +111,7 @@ impl LegacyEnginePreamble {
                 lock_engine: reader.read_bool("lock_engine")?,
                 mission_won: reader.read_bool("mission_won")?,
                 mission_won_first_time: reader.read_bool("mission_won_first_time")?,
-                camera_wanted: LegacyPoint2::read(reader, "camera_wanted")?,
+                camera_wanted: read_point2(reader, "camera_wanted")?,
                 locker: reader.read_bool("locker")?,
                 skip_data: reader.read_string("skip_data")?,
                 short_briefings: LegacyShortBriefings::read(reader, limits)?,
@@ -123,25 +124,7 @@ impl LegacyEnginePreamble {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LegacyPoint2 {
-    pub x: f32,
-    pub y: f32,
-}
-
-impl LegacyPoint2 {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        field: impl Into<std::borrow::Cow<'static, str>>,
-    ) -> LegacyResult<Self> {
-        reader.scope(field, |reader| {
-            Ok(Self {
-                x: reader.read_f32("x")?,
-                y: reader.read_f32("y")?,
-            })
-        })
-    }
-}
+pub use super::payload_base::LegacyPoint2;
 
 /// Raw background transform as emitted by the original game's save format.
 ///
@@ -207,9 +190,9 @@ impl LegacyBackgroundTransform {
             let current_zoom_level = reader.read_u16("current_zoom_level")?;
             let padding_before_zoom_values = read_array::<2>(reader, "padding_before_zoom_values")?;
             let zoom_values = read_f32_array(reader, "zoom_values")?;
-            let center_zoom = LegacyPoint2::read(reader, "center_zoom")?;
-            let clipped_zoom = LegacyPoint2::read(reader, "clipped_zoom")?;
-            let scrolling = LegacyPoint2::read(reader, "scrolling")?;
+            let center_zoom = read_point2(reader, "center_zoom")?;
+            let clipped_zoom = read_point2(reader, "clipped_zoom")?;
+            let scrolling = read_point2(reader, "scrolling")?;
 
             debug_assert_eq!(reader.offset() - start, Self::SERIALIZED_SIZE);
             Ok(Self {
@@ -364,7 +347,7 @@ impl LegacySoundGeometry {
                 "sound-geometry fingerprint",
             )?;
             Ok(Self {
-                listen_point: LegacyPoint2::read(reader, "listen_point")?,
+                listen_point: read_point2(reader, "listen_point")?,
                 zoom_factor: reader.read_f32("zoom_factor")?,
             })
         })
@@ -480,7 +463,7 @@ impl LegacySoundSource {
             }
             let mut shape = try_vec(reader, "shape", count)?;
             for index in 0..count {
-                shape.push(LegacyPoint2::read(reader, format!("shape[{index}]"))?);
+                shape.push(read_point2(reader, format!("shape[{index}]"))?);
             }
             Ok(Self {
                 kind,
@@ -561,15 +544,6 @@ impl LegacyGameState {
             })
         })
     }
-}
-
-fn read_array<const N: usize>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<[u8; N]> {
-    let mut value = [0; N];
-    reader.read_bytes(field, &mut value)?;
-    Ok(value)
 }
 
 fn read_f32_array<const N: usize>(
