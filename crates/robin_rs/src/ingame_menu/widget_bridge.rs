@@ -747,7 +747,7 @@ pub fn draw_widget_button(
     let sprite_drawn = if let Some(surf) = sprite {
         let (source_w, source_h) = renderer.surface_dimensions(surf).expect("live menu button");
         let (source_x, target_x) = button_horizontal_slices(i32::from(source_w), w);
-        // `blit_with_shadow` multiply-darkens shadow-key pixels (key
+        // `draw_surface_with_shadow` multiply-darkens shadow-key pixels (key
         // 0x1F, intensity 50) in the source bitmap so the drop-shadow
         // ring around each button blends instead of rendering opaque
         // blue.
@@ -772,7 +772,6 @@ pub fn draw_widget_button(
                     surf,
                     Some(&src),
                     Some(&dst),
-                    0,  // shadow_color (unused on this path)
                     50, // shadow_level — shadow-renderer default
                     BLIT_SOURCE_TRANSPARENT,
                 )

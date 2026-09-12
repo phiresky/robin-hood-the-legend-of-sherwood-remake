@@ -5456,7 +5456,9 @@ impl OwnerViewRadiusCache {
         obstacle: Option<crate::position_interface::ObstacleHandle>,
         compute: impl FnOnce() -> f32,
     ) -> f32 {
-        if let Some(radius) = self.values.borrow().get(&obstacle).copied() {
+        if let Some(radius) = self.values.borrow().get(&obstacle).copied()
+            && radius != 0.0
+        {
             if let Some(viewer) = self.diagnostic_viewer {
                 crate::ai_vision::debug_view_radius_cache_event(
                     "owner_hit",
@@ -5497,11 +5499,9 @@ impl OwnerViewRadiusCache {
         } else {
             compute()
         };
-        // Original uses zero as the cache-miss sentinel: a zero result from
-        // The view radius is recomputed on the next eligible target.
-        if radius != 0.0 {
-            self.values.borrow_mut().insert(obstacle, radius);
-        }
+        // Zero remains a miss, but must be published as this owner's write
+        // so a prior viewer cannot reuse its radius after this pass.
+        self.values.borrow_mut().insert(obstacle, radius);
         if let Some(viewer) = self.diagnostic_viewer {
             crate::ai_vision::debug_view_radius_cache_event(
                 if radius == 0.0 {
@@ -5850,6 +5850,33 @@ mod tests {
         assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
         assert_eq!(cache.get_or_compute(Some(obstacle), compute), 321.0);
         assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn owner_view_radius_cache_publishes_zero_over_another_viewer() {
+        let first = EntityId::from(crate::entity_id::SoldierId(7));
+        let second = EntityId::from(crate::entity_id::SoldierId(9));
+        let mut persistent = crate::ai_vision::ViewRadiusCache::default();
+        let surfaces = [None, crate::position_interface::ObstacleHandle::new(3)];
+        for surface in surfaces {
+            persistent.set(surface, first, 40, 125.0);
+        }
+        let cache = OwnerViewRadiusCache::from_persistent(&persistent, second, 40, "test");
+        for surface in surfaces {
+            assert_eq!(cache.get_or_compute(surface, || 0.0), 0.0);
+            assert_eq!(cache.get_or_compute(surface, || 0.0), 0.0);
+        }
+        cache.commit_to(&mut persistent, second, 40);
+        let next = OwnerViewRadiusCache::from_persistent(&persistent, first, 40, "test");
+        for surface in surfaces {
+            assert_eq!(persistent.get(surface, first, 40), None);
+            assert_eq!(persistent.get(surface, second, 40), None);
+            assert_eq!(next.get_or_compute(surface, || 90.0), 90.0);
+        }
+        next.commit_to(&mut persistent, first, 40);
+        for surface in surfaces {
+            assert_eq!(persistent.get(surface, first, 40), Some(90.0));
+        }
     }
 
     #[test]

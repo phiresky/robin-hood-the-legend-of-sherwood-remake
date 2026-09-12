@@ -630,6 +630,8 @@ def import_result(
     workspace: Path | None,
     host: str,
     fallback_env: dict[str, str] | None = None,
+    *,
+    historical: bool = False,
 ) -> bool:
     attestation = result / "attestation.env"
     status_path = result / "status"
@@ -638,9 +640,22 @@ def import_result(
         log_path = result / "run.log"
     if not (attestation.is_file() and status_path.is_file() and log_path.is_file()):
         raise ValueError(f"incomplete replay evidence directory: {result}")
-    manifest_sha = verify_manifest(result)
+    required = {"attestation.env", "status", log_path.name}
+    trace_file = result / "trace.path"
+    if trace_file.exists() or trace_file.is_symlink():
+        required.add("trace.path")
+    # Historical recovery is explicitly provisional, including bundles with
+    # partial seals. Never let unsealed audit provenance supply trusted identity.
+    if historical:
+        for relative in required:
+            _safe_manifest_path(result.resolve(), relative)
+        manifest = result / "MANIFEST.sha256"
+        manifest_sha = (verify_manifest(result, set())
+                        if manifest.exists() or manifest.is_symlink() else None)
+    else:
+        manifest_sha = verify_manifest(result, required)
     env = parse_env(attestation)
-    for key, value in (fallback_env or {}).items():
+    for key, value in ((fallback_env or {}) if historical else {}).items():
         env.setdefault(key, value)
     status_lines = status_path.read_text().splitlines()
     if len(status_lines) != 1 or not status_lines[0]:
@@ -651,7 +666,6 @@ def import_result(
     if env.get("LOG_SHA256", log_sha).lower() != log_sha:
         raise ValueError(f"{log_path}: attested log hash mismatch")
     log = log_bytes.decode(errors="replace")
-    trace_file = result / "trace.path"
     if trace_file.is_file():
         traces = trace_file.read_text().splitlines()
         if len(traces) != 1:
@@ -722,8 +736,8 @@ def import_result(
             progress_precision = "exact"
     evidence_relative = str(result.relative_to(audit_root))
     evidence_seed = (
-        "replay-run-v1\n"
-        f"AUDIT={audit_root.resolve()}\n"
+        ("historical-replay-run-v1\n" if historical else "replay-run-v1\n")
+        + f"AUDIT={audit_root.resolve()}\n"
         f"EVIDENCE={evidence_relative}\n"
         f"MANIFEST={manifest_sha or log_sha}\n"
     )
@@ -742,7 +756,7 @@ def import_result(
             replay_id,
             runner_id,
             "incremental_eof",
-            "attested",
+            "provisional" if historical else "attested",
             outcome,
             status,
             command_status,
@@ -779,6 +793,8 @@ def import_audit(
     audit: Path,
     workspace: Path | None,
     host: str,
+    *,
+    historical: bool = False,
 ) -> tuple[int, int]:
     fallback_env: dict[str, str] = {}
     for name in ("PROVENANCE.env", "provenance.env"):
@@ -795,7 +811,8 @@ def import_audit(
     with connection:
         for result in candidates:
             inserted += import_result(
-                connection, result, audit, workspace, host, fallback_env
+                connection, result, audit, workspace, host, fallback_env,
+                historical=historical,
             )
     provisional_inserted, provisional_seen = import_provisional_audit(
         connection, audit, workspace, host
@@ -2850,6 +2867,11 @@ def parser() -> argparse.ArgumentParser:
     tree.add_argument("audits", type=Path)
     tree.add_argument("--workspace", type=Path)
     tree.add_argument("--host", default=socket.gethostname())
+    for importer in (one, audit, tree):
+        importer.add_argument(
+            "--historical", action="store_true",
+            help="recover older evidence as provisional; never trust it for scheduler skips",
+        )
     legacy = commands.add_parser("import-legacy-tree")
     legacy.add_argument("database", type=Path)
     legacy.add_argument("audits", type=Path)
@@ -2988,10 +3010,12 @@ def main() -> None:
                 args.audit_root.resolve(),
                 args.workspace.resolve() if args.workspace else None,
                 args.host,
+                historical=args.historical,
             )
         evidence = connection.execute(
-            "SELECT evidence_key FROM replay_runs WHERE evidence_path=?",
-            (str(args.result.resolve()),),
+            """SELECT evidence_key FROM replay_runs
+               WHERE evidence_path=? AND evidence_tier=? ORDER BY run_id DESC LIMIT 1""",
+            (str(args.result.resolve()), "provisional" if args.historical else "attested"),
         ).fetchone()
         print(json.dumps({
             "inserted": int(inserted),
@@ -3004,6 +3028,7 @@ def main() -> None:
             args.audit.resolve(),
             args.workspace.resolve() if args.workspace else None,
             args.host,
+            historical=args.historical,
         )
         print(json.dumps({"inserted": inserted, "seen": seen, "audit": str(args.audit)}))
     elif args.command == "import-reblock-audit":
@@ -3022,6 +3047,7 @@ def main() -> None:
                 audit.resolve(),
                 args.workspace.resolve() if args.workspace else None,
                 args.host,
+                historical=args.historical,
             )
             if observed:
                 audits += 1

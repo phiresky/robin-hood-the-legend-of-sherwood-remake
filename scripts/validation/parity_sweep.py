@@ -170,6 +170,14 @@ def core_identity(args):
     return dict(path=str(root), audio_durations_sha256=digest(root / "Data/AudioDurations.json"))
 
 
+def check_result_identity(result, trace, entry, runner_sha):
+    """Both early divergence and EOF must belong to the selected inputs."""
+    if (Path(result["trace_path"]).resolve() != trace.resolve()
+            or result["native_trace_sha256"] != entry["sha256"]
+            or result["executable_sha256"] != runner_sha):
+        raise ValueError("structured result identity mismatch")
+
+
 def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir=None):
     core_datadir = (core_datadir or Path(__file__).resolve().parents[2] / "assets/core-datadir").resolve()
     started = time.monotonic()
@@ -193,14 +201,14 @@ def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_da
             log = log_path.read_text(errors="replace")
             result = read_result(log)
             if classification != "timeout":
+                if result is not None:
+                    check_result_identity(result, trace, entry, runner_sha)
                 if result and result["outcome"] == "divergence":
                     classification = "divergence"
                 elif status == 0 and exact_eof(log, trace=trace):
-                    if (result["native_trace_sha256"] != entry["sha256"]
-                            or result["executable_sha256"] != runner_sha
-                            or result["processed_frames"] != entry["frames"]
+                    if (result["processed_frames"] != entry["frames"]
                             or result["final_frame"] != entry["final_frame"]):
-                        raise ValueError("structured EOF identity/extent mismatch")
+                        raise ValueError("structured EOF extent mismatch")
                     classification = "exact_eof"
                 else:
                     error = "runner did not produce an admitted exact EOF result"
@@ -266,14 +274,16 @@ def recover(output, manifest, args):
                     or record["classification"] not in ("exact_eof", "divergence", "error", "timeout")
                     or (encoded is not None and state != record["classification"])):
                 raise ValueError(f"saved result mismatch: {index}")
-            if record["classification"] == "exact_eof":
+            if record["classification"] in ("exact_eof", "divergence"):
                 log = log_path.read_text(errors="replace")
                 result = read_result(log)
                 entry = entries[index]
-                if (record["status"] != 0 or not exact_eof(log, trace=output / "traces" / trace)
-                        or result != record["result"]
-                        or result["executable_sha256"] != launch["runner_sha256"]
-                        or result["native_trace_sha256"] != entry["sha256"]
+                if (result is None or result != record["result"]
+                        or result["outcome"] != record["classification"]):
+                    raise ValueError(f"saved structured result mismatch: {index}")
+                check_result_identity(result, output / "traces" / trace, entry, launch["runner_sha256"])
+                if record["classification"] == "exact_eof" and (
+                        record["status"] != 0 or not exact_eof(log, trace=output / "traces" / trace)
                         or result["processed_frames"] != entry["frames"]
                         or result["final_frame"] != entry["final_frame"]):
                     raise ValueError(f"saved EOF mismatch: {index}")

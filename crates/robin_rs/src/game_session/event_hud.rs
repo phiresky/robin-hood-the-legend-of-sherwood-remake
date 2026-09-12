@@ -181,7 +181,7 @@ fn apply_frame_resizes(
     let h = new_h as f32;
     host.frontend.viewport.set_screen_size(w, h);
     game.set_resolution(new_w as u16, new_h as u16);
-    input.resize(new_w, new_h, host.frontend.preferences().key_config());
+    input.resize(new_w, new_h);
     if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
         let cmd = PlayerCommand::MinimapResize {
             base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),

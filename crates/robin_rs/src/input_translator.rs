@@ -241,71 +241,18 @@ impl Default for InputTranslator {
 }
 
 impl InputTranslator {
-    pub fn new(screen_width: f32, screen_height: f32) -> Self {
+    pub fn new(screen_width: f32, screen_height: f32, key_config: &KeyConfig) -> Self {
         let mut t = Self {
             screen_width,
             screen_height,
             ..Self::default()
         };
-        t.set_default_bindings();
+        t.load_bindings_from_keyconfig(key_config);
         t.set_reserved_bindings();
         t
     }
 
-    /// Set the default rebindable key bindings.
-    ///
-    /// Matches the runtime Default1 preset used for new profiles.
-    fn set_default_bindings(&mut self) {
-        use KeyCode::*;
-        // Camera
-        self.bindings[GameKey::ZoomIn] = Some(PageUp);
-        self.bindings[GameKey::ZoomOut] = Some(PageDown);
-        self.bindings[GameKey::ScrollUp] = Some(ArrowUp);
-        self.bindings[GameKey::ScrollDown] = Some(ArrowDown);
-        self.bindings[GameKey::ScrollLeft] = Some(ArrowLeft);
-        self.bindings[GameKey::ScrollRight] = Some(ArrowRight);
-
-        // Map
-        self.bindings[GameKey::DisplayMap] = Some(KeyM);
-
-        // Character selection
-        self.bindings[GameKey::SelectCharacter1] = Some(Digit1);
-        self.bindings[GameKey::SelectCharacter2] = Some(Digit2);
-        self.bindings[GameKey::SelectCharacter3] = Some(Digit3);
-        self.bindings[GameKey::SelectCharacter4] = Some(Digit4);
-        self.bindings[GameKey::SelectCharacter5] = Some(Digit5);
-        self.bindings[GameKey::SelectAll] = Some(F2);
-        self.bindings[GameKey::SelectNone] = Some(F3);
-
-        // Stance
-        self.bindings[GameKey::CrouchDown] = Some(KeyC);
-        self.bindings[GameKey::StandUp] = Some(KeyX);
-
-        // Vision modifiers
-        self.bindings[GameKey::ShowDoors] = Some(ShiftLeft);
-        self.bindings[GameKey::SwitchHiddenDisplay] = Some(KeyH);
-        self.bindings[GameKey::ShowViewCone] = Some(AltLeft);
-
-        // Action slots
-        self.bindings[GameKey::Action1] = Some(KeyA);
-        self.bindings[GameKey::Action2] = Some(KeyS);
-        self.bindings[GameKey::Action3] = Some(KeyD);
-        self.bindings[GameKey::MoveDuringAction] = Some(ControlLeft);
-
-        // Quick actions (macro recording)
-        self.bindings[GameKey::RecordQa] = Some(F5);
-        self.bindings[GameKey::StartQa] = Some(F6);
-        self.bindings[GameKey::DeleteQa] = Some(F8);
-
-        // Save / Load
-        self.bindings[GameKey::QuickSave1] = Some(F9);
-        self.bindings[GameKey::QuickLoad1] = Some(F12);
-        self.bindings[GameKey::PlanQuickActions] = Some(ShiftLeft);
-        self.bindings[GameKey::ToggleCloak] = Some(KeyV);
-    }
-
-    /// Set the non-rebindable key bindings (console, print screen, menu,
-    /// and debug keys).
+    /// Set the non-rebindable console, menu, and debug bindings at construction.
     fn set_reserved_bindings(&mut self) {
         use KeyCode::*;
         self.bindings[GameKey::DisplayConsole] = Some(Backquote);
@@ -351,13 +298,12 @@ impl InputTranslator {
     /// Load rebindable keys from a [`KeyConfig`].
     ///
     /// Uses index-based loading — a raw copy from the key config's
-    /// flat array.
+    /// flat array. Reserved/debug bindings (including deity overrides) and
+    /// input edge state belong to the session and are preserved.
     pub fn load_bindings_from_keyconfig(&mut self, cfg: &KeyConfig) {
         for (game_key, binding) in self.bindings.iter_mut().take(REAL_KEY_COUNT as usize) {
             *binding = cfg.get_key_by_index(game_key as u16);
         }
-        // Re-apply reserved bindings so they can't be overwritten by config.
-        self.set_reserved_bindings();
     }
 
     /// Edge detection helper for physical keys that aren't routed through the
@@ -714,22 +660,7 @@ mod tests {
     use winit::keyboard::KeyCode;
 
     fn make_translator() -> InputTranslator {
-        let mut t = InputTranslator::new(1024.0, 768.0);
-        // Bind some keys for testing
-        t.set_binding(GameKey::ZoomIn, Some(KeyCode::Equal));
-        t.set_binding(GameKey::ZoomOut, Some(KeyCode::Minus));
-        t.set_binding(GameKey::ScrollLeft, Some(KeyCode::ArrowLeft));
-        t.set_binding(GameKey::ScrollRight, Some(KeyCode::ArrowRight));
-        t.set_binding(GameKey::ScrollUp, Some(KeyCode::ArrowUp));
-        t.set_binding(GameKey::ScrollDown, Some(KeyCode::ArrowDown));
-        t.set_binding(GameKey::SelectCharacter1, Some(KeyCode::Digit1));
-        t.set_binding(GameKey::SelectAll, Some(KeyCode::KeyQ));
-        t.set_binding(GameKey::Action1, Some(KeyCode::KeyG));
-        t.set_binding(GameKey::ShowDoors, Some(KeyCode::ShiftLeft));
-        t.set_binding(GameKey::QuickSave1, Some(KeyCode::F1));
-        t.set_binding(GameKey::QuickLoad1, Some(KeyCode::F5));
-        t.set_binding(GameKey::ToggleCloak, Some(KeyCode::KeyV));
-        t
+        InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset())
     }
 
     fn keys_down(keys: &[KeyCode]) -> BTreeSet<KeyCode> {
@@ -739,8 +670,11 @@ mod tests {
     #[test]
     fn translate_key_returns_bound_game_key() {
         let t = make_translator();
-        assert_eq!(t.translate_key(KeyCode::Equal), Some(GameKey::ZoomIn));
-        assert_eq!(t.translate_key(KeyCode::Minus), Some(GameKey::ZoomOut));
+        assert_eq!(t.translate_key(KeyCode::NumpadAdd), Some(GameKey::ZoomIn));
+        assert_eq!(
+            t.translate_key(KeyCode::NumpadSubtract),
+            Some(GameKey::ZoomOut)
+        );
         assert_eq!(
             t.translate_key(KeyCode::Digit1),
             Some(GameKey::SelectCharacter1)
@@ -830,7 +764,7 @@ mod tests {
     #[test]
     fn keyboard_released_triggers_action() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[KeyCode::Equal]);
+        let frame1 = keys_down(&[KeyCode::NumpadAdd]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
 
         let frame2 = keys_down(&[]);
@@ -986,7 +920,7 @@ mod tests {
     #[test]
     fn reset_state_clears_previous_keys() {
         let mut t = make_translator();
-        let frame1 = keys_down(&[KeyCode::Equal]);
+        let frame1 = keys_down(&[KeyCode::NumpadAdd]);
         let _ = t.translate_keyboard(&frame1, TranslationFlags::ALL);
 
         t.reset_state();
@@ -1008,7 +942,7 @@ mod tests {
 
     #[test]
     fn load_bindings_from_keyconfig() {
-        let mut t = InputTranslator::new(1024.0, 768.0);
+        let mut t = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
         let mut cfg = KeyConfig::default();
         cfg.set_binding("ZoomIn", Some(KeyCode::PageUp), None);
         cfg.set_binding("ScrollUp", Some(KeyCode::ArrowUp), None);
@@ -1024,7 +958,7 @@ mod tests {
 
     #[test]
     fn built_in_t_shortcut_emits_typed_trading_action_on_release() {
-        let mut t = InputTranslator::new(1024.0, 768.0);
+        let mut t = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
 
         let pressed = keys_down(&[KeyCode::KeyT]);
         assert!(
@@ -1041,7 +975,7 @@ mod tests {
 
     #[test]
     fn custom_binding_on_t_takes_precedence_over_trading_shortcut() {
-        let mut t = InputTranslator::new(1024.0, 768.0);
+        let mut t = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
         t.set_binding(GameKey::Action1, Some(KeyCode::KeyT));
 
         let pressed = keys_down(&[KeyCode::KeyT]);
@@ -1054,8 +988,31 @@ mod tests {
 
     #[test]
     fn enum_map_order_matches_persisted_slots_and_reserved_keys_are_not_loaded() {
-        for config in [KeyConfig::default_preset(), KeyConfig::alternate_preset()] {
-            let mut translator = InputTranslator::new(1024.0, 768.0);
+        let mut custom = KeyConfig::default_preset();
+        custom.set_binding("ZoomIn", None, None);
+        custom.set_binding("ScrollUp", Some(KeyCode::KeyW), None);
+        for config in [
+            KeyConfig::default_preset(),
+            KeyConfig::alternate_preset(),
+            custom,
+            KeyConfig::default(),
+        ] {
+            let mut translator = InputTranslator::new(1024.0, 768.0, &config);
+            for (key, binding) in translator.bindings.iter().take(REAL_KEY_COUNT as usize) {
+                assert_eq!(*binding, config.get_key_by_index(key as u16));
+            }
+            assert_eq!(
+                translator.get_binding(GameKey::DisplayMenu),
+                Some(KeyCode::Escape)
+            );
+            assert_eq!(
+                translator.get_binding(GameKey::DisplayConsole),
+                Some(KeyCode::Backquote)
+            );
+            assert_eq!(
+                translator.get_binding(GameKey::SlowMotion),
+                Some(KeyCode::Pause)
+            );
             let reserved_before: Vec<_> = translator
                 .bindings
                 .iter()
@@ -1097,7 +1054,7 @@ mod tests {
 
     #[test]
     fn planning_binding_is_rebindable_and_held_independently() {
-        let mut translator = InputTranslator::new(1024.0, 768.0);
+        let mut translator = InputTranslator::new(1024.0, 768.0, &KeyConfig::default_preset());
         translator.set_binding(GameKey::PlanQuickActions, Some(KeyCode::KeyP));
         assert!(
             translator.is_binding_held(GameKey::PlanQuickActions, &keys_down(&[KeyCode::KeyP]))
@@ -1132,7 +1089,7 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         let back: InputTranslator = serde_json::from_str(&json).unwrap();
         assert_eq!(back.screen_width, 1024.0);
-        assert_eq!(back.get_binding(GameKey::ZoomIn), Some(KeyCode::Equal));
+        assert_eq!(back.get_binding(GameKey::ZoomIn), Some(KeyCode::NumpadAdd));
         assert_eq!(back.dead_zones.len(), 1);
     }
 }

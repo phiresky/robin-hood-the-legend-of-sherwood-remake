@@ -108,6 +108,7 @@ impl Entities {
     }
 
     pub fn push(&mut self, entity: Option<Entity>) {
+        self.ensure_generation_slots();
         self.1.push(u64::from(entity.is_some()));
         self.0.push(entity);
     }
@@ -730,6 +731,50 @@ mod generation_tests {
 
         let restored: Entities = serde_json::from_value(serialized).expect("restore entity slots");
         assert_eq!(restored.generation(id), 0);
+    }
+
+    fn assert_restored_append_generations(restored: Entities) {
+        for occupied_first in [true, false] {
+            let mut entities = restored.clone();
+            let generations = |entities: &Entities| {
+                (0..entities.len())
+                    .map(|index| entities.generation(ScrollId(index as u32)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(generations(&entities), [0, 0]);
+
+            for occupied in [occupied_first, !occupied_first] {
+                entities.push(occupied.then(|| Entity::Scroll(ElementScroll::default())));
+            }
+            let mut expected = vec![0, 0, u64::from(occupied_first), u64::from(!occupied_first)];
+            assert_eq!(generations(&entities), expected);
+
+            let serialized = serde_json::to_value(&entities).unwrap();
+            let state_hash = hash(&entities);
+            for index in [0, 2, 1, 3] {
+                let _slot = &mut entities[ScrollId(index as u32)];
+                expected[index] += 1;
+                assert_eq!(generations(&entities), expected);
+            }
+            assert_eq!(serde_json::to_value(&entities).unwrap(), serialized);
+            assert_eq!(hash(&entities), state_hash);
+        }
+    }
+
+    #[test]
+    fn append_after_serde_restore_keeps_generations_aligned() {
+        let entities =
+            Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
+        let restored = serde_json::from_value(serde_json::to_value(&entities).unwrap()).unwrap();
+        assert_restored_append_generations(restored);
+    }
+
+    #[test]
+    fn append_after_persisted_restore_keeps_generations_aligned() {
+        let entities =
+            Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
+        let restored = PersistedEntities::capture(&entities).into_runtime();
+        assert_restored_append_generations(restored);
     }
 }
 

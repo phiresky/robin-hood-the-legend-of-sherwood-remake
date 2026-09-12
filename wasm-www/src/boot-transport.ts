@@ -68,11 +68,11 @@ export async function fetchRuntimeWasm(
     try {
         gzip = await fetchPrecompressedWasm(`${url}.gz`, cache, onProgress, signal, fetcher);
     } catch (error) {
-        await response.body?.cancel();
+        discardResponse(response);
         throw error;
     }
     if (gzip === undefined) return responseWithProgress(response, url, 'application/wasm', onProgress, signal);
-    await response.body?.cancel();
+    discardResponse(response);
     return gzip;
 }
 
@@ -105,6 +105,7 @@ export async function fetchPrecompressedWasm(
     }
     const resp = await withAbort(signal, () => fetcher(url, { cache, signal }));
     if (resp.status === 404) {
+        discardResponse(resp);
         return undefined;
     }
     if (!resp.ok) {
@@ -140,4 +141,10 @@ export async function fetchPrecompressedWasm(
     return new Response(body, {
         headers: { 'Content-Type': 'application/wasm' },
     });
+}
+
+function discardResponse(response: Response): void {
+    // Cleanup must neither replace the selected result/error nor delay fallback
+    // when a stream provider rejects cancellation or never finishes it.
+    void response.body?.cancel().catch(() => {});
 }

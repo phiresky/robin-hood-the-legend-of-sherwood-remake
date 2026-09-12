@@ -240,6 +240,102 @@ class ReplayStateDatabaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "checksum mismatch"):
             DB.import_result(self.connection, result, self.root / "audit", None, "host-a")
 
+    def test_result_requires_complete_bounded_manifest(self) -> None:
+        cases = ["absent", "empty", "duplicate", "absolute", "escaping", "alias", "symlink"]
+        cases += [f"omit-{name}" for name in ("attestation.env", "status", "log", "trace.path")]
+        for case in cases:
+            with self.subTest(case=case):
+                result = self.evidence(case, "0", f"{DB.EOF_MARKER}\n")
+                manifest = result / "MANIFEST.sha256"
+                lines = manifest.read_text().splitlines(keepends=True)
+                if case == "absent":
+                    manifest.unlink()
+                elif case == "empty":
+                    manifest.write_text("")
+                elif case.startswith("omit-"):
+                    omitted = case.removeprefix("omit-")
+                    manifest.write_text("".join(line for line in lines
+                                                if not line.endswith(f"  {omitted}\n")))
+                elif case == "duplicate":
+                    manifest.write_text("".join(lines + [lines[0]]))
+                elif case == "symlink":
+                    outside = self.root / "outside-log"
+                    outside.write_bytes((result / "log").read_bytes())
+                    (result / "log").unlink()
+                    (result / "log").symlink_to(outside)
+                else:
+                    outside = result.parent / "outside"
+                    outside.write_text("outside\n")
+                    relative = {"absolute": str(outside), "escaping": "../outside",
+                                "alias": "./log"}[case]
+                    target = result / relative
+                    manifest.write_text("".join(lines) + f"{DB.sha256_file(target)}  {relative}\n")
+                with self.assertRaises(ValueError):
+                    DB.import_result(self.connection, result, self.root / "audit", None, "test")
+                self.assertEqual(self.connection.execute("SELECT count(*) FROM replay_runs").fetchone()[0], 0)
+
+    def test_historical_import_is_explicit_provisional_and_cannot_skip_work(self) -> None:
+        result = self.evidence("historical", "0", f"{DB.EOF_MARKER}\n")
+        logical = (result / "trace.path").read_text().strip()
+        (result / "MANIFEST.sha256").unlink()
+        with self.assertRaises(ValueError):
+            DB.import_audit(self.connection, self.root / "audit", None, "test")
+        self.assertEqual(DB.import_audit(
+            self.connection, self.root / "audit", None, "test", historical=True,
+        ), (1, 1))
+        row = self.connection.execute("SELECT * FROM replay_runs").fetchone()
+        self.assertEqual(row["evidence_tier"], "provisional")
+        self.assertEqual(row["outcome"], "exact_eof")
+        self.assertFalse(DB.has_attested_exact(self.connection, logical, "2" * 64, "3" * 64))
+        self.assertIsNone(DB.exact_evidence_key(self.connection, logical, "2" * 64, "3" * 64))
+        self.rewrite_evidence_logical(result, logical)
+        DB.import_result(self.connection, result, self.root / "audit", None, "test")
+        self.assertTrue(DB.has_attested_exact(self.connection, logical, "2" * 64, "3" * 64))
+
+    def test_run_log_and_attested_logical_identity_are_supported(self) -> None:
+        result = self.evidence("alternate-layout", "0", f"{DB.EOF_MARKER}\n")
+        logical = (result / "trace.path").read_text().strip()
+        (result / "trace.path").unlink()
+        (result / "log").rename(result / "run.log")
+        attestation = result / "attestation.env"
+        attestation.write_text(attestation.read_text() + f"LOGICAL_TRACE={logical}\n")
+        (result / "MANIFEST.sha256").write_text("".join(
+            f"{DB.sha256_file(result / name)}  {name}\n"
+            for name in ("attestation.env", "status", "run.log")
+        ))
+        DB.import_result(self.connection, result, self.root / "audit", None, "test")
+        self.assertTrue(DB.has_attested_exact(self.connection, logical, "2" * 64, "3" * 64))
+
+    def test_historical_partial_seal_stays_provisional(self) -> None:
+        result = self.evidence("partial-history", "0", f"{DB.EOF_MARKER}\n")
+        (result / "MANIFEST.sha256").write_text(
+            f"{DB.sha256_file(result / 'log')}  log\n"
+        )
+        DB.import_result(self.connection, result, self.root / "audit", None, "test",
+                         historical=True)
+        row = self.connection.execute("SELECT evidence_tier FROM replay_runs").fetchone()
+        self.assertEqual(row[0], "provisional")
+
+    def test_strict_import_cannot_borrow_unsealed_runner_identity(self) -> None:
+        result = self.evidence("fallback", "0", f"{DB.EOF_MARKER}\n")
+        logical = (result / "trace.path").read_text().strip()
+        attestation = result / "attestation.env"
+        attestation.write_text("".join(line for line in attestation.read_text().splitlines(True)
+                                       if not line.startswith("RUNNER_BUNDLE_TRUST_SHA256=")))
+        self.rewrite_evidence_logical(result, logical)
+        fallback = {"RUNNER_BUNDLE_TRUST_SHA256": "2" * 64}
+        with self.assertRaisesRegex(ValueError, "no trust identity"):
+            DB.import_result(self.connection, result, self.root / "audit", None, "test", fallback)
+        self.assertFalse(DB.has_attested_exact(self.connection, logical, "2" * 64, "3" * 64))
+
+    def test_historical_cli_policy_is_available_on_each_importer(self) -> None:
+        for command in ("import-result", "import-audit", "import-tree"):
+            arguments = [command, str(self.database), str(self.root / "audit"), "--historical"]
+            if command == "import-result":
+                arguments += ["--audit-root", str(self.root / "audit")]
+            with self.subTest(command=command):
+                self.assertTrue(DB.parser().parse_args(arguments).historical)
+
     def test_reblock_lineage_preserves_exact_eof_and_scheduler_skip(self) -> None:
         exact = self.evidence("lineage-exact", "0", f"{DB.EOF_MARKER}\n")
         logical = (self.root / "audit/results/lineage-exact/trace.path").read_text().strip()

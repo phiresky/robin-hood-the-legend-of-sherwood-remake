@@ -12,24 +12,15 @@ def sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
-def verify_manifest(result: Path) -> str | None:
-    manifest = result / "MANIFEST.sha256"
-    if not manifest.is_file():
-        return None
-    for number, line in enumerate(manifest.read_text().splitlines(), 1):
-        match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *](.+)", line)
-        if not match:
-            raise ValueError(f"{manifest}:{number}: malformed checksum")
-        expected, relative = match.groups()
-        candidate = result / relative
-        if not candidate.is_file() or sha256_file(candidate) != expected.lower():
-            raise ValueError(f"{manifest}:{number}: checksum mismatch for {relative}")
-    return sha256_file(manifest)
+def verify_manifest(result: Path, required: set[str]) -> str:
+    """Admit a sealed result only when every consumed file is covered."""
+    return _verify_checksum_file(result.resolve(), "MANIFEST.sha256", required)
 
 
 def _safe_manifest_path(root: Path, relative: str) -> Path:
     candidate_relative = Path(relative)
-    if (not relative or candidate_relative.is_absolute()
+    if (not relative or candidate_relative.as_posix() != relative
+            or candidate_relative.is_absolute()
             or ".." in candidate_relative.parts):
         raise ValueError(f"unsafe manifest path: {relative}")
     candidate = root / candidate_relative
@@ -120,5 +111,4 @@ def _verify_checksum_file(
     if required and not required.issubset(seen):
         raise ValueError(f"{manifest}: missing required bundle members {sorted(required - seen)}")
     return sha256_file(manifest)
-
 

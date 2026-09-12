@@ -1998,7 +1998,6 @@ pub(super) fn setup_input_and_camera(
         window_width as f32,
         window_height as f32,
     ));
-    let mut input_translator = InputTranslator::new(window_width as f32, window_height as f32);
 
     // Playback and legacy-save parity capture must not admit post-port live
     // planning input. Recorded QueueQuickAction commands remain authoritative
@@ -2014,7 +2013,11 @@ pub(super) fn setup_input_and_camera(
     // Host construction snapshots the active profile's bindings from the
     // ApplicationContext. The Original copies that active config at this
     // exact input-translator boundary (`ReflectActiveKeyConfig`).
-    input_translator.load_bindings_from_keyconfig(host.frontend.preferences().key_config());
+    let mut input_translator = InputTranslator::new(
+        window_width as f32,
+        window_height as f32,
+        host.frontend.preferences().key_config(),
+    );
 
     // The `DisplayMap` minimap accelerator is stored host-side on
     // `host.frontend.minimap_fast_key` — the game loop reads it out to emit a

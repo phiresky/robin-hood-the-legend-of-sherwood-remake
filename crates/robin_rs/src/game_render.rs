@@ -1019,7 +1019,6 @@ fn render_all_view_cones(
 /// sim state.
 pub(crate) fn render_ground_marks(
     host: &HostDraw<'_>,
-    presentation: &FramePresentationInputs,
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
@@ -1033,10 +1032,9 @@ pub(crate) fn render_ground_marks(
         return;
     }
 
-    render_ground_mark_set(host, presentation, engine.ground_mark(), engine, renderer);
+    render_ground_mark_set(host, engine.ground_mark(), engine, renderer);
     render_ground_mark_set(
         host,
-        presentation,
         host.frontend.trajectory_preview().ground_marks(),
         engine,
         renderer,
@@ -1045,7 +1043,6 @@ pub(crate) fn render_ground_marks(
 
 fn render_ground_mark_set(
     host: &HostDraw<'_>,
-    presentation: &FramePresentationInputs,
     ground_mark: &GroundMark,
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
@@ -1058,7 +1055,6 @@ fn render_ground_mark_set(
     let screen_h = host.viewport().screen_size.y as i32;
 
     // The same shadow rendering used for entity shadows.
-    let shadow_color = presentation.shadow_color;
     let shadow_level = host.frontend.resources.frame_holder().global_shadow();
 
     let view_pos = host.viewport().view_position;
@@ -1127,7 +1123,6 @@ fn render_ground_mark_set(
                 surf_id,
                 Some(&src_box),
                 Some(&dst_box),
-                shadow_color,
                 shadow_level,
                 BLIT_SOURCE_TRANSPARENT,
             )
