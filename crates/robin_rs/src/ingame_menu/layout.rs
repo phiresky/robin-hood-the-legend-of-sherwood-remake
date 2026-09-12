@@ -402,6 +402,23 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
 /// Draw the shared dark panel/input fallback used when a menu bitmap is
 /// unavailable.
 pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
+    draw_colored_panel(
+        renderer,
+        transform,
+        rect,
+        Renderer::create_color_16(30, 25, 15),
+        Renderer::create_color_16(180, 160, 100),
+    );
+}
+
+/// Draw a panel with the screen's explicit palette.
+pub fn draw_colored_panel(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    rect: &MenuRect,
+    fill: u16,
+    edge: u16,
+) {
     let (sx, sy) = transform.to_screen(rect.x, rect.y);
     renderer.fill_screen(
         Some(&BBox::from_coords(
@@ -410,15 +427,9 @@ pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, re
             (sx + rect.w) as f32,
             (sy + rect.h) as f32,
         )),
-        Renderer::create_color_16(30, 25, 15),
+        fill,
     );
-    renderer.draw_rect_outline_screen(
-        sx,
-        sy,
-        sx + rect.w,
-        sy + rect.h,
-        Renderer::create_color_16(180, 160, 100),
-    );
+    renderer.draw_rect_outline_screen(sx, sy, sx + rect.w, sy + rect.h, edge);
 }
 
 /// Render a slider widget — a 0..10 horizontal track with a thumb

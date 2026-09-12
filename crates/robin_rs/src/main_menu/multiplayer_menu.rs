@@ -389,18 +389,17 @@ pub(crate) async fn show_multiplayer_menu(
                 .get(selected)
                 .is_some_and(|game| matchmaking_connected || game.state == "direct_invite");
         let can_start = matchmaking_connected && matches!(mode, MenuMode::Hosted { .. });
-        set_button(&mut frame, ID_JOIN, "Join", can_join);
-        set_button(
-            &mut frame,
+        frame.update_widget(ID_JOIN, Some("Join"), can_join);
+        frame.update_widget(
             ID_CREATE,
-            match mode {
+            Some(match mode {
                 MenuMode::Missions => "Create",
                 _ => "Create Game",
-            },
+            }),
             matchmaking_connected && matches!(mode, MenuMode::Games | MenuMode::Missions),
         );
-        set_button(&mut frame, ID_START, "Start", can_start);
-        set_button(&mut frame, ID_BACK, "Back", true);
+        frame.update_widget(ID_START, Some("Start"), can_start);
+        frame.update_widget(ID_BACK, Some("Back"), true);
 
         let rows_len = match &mode {
             MenuMode::Games => games.len(),
@@ -1168,16 +1167,6 @@ async fn preflight_host_content(
     Ok(encoded)
 }
 
-fn set_button(frame: &mut FrameWnd, id: u32, label: &str, enabled: bool) {
-    let Some(widget) = frame.widget_mut(id) else {
-        panic!("Multiplayer menu: missing button widget {id}");
-    };
-    widget.base_mut().set_text(label);
-    if widget.base().enabled != enabled {
-        widget.set_enable(enabled);
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn render_menu(
     renderer: &mut Renderer,
@@ -1475,21 +1464,11 @@ fn truncate_to_pixel_width<'a>(font: &Font, text: &'a str, max_w: i32) -> &'a st
 }
 
 fn draw_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {
-    let (sx, sy) = transform.to_screen(rect.x, rect.y);
-    renderer.fill_screen(
-        Some(&BBox::from_coords(
-            sx as f32,
-            sy as f32,
-            (sx + rect.w) as f32,
-            (sy + rect.h) as f32,
-        )),
+    crate::ingame_menu::layout::draw_colored_panel(
+        renderer,
+        transform,
+        rect,
         Renderer::create_color_16(28, 24, 16),
-    );
-    renderer.draw_rect_outline_screen(
-        sx,
-        sy,
-        sx + rect.w,
-        sy + rect.h,
         Renderer::create_color_16(172, 146, 84),
     );
 }

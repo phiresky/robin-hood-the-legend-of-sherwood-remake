@@ -100,6 +100,21 @@ cargo build --locked -p robin_rs --example export_runtime_contract
 target/debug/examples/export_runtime_contract --check wasm-www/runtime-contract.json
 ```
 
+Small inspection tools are built on demand:
+
+```sh
+cargo build -p robin_rs --example count_quads --example list_mods --example verify_rollback
+target/debug/examples/count_quads datadirs/demo_leicester_ecoste/Data/Levels/Dem_Lei_MP.scb
+target/debug/examples/list_mods datadirs/mods
+target/debug/examples/verify_rollback --data-dir datadirs/demo_leicester_ecoste
+```
+
+`count_quads` inspects the supplied SCB; `list_mods` reports launchable and broken
+mod entries. `verify_rollback` runs the Original-loader determinism probe; its
+`--data-dir` overrides `ROBINHOOD_DATA_DIR`. The completed sprite research probes
+and one-time schema-10 replay migration are retained in Git history, not built
+as maintained tools. The operational sprite benchmarks remain opt-in examples.
+
 The Ubuntu 26.04 CI job installs the native library development packages it needs.
 The services suite also needs bubblewrap 0.11.1 or newer and a system POSIX shell. Its runner
 allows unprivileged user namespaces for the verifier launched through a pinned

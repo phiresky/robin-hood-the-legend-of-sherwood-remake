@@ -159,11 +159,11 @@ pub(crate) async fn show_select_player(
         // profile before menus, saves, or sessions can continue.
         let can_delete = can_delete_profile(profiles.len());
 
-        set_button_enabled(&mut frame, ID_SELECT, can_select);
-        set_button_enabled(&mut frame, ID_NEW, can_new);
-        set_button_enabled(&mut frame, ID_RENAME, can_rename);
-        set_button_enabled(&mut frame, ID_DELETE, can_delete);
-        set_button_enabled(&mut frame, ID_DIFFICULTY, has_profile);
+        frame.update_widget(ID_SELECT, None, can_select);
+        frame.update_widget(ID_NEW, None, can_new);
+        frame.update_widget(ID_RENAME, None, can_rename);
+        frame.update_widget(ID_DELETE, None, can_delete);
+        frame.update_widget(ID_DIFFICULTY, None, has_profile);
 
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
@@ -509,15 +509,6 @@ fn profile_count(application_context: &ApplicationContext) -> usize {
 
 fn can_delete_profile(profile_count: usize) -> bool {
     profile_count > 1
-}
-
-fn set_button_enabled(frame: &mut crate::widget::FrameWnd, id: u32, enabled: bool) {
-    let Some(widget) = frame.widget_mut(id) else {
-        panic!("Select Player: missing button widget {id}");
-    };
-    if widget.base().enabled != enabled {
-        widget.set_enable(enabled);
-    }
 }
 
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
