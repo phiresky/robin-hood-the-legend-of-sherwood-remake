@@ -372,7 +372,6 @@ pub fn spawn_wasp(nest_id: EntityId, position: WorldPoint3D, layer: u16) -> Enti
 /// should look up `PositionInterface::get_forecasted_movement()` on
 /// the NPC so the shot leads the target's current motion; pass `None`
 /// for FX / static targets.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_apple(
     thrower: EntityId,
     throw_pos: WorldPoint3D,
@@ -383,17 +382,15 @@ pub fn spawn_apple(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     spawn_throwable(
-        thrower,
-        throw_pos,
-        target_pos,
-        target,
-        target_forecasted_movement,
-        layer,
-        MASS_APPLE,
-        APEX_APPLE,
-        0,
-        Action::Apple,
-        ObjectType::Apple,
+        ThrowRequest {
+            thrower,
+            throw_pos,
+            target_pos,
+            target,
+            target_forecasted_movement,
+            layer,
+        },
+        ThrowableKind::Apple,
         obstacle_check,
     )
 }
@@ -409,7 +406,6 @@ pub fn spawn_apple(
 ///
 /// `target_forecasted_movement`: see `spawn_apple` for how callers
 /// supply this.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_stone(
     thrower: EntityId,
     throw_pos: WorldPoint3D,
@@ -420,17 +416,15 @@ pub fn spawn_stone(
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
     spawn_throwable(
-        thrower,
-        throw_pos,
-        target_pos,
-        target,
-        target_forecasted_movement,
-        layer,
-        MASS_STONE,
-        APEX_STONE,
-        1,
-        Action::Stone,
-        ObjectType::Stone,
+        ThrowRequest {
+            thrower,
+            throw_pos,
+            target_pos,
+            target,
+            target_forecasted_movement,
+            layer,
+        },
+        ThrowableKind::Stone,
         obstacle_check,
     )
 }
@@ -442,21 +436,39 @@ pub fn spawn_stone(
 /// `flight_time` is forwarded to `compute_initial_throw_velocity`.
 /// Apple passes `0` (compute from apex), stone passes `1` (fast flat
 /// throw, apex unused).
-#[allow(clippy::too_many_arguments)]
-fn spawn_throwable(
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ThrowRequest {
     thrower: EntityId,
     throw_pos: WorldPoint3D,
     target_pos: WorldPoint3D,
     target: Option<EntityId>,
     target_forecasted_movement: Option<WorldVec3D>,
     layer: u16,
-    mass: f32,
-    apex: f32,
-    flight_time: u16,
-    action: Action,
-    object_type: ObjectType,
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+enum ThrowableKind {
+    Apple,
+    Stone,
+}
+
+fn spawn_throwable(
+    request: ThrowRequest,
+    kind: ThrowableKind,
     obstacle_check: Option<&TrajectoryObstacleCheck<'_>>,
 ) -> Entity {
+    let ThrowRequest {
+        thrower,
+        throw_pos,
+        target_pos,
+        target,
+        target_forecasted_movement,
+        layer,
+    } = request;
+    let (mass, apex, flight_time, action, object_type) = match kind {
+        ThrowableKind::Apple => (MASS_APPLE, APEX_APPLE, 0, Action::Apple, ObjectType::Apple),
+        ThrowableKind::Stone => (MASS_STONE, APEX_STONE, 1, Action::Stone, ObjectType::Stone),
+    };
     let dx = target_pos.x - throw_pos.x;
     let dy = target_pos.y - throw_pos.y;
     let dz = target_pos.z - throw_pos.z;
