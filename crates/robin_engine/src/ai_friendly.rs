@@ -370,13 +370,8 @@ impl FriendlyAi {
         );
     }
 
-    /// Panic from a position, preserving sector/level.
-    fn panic_from_position(&mut self, pos: Position, runs: u8, _ctx: &AiContext) {
-        self.panic_from_point_at(pos, runs);
-    }
-
     /// Undirected panic.
-    fn panic_undirected(&mut self, runs: u8, _ctx: &AiContext) {
+    fn panic_undirected(&mut self, runs: u8) {
         let was_already_fleeing = matches!(
             self.base.current_substate,
             Substate::FleeingPanic | Substate::FleeingRunToDoor
@@ -523,7 +518,7 @@ impl FriendlyAi {
         ctx: &AiContext,
     ) {
         if !accepted {
-            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
+            self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8);
             return;
         }
 
@@ -964,7 +959,7 @@ impl FriendlyAi {
                     ) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
-                        self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                        self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
                     }
                 }
             }
@@ -983,7 +978,7 @@ impl FriendlyAi {
                     ) {
                         self.base.say(Remark::CivPanic);
                         let pos = self.base.seek_position;
-                        self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                        self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
                     }
                 }
             }
@@ -1174,7 +1169,7 @@ impl FriendlyAi {
             Substate::SeekingCivilianGiveAlertingReportToSoldierEnd => {
                 if stimulus_type == StimulusType::EventTimer {
                     let pos = self.base.seek_position;
-                    self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                    self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
                 }
             }
 
@@ -1242,11 +1237,7 @@ impl FriendlyAi {
                                 .entity_view(self.base.antagonist)
                                 .map(|v| v.position)
                                 .expect("antagonist entity view missing during apple-chase panic");
-                            self.panic_from_position(
-                                panic_center,
-                                AI_STANDARD_PANIC_RUNS as u8,
-                                ctx,
-                            );
+                            self.panic_from_point_at(panic_center, AI_STANDARD_PANIC_RUNS as u8);
                         }
                     }
                     _ => {}
@@ -1548,7 +1539,7 @@ impl FriendlyAi {
 
             StimulusType::EventNetAway => {
                 let pos = self.base.seek_position;
-                self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
             }
 
             StimulusType::EventFitAgain => {
@@ -1828,7 +1819,7 @@ impl FriendlyAi {
                 // Inside house — panic!
                 self.base
                     .say_with_flags(Remark::CivPanic, SpeechFlags::HOUSE);
-                self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
+                self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8);
             } else {
                 // Outside — reaction time before alerting.
                 self.base.primary_target = Some(AiEntityHandle::new(good_guy));
@@ -1896,7 +1887,7 @@ impl FriendlyAi {
                     )
                 {
                     let pos = self.base.seek_position;
-                    self.panic_from_position(pos, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                    self.panic_from_point_at(pos, AI_STANDARD_PANIC_RUNS as u8);
                 }
             }
             _ => {
@@ -2248,10 +2239,10 @@ impl FriendlyAi {
         match failure {
             AlertSoldierFailureContinuation::PanicWithRemark => {
                 self.base.say(Remark::CivPanic);
-                self.panic_from_position(center, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                self.panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
             }
             AlertSoldierFailureContinuation::Panic => {
-                self.panic_from_position(center, AI_STANDARD_PANIC_RUNS as u8, ctx);
+                self.panic_from_point_at(center, AI_STANDARD_PANIC_RUNS as u8);
             }
             AlertSoldierFailureContinuation::ReturnToDuty => {
                 self.return_to_duty(sim, DutyFlags::empty(), ctx);
@@ -2792,7 +2783,7 @@ mod tests {
     #[test]
     fn civilian_panic_undirected() {
         let mut ai = FriendlyAi::new(1);
-        ai.panic_undirected(4, &AiContext::test_fixture());
+        ai.panic_undirected(4);
         assert_eq!(ai.base.current_state, AiState::Fleeing);
         assert_eq!(ai.base.current_substate, Substate::FleeingPanic);
         assert_eq!(ai.base.lasting_panic_runs, 4);
