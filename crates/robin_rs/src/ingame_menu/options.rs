@@ -177,7 +177,6 @@ struct OptionsModalState {
 }
 
 impl OptionsModalState {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         application_context: &crate::host::ApplicationContext,
         allow_language_switching: bool,
@@ -258,7 +257,6 @@ impl OptionsModalState {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,

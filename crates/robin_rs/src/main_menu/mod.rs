@@ -539,7 +539,6 @@ impl MainMenuState {
         (activated, exit_requested)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn tick(
         &mut self,
         window: &mut GameWindow,
