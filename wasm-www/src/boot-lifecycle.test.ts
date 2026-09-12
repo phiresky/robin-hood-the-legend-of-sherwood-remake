@@ -179,18 +179,37 @@ test('multiplayer content access and preloads stay behind runtime compatibility 
         const calls: string[] = [];
         const ticket = { code: 'signed', payload: { engine_version: 'a'.repeat(40), net_protocol: 38, schema: 3, relay_url: 'https://relay.example' } } as VerifiedBrowserJoinTicket;
         const deps = fixture(calls);
+        const content: Awaited<ReturnType<BootDependencies['prepareContent']>> = {
+            datadir: new Uint8Array([1, 2]), dataBaseUrl: 'data', edition: 'demo',
+            assets: [{ path: 'asset', bytes: new Uint8Array([3]) }],
+            shippingFiles: [{ path: 'shipping', bytes: new Uint8Array([4]) }],
+        };
+        let yieldedAfterBoot = false;
         const boot = bootGame({ ...deps,
             prepareJoin: async () => ({ ticket, redeemed: true }),
             loadManifest: async () => ({} as Awaited<ReturnType<BootDependencies['loadManifest']>>),
             loadRuntime: async () => ({
-                default: async () => {}, wasm_boot: () => { calls.push('boot'); },
+                default: async () => {}, wasm_boot: (datadir, dataBaseUrl) => {
+                    assert.equal(datadir, content.datadir);
+                    assert.equal(dataBaseUrl, content.dataBaseUrl);
+                    calls.push('boot');
+                    queueMicrotask(() => { yieldedAfterBoot = true; });
+                },
                 wasm_multiplayer_compatibility: () => ({ engineCommit: (compatible ? 'a' : 'b').repeat(40), artifactShort: 'a'.repeat(12), netProtocol: 38, ticketSchema: 3 }),
                 wasm_set_multiplayer_join_ticket: (code, redeemed) => { assert.equal(code, 'signed'); assert.equal(redeemed, true); calls.push('ticket'); },
             }),
             loadDefaultContent: async () => { throw new Error('unexpected default content'); },
-            prepareContent: async () => { calls.push('local content'); return { datadir: new Uint8Array([1, 2]), dataBaseUrl: 'data', edition: 'demo', assets: [], shippingFiles: [] }; },
-            preloadLocalAssets: () => { calls.push('local assets'); },
-            preloadShippingFiles: () => { calls.push('shipping files'); },
+            prepareContent: async () => { calls.push('local content'); return content; },
+            preloadLocalAssets: (_wasm, assets) => { assert.equal(assets, content.assets); calls.push('local assets'); },
+            preloadShippingFiles: (_wasm, files) => {
+                assert.equal(files, content.shippingFiles);
+                assert.equal(yieldedAfterBoot, false);
+                calls.push('shipping files');
+            },
+            runtimeStarted: () => {
+                assert.equal(yieldedAfterBoot, false);
+                deps.runtimeStarted();
+            },
         }, new AbortController().signal);
         if (compatible) {
             await boot;
