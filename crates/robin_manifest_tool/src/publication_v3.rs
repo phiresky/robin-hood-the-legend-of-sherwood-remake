@@ -24,7 +24,7 @@ use persistence::{
 #[cfg(test)]
 use persistence::{discard_failed_publication_staging_with, persist_publication_staging_with};
 use std::fs;
-use std::io::{BufReader, Read as _, Seek as _, Write as _};
+use std::io::{BufReader, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use topology::{ExpectedPublicationTopologyV3, valid_publication_relative_path_v3};
 
@@ -1155,8 +1155,6 @@ use inventory::PublicationTreeInventoryV3;
 
 pub(crate) use inventory::ValidatedPublicationV3;
 
-pub(crate) use inventory::PublicationTreeSnapshotV3;
-
 use inventory::PublicationTreeAuthorityV3;
 
 use inventory::publication_inventory_matches_after_root_rename_v3;
@@ -1217,6 +1215,7 @@ use inventory::publication_tree_inventory_v3_from_fd;
 #[cfg(test)]
 use inventory::publication_tree_inventory_v3_from_fd_with;
 
+#[cfg(test)]
 use inventory::publication_tree_inventory_v3;
 
 #[cfg(test)]

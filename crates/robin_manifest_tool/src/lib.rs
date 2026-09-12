@@ -22,7 +22,7 @@ pub mod verifier_catalog_v1;
 #[cfg(target_os = "linux")]
 pub mod vps_release_v2;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -38,7 +38,7 @@ use robin_run_protocol::{
     CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1, CampaignContentManifestV1, CanonicalDocument as _,
     CanonicalValue, CompetitionManifestV1, ContentManifestV1, Digest32, ImmutablePolicyManifestV1,
     NamedArtifactV1, NativeBuildPlatformV2, NativeLinkageV2,
-    OfficialBuiltInOverlaySourceManifestV2, OfficialContentEditionV1, OfficialContentSubjectV1,
+    OfficialBuiltInOverlaySourceManifestV2, OfficialContentEditionV1,
     OfficialProjectionAuthorityManifestV2, OfficialProjectionExecutionPolicyV1,
     OfficialProjectionExporterBuildIdentityV2, OfficialProjectionExporterPlatformV2,
     OfficialSimulationProjectionReceiptV2, OfficialSourceTreeManifestV2,

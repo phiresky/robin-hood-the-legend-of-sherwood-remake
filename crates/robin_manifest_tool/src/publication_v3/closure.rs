@@ -2335,6 +2335,8 @@ pub(super) fn reject_private_json_keys(
 
 #[cfg(test)]
 pub(super) fn file_contains_bytes(path: &Path, needle: &[u8]) -> Result<bool> {
+    use std::io::Read as _;
+
     ensure!(!needle.is_empty(), "privacy sentinel is empty");
     let mut reader = BufReader::new(fs::File::open(path)?);
     let mut carry = Vec::new();
