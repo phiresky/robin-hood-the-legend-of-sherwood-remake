@@ -153,9 +153,9 @@ impl EnemyAi {
                 continue;
             }
             let sub = f.current_substate;
-            if (sub == Substate::AttackingBowShooting as u32
-                || sub == Substate::AttackingBowLoading as u32
-                || sub == Substate::AttackingBowAiming as u32)
+            if (sub == Substate::AttackingBowShooting
+                || sub == Substate::AttackingBowLoading
+                || sub == Substate::AttackingBowAiming)
                 && let Some(target) = f.primary_target
             {
                 let target = target.get();

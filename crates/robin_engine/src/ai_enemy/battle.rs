@@ -1652,12 +1652,15 @@ impl EnemyAi {
                 }
 
                 Decision::ArcherStepBack => {
-                    match self.execute_archer_step_back_decision(crate::ai_enemy::ThinkEnv {
-                        sim,
-                        ctx,
-                        tick,
-                        grid,
-                    }) {
+                    match self.execute_archer_step_back_decision(
+                        old_substate,
+                        crate::ai_enemy::ThinkEnv {
+                            sim,
+                            ctx,
+                            tick,
+                            grid,
+                        },
+                    ) {
                         std::ops::ControlFlow::Continue(next) => {
                             decision = next;
                             continue;
@@ -3708,9 +3711,9 @@ impl EnemyAi {
                 (friend.is_soldier
                     && matches!(
                         friend.current_substate,
-                        x if x == Substate::AttackingBowShooting as u32
-                            || x == Substate::AttackingBowLoading as u32
-                            || x == Substate::AttackingBowAiming as u32
+                        x if x == Substate::AttackingBowShooting
+                            || x == Substate::AttackingBowLoading
+                            || x == Substate::AttackingBowAiming
                     )
                     && friend.primary_target.is_some())
                 .then(|| friend.primary_target.map(AiEntityHandle::get))
@@ -3819,7 +3822,6 @@ impl EnemyAi {
             // LookForHelp after success, Cassos after route failure.
             return std::ops::ControlFlow::Break(false);
         }
-        std::ops::ControlFlow::Break(true)
     }
 
     fn execute_alert_soldiers_decision(
@@ -3851,12 +3853,13 @@ impl EnemyAi {
             .expect_entity_view(target, "alert-soldiers primary target")
             .position;
         match self.command_soldiers_to_attack(center, global, grid, ctx, tick) {
-            super::alert::CommandSoldiersStart::Pending => return true,
+            super::alert::CommandSoldiersStart::Pending => {
+                return std::ops::ControlFlow::Break(true);
+            }
             super::alert::CommandSoldiersStart::Rejected => {
                 return std::ops::ControlFlow::Continue(Decision::Reserve);
             }
         }
-        std::ops::ControlFlow::Break(true)
     }
 
     fn execute_run_for_new_arrows_decision(
@@ -4093,6 +4096,7 @@ impl EnemyAi {
 
     fn execute_archer_step_back_decision(
         &mut self,
+        old_substate: Substate,
         env: crate::ai_enemy::ThinkEnv<'_>,
     ) -> std::ops::ControlFlow<bool, Decision> {
         let crate::ai_enemy::ThinkEnv {
