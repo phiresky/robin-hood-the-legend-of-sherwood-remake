@@ -4675,427 +4675,27 @@ impl EngineInner {
         assets: &LevelAssets,
         actor_id: EntityId,
     ) {
-        let pending_pay_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Pay)
-                    && actor.execute_order_initialising)
-                    .then(|| {
-                        (
-                            ability
-                                .sequence_id
-                                .expect("pending Pay initialization lost sequence identity"),
-                            ability.element_index,
-                            ability
-                                .target
-                                .expect("pending Pay initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Pay initialization lost order identity"),
-                        )
-                    })
-            });
-        if let Some((seq_id, elem_idx, beggar_id, order_id)) = pending_pay_init {
-            let valid = {
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .unwrap_or_else(|| {
-                        panic!("pending Pay owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
-                    });
-                assert_eq!(element.owner, Some(actor_id));
-                assert_eq!(element.command, crate::element::Command::Pay);
-                let order = element.current_order().unwrap_or_else(|| {
-                    panic!("pending Pay element {seq_id:?}/{elem_idx} lost its selected order")
-                });
-                assert_eq!(order.order_id, order_id);
-                assert_eq!(order.target_actor, Some(beggar_id.index()));
-                self.check_sequence_element_validity(assets, actor_id, element, true)
-            };
-            if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Pay,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                return;
-            }
-
-            let beggar_direction = self
-                .get_entity(beggar_id)
-                .unwrap_or_else(|| {
-                    panic!("validated Pay beggar {beggar_id:?} vanished during initialization")
-                })
-                .element_data()
-                .direction();
-            // The player-character paying action samples the antagonist's live
-            // direction and changes only the progressive goal on the first
-            // Execute. Translation may happen after this PC's owner slot and
-            // therefore must not expose this facing one frame early.
-            self.get_entity_mut(actor_id)
-                .expect("validated Pay owner vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal((beggar_direction + 8).rem_euclid(16));
-            self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_GIVE_MONEY);
+        if !self.initialize_ability_pay_init(sim, assets, actor_id) {
+            return;
         }
-
-        let pending_hit_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Hit)
-                    && actor.execute_order_initialising)
-                    .then(|| {
-                        (
-                            ability
-                                .sequence_id
-                                .expect("pending Hit initialization lost sequence identity"),
-                            ability.element_index,
-                            ability
-                                .target
-                                .expect("pending Hit initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Hit initialization lost order identity"),
-                        )
-                    })
-            });
-        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_hit_init {
-            let attacker_ground = self
-                .get_entity(actor_id)
-                .expect("Hit owner vanished during initialization")
-                .ground_position();
-            let victim_ground = self
-                .get_entity(victim_id)
-                .unwrap_or_else(|| {
-                    panic!("Hit victim {victim_id:?} vanished during initialization")
-                })
-                .ground_position();
-            let facing = crate::position_interface::vector_to_sector_0_to_15(
-                victim_ground.x - attacker_ground.x,
-                victim_ground.y - attacker_ground.y,
-            );
-            // The original game's hit initialization changes only the progressive
-            // direction goal, before checking whether the interaction remains
-            // valid. The later Turn call owns the current-direction change.
-            self.get_entity_mut(actor_id)
-                .expect("Hit owner vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal(facing);
-
-            let valid = {
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .unwrap_or_else(|| {
-                        panic!("pending Hit owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
-                    });
-                assert_eq!(element.owner, Some(actor_id));
-                assert_eq!(element.command, crate::element::Command::HitCmd);
-                let order = element.current_order().unwrap_or_else(|| {
-                    panic!("pending Hit element {seq_id:?}/{elem_idx} lost its selected order")
-                });
-                assert_eq!(order.order_id, order_id);
-                assert_eq!(order.target_actor, Some(victim_id.index()));
-                self.check_sequence_element_validity(assets, actor_id, element, true)
-            };
-            if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Hit,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                return;
-            }
+        if !self.initialize_ability_hit_init(sim, assets, actor_id) {
+            return;
         }
-
-        let pending_tying_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                let kind = ability.kind?;
-                (matches!(
-                    kind,
-                    crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
-                ) && actor.execute_order_initialising)
-                    .then(|| {
-                        (
-                            kind,
-                            ability
-                                .sequence_id
-                                .expect("pending tying initialization lost sequence identity"),
-                            ability.element_index,
-                            ability
-                                .target
-                                .expect("pending tying initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending tying initialization lost order identity"),
-                        )
-                    })
-            });
-        if let Some((kind, seq_id, elem_idx, target_id, order_id)) = pending_tying_init {
-            let command = match kind {
-                crate::movement::AbilityKind::Tie => crate::element::Command::TieCmd,
-                crate::movement::AbilityKind::Untie => crate::element::Command::Untie,
-                _ => unreachable!("pending tying initializer accepted a non-tying ability"),
-            };
-            let valid = {
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "pending {kind:?} owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
-                        )
-                    });
-                assert_eq!(element.owner, Some(actor_id));
-                assert_eq!(element.command, command);
-                let order = element.current_order().unwrap_or_else(|| {
-                    panic!("pending {kind:?} element {seq_id:?}/{elem_idx} lost its selected order")
-                });
-                assert_eq!(order.order_id, order_id);
-                assert_eq!(order.target_actor, Some(target_id.index()));
-                self.check_sequence_element_validity(assets, actor_id, element, true)
-            };
-            if !valid {
-                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                return;
-            }
-
-            let actor_pos = self
-                .get_entity(actor_id)
-                .expect("validated tying owner vanished during initialization")
-                .element_data()
-                .position_map();
-            let target_pos = self
-                .get_entity(target_id)
-                .expect("validated tying target vanished during initialization")
-                .element_data()
-                .position_map();
-            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
-                target_pos.x - actor_pos.x,
-                target_pos.y - actor_pos.y,
-            );
-            // The player-character tying action installs only the progressive
-            // direction goal during the order's first Execute. Translation
-            // itself must not rotate or stop a moving PC: the Tie can still
-            // be interrupted by an earlier manager-FIFO continuation before
-            // its animation ever owns an actor slot.
-            self.get_entity_mut(actor_id)
-                .expect("validated tying owner vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal(facing);
+        if !self.initialize_ability_tying_init(sim, assets, actor_id) {
+            return;
         }
-
-        let pending_carry_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Carry)
-                    && actor.execute_order_initialising
-                    && actor.installed_order.is_some_and(|installed| {
-                        installed.order_type
-                            == crate::order::OrderType::TransitionWaitingUprightCarryingCorpse
-                    }))
-                .then_some(ability.target)
-                .flatten()
-            });
-        if let Some(target_id) = pending_carry_init {
-            // The pickup transition's first Execute is where the carried
-            // body stops running its own sequence element and starts being
-            // driven by the carrier, and where an indoor pickup re-selects
-            // the pair and lights the body's hulk. Both are visible one
-            // frame later than the element's translation, which happens in
-            // the manager pass after the carrier's own slot.
-            crate::abilities::initialize_carry_relationship(
-                &mut self.world.entities,
-                actor_id,
-                target_id,
-            );
-            self.actor_freeze_execution(target_id);
-            self.apply_carry_building_hulk(actor_id, target_id);
+        if !self.initialize_ability_carry_init(actor_id) {
+            return;
         }
-
-        let pending_climb_on_shoulders_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
-                    && actor.execute_order_initialising
-                    && actor.installed_order.is_some_and(|installed| {
-                        installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
-                    }))
-                .then_some(ability.target)
-                .flatten()
-            });
-        if let Some(helper_id) = pending_climb_on_shoulders_init {
-            // Translate only appends the climbing order. Original links the
-            // pair, changes posture, snaps the climber, and freezes the helper
-            // when that order reaches its first Execute in the climber's later
-            // owner slot.
-            crate::abilities::initialize_climb_on_shoulders_relationship(
-                &mut self.world.entities,
-                actor_id,
-                helper_id,
-            );
-            self.actor_freeze_execution(helper_id);
+        if !self.initialize_ability_climb_on_shoulders_init(actor_id) {
+            return;
         }
-
-        let pending_heal_facing = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Heal)
-                    && actor.execute_order_initialising)
-                    .then_some(ability.target)
-                    .flatten()
-                    .filter(|target| *target != actor_id)
-            });
-        if let Some(target_id) = pending_heal_facing {
-            let healer_pos = self
-                .get_entity(actor_id)
-                .expect("Heal owner vanished during initialization")
-                .element_data()
-                .position_map();
-            let target_pos = self
-                .get_entity(target_id)
-                .unwrap_or_else(|| {
-                    panic!("Heal target {target_id:?} vanished during initialization")
-                })
-                .element_data()
-                .position_map();
-            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
-                target_pos.x - healer_pos.x,
-                target_pos.y - healer_pos.y,
-            );
-            // The healing animation computes the goal on its first execution,
-            // then calls Turn before advancing the animation. Selection of
-            // the interaction alone must not rotate the actor a frame early.
-            self.get_entity_mut(actor_id)
-                .expect("Heal owner vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal(facing);
+        if !self.initialize_ability_heal_facing(actor_id) {
+            return;
         }
-
-        let pending_strangle_init = self
-            .get_entity(actor_id)
-            .and_then(Entity::actor_data)
-            .and_then(|actor| {
-                let ability = &actor.active_ability;
-                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
-                    && !ability.strangle_initialized)
-                    .then(|| {
-                        (
-                            ability
-                                .sequence_id
-                                .expect("pending Strangle initialization lost sequence identity"),
-                            ability.element_index,
-                            ability
-                                .target
-                                .expect("pending Strangle initialization lost antagonist identity"),
-                            ability
-                                .order_id
-                                .expect("pending Strangle initialization lost order identity"),
-                        )
-                    })
-            });
-        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_strangle_init {
-            let valid = {
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "pending Strangle owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
-                        )
-                    });
-                assert_eq!(element.owner, Some(actor_id));
-                assert_eq!(element.command, crate::element::Command::StrangleCmd);
-                let order = element.current_order().unwrap_or_else(|| {
-                    panic!("pending Strangle element {seq_id:?}/{elem_idx} lost its selected order")
-                });
-                assert_eq!(order.order_id, order_id);
-                assert_eq!(order.target_actor, Some(victim_id.index()));
-                self.check_sequence_element_validity(assets, actor_id, element, true)
-            };
-            if !valid {
-                self.cleanup_aborted_ability(
-                    actor_id,
-                    crate::movement::AbilityKind::Strangle,
-                    seq_id,
-                    elem_idx,
-                    Some(order_id),
-                );
-                self.orders
-                    .sequence_manager
-                    .element_impossible(seq_id, elem_idx);
-                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
-                return;
-            }
-
-            let attacker_pos = self
-                .get_entity(actor_id)
-                .expect("validated strangler vanished during initialization")
-                .element_data()
-                .position_map();
-            let victim_pos = self
-                .get_entity(victim_id)
-                .expect("validated Strangle victim vanished during initialization")
-                .element_data()
-                .position_map();
-            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
-                victim_pos.x - attacker_pos.x,
-                victim_pos.y - attacker_pos.y,
-            );
-            self.get_entity_mut(victim_id)
-                .expect("validated Strangle victim vanished before FREEZE")
-                .ai_controller_mut()
-                .expect("validated Strangle victim lost AI before FREEZE")
-                .non_script_lock(crate::ai::AiLockFlags::FREEZE);
-            self.get_entity_mut(actor_id)
-                .expect("validated strangler vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal(facing);
-            self.get_entity_mut(victim_id)
-                .expect("validated Strangle victim vanished before direction initialization")
-                .element_data_mut()
-                .set_direction_goal(facing);
-            self.get_entity_mut(actor_id)
-                .expect("validated strangler vanished before initialization latch")
-                .actor_data_mut()
-                .expect("validated strangler lost actor state before initialization latch")
-                .active_ability
-                .strangle_initialized = true;
+        if !self.initialize_ability_strangle_init(sim, assets, actor_id) {
+            return;
         }
-
         let strangle_victim_after_attacker = self
             .get_entity(actor_id)
             .and_then(Entity::actor_data)
@@ -6346,6 +5946,468 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    fn initialize_ability_pay_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
+        let pending_pay_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Pay)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Pay initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Pay initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Pay initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, beggar_id, order_id)) = pending_pay_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Pay owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::Pay);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Pay element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(beggar_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Pay,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return false;
+            }
+
+            let beggar_direction = self
+                .get_entity(beggar_id)
+                .unwrap_or_else(|| {
+                    panic!("validated Pay beggar {beggar_id:?} vanished during initialization")
+                })
+                .element_data()
+                .direction();
+            // The player-character paying action samples the antagonist's live
+            // direction and changes only the progressive goal on the first
+            // Execute. Translation may happen after this PC's owner slot and
+            // therefore must not expose this facing one frame early.
+            self.get_entity_mut(actor_id)
+                .expect("validated Pay owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal((beggar_direction + 8).rem_euclid(16));
+            self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_GIVE_MONEY);
+        }
+        true
+    }
+
+    fn initialize_ability_hit_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
+        let pending_hit_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Hit)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Hit initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Hit initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Hit initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_hit_init {
+            let attacker_ground = self
+                .get_entity(actor_id)
+                .expect("Hit owner vanished during initialization")
+                .ground_position();
+            let victim_ground = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| {
+                    panic!("Hit victim {victim_id:?} vanished during initialization")
+                })
+                .ground_position();
+            let facing = crate::position_interface::vector_to_sector_0_to_15(
+                victim_ground.x - attacker_ground.x,
+                victim_ground.y - attacker_ground.y,
+            );
+            // The original game's hit initialization changes only the progressive
+            // direction goal, before checking whether the interaction remains
+            // valid. The later Turn call owns the current-direction change.
+            self.get_entity_mut(actor_id)
+                .expect("Hit owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Hit owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::HitCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Hit element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Hit,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return false;
+            }
+        }
+        true
+    }
+
+    fn initialize_ability_tying_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
+        let pending_tying_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                let kind = ability.kind?;
+                (matches!(
+                    kind,
+                    crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
+                ) && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            kind,
+                            ability
+                                .sequence_id
+                                .expect("pending tying initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending tying initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending tying initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((kind, seq_id, elem_idx, target_id, order_id)) = pending_tying_init {
+            let command = match kind {
+                crate::movement::AbilityKind::Tie => crate::element::Command::TieCmd,
+                crate::movement::AbilityKind::Untie => crate::element::Command::Untie,
+                _ => unreachable!("pending tying initializer accepted a non-tying ability"),
+            };
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pending {kind:?} owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, command);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending {kind:?} element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(target_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return false;
+            }
+
+            let actor_pos = self
+                .get_entity(actor_id)
+                .expect("validated tying owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .expect("validated tying target vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - actor_pos.x,
+                target_pos.y - actor_pos.y,
+            );
+            // The player-character tying action installs only the progressive
+            // direction goal during the order's first Execute. Translation
+            // itself must not rotate or stop a moving PC: the Tie can still
+            // be interrupted by an earlier manager-FIFO continuation before
+            // its animation ever owns an actor slot.
+            self.get_entity_mut(actor_id)
+                .expect("validated tying owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+        true
+    }
+
+    fn initialize_ability_carry_init(&mut self, actor_id: EntityId) -> bool {
+        let pending_carry_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Carry)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type
+                            == crate::order::OrderType::TransitionWaitingUprightCarryingCorpse
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(target_id) = pending_carry_init {
+            // The pickup transition's first Execute is where the carried
+            // body stops running its own sequence element and starts being
+            // driven by the carrier, and where an indoor pickup re-selects
+            // the pair and lights the body's hulk. Both are visible one
+            // frame later than the element's translation, which happens in
+            // the manager pass after the carrier's own slot.
+            crate::abilities::initialize_carry_relationship(
+                &mut self.world.entities,
+                actor_id,
+                target_id,
+            );
+            self.actor_freeze_execution(target_id);
+            self.apply_carry_building_hulk(actor_id, target_id);
+        }
+        true
+    }
+
+    fn initialize_ability_climb_on_shoulders_init(&mut self, actor_id: EntityId) -> bool {
+        let pending_climb_on_shoulders_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(helper_id) = pending_climb_on_shoulders_init {
+            // Translate only appends the climbing order. Original links the
+            // pair, changes posture, snaps the climber, and freezes the helper
+            // when that order reaches its first Execute in the climber's later
+            // owner slot.
+            crate::abilities::initialize_climb_on_shoulders_relationship(
+                &mut self.world.entities,
+                actor_id,
+                helper_id,
+            );
+            self.actor_freeze_execution(helper_id);
+        }
+        true
+    }
+
+    fn initialize_ability_heal_facing(&mut self, actor_id: EntityId) -> bool {
+        let pending_heal_facing = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Heal)
+                    && actor.execute_order_initialising)
+                    .then_some(ability.target)
+                    .flatten()
+                    .filter(|target| *target != actor_id)
+            });
+        if let Some(target_id) = pending_heal_facing {
+            let healer_pos = self
+                .get_entity(actor_id)
+                .expect("Heal owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .unwrap_or_else(|| {
+                    panic!("Heal target {target_id:?} vanished during initialization")
+                })
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - healer_pos.x,
+                target_pos.y - healer_pos.y,
+            );
+            // The healing animation computes the goal on its first execution,
+            // then calls Turn before advancing the animation. Selection of
+            // the interaction alone must not rotate the actor a frame early.
+            self.get_entity_mut(actor_id)
+                .expect("Heal owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+        true
+    }
+
+    fn initialize_ability_strangle_init(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) -> bool {
+        let pending_strangle_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
+                    && !ability.strangle_initialized)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Strangle initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Strangle initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Strangle initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_strangle_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pending Strangle owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::StrangleCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Strangle element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Strangle,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return false;
+            }
+
+            let attacker_pos = self
+                .get_entity(actor_id)
+                .expect("validated strangler vanished during initialization")
+                .element_data()
+                .position_map();
+            let victim_pos = self
+                .get_entity(victim_id)
+                .expect("validated Strangle victim vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                victim_pos.x - attacker_pos.x,
+                victim_pos.y - attacker_pos.y,
+            );
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before FREEZE")
+                .ai_controller_mut()
+                .expect("validated Strangle victim lost AI before FREEZE")
+                .non_script_lock(crate::ai::AiLockFlags::FREEZE);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before initialization latch")
+                .actor_data_mut()
+                .expect("validated strangler lost actor state before initialization latch")
+                .active_ability
+                .strangle_initialized = true;
+        }
+        true
     }
 
     pub(super) fn cleanup_aborted_ability(

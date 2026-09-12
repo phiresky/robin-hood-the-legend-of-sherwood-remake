@@ -510,7 +510,7 @@ impl EngineInner {
         focus: crate::element::Focus,
         selected_pc_id: Option<EntityId>,
     ) -> bool {
-        use crate::element::{Camp, Focus, Posture};
+        use crate::element::Focus;
 
         // PCs check `is_active` per-focus (SELECT and HEAL allow
         // inactive PCs that are inside a building sector via
@@ -568,190 +568,8 @@ impl EngineInner {
             return false;
         }
 
-        // ── PC entities ──
         if entity.is_pc() {
-            let posture = entity.element_data().posture();
-            return match focus {
-                // SELECT requires: is-active, selectable, and either
-                // not on a HelpingToClimb posture or the selected PC
-                // doesn't have Jump (so the human pyramid pose isn't
-                // hijacked into a select). The pixel-hit test above
-                // already handles the sprite check.
-                Focus::Select => {
-                    self.is_pc_selectable(assets, entity_id)
-                        && (posture != Posture::HelpingToClimb
-                            || !self.selected_pc_has_contextual_action(
-                                assets,
-                                selected_pc_id,
-                                crate::profiles::Action::Jump,
-                            ))
-                }
-                Focus::Shield | Focus::ShieldPortrait => {
-                    entity.is_active()
-                        && !self.players.seats[0].selection.contains(&entity_id)
-                        && !entity.is_dead()
-                }
-                // Heal-active PC must be alive, below max HP, not in
-                // coma, not stuck under a net, not carried. Portrait
-                // variant + the recording-macro split are elided here
-                // (they require host-side context that the current
-                // focus call site doesn't route through this predicate).
-                // Inactive-in-building is allowed.
-                Focus::Heal | Focus::HealPortrait => {
-                    if entity.is_dead() {
-                        return false;
-                    }
-                    let Some(pc_human) = entity.human_data() else {
-                        return false;
-                    };
-                    if pc_human.unconscious {
-                        return false;
-                    }
-                    if pc_human.stuck_under_nets_counter > 0 {
-                        return false;
-                    }
-                    if posture == Posture::Carried {
-                        return false;
-                    }
-                    let pc_data = match entity.pc_data() {
-                        Some(d) => d,
-                        None => return false,
-                    };
-                    if pc_data.life_points >= crate::combat::LIFEPOINTS_PC {
-                        return false;
-                    }
-                    // In-coma check reads the campaign-level coma
-                    // status flag on the PC.
-                    let in_coma = self
-                        .pc_description_for_pc_data(pc_data)
-                        .map(|desc| desc.status.in_coma)
-                        .unwrap_or(false);
-                    !in_coma
-                }
-                // Focus::Use on a PC target has three sub-branches:
-                //   (a) Target posture is HelpingToClimb and selected
-                //       PC has Jump and isn't mid-swordfight → allow.
-                //   (b) Target is OutOfOrder, not stuck-under-net, not
-                //       carried, not unreachable, and selected PC has
-                //       a carry action → allow.
-                //   (c) Else reject (no fall-through arm for PC targets).
-                Focus::Use => {
-                    use crate::profiles::Action;
-                    if !entity.is_active() {
-                        return false;
-                    }
-                    let selector_swordfighting = selected_pc_id
-                        .and_then(|id| self.get_entity(id))
-                        .and_then(|e| e.actor_data())
-                        .is_some_and(|a| a.action_state.is_sword());
-                    let has_jump = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::Jump,
-                    );
-                    if posture == Posture::HelpingToClimb && has_jump && !selector_swordfighting {
-                        return true;
-                    }
-                    let out_of_order =
-                        entity.is_dead() || entity.human_data().is_some_and(|h| h.unconscious);
-                    let carry = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::LittleJohnCarry,
-                    ) || self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::FarmerCarry,
-                    );
-                    let is_stuck = entity
-                        .human_data()
-                        .is_some_and(|h| h.stuck_under_nets_counter > 0);
-                    let is_carried = entity.human_data().is_some_and(|h| h.carrier.is_some());
-                    out_of_order && !is_stuck && !is_carried && carry
-                }
-                // Focus::Interact gates on the selected PC's
-                // contextual actions against target state. A PC target
-                // is not a soldier/civilian/NPC, and PCs have no
-                // `rider` flag, so several branches simplify away.
-                Focus::Interact => {
-                    use crate::profiles::Action;
-                    let is_dead = entity.is_dead();
-                    let carry = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::LittleJohnCarry,
-                    ) || self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::FarmerCarry,
-                    );
-                    let loot = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::Search,
-                    );
-                    let terminator = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::Execute,
-                    );
-                    let reanimator = self.selected_pc_has_contextual_action(
-                        assets,
-                        selected_pc_id,
-                        Action::Resuscitate,
-                    );
-                    let tie_man =
-                        self.selected_pc_has_contextual_action(assets, selected_pc_id, Action::Tie);
-                    // Selected PC is VIP? (needed for Give Money branch.)
-                    let selector_is_vip = selected_pc_id
-                        .and_then(|id| self.get_entity(id))
-                        .is_some_and(|e| self.is_entity_vip(assets, e));
-                    // Selected PC is Robin? (needed for Loot-VIP gating.)
-                    let selector_is_robin = selected_pc_id
-                        .and_then(|id| self.get_entity(id))
-                        .and_then(|e| e.pc_data())
-                        .is_some_and(|pc| pc.robin);
-                    let target_is_vip = self.is_entity_vip(assets, entity);
-
-                    // Carry: carry action && (blipped || !rider). PCs
-                    // aren't riders, so this reduces to `carry`.
-                    if carry {
-                        return true;
-                    }
-                    // Give Money: selected PC is VIP && (target blipped ||
-                    // target civilian beggar). PCs aren't civilians, so
-                    // only the blipped branch applies.
-                    if selector_is_vip && blipped {
-                        return true;
-                    }
-                    // Loot: loot action && (blipped || (Robin-or-notVIP &&
-                    // (!dead || NPC w/ money>0))). PCs aren't NPCs so the
-                    // money sub-branch resolves to `!dead`.
-                    let robin_loot_vip = selector_is_robin || !target_is_vip;
-                    let blip_or_lootable = blipped || (robin_loot_vip && !is_dead);
-                    if loot && blip_or_lootable {
-                        return true;
-                    }
-                    // Kill: terminator && (blipped || aliveCommonSoldier).
-                    // PCs aren't soldiers, so only blipped triggers.
-                    if terminator && blipped {
-                        return true;
-                    }
-                    // Reanimate: reanimator && (blipped || (!dead &&
-                    // !civilian && royalist)). PCs are royalist allies
-                    // and never civilians.
-                    if reanimator && (blipped || !is_dead) {
-                        return true;
-                    }
-                    // Tie up: tie_man && (blipped || (NPC && ...)). PCs
-                    // aren't NPCs so only the blipped branch applies.
-                    if tie_man && blipped {
-                        return true;
-                    }
-                    false
-                }
-                _ => false,
-            };
+            return self.pc_focusable(assets, entity_id, entity, focus, selected_pc_id, blipped);
         }
 
         // ── FX targets ──
@@ -822,6 +640,204 @@ impl EngineInner {
             );
         }
 
+        self.npc_focusable(assets, entity_id, entity, focus, selected_pc_id, blipped)
+    }
+
+    fn pc_focusable(
+        &self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        entity: &Entity,
+        focus: crate::element::Focus,
+        selected_pc_id: Option<EntityId>,
+        blipped: bool,
+    ) -> bool {
+        use crate::element::{Focus, Posture};
+        let posture = entity.element_data().posture();
+        match focus {
+            // SELECT requires: is-active, selectable, and either
+            // not on a HelpingToClimb posture or the selected PC
+            // doesn't have Jump (so the human pyramid pose isn't
+            // hijacked into a select). The pixel-hit test above
+            // already handles the sprite check.
+            Focus::Select => {
+                self.is_pc_selectable(assets, entity_id)
+                    && (posture != Posture::HelpingToClimb
+                        || !self.selected_pc_has_contextual_action(
+                            assets,
+                            selected_pc_id,
+                            crate::profiles::Action::Jump,
+                        ))
+            }
+            Focus::Shield | Focus::ShieldPortrait => {
+                entity.is_active()
+                    && !self.players.seats[0].selection.contains(&entity_id)
+                    && !entity.is_dead()
+            }
+            // Heal-active PC must be alive, below max HP, not in
+            // coma, not stuck under a net, not carried. Portrait
+            // variant + the recording-macro split are elided here
+            // (they require host-side context that the current
+            // focus call site doesn't route through this predicate).
+            // Inactive-in-building is allowed.
+            Focus::Heal | Focus::HealPortrait => {
+                if entity.is_dead() {
+                    return false;
+                }
+                let Some(pc_human) = entity.human_data() else {
+                    return false;
+                };
+                if pc_human.unconscious {
+                    return false;
+                }
+                if pc_human.stuck_under_nets_counter > 0 {
+                    return false;
+                }
+                if posture == Posture::Carried {
+                    return false;
+                }
+                let pc_data = match entity.pc_data() {
+                    Some(d) => d,
+                    None => return false,
+                };
+                if pc_data.life_points >= crate::combat::LIFEPOINTS_PC {
+                    return false;
+                }
+                // In-coma check reads the campaign-level coma
+                // status flag on the PC.
+                let in_coma = self
+                    .pc_description_for_pc_data(pc_data)
+                    .map(|desc| desc.status.in_coma)
+                    .unwrap_or(false);
+                !in_coma
+            }
+            // Focus::Use on a PC target has three sub-branches:
+            //   (a) Target posture is HelpingToClimb and selected
+            //       PC has Jump and isn't mid-swordfight → allow.
+            //   (b) Target is OutOfOrder, not stuck-under-net, not
+            //       carried, not unreachable, and selected PC has
+            //       a carry action → allow.
+            //   (c) Else reject (no fall-through arm for PC targets).
+            Focus::Use => {
+                use crate::profiles::Action;
+                if !entity.is_active() {
+                    return false;
+                }
+                let selector_swordfighting = selected_pc_id
+                    .and_then(|id| self.get_entity(id))
+                    .and_then(|e| e.actor_data())
+                    .is_some_and(|a| a.action_state.is_sword());
+                let has_jump =
+                    self.selected_pc_has_contextual_action(assets, selected_pc_id, Action::Jump);
+                if posture == Posture::HelpingToClimb && has_jump && !selector_swordfighting {
+                    return true;
+                }
+                let out_of_order =
+                    entity.is_dead() || entity.human_data().is_some_and(|h| h.unconscious);
+                let carry = self.selected_pc_has_contextual_action(
+                    assets,
+                    selected_pc_id,
+                    Action::LittleJohnCarry,
+                ) || self.selected_pc_has_contextual_action(
+                    assets,
+                    selected_pc_id,
+                    Action::FarmerCarry,
+                );
+                let is_stuck = entity
+                    .human_data()
+                    .is_some_and(|h| h.stuck_under_nets_counter > 0);
+                let is_carried = entity.human_data().is_some_and(|h| h.carrier.is_some());
+                out_of_order && !is_stuck && !is_carried && carry
+            }
+            // Focus::Interact gates on the selected PC's
+            // contextual actions against target state. A PC target
+            // is not a soldier/civilian/NPC, and PCs have no
+            // `rider` flag, so several branches simplify away.
+            Focus::Interact => {
+                use crate::profiles::Action;
+                let is_dead = entity.is_dead();
+                let carry = self.selected_pc_has_contextual_action(
+                    assets,
+                    selected_pc_id,
+                    Action::LittleJohnCarry,
+                ) || self.selected_pc_has_contextual_action(
+                    assets,
+                    selected_pc_id,
+                    Action::FarmerCarry,
+                );
+                let loot =
+                    self.selected_pc_has_contextual_action(assets, selected_pc_id, Action::Search);
+                let terminator =
+                    self.selected_pc_has_contextual_action(assets, selected_pc_id, Action::Execute);
+                let reanimator = self.selected_pc_has_contextual_action(
+                    assets,
+                    selected_pc_id,
+                    Action::Resuscitate,
+                );
+                let tie_man =
+                    self.selected_pc_has_contextual_action(assets, selected_pc_id, Action::Tie);
+                // Selected PC is VIP? (needed for Give Money branch.)
+                let selector_is_vip = selected_pc_id
+                    .and_then(|id| self.get_entity(id))
+                    .is_some_and(|e| self.is_entity_vip(assets, e));
+                // Selected PC is Robin? (needed for Loot-VIP gating.)
+                let selector_is_robin = selected_pc_id
+                    .and_then(|id| self.get_entity(id))
+                    .and_then(|e| e.pc_data())
+                    .is_some_and(|pc| pc.robin);
+                let target_is_vip = self.is_entity_vip(assets, entity);
+
+                // Carry: carry action && (blipped || !rider). PCs
+                // aren't riders, so this reduces to `carry`.
+                if carry {
+                    return true;
+                }
+                // Give Money: selected PC is VIP && (target blipped ||
+                // target civilian beggar). PCs aren't civilians, so
+                // only the blipped branch applies.
+                if selector_is_vip && blipped {
+                    return true;
+                }
+                // Loot: loot action && (blipped || (Robin-or-notVIP &&
+                // (!dead || NPC w/ money>0))). PCs aren't NPCs so the
+                // money sub-branch resolves to `!dead`.
+                let robin_loot_vip = selector_is_robin || !target_is_vip;
+                let blip_or_lootable = blipped || (robin_loot_vip && !is_dead);
+                if loot && blip_or_lootable {
+                    return true;
+                }
+                // Kill: terminator && (blipped || aliveCommonSoldier).
+                // PCs aren't soldiers, so only blipped triggers.
+                if terminator && blipped {
+                    return true;
+                }
+                // Reanimate: reanimator && (blipped || (!dead &&
+                // !civilian && royalist)). PCs are royalist allies
+                // and never civilians.
+                if reanimator && (blipped || !is_dead) {
+                    return true;
+                }
+                // Tie up: tie_man && (blipped || (NPC && ...)). PCs
+                // aren't NPCs so only the blipped branch applies.
+                if tie_man && blipped {
+                    return true;
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn npc_focusable(
+        &self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+        entity: &Entity,
+        focus: crate::element::Focus,
+        selected_pc_id: Option<EntityId>,
+        blipped: bool,
+    ) -> bool {
+        use crate::element::{Camp, Focus, Posture};
         // ── NPC entities (soldiers and civilians) ──
         if !entity.is_npc() {
             return false;
