@@ -2008,6 +2008,34 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_views_preserve_history_replay_index_authority_in_both_layers() {
+        let (profiles, mut campaign) = fixture();
+        campaign.history_replay_mission_idx = Some(usize::MAX);
+        assert!(matches!(
+            validate(&profiles, &campaign),
+            Err(ReplayCampaignValidationError::IndexOutOfRange {
+                layer: CampaignLayer::Current,
+                field: CampaignIndexField::HistoryReplayMission,
+                ..
+            })
+        ));
+        campaign.history_replay_mission_idx = None;
+        campaign
+            .pre_mission_snapshot
+            .as_mut()
+            .unwrap()
+            .history_replay_mission_idx = Some(usize::MAX);
+        assert!(matches!(
+            validate(&profiles, &campaign),
+            Err(ReplayCampaignValidationError::IndexOutOfRange {
+                layer: CampaignLayer::PreMissionSnapshot,
+                field: CampaignIndexField::HistoryReplayMission,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn rejects_duplicate_disjoint_and_out_of_range_character_identities() {
         let (profiles, mut campaign) = fixture();
         campaign.gang_indices.push(0);
