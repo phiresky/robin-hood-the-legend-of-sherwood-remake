@@ -6323,23 +6323,6 @@ pub trait Human: Actor {
     fn tiredness(&self) -> u16 {
         self.human_data().tiredness
     }
-    /// Legacy distinct-allegiance fallback for isolated entity tests. Runtime
-    /// combat and AI must query the mission `DiplomacyState` instead.
-    fn is_enemy_of(&self, other_camp: Camp) -> bool {
-        self.camp().is_hostile_to(other_camp)
-    }
-    fn enemy_camp(&self) -> Camp {
-        // TODO(multi-team-diplomacy): remove this binary compatibility
-        // accessor once remaining callers request concrete hostile actors.
-        match self.camp() {
-            Camp::Royalists => Camp::Lacklandists,
-            Camp::Lacklandists => Camp::Royalists,
-            Camp::Custom(id) => {
-                panic!("custom allegiance {id} has multiple possible enemy camps; use is_enemy_of")
-            }
-            Camp::Error => panic!("invalid camp has no enemy camp"),
-        }
-    }
     fn is_robin(&self) -> bool {
         false
     }
@@ -7725,7 +7708,6 @@ mod tests {
         assert_eq!(Human::life_points(&s), 50);
         assert!(!s.is_out_of_order());
         assert_eq!(s.camp(), Camp::Lacklandists);
-        assert!(s.is_enemy_of(Camp::Royalists));
         assert!(s.is_able_to_fight());
     }
 

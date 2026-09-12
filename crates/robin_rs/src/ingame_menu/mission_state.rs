@@ -2,8 +2,8 @@
 //!
 //! Creates a 629x480 frame window with the small menu background
 //! inside, plays a scaling open/close transition from the source
-//! button position, and on open launches a blocking Yes/No
-//! confirmation prompt.  Returns `true` when the player confirms.
+//! button position, and on open advances a frame-driven Yes/No
+//! confirmation prompt. Reports `true` when the player confirms.
 
 use crate::renderer::Renderer;
 
@@ -27,39 +27,6 @@ const TEXT_X: i32 = 25;
 const TEXT_Y: i32 = 50;
 const TEXT_W: i32 = 350;
 const TEXT_H: i32 = 70;
-
-/// Show the mission state popup.
-///
-/// - `message` is the body text (e.g. "Really abandon this mission?").
-/// - `won` selects the Mission Won vs Mission Lost title.
-/// - `source_button`: the on-screen rectangle the popup zooms out from
-///   (the "start mission" / "quit mission" widget the player clicked).
-///   Pass the full screen rect when there is no source button.
-///
-/// Returns `true` if the player confirmed the prompt.
-pub async fn show_mission_state_popup(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
-    message: &str,
-    won: bool,
-    source_button: Option<(i32, i32, i32, i32)>,
-) -> bool {
-    let mut state =
-        MissionStatePopupState::new(renderer, resources, message.to_string(), won, source_button);
-    loop {
-        if let Some(result) = state.tick(
-            event_pump,
-            renderer,
-            resources,
-            cursor.as_mut().map(|c| c.reborrow()),
-        ) {
-            return result;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
-}
 
 #[derive(Copy, Clone)]
 enum TransitionDirection {

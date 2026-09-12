@@ -6,8 +6,10 @@ use super::{
 };
 use crate::{audio_backend::KiraAudioBackend, game::Game, host::Host};
 use robin_assets::res_descr as assets_res_descr;
-use robin_assets::{resource_manager::ResourceManager, shipping_datadir::ShippingDatadir};
-use robin_engine::sbfile::SbFileSystem;
+use robin_assets::{
+    resource_manager::{ResourceAttachmentError, ResourceManager},
+    shipping_datadir::ShippingDatadir,
+};
 use robin_engine::{engine as engine_api, sbfile as engine_sbfile};
 
 /// Preserve archive identity and the decoder's full table/entry error chain.
@@ -16,42 +18,22 @@ pub(super) fn attach_mission_archive(
     resources: &mut ResourceManager,
     path: &str,
     shipping: Option<&ShippingDatadir>,
-    files: &SbFileSystem,
 ) -> Result<Option<()>, ResourcePreparationError> {
     // Let the resource manager select active shipping locales and legacy
     // fallbacks. A failed registered archive is never optional absence.
-    match resources.attach_or_from_shipping(path, shipping) {
-        Ok(()) => Ok(Some(())),
-        Err(error) => {
-            let present = files
-                .try_exists(path)
-                .map_err(|status| ResourcePreparationError::unavailable(path, status))?;
-            if present {
-                // Presence alone does not prove the bytes could be acquired
-                // (permissions, truncated backing files, or VFS failures).
-                files.read_shared(path).map_err(|status| {
-                    ResourcePreparationError::unavailable(
-                        path,
-                        format!("file error {status}; {error:#}"),
-                    )
-                })?;
-                Err(ResourcePreparationError::malformed(
-                    path,
-                    format!("{error:#}"),
-                ))
-            } else {
-                if shipping.is_some_and(|datadir| datadir.active_locale_name().is_some())
-                    && robin_assets::shipping_datadir::is_required_locale_key(path)
-                {
-                    return Err(ResourcePreparationError::unavailable(
-                        path,
-                        format!("required selected-locale archive: {error:#}"),
-                    ));
-                }
-                tracing::debug!(path, "Optional mission archive absent");
-                Ok(None)
-            }
+    match resources.try_attach_or_from_shipping(path, shipping) {
+        Ok(None) => {
+            tracing::debug!(path, "Optional mission archive absent");
+            Ok(None)
         }
+        Ok(attached) => Ok(attached),
+        Err(ResourceAttachmentError::Unavailable(error)) => Err(
+            ResourcePreparationError::unavailable(path, format!("{error:#}")),
+        ),
+        Err(ResourceAttachmentError::Malformed(error)) => Err(ResourcePreparationError::malformed(
+            path,
+            format!("{error:#}"),
+        )),
     }
 }
 
@@ -123,10 +105,10 @@ impl MissionEngineResources {
         // Hackable/headless missions may omit these archives. Malformed
         // authored content is an error, not a request for that fallback.
         let mut text = ResourceManager::with_files(files.clone());
-        attach_mission_archive(&mut text, "Data/Text/Level.res", shipping, &files)?;
+        attach_mission_archive(&mut text, "Data/Text/Level.res", shipping)?;
 
-        let mut cursor = ResourceManager::with_files(files.clone());
-        attach_mission_archive(&mut cursor, "Data/Interface/DEFAULT.RES", shipping, &files)?;
+        let mut cursor = ResourceManager::with_files(files);
+        attach_mission_archive(&mut cursor, "Data/Interface/DEFAULT.RES", shipping)?;
         Ok(Self { text, cursor })
     }
 
@@ -281,6 +263,27 @@ impl<Interface> MissionProcessResources<Interface> {
 mod tests {
     use super::*;
     use robin_engine::resource_ids;
+
+    #[test]
+    fn mission_archive_acquisition_failure_is_not_optional_absence() {
+        let mut unbound = ResourceManager::new();
+        let error = attach_mission_archive(&mut unbound, "missing.res", None).unwrap_err();
+        assert!(matches!(
+            error,
+            ResourcePreparationError::Unavailable { .. }
+        ));
+        assert!(error.to_string().contains("no bound file reader"));
+        let files = std::sync::Arc::new(engine_sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        let mut resources = ResourceManager::with_files(files);
+        let error = attach_mission_archive(&mut resources, "../forbidden.res", None).unwrap_err();
+        assert!(matches!(
+            error,
+            ResourcePreparationError::Unavailable { .. }
+        ));
+        assert!(error.to_string().contains("error -5"));
+    }
     #[test]
     fn required_selected_locale_archive_is_not_optional_absence() {
         use robin_assets::shipping_datadir::{ShippingAssets, ShippingLocale};
@@ -294,15 +297,11 @@ mod tests {
             .datadir()
             .set_active_locale(Some("en-US"))
             .unwrap();
-        let files = std::sync::Arc::new(SbFileSystem::new(vfs).snapshot());
+        let files = std::sync::Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
         let mut text = ResourceManager::with_files(files.clone());
-        let error = attach_mission_archive(
-            &mut text,
-            "Data/Text/Level.res",
-            Some(installed.datadir()),
-            &files,
-        )
-        .unwrap_err();
+        let error =
+            attach_mission_archive(&mut text, "Data/Text/Level.res", Some(installed.datadir()))
+                .unwrap_err();
         assert!(matches!(
             error,
             ResourcePreparationError::Unavailable { .. }
@@ -419,7 +418,7 @@ mod tests {
             .unwrap();
         let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
         let mut text = ResourceManager::with_files(files.clone());
-        let error = attach_mission_archive(&mut text, path, None, &files).unwrap_err();
+        let error = attach_mission_archive(&mut text, path, None).unwrap_err();
         assert!(matches!(error, ResourcePreparationError::Malformed { .. }));
         let error = error.to_string();
         assert!(error.contains(path), "{error}");
