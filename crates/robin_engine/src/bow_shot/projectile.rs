@@ -2232,7 +2232,7 @@ pub fn apply_arrow_hit(
 /// human.  Factored from [`apply_arrow_hit`] so stones can pass a
 /// distinct concussion (e.g. damage=10, concussion=100 for stones —
 /// much higher KO potential than arrows).
-pub fn apply_projectile_hit(
+fn apply_projectile_hit(
     entities: &mut Entities,
     victim_id: EntityId,
     shooter_id: EntityId,

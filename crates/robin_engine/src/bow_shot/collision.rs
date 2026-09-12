@@ -51,7 +51,7 @@ pub fn shield_params_for_pc(has_big_shield: bool) -> ShieldParams {
 /// to their geometric meaning:
 ///   profile "width"  → Z extent (height)
 ///   profile "height" → horizontal extent (width)
-pub fn shield_params_for_soldier(
+pub(super) fn shield_params_for_soldier(
     profile_shield_width: u16,
     profile_shield_height: u16,
 ) -> ShieldParams {
