@@ -1791,10 +1791,18 @@ pub enum ProfileJsonLoadError {
     #[error("Invalid profile document {path}: {message}")]
     Schema { path: String, message: String },
 
-    #[error("Failed to open {path}: error {status}")]
-    Open { path: String, status: i32 },
-    #[error("Failed to read {path}: error {status}")]
-    Read { path: String, status: i32 },
+    #[error("Failed to open {path}: error {source}")]
+    Open {
+        path: String,
+        #[source]
+        source: crate::sbfile::SbFileError,
+    },
+    #[error("Failed to read {path}: error {source}")]
+    Read {
+        path: String,
+        #[source]
+        source: crate::sbfile::SbFileError,
+    },
     #[error("Failed to decode {path} as UTF-8: {source}")]
     Utf8 {
         path: String,
@@ -1850,15 +1858,15 @@ impl ProfileManager {
     ) -> Result<serde_json::Value, ProfileJsonLoadError> {
         let mut file = files
             .open(path)
-            .map_err(|status| ProfileJsonLoadError::Open {
+            .map_err(|source| ProfileJsonLoadError::Open {
                 path: path.into(),
-                status,
+                source,
             })?;
         let mut bytes = vec![0u8; file.get_size() as usize];
-        file.serialize_bytes(&mut bytes)
-            .map_err(|status| ProfileJsonLoadError::Read {
+        file.read(&mut bytes)
+            .map_err(|source| ProfileJsonLoadError::Read {
                 path: path.into(),
-                status,
+                source,
             })?;
         let data = String::from_utf8(bytes).map_err(|source| ProfileJsonLoadError::Utf8 {
             path: path.into(),
@@ -2061,6 +2069,11 @@ mod tests {
         ] {
             assert!(
                 matches!(error, ProfileJsonLoadError::Open { ref path, .. } if path == "typed-profiles/missing.json")
+            );
+            assert!(
+                std::error::Error::source(&error)
+                    .expect("preserve the underlying file error")
+                    .is::<crate::sbfile::SbFileError>()
             );
         }
         for error in [
