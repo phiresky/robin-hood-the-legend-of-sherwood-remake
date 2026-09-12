@@ -838,3 +838,111 @@ impl Database {
         Ok(Some(lifecycle_from_row(row)?))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Connection as _;
+
+    #[tokio::test]
+    async fn reserved_intent_requires_every_immutable_identity_field() {
+        let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let intent = SubmissionUploadIntent {
+            proposed_submission_id: "proposed".into(),
+            upload_challenge_id: "challenge".into(),
+            offer_json: "offer".into(),
+            envelope_json: "envelope".into(),
+            controller_public_key: [1; 32],
+            session_genesis_sha256: [2; 32],
+            session_genesis_host_public_key: [3; 32],
+            replay_session_id: [4; 32],
+            session_genesis_host_nonce: [5; 32],
+            participants: Vec::new(),
+        };
+        let digest = Digest32::digest_bytes(intent.envelope_json.as_bytes()).into_bytes();
+        let row = sqlx::query(
+            "SELECT ? AS envelope_json, ? AS envelope_sha256, ? AS controller_public_key, \
+                    ? AS session_genesis_sha256, ? AS session_genesis_host_public_key, \
+                    ? AS replay_session_id, ? AS session_genesis_host_nonce",
+        )
+        .bind(&intent.envelope_json)
+        .bind(digest.as_slice())
+        .bind(intent.controller_public_key.as_slice())
+        .bind(intent.session_genesis_sha256.as_slice())
+        .bind(intent.session_genesis_host_public_key.as_slice())
+        .bind(intent.replay_session_id.as_slice())
+        .bind(intent.session_genesis_host_nonce.as_slice())
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        check_reserved_intent(&row, &intent, &digest).unwrap();
+        for field in 0..7 {
+            let mut changed = intent.clone();
+            let mut changed_digest = digest;
+            match field {
+                0 => changed.envelope_json.push('x'),
+                1 => changed_digest[0] ^= 1,
+                2 => changed.controller_public_key[0] ^= 1,
+                3 => changed.session_genesis_sha256[0] ^= 1,
+                4 => changed.session_genesis_host_public_key[0] ^= 1,
+                5 => changed.replay_session_id[0] ^= 1,
+                6 => changed.session_genesis_host_nonce[0] ^= 1,
+                _ => unreachable!(),
+            }
+            assert!(
+                matches!(
+                    check_reserved_intent(&row, &changed, &changed_digest),
+                    Err(DbError::SubmissionConflict)
+                ),
+                "field {field}"
+            );
+        }
+        let missing_column = sqlx::query("SELECT 'envelope' AS envelope_json")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert!(matches!(
+            check_reserved_intent(&missing_column, &intent, &digest),
+            Err(DbError::Sql(sqlx::Error::ColumnNotFound(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn participant_identity_checks_observe_the_callers_transaction() {
+        let mut connection = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE identities (public_key BLOB PRIMARY KEY)")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        let participants = [crate::model::ParticipantClaim {
+            seat: 3,
+            participant_instance_id: [1; 32],
+            public_key: [2; 32],
+            public_disclosure: "named_profile".into(),
+        }];
+        let mut tx = connection.begin().await.unwrap();
+        assert!(matches!(
+            ensure_participant_identities(&mut tx, &participants).await,
+            Err(DbError::ResultInvariant(message))
+                if message == "participant seat 3 has no registered identity"
+        ));
+        sqlx::query("INSERT INTO identities (public_key) VALUES (?)")
+            .bind(participants[0].public_key.as_slice())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        ensure_participant_identities(&mut tx, &participants)
+            .await
+            .unwrap();
+        tx.rollback().await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identities")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}

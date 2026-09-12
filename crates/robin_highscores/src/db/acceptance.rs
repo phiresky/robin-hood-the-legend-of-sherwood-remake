@@ -644,7 +644,7 @@ async fn check_offer_matches_result(
         ));
     }
     compare_blob(
-        &submitted,
+        submitted,
         "replay_sha256",
         result.artifacts.replay.artifact.sha256.as_bytes(),
     )?;
@@ -660,27 +660,27 @@ async fn check_offer_matches_result(
         ));
     }
     compare_blob(
-        &submitted,
+        submitted,
         "build_manifest_id",
         result.build_manifest_sha256.as_bytes(),
     )?;
     compare_blob(
-        &submitted,
+        submitted,
         "content_manifest_id",
         result.content_manifest_sha256.as_bytes(),
     )?;
     compare_blob(
-        &submitted,
+        submitted,
         "config_id",
         result.rules_config_sha256.as_bytes(),
     )?;
     compare_blob(
-        &submitted,
+        submitted,
         "ruleset_id",
         result.ruleset_manifest_sha256.as_bytes(),
     )?;
     compare_blob(
-        &submitted,
+        submitted,
         "starting_campaign_sha256",
         verified.starting_campaign.sha256.as_bytes(),
     )?;
@@ -688,7 +688,7 @@ async fn check_offer_matches_result(
         RunScopeKindV1::IndividualLevel => "individual_level",
         RunScopeKindV1::Campaign => "campaign",
     };
-    compare_value(&submitted, "scope_kind", scope_kind)?;
+    compare_value(submitted, "scope_kind", scope_kind)?;
     let expected_max_concurrent: i64 = submitted.try_get("max_concurrent_players")?;
     let expected_instances: i64 = submitted.try_get("participant_instance_count")?;
     if expected_max_concurrent != i64::from(verified.max_concurrent_players)
