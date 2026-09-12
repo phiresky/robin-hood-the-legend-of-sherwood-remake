@@ -259,7 +259,6 @@ enum ScriptedModalMode {
 /// Drain the ordered dialogue -> popup/report -> debriefing lanes. An
 /// interactive frame renders at most one lane; headless map export drains all
 /// lanes without presenting them.
-#[allow(clippy::too_many_arguments)]
 async fn drive_scripted_modal_lanes(
     host: &mut Host,
     game: &Game,
@@ -480,7 +479,6 @@ fn dispatch_active_modal_outcome(
 }
 
 /// Drive the first mission-won "leave now" prompt after scripted modal lanes.
-#[allow(clippy::too_many_arguments)]
 fn drive_leave_mission_prompt(
     host: &mut Host,
     engine: &robin_engine::engine::Engine,

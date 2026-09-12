@@ -66,7 +66,6 @@ use robin_engine::tactical_control::{CombatStance, TacticalFormation};
 ///   Left dblclk = run to location / interact
 ///   Right click = cancel / stop / deselect-box completion
 ///   Right drag  = red deselection box
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_mouse_input(
     engine: &Engine,
     host: &mut Host,
@@ -512,7 +511,6 @@ fn on_mouse_move(
 
 /// Left-mouse-up: minimap release, box-select completion, portrait
 /// clicks, or the world left-click resolver.
-#[allow(clippy::too_many_arguments)]
 fn on_left_mouse_up(
     engine: &Engine,
     host: &mut Host,
@@ -1461,7 +1459,6 @@ fn on_right_mouse_up(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_pause_menu_events(
     pause_menu: &mut Option<PauseMenu>,
     active_ui_task: &mut Option<ActiveUiTask>,
@@ -1822,7 +1819,6 @@ fn defer_multiplayer_campaign_exit(host: &mut Host, mission_id: u32) -> bool {
 /// caller should return that `GameCode` from `run_mission`
 /// (StartMission), or `Proceed` to continue with the rest of the
 /// frame.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_sherwood_hud_buttons(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
@@ -2074,7 +2070,6 @@ pub(super) fn handle_sherwood_hud_buttons(
 /// Returns `HandlerAction::Exit(GameCode::Quit)` when the player
 /// escapes out of the map (emergency quit-game path).  Returns
 /// `Proceed` otherwise.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,

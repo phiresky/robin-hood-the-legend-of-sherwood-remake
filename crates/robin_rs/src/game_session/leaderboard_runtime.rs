@@ -717,7 +717,6 @@ fn authorized_boards(
     Ok(boards)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn metric_boards(
     subject_kind: LeaderboardQuerySubjectV1,
     mission_id: Option<String>,
@@ -753,7 +752,6 @@ fn metric_boards(
     .collect()
 }
 
-#[allow(clippy::too_many_arguments)]
 fn query(
     subject_kind: LeaderboardQuerySubjectV1,
     mission_id: Option<String>,
@@ -782,7 +780,6 @@ fn query(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn select_competition<'a>(
     metadata: &'a LeaderboardMetadataV1,
     mission_id: &str,

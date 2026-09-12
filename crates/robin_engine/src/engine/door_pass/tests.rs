@@ -71,7 +71,6 @@ fn dispatch_pass(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dispatch_pass_with_transition_state(
     engine: &mut EngineInner,
     doors: &[crate::gate::Door],
@@ -93,7 +92,6 @@ fn dispatch_pass_with_transition_state(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn dispatch_pass_with_element_mutation(
     engine: &mut EngineInner,
     doors: &[crate::gate::Door],

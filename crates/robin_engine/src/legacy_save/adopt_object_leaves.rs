@@ -1290,7 +1290,6 @@ pub(crate) fn preflight_vm(
     Ok(Some(heap))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn vm_entity_handle(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,

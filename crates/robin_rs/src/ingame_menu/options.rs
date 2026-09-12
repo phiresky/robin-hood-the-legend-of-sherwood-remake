@@ -84,7 +84,6 @@ fn language_option_visible(allow_language_switching: bool, selector_visible: boo
 /// returns with changes, `sound.apply_volumes` runs.  Pass `None` for
 /// audio args from contexts with no live audio (e.g. the main-menu
 /// entry path).
-#[allow(clippy::too_many_arguments)]
 pub async fn show_options(
     application_context: &crate::host::ApplicationContext,
     allow_language_switching: bool,

@@ -16,7 +16,6 @@ impl EnemyAi {
     /// Called every 16 frames (staggered per NPC) for periodic checks.
     /// `is_idle` corresponds to the wait command;
     /// `receiving_wasp_sting` to the receive-wasp-sting command.
-    #[allow(clippy::too_many_arguments)]
     pub fn the_16th_frame(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -57,7 +56,6 @@ impl EnemyAi {
     /// the same work synchronously: its subsequent stuck guard queries the
     /// live sequence-manager queue populated by movement requests, not the queue as it
     /// stood on entry.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn the_16th_frame_before_stuck(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

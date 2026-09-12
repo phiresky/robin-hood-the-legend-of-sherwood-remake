@@ -1099,7 +1099,6 @@ impl PassDoorLaunchContext<'_> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn install_initial_walk(
         &mut self,
         entity_id: EntityId,

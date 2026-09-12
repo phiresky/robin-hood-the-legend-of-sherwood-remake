@@ -748,7 +748,6 @@ fn adjust_parameter(config: &mut GraphicConfig, effect_page: bool, index: usize,
     crate::options_model::adjust_graphics_setting(config, setting, if increase { 1 } else { -1 });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_parameter_panel(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,

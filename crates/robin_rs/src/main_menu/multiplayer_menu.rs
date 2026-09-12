@@ -853,7 +853,6 @@ fn direct_browser_listing() -> Option<GameListing> {
 /// and reuses the same durable public-key identity for the real mission
 /// connection.
 #[cfg(target_arch = "wasm32")]
-#[allow(clippy::too_many_arguments)]
 async fn prepare_direct_browser_launch(
     connect_addr: &str,
     missions: &[MissionChoice],
@@ -999,7 +998,6 @@ async fn prepare_direct_browser_launch(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_arguments)]
 async fn prepare_direct_browser_launch(
     _connect_addr: &str,
     _missions: &[MissionChoice],
@@ -1052,7 +1050,6 @@ async fn await_prepared_confirmation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn preflight_host_content(
     connect_addr: &str,
     advertised: &robin_engine::multiplayer::DistributedModOffer,
@@ -1169,7 +1166,6 @@ async fn preflight_host_content(
     Ok(encoded)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn render_menu(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,

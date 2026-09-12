@@ -3,7 +3,6 @@ use super::*;
 impl Renderer {
     /// Outline a rect on the GPU overlay layer. Color is RGB565 to match the
     /// rest of the legacy rendering API.
-    #[allow(clippy::too_many_arguments)]
     pub fn draw_rect_outline_screen(&mut self, x1: i32, y1: i32, x2: i32, y2: i32, color: u16) {
         let (r, g, b) = rgb565_to_rgb8(color);
         self.render_gpu_line(x1, y1, x2, y1, [r, g, b]);

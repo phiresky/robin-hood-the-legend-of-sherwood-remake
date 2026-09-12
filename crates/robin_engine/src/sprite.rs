@@ -630,7 +630,6 @@ impl Sprite {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn emit_sprite_row_diagnostic(
         &self,
         stage: &'static str,
@@ -856,7 +855,6 @@ impl Sprite {
     /// (e.g. `PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points)`):
     /// the obstacle handle is always paired with its top plane, so they
     /// are set together.  Pass `None` for both when there is no obstacle.
-    #[allow(clippy::too_many_arguments)]
     pub fn apply_placement(
         &mut self,
         position_map: crate::coordinates::MapPoint,
@@ -1230,7 +1228,6 @@ impl Sprite {
     /// "blip00" / "Blip 00" profile and switches to it: the blipped
     /// version becomes the default and the normal character is the
     /// alternate.
-    #[allow(clippy::too_many_arguments)]
     pub fn load_frame_info(
         &mut self,
         scriptor: &mut SpriteScriptor,
@@ -1276,7 +1273,6 @@ impl Sprite {
     /// Load an additional profile into the alternate slot without
     /// switching to it.  Used by PC profiles with a valid alternative
     /// profile (e.g. for disguise / variant animations).
-    #[allow(clippy::too_many_arguments)]
     pub fn load_alternate_profile(
         &mut self,
         scriptor: &mut SpriteScriptor,
@@ -1325,7 +1321,6 @@ impl Sprite {
     }
 
     /// Inner helper: load a single sprite profile and store it as primary or alternate.
-    #[allow(clippy::too_many_arguments)]
     fn apply_sprite_info(
         &mut self,
         scriptor: &mut SpriteScriptor,
@@ -1956,7 +1951,6 @@ impl Sprite {
     /// The returned distance is the raw per-tick distance **without**
     /// the sequence-element speed-factor applied — callers multiply it
     /// in afterwards.
-    #[allow(clippy::too_many_arguments)]
     pub fn perform_motion(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,

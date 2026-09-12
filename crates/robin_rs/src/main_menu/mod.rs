@@ -750,7 +750,6 @@ fn campaign_browser_profiles(
 /// Dispatch a button click to either an immediate return or an in-place
 /// sub-menu.  Returns `Some` when the main menu should exit with that
 /// choice; `None` when control should stay on the menu.
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_click(
     action: ClickAction,
     event_pump: &mut crate::window::GameWindow,

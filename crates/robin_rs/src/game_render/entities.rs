@@ -1,7 +1,6 @@
 //! entities presentation pass.
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn render_character_masks_clipped(
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
@@ -45,7 +44,6 @@ pub(super) fn sprite_screen_masks(
     screen_masks
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn applicable_sprite_masks(
     engine: &PresentationView<'_>,
     assets: &LevelAssets,
@@ -544,7 +542,6 @@ pub(super) fn transition_crenel_climb_up_mask_position(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn render_sprite_mask_debug_overlay(
     host: &HostDraw<'_>,
     engine: &PresentationView<'_>,

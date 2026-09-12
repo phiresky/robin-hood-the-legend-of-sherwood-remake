@@ -119,7 +119,6 @@ pub struct BlazonSetState {
 ///   the latch is not armed.
 ///
 /// Returns an empty [`BlazonSetState`] when `total_blazons == 0`.
-#[allow(clippy::too_many_arguments)]
 pub fn build_blazon_set_state(
     box_x: i32,
     box_y: i32,

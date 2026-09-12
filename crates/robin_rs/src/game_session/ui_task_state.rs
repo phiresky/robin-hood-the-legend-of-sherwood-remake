@@ -205,7 +205,6 @@ pub(super) enum UiTaskKind {
 }
 
 impl ActiveUiTask {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
@@ -438,7 +437,6 @@ pub(super) struct OptionsTaskState {
 }
 
 impl OptionsTaskState {
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         application_context: &crate::host::ApplicationContext,
         window: &crate::window::GameWindow,
@@ -502,7 +500,6 @@ impl OptionsTaskState {
         state
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,

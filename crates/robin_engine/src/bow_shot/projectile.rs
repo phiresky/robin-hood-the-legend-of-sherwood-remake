@@ -741,7 +741,6 @@ pub fn spawn_purse(
 /// are stored on the projectile so the coin can snap to them on
 /// landing — see [`PurseData::layer_goal`] and
 /// [`PurseData::sector_goal`].
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_coin(
     source_purse: Option<EntityId>,
     source_pos: WorldPoint3D,

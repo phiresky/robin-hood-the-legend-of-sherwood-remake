@@ -500,7 +500,6 @@ impl MappedCache {
     }
 
     /// Look up and optionally load a sample.
-    #[allow(clippy::too_many_arguments)]
     pub fn get_sample(
         &mut self,
         sample_present: bool,

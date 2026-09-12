@@ -403,7 +403,6 @@ impl RustCallbacks {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_autosave(
         &mut self,
         host: &crate::host::Host,
@@ -431,7 +430,6 @@ impl RustCallbacks {
     }
 
     #[cfg(target_arch = "wasm32")]
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enqueue_initial_autosave_with_thumbnail(
         &mut self,
         host: &crate::host::Host,

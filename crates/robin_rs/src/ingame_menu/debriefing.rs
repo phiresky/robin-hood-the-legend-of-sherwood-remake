@@ -127,7 +127,6 @@ fn debriefing_title(resources: &IngameMenuResources, won: bool) -> String {
 /// clicked).  Pass `None` to skip the stat panel — the cheat path
 /// that displays the full debriefing vector doesn't render the stat
 /// panel, so that caller passes `None`.
-#[allow(clippy::too_many_arguments)]
 pub async fn show_debriefing(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
@@ -196,7 +195,6 @@ pub struct DebriefingModalState {
 }
 
 impl DebriefingModalState {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         resources: &IngameMenuResources,
         body: String,
@@ -523,7 +521,6 @@ struct DebriefingPageState {
 }
 
 impl DebriefingPageState {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         event_pump: &crate::window::GameWindow,
         renderer: &Renderer,

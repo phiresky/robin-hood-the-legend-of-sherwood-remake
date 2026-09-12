@@ -163,7 +163,6 @@ pub fn resolve_built_in_mission_assets(
 /// launch. Admission, descriptor construction, and mounting stay in this one
 /// boundary: no caller can substitute bytes or metadata after admission. The
 /// returned package is derived from those same bytes, not supplied by callers.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn retain_live_mission_assets(
     mission_basename: &str,
     map_filename: &str,

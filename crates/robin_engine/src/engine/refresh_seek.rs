@@ -187,7 +187,6 @@ fn validate_recorded_point_seek_source(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn find_seek_gate_path(
     doors: &[crate::gate::Door],
     source: MapPoint,

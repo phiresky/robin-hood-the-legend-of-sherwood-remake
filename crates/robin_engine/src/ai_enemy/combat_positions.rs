@@ -610,7 +610,6 @@ impl EnemyAi {
     /// Drops a line-formation candidate at
     /// `there` facing `direction`, for every them-list enemy reachable
     /// from it.
-    #[allow(clippy::too_many_arguments)]
     fn propose_line_positions_there(
         &self,
         list: &mut Vec<CombatPosition>,

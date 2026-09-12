@@ -1472,7 +1472,6 @@ impl HeadlessMissionBuilder {
 pub(super) struct InteractiveMissionBuilder;
 
 impl InteractiveMissionBuilder {
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn build(
         window: &mut GameWindow,
         callbacks: &mut RustCallbacks,

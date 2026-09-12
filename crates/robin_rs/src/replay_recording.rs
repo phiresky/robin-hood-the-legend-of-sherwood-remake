@@ -301,7 +301,6 @@ impl SharedReplayRecorder {
             .recorder
             .record_input_taint(kind, ordinal);
     }
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_frame(
         &self,
         ordinal: u32,
