@@ -254,6 +254,53 @@ fn zoom_state_machine() {
 }
 
 #[test]
+fn zoom_dispatch_uses_supplied_camera_display_not_owned_placeholder() {
+    for request in [
+        EngineStateRequest::ZoomingUp,
+        EngineStateRequest::ZoomingDown,
+    ] {
+        for supplied_is_idle in [false, true] {
+            let mut engine = EngineInner::new();
+            engine.feedback.cutscene_camera.level_size = MapSize::new(4096.0, 4096.0);
+            engine.feedback.cutscene_camera.zoom_factor = 1.0;
+            engine.feedback.cutscene_camera.zoom_init_done = false;
+            let owned_op = if supplied_is_idle {
+                DisplayOpCode::InZoom
+            } else {
+                DisplayOpCode::NoBackgroundMove
+            };
+            engine.feedback.cutscene_camera.display.display_op = owned_op;
+            let mut supplied = CameraDisplayState::default();
+            supplied.display_op = if supplied_is_idle {
+                DisplayOpCode::NoBackgroundMove
+            } else {
+                DisplayOpCode::InZoom
+            };
+            supplied.background_transform.current_zoom_level = 1;
+
+            assert_eq!(engine.is_zoom_possible(), !supplied_is_idle);
+            assert_eq!(
+                engine.is_zoom_possible_for_camera(&supplied),
+                supplied_is_idle
+            );
+            assert_eq!(
+                engine.change_state(&mut supplied, 0, request),
+                supplied_is_idle
+            );
+            assert_eq!(
+                supplied.display_op,
+                if supplied_is_idle {
+                    DisplayOpCode::InitZoom
+                } else {
+                    DisplayOpCode::InZoom
+                }
+            );
+            assert_eq!(engine.feedback.cutscene_camera.display.display_op, owned_op);
+        }
+    }
+}
+
+#[test]
 fn camera_clip_view() {
     let mut camera = CameraState {
         level_size: MapSize::new(2000.0, 1500.0),
