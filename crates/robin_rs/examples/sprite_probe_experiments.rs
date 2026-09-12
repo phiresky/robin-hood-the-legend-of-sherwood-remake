@@ -301,10 +301,25 @@ fn detect_families(data_dir: &Path) -> Result<BTreeMap<String, Vec<String>>> {
     if !chars_dir.is_dir() {
         chars_dir = data_dir.join("DATA/Characters");
     }
-    let mut names: Vec<String> = fs::read_dir(&chars_dir)
-        .with_context(|| format!("read {}", chars_dir.display()))?
-        .filter_map(|e| {
-            let p = e.ok()?.path();
+    let entries =
+        fs::read_dir(&chars_dir).with_context(|| format!("read {}", chars_dir.display()))?;
+    families_from_entries(
+        &chars_dir,
+        entries.map(|entry| entry.map(|entry| entry.path())),
+    )
+}
+
+fn families_from_entries(
+    dir: &Path,
+    entries: impl IntoIterator<Item = std::io::Result<PathBuf>>,
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let paths = entries
+        .into_iter()
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("read entry in {}", dir.display()))?;
+    let mut names: Vec<String> = paths
+        .into_iter()
+        .filter_map(|p| {
             (p.extension()?.to_str()? == "rhs")
                 .then(|| p.file_stem().unwrap().to_string_lossy().into_owned())
         })
@@ -322,6 +337,70 @@ fn detect_families(data_dir: &Path) -> Result<BTreeMap<String, Vec<String>>> {
     }
     families.retain(|_, v| v.len() > 1);
     Ok(families)
+}
+
+#[cfg(test)]
+mod family_scan_tests {
+    use super::*;
+
+    #[test]
+    fn family_selection_is_sorted_and_keeps_existing_naming_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let chars = dir.path().join("Data/Characters");
+        fs::create_dir_all(&chars).unwrap();
+        assert!(detect_families(dir.path()).unwrap().is_empty());
+        for name in [
+            "Guard02.rhs",
+            "Guard01.rhs",
+            "Guard03.RHS",
+            "Guard004.rhs",
+            "Solo01.rhs",
+            "Other.txt",
+        ] {
+            fs::write(chars.join(name), []).unwrap();
+        }
+        assert_eq!(
+            detect_families(dir.path()).unwrap(),
+            BTreeMap::from([(
+                "Guard".to_owned(),
+                vec!["Guard01".to_owned(), "Guard02".to_owned()]
+            ),])
+        );
+    }
+
+    #[test]
+    fn missing_and_file_roots_fail_with_path_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let chars = dir.path().join("DATA/Characters");
+        assert!(
+            detect_families(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains(&chars.display().to_string())
+        );
+        fs::create_dir_all(chars.parent().unwrap()).unwrap();
+        fs::write(&chars, []).unwrap();
+        assert!(
+            detect_families(dir.path())
+                .unwrap_err()
+                .to_string()
+                .contains(&chars.display().to_string())
+        );
+    }
+
+    #[test]
+    fn entry_failure_cannot_produce_a_partial_family_set() {
+        let dir = Path::new("fixture/Characters");
+        let entries = [
+            Ok(dir.join("Guard01.rhs")),
+            Err(std::io::Error::other("injected entry failure")),
+            Ok(dir.join("Guard02.rhs")),
+        ];
+        let error = families_from_entries(dir, entries).unwrap_err();
+        let detail = format!("{error:#}");
+        assert!(detail.contains("fixture/Characters"));
+        assert!(detail.contains("injected entry failure"));
+    }
 }
 
 fn topology(holder: &FrameHolder, data_dir: &Path, filter: &[String]) -> Result<()> {
