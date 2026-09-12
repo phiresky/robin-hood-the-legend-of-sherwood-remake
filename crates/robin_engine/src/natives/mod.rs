@@ -252,6 +252,7 @@ pub enum SimulationEffect {
 /// not a world owner; deterministic state queried by natives lives in the
 /// engine capabilities borrowed by [`NativeContext`].
 #[derive(
+    Default,
     Clone,
     serde::Serialize,
     serde::Deserialize,
@@ -273,9 +274,7 @@ pub const MAX_NESTED_CALL_DEPTH: u8 = 4;
 
 impl ScriptEffects {
     pub fn new() -> Self {
-        Self {
-            ordered: std::collections::VecDeque::new(),
-        }
+        Self::default()
     }
 
     pub fn emit_engine(&mut self, command: EngineCommand) {
@@ -2716,12 +2715,6 @@ impl NativeContext<'_, '_> {
             .profile_manager
             .get_bow(profile.shooting_weapon_id)
             .is_some()
-    }
-}
-
-impl Default for ScriptEffects {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

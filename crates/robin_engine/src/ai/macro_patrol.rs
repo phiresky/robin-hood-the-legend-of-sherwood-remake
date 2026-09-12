@@ -450,6 +450,7 @@ pub const PATROL_SPEED_DIVISOR: f32 = 30.0;
 /// Sector is currently an opaque handle; once the sector system is fully
 /// integrated this will reference it properly.
 #[derive(
+    Default,
     Debug,
     Clone,
     Copy,
@@ -467,17 +468,6 @@ pub struct Position {
     /// `None` indicates a null sector / unassigned waypoint.
     pub sector: Option<SectorHandle>,
     pub level: u16,
-}
-
-impl Default for Position {
-    fn default() -> Self {
-        Self {
-            x: 0.0,
-            y: 0.0,
-            sector: None,
-            level: 0,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1138,57 +1138,30 @@ impl AiController {
                         0..range,
                     )
             }
-            ProbabilityDistribution::GaussHighVariance => {
-                // `range*0.333` truncated (three samples) and
-                // `range*0.5` for the centring shift.
-                let third = ((range as f32) * 0.333) as i16;
-                let half = ((range as f32) * 0.5) as i16;
-                let mut val: i32 = 0;
-                if third > 0 {
-                    val = crate::sim_rng::i16(
-                        sim,
+            ProbabilityDistribution::GaussHighVariance | ProbabilityDistribution::Gauss => {
+                let (sample_scale, center_scale, site) = match dist {
+                    ProbabilityDistribution::GaussHighVariance => (
+                        0.333_f32,
+                        0.5_f32,
                         crate::sim_rng::RngSite::AiRandomValueGaussHigh,
-                        0..third,
-                    ) as i32
-                        + crate::sim_rng::i16(
-                            sim,
-                            crate::sim_rng::RngSite::AiRandomValueGaussHigh,
-                            0..third,
-                        ) as i32
-                        + crate::sim_rng::i16(
-                            sim,
-                            crate::sim_rng::RngSite::AiRandomValueGaussHigh,
-                            0..third,
-                        ) as i32;
-                }
-                val += gauss_curve_top as i32 - half as i32;
-                (val.clamp(min_val as i32, max_val as i32)) as i16
-            }
-            ProbabilityDistribution::Gauss => {
-                // `range*0.166` truncated (three samples) and
-                // `range*0.25` for the centring shift.
-                let sixth = ((range as f32) * 0.166) as i16;
-                let quarter = ((range as f32) * 0.25) as i16;
-                let mut val: i32 = 0;
-                if sixth > 0 {
-                    val = crate::sim_rng::i16(
-                        sim,
+                    ),
+                    ProbabilityDistribution::Gauss => (
+                        0.166_f32,
+                        0.25_f32,
                         crate::sim_rng::RngSite::AiRandomValueGauss,
-                        0..sixth,
-                    ) as i32
-                        + crate::sim_rng::i16(
-                            sim,
-                            crate::sim_rng::RngSite::AiRandomValueGauss,
-                            0..sixth,
-                        ) as i32
-                        + crate::sim_rng::i16(
-                            sim,
-                            crate::sim_rng::RngSite::AiRandomValueGauss,
-                            0..sixth,
-                        ) as i32;
+                    ),
+                    _ => unreachable!("Gaussian distribution arm"),
+                };
+                let width = ((range as f32) * sample_scale) as i16;
+                let center = ((range as f32) * center_scale) as i16;
+                let mut val = 0_i32;
+                if width > 0 {
+                    val = crate::sim_rng::i16(sim, site, 0..width) as i32
+                        + crate::sim_rng::i16(sim, site, 0..width) as i32
+                        + crate::sim_rng::i16(sim, site, 0..width) as i32;
                 }
-                val += gauss_curve_top as i32 - quarter as i32;
-                (val.clamp(min_val as i32, max_val as i32)) as i16
+                val += gauss_curve_top as i32 - center as i32;
+                val.clamp(min_val as i32, max_val as i32) as i16
             }
         }
     }

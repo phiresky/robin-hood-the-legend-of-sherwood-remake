@@ -2186,6 +2186,7 @@ pub enum TargetType {
 
 /// Report type for reconnaissance reports.
 #[derive(
+    Default,
     Debug,
     Clone,
     Copy,
@@ -2202,6 +2203,7 @@ pub enum TargetType {
 )]
 #[repr(u32)]
 pub enum ReportType {
+    #[default]
     Nothing = 0,
     Noise,
     Body,
@@ -2559,6 +2561,7 @@ pub struct ForbiddenRemark {
 // ---------------------------------------------------------------------------
 
 #[derive(
+    Default,
     Debug,
     Clone,
     Serialize,
@@ -2574,18 +2577,6 @@ pub struct ReconnaissanceReport {
     #[serde(with = "optional_ai_handle")]
     pub charly: Option<AiEntityHandle>,
     pub charly_seen: bool,
-}
-
-impl Default for ReconnaissanceReport {
-    fn default() -> Self {
-        Self {
-            seek_position: Position::default(),
-            report_type: ReportType::Nothing,
-            seen_bodies: Vec::new(),
-            charly: None,
-            charly_seen: false,
-        }
-    }
 }
 
 impl ReconnaissanceReport {
