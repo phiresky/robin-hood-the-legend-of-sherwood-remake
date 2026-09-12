@@ -1,5 +1,6 @@
 //! Shipping conversion phases; the entry point preserves their publication order.
 use super::*;
+use std::collections::BTreeMap;
 
 pub(super) fn load_boot_roots(
     dd: &mut ShippingDatadir,
@@ -599,4 +600,3 @@ pub(super) fn finish_profiles_and_boot_files(
     }
     Ok(())
 }
-use std::collections::BTreeMap;
