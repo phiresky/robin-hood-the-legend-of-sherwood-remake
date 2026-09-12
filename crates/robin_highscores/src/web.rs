@@ -4947,6 +4947,10 @@ fn filter_digest(filter: &RunFilterV1) -> Result<Digest32, ApiError> {
 }
 
 fn encode_cursor(cursor: &CursorToken, key: &[u8; 32]) -> Result<String, ApiError> {
+    encode_cursor_envelope(cursor, key)
+}
+
+fn encode_cursor_envelope<T: Serialize>(cursor: &T, key: &[u8; 32]) -> Result<String, ApiError> {
     let bytes = serde_json::to_vec(cursor).map_err(internal_json)?;
     let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
     let signature = ring::hmac::sign(&signing_key, &bytes);
@@ -4955,11 +4959,10 @@ fn encode_cursor(cursor: &CursorToken, key: &[u8; 32]) -> Result<String, ApiErro
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(authenticated))
 }
 
-fn decode_cursor(
+fn decode_cursor_envelope<T: serde::de::DeserializeOwned>(
     value: &str,
-    expected_filter: Digest32,
     key: &[u8; 32],
-) -> Result<CursorToken, ApiError> {
+) -> Result<T, ApiError> {
     if value.len() > 2048 {
         return Err(ApiError::BadRequest("cursor is too long".to_owned()));
     }
@@ -4973,8 +4976,16 @@ fn decode_cursor(
     let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
     ring::hmac::verify(&signing_key, bytes, signature)
         .map_err(|_| ApiError::BadRequest("cursor authentication failed".to_owned()))?;
-    let cursor: CursorToken = serde_json::from_slice(bytes)
-        .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))?;
+    serde_json::from_slice(bytes)
+        .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))
+}
+
+fn decode_cursor(
+    value: &str,
+    expected_filter: Digest32,
+    key: &[u8; 32],
+) -> Result<CursorToken, ApiError> {
+    let cursor: CursorToken = decode_cursor_envelope(value, key)?;
     if cursor.filter_sha256 != expected_filter {
         return Err(ApiError::BadRequest(
             "cursor does not belong to this leaderboard".to_owned(),
@@ -4987,12 +4998,7 @@ fn encode_player_history_cursor(
     cursor: &PlayerHistoryCursorToken,
     key: &[u8; 32],
 ) -> Result<String, ApiError> {
-    let bytes = serde_json::to_vec(cursor).map_err(internal_json)?;
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    let signature = ring::hmac::sign(&signing_key, &bytes);
-    let mut authenticated = bytes;
-    authenticated.extend_from_slice(signature.as_ref());
-    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(authenticated))
+    encode_cursor_envelope(cursor, key)
 }
 
 fn decode_player_history_cursor(
@@ -5001,21 +5007,7 @@ fn decode_player_history_cursor(
     query_sha256: Digest32,
     key: &[u8; 32],
 ) -> Result<PlayerHistoryCursorToken, ApiError> {
-    if value.len() > 2_048 {
-        return Err(ApiError::BadRequest("cursor is too long".to_owned()));
-    }
-    let authenticated = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(value)
-        .map_err(|_| ApiError::BadRequest("cursor is not valid base64url".to_owned()))?;
-    if authenticated.len() <= 32 {
-        return Err(ApiError::BadRequest("cursor is not valid".to_owned()));
-    }
-    let (bytes, signature) = authenticated.split_at(authenticated.len() - 32);
-    let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
-    ring::hmac::verify(&signing_key, bytes, signature)
-        .map_err(|_| ApiError::BadRequest("cursor authentication failed".to_owned()))?;
-    let cursor: PlayerHistoryCursorToken = serde_json::from_slice(bytes)
-        .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))?;
+    let cursor: PlayerHistoryCursorToken = decode_cursor_envelope(value, key)?;
     if cursor.player_public_key != player_public_key || cursor.query_sha256 != query_sha256 {
         return Err(ApiError::BadRequest(
             "cursor does not belong to this player history query".to_owned(),
@@ -5996,6 +5988,129 @@ pub(crate) mod tests {
         let tampered = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(decoded);
         assert!(decode_cursor(&tampered, Digest32::from_bytes([1; 32]), &key).is_err());
         assert!(decode_cursor(&encoded, Digest32::from_bytes([1; 32]), &[4; 32]).is_err());
+    }
+
+    fn history_cursor() -> PlayerHistoryCursorToken {
+        PlayerHistoryCursorToken {
+            player_public_key: PublicKey32::from_bytes([3; 32]),
+            query_sha256: Digest32::from_bytes([4; 32]),
+            accepted_sequence_watermark: 25,
+            visibility_revision: 3,
+            accepted_sequence: 20,
+            run_id: "run-1".to_owned(),
+        }
+    }
+
+    // Independent legacy envelope construction, also used to authenticate
+    // malformed JSON without going through the production serializer.
+    fn legacy_cursor_envelope(bytes: &[u8], key: &[u8; 32]) -> String {
+        let signature =
+            ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key), bytes);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode([bytes, signature.as_ref()].concat())
+    }
+
+    #[test]
+    fn both_cursor_formats_preserve_legacy_bytes() {
+        let key = [2; 32];
+        let board_json = format!(
+            r#"{{"filter_sha256":"{}","accepted_sequence_watermark":25,"visibility_revision":3,"metric_value":12345,"position":4,"rank":3,"accepted_sequence":20,"verified_at_unix_ms":1234567,"run_id":"018f0000-0000-7000-8000-000000000000"}}"#,
+            "01".repeat(32)
+        );
+        let history_json = format!(
+            r#"{{"player_public_key":"{}","query_sha256":"{}","accepted_sequence_watermark":25,"visibility_revision":3,"accepted_sequence":20,"run_id":"run-1"}}"#,
+            "03".repeat(32),
+            "04".repeat(32)
+        );
+        assert_eq!(
+            encode_cursor(&cursor(), &key).unwrap(),
+            legacy_cursor_envelope(board_json.as_bytes(), &key)
+        );
+        assert_eq!(
+            encode_player_history_cursor(&history_cursor(), &key).unwrap(),
+            legacy_cursor_envelope(history_json.as_bytes(), &key)
+        );
+    }
+
+    #[test]
+    fn history_cursor_authenticates_and_binds_player_and_query() {
+        let key = [2; 32];
+        let cursor = history_cursor();
+        let encoded = encode_player_history_cursor(&cursor, &key).unwrap();
+        let decode = |value: &str, player, query, key: &[u8; 32]| {
+            decode_player_history_cursor(value, player, query, key)
+        };
+        let restored = decode(
+            &encoded,
+            cursor.player_public_key,
+            cursor.query_sha256,
+            &key,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(&cursor).unwrap()
+        );
+        for (player, query) in [
+            (PublicKey32::from_bytes([5; 32]), cursor.query_sha256),
+            (cursor.player_public_key, Digest32::from_bytes([5; 32])),
+        ] {
+            assert_eq!(
+                decode(&encoded, player, query, &key)
+                    .unwrap_err()
+                    .to_string(),
+                "cursor does not belong to this player history query"
+            );
+        }
+        let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&encoded)
+            .unwrap();
+        bytes[10] ^= 1;
+        let tampered = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        for (value, key) in [(&tampered, key), (&encoded, [9; 32])] {
+            assert_eq!(
+                decode(value, cursor.player_public_key, cursor.query_sha256, &key)
+                    .unwrap_err()
+                    .to_string(),
+                "cursor authentication failed"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_envelope_errors_preserve_precedence_for_both_formats() {
+        let key = [2; 32];
+        for (value, expected) in [
+            ("!".repeat(2049), "cursor is too long"),
+            ("!".repeat(2048), "cursor is not valid base64url"),
+            (
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0; 32]),
+                "cursor is not valid",
+            ),
+            (
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0; 33]),
+                "cursor authentication failed",
+            ),
+            (
+                legacy_cursor_envelope(b"not json", &key),
+                "cursor is not valid",
+            ),
+            (legacy_cursor_envelope(b"{}", &key), "cursor is not valid"),
+        ] {
+            for error in [
+                decode_cursor(&value, Digest32::from_bytes([9; 32]), &key).unwrap_err(),
+                decode_player_history_cursor(
+                    &value,
+                    PublicKey32::from_bytes([9; 32]),
+                    Digest32::from_bytes([9; 32]),
+                    &key,
+                )
+                .unwrap_err(),
+            ] {
+                assert!(matches!(error, ApiError::BadRequest(_)));
+                assert_eq!(error.to_string(), expected);
+            }
+        }
     }
 
     #[test]
