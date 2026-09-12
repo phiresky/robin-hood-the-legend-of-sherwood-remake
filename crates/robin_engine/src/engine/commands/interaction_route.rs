@@ -618,7 +618,7 @@ impl EngineInner {
         );
         let interaction = SequenceElement::new_interaction(2, command, Some(actor), Some(target));
 
-        self.build_gate_movement_sequence(
+        self.launch_gate_movement_sequence(
             sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: actor,

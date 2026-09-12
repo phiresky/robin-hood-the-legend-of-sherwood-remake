@@ -744,7 +744,7 @@ impl EngineInner {
                         // so the flag flip + element termination
                         // happen on animation end.  Target door is
                         // read from the `Field::Door` property set
-                        // by `build_gate_movement_sequence`.
+                        // by `launch_gate_movement_sequence`.
                         Command::UnlockDoor => {
                             if self.instruct_unlock_door(owner, seq_id, elem_idx)
                                 == OwnerActionBarrier::Skip

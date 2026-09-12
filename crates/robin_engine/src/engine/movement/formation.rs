@@ -939,7 +939,7 @@ impl EngineInner {
                         );
                         continue;
                     };
-                    self.build_gate_movement_sequence(
+                    self.launch_gate_movement_sequence(
                         sim,
                         crate::engine::movement::GateRouteRequest {
                             entity_id: approach_owner,
@@ -1376,7 +1376,7 @@ impl EngineInner {
                             tolerance: 0.0,
                         }
                     };
-                    let _ = self.build_gate_movement_sequence(
+                    self.launch_gate_movement_order(
                         sim,
                         crate::engine::movement::GateRouteRequest {
                             entity_id: *pc_id,

@@ -255,7 +255,7 @@ impl EngineInner {
 
         // Cross-sector routing: when the target is separated from the
         // PC by one or more gates, a plain `Command::Seek` never
-        // crosses them.  Route through `build_gate_movement_sequence`
+        // crosses them.  Route through `launch_gate_movement_sequence`
         // so the actor walks through gates and then seeks the target.
         // When a swordfight jump-line pair spans the final hop, use
         // `GoalShape::Line` so the arrival check snaps to line
@@ -389,7 +389,7 @@ impl EngineInner {
                 // post-seek work exactly like the Original. Arrival speech
                 // and generic posture recovery belong to PC group moves, not
                 // soldier interaction.
-                let _ = self.build_gate_movement_sequence(sim, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
+                self.launch_gate_movement_order(sim, crate::engine::movement::GateRouteRequest { entity_id: pc_id, source_sector: Some(
                         crate::position_interface::SectorHandle::new(adj_src_sector)
                             .unwrap_or_else(|| {
                                 panic!(

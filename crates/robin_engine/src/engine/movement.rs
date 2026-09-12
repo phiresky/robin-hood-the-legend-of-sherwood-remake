@@ -2762,7 +2762,7 @@ pub(crate) fn mercenary_formation_destinations(
         .collect()
 }
 
-/// Shape of the goal passed to [`EngineInner::build_gate_movement_sequence`].
+/// Shape of the goal passed to [`EngineInner::launch_gate_movement_sequence`].
 ///
 /// Unifies the three goal flavours (point, door, line) into a single
 /// builder; the function switches on this enum to pick the right

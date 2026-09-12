@@ -65,6 +65,56 @@ fn tick_movement_and_sequences(
 }
 
 #[test]
+fn rejected_gate_routes_launch_nothing_and_consume_no_random_draws() {
+    use crate::engine::movement::{GateRouteRequest, GoalShape};
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sequence::MoveFlags;
+
+    for retain_sequence_id in [true, false] {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(minimal_movement_test_mission());
+        let owner =
+            engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+        let before = engine.orders.sequence_manager.sequence_count();
+        let request = GateRouteRequest {
+            entity_id: owner,
+            source_sector: crate::position_interface::SectorHandle::new(0),
+            gate_path: vec![GatePathStep {
+                door_index: DoorIndex::new(0).expect("valid door index"),
+                direct: true,
+            }],
+            goal: GoalShape::Point {
+                point: MapPoint::new(10.0, 20.0),
+                tolerance: 0.0,
+            },
+            goal_layer: 0,
+            base_action: crate::order::OrderType::WalkingUpright,
+            move_after_last_door: true,
+            speed_factor: 1.0,
+            initial_flags: MoveFlags::empty(),
+            prefix_elements: Vec::new(),
+            tail_elements: Vec::new(),
+            append_arrival_speech: false,
+            append_recovery: false,
+        };
+        let sim = crate::sim_rng::test_context();
+        let ((), draws) = crate::sim_rng::with_draw_trace(|| {
+            if retain_sequence_id {
+                assert!(
+                    engine
+                        .launch_gate_movement_sequence(&sim, request)
+                        .is_none()
+                );
+            } else {
+                engine.launch_gate_movement_order(&sim, request);
+            }
+        });
+        assert!(draws.is_empty());
+        assert_eq!(engine.orders.sequence_manager.sequence_count(), before);
+    }
+}
+
+#[test]
 fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     use crate::engine::movement::GoalShape;
     use crate::fast_find_grid::{GridSector, SectorIndex};
@@ -178,7 +228,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
 
     let (sequence_id, draws) = crate::sim_rng::with_draw_trace(|| {
         engine
-            .build_gate_movement_sequence(
+            .launch_gate_movement_sequence(
                 &sim,
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
@@ -229,7 +279,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     ));
 
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.build_gate_movement_sequence(
+        engine.launch_gate_movement_sequence(
             &sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -275,7 +325,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
     );
 
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.build_gate_movement_sequence(
+        engine.launch_gate_movement_sequence(
             &sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -324,7 +374,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         .unwrap()
         .with_arena_index(SectorIndex::new(3).unwrap());
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.build_gate_movement_sequence(
+        engine.launch_gate_movement_sequence(
             &sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -362,7 +412,7 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         .unwrap()
         .with_arena_index(SectorIndex::new(5).unwrap());
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
-        engine.build_gate_movement_sequence(
+        engine.launch_gate_movement_sequence(
             &sim,
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -446,7 +496,7 @@ fn line_jump_approach_routes_cross_sector_before_jump_tail() {
         1.0,
     );
     let sequence_id = engine
-        .build_gate_movement_sequence(
+        .launch_gate_movement_sequence(
             &crate::sim_rng::test_context(),
             crate::engine::movement::GateRouteRequest {
                 entity_id: owner,
@@ -1043,7 +1093,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         }];
 
         let sequence_id = engine
-            .build_gate_movement_sequence(
+            .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
@@ -1174,7 +1224,7 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
         }];
 
         let sequence_id = engine
-            .build_gate_movement_sequence(
+            .launch_gate_movement_sequence(
                 &crate::sim_rng::test_context(),
                 crate::engine::movement::GateRouteRequest {
                     entity_id: owner,
@@ -1210,6 +1260,14 @@ fn gate_builder_retains_pass_direction_and_faces_locked_gate_exit() {
                 .iter()
                 .any(|element| element.command == Command::UnlockDoor),
             "fixture must exercise the lockpick branch"
+        );
+        assert_eq!(
+            sequence
+                .last()
+                .expect("lockpick sequence has elements")
+                .command,
+            Command::UnlockDoor,
+            "intermediate lockpick must suppress the ordinary route goal tail"
         );
         let turn = sequence
             .elements
