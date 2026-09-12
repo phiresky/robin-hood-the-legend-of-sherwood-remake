@@ -1983,7 +1983,7 @@ impl ShippingDatadir {
     /// Parse a shipping datadir blob already in memory.  Used by the
     /// wasm-bindgen bootstrap, which fetches `datadir.bin` from JS,
     /// hands the bytes to Rust, and decodes here — bypassing the
-    /// `asset_fs::read` path (which is bundle-only on wasm and the
+    /// `asset_fs::read_shared` path (which is bundle-only on wasm and the
     /// bundle isn't installed yet at this point).
     pub fn from_compressed_bytes(compressed: &[u8]) -> Result<Self> {
         // Streaming decoder with `windowLogMax=30` (1 GiB virtual) —

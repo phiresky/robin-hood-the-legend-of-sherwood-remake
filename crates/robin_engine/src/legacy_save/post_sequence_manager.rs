@@ -497,7 +497,7 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     const FINGERPRINT_SEQUENCE: [u8; 16] = hex16("462542ef9f0ef300dff9647c2091d151");
     const FINGERPRINT_SEQUENCE_ELEMENT: [u8; 16] = hex16("8358d2ae0236d0e6a448a02189c93b67");
@@ -560,8 +560,8 @@ mod tests {
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut temp = NamedTempFile::new().expect("temporary file");
         temp.write_all(bytes).expect("write fixture");
-        let mut file = SbFile::open(temp.path().to_str().expect("utf-8 path"), SB_FILE_READ)
-            .expect("open fixture");
+        let mut file =
+            SbFile::open(temp.path().to_str().expect("utf-8 path")).expect("open fixture");
         read(&mut LegacyReader::new(&mut file))
     }
 

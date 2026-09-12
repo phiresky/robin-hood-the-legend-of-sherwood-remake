@@ -12,7 +12,7 @@
 use crate::coordinates::MapPoint;
 use crate::human_control::{CombatStance, CommandInterface, DecisionPolicy, MissionRole};
 use crate::legacy_io::{LegacyIoError, LegacyReader};
-use crate::sbfile::{SB_FILE_READ, SbFile};
+use crate::sbfile::SbFile;
 use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════
@@ -2671,7 +2671,7 @@ pub fn load_level_with_files(
 
     // Open proto-level and detect format
     let proto_file = files
-        .open(&proto_path, SB_FILE_READ)
+        .open(&proto_path)
         .map_err(|_| LevelError::FileNotFound(proto_path.clone()))?;
     let mut proto_reader = ChunkReader::new(proto_file);
 
@@ -2692,7 +2692,7 @@ pub fn load_level_with_files(
 
     // Open and load mission
     let mission_file = files
-        .open(&mission_path, SB_FILE_READ)
+        .open(&mission_path)
         .map_err(|_| LevelError::FileNotFound(mission_path.clone()))?;
     let mut mission_reader = ChunkReader::new(mission_file);
 
@@ -3729,7 +3729,7 @@ pub fn scan_mission_for_beam_mes_with_files(
     files: &crate::sbfile::SbFileSystem,
 ) -> Result<MissionBeamMeScan, LevelError> {
     let file = files
-        .open(path, SB_FILE_READ)
+        .open(path)
         .map_err(|_| LevelError::FileNotFound(path.to_string()))?;
     let mut reader = ChunkReader::new(file);
 
@@ -5428,7 +5428,7 @@ mod tests {
         let data = build_chunk(b"TEST", 1, &payload);
         let (_dir, path) = write_temp_file("chunk.bin", &data);
 
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         reader.chunk_start(b"TEST", 1).unwrap();
@@ -5587,7 +5587,7 @@ mod tests {
         let data = build_chunk(b"AAAA", 1, &[]);
         let (_dir, path) = write_temp_file("mismatch.bin", &data);
 
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let err = reader.chunk_start(b"BBBB", 1).unwrap_err();
@@ -5599,7 +5599,7 @@ mod tests {
         let data = build_chunk(b"TEST", 5, &[]);
         let (_dir, path) = write_temp_file("vermis.bin", &data);
 
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let err = reader.chunk_start(b"TEST", 3).unwrap_err();
@@ -5619,7 +5619,7 @@ mod tests {
         let outer = build_chunk(b"ROOT", 1, &data);
         let (_dir, path) = write_temp_file("peek.bin", &outer);
 
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         reader.chunk_start(b"ROOT", 1).unwrap();
@@ -5666,7 +5666,7 @@ mod tests {
 
             let proto = build_chunk(format.proto_tag(), format.file_version(), &payload);
             let (_dir, path) = write_temp_file("proto-order.rhp", &proto);
-            let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+            let file = SbFile::open(&path).unwrap();
             let mut reader = ChunkReader::new(file);
 
             let loaded = load_proto_level(&mut reader, format).unwrap();
@@ -5691,7 +5691,7 @@ mod tests {
         let outer = build_chunk(format.mission_tag(), format.file_version(), &header_chunk);
         let (_dir, path) = write_temp_file("mission.bin", &outer);
 
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let mission = load_mission(&mut reader, format, &|_| false).unwrap();
@@ -5761,7 +5761,7 @@ mod tests {
         );
 
         let (_dir, path) = write_temp_file("soldiers.bin", &outer);
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let mission = load_mission(&mut reader, format, &|_| false).unwrap();
@@ -5829,7 +5829,7 @@ mod tests {
         );
 
         let (_dir, path) = write_temp_file("beamme.bin", &outer);
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let mission = load_mission(&mut reader, format, &|_| false).unwrap();
@@ -5887,7 +5887,7 @@ mod tests {
         );
 
         let (_dir, path) = write_temp_file("bonus.bin", &outer);
-        let file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let file = SbFile::open(&path).unwrap();
         let mut reader = ChunkReader::new(file);
 
         let mission = load_mission(&mut reader, format, &|_| false).unwrap();

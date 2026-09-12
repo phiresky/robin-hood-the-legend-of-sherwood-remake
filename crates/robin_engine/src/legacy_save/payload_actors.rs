@@ -641,7 +641,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     fn push_u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -664,7 +664,7 @@ mod tests {
         fixture.write_all(bytes).unwrap();
         fixture.flush().unwrap();
         let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

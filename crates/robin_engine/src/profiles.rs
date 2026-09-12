@@ -1749,7 +1749,7 @@ impl ProfileManager {
         files: &crate::sbfile::SbFileSystem,
     ) -> Result<serde_json::Value, ProfileJsonLoadError> {
         let mut file = files
-            .open(path, crate::sbfile::SB_FILE_READ)
+            .open(path)
             .map_err(|status| ProfileJsonLoadError::Open {
                 path: path.into(),
                 status,

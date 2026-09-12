@@ -98,7 +98,7 @@ impl NativeFont {
     /// and case-insensitive lookup).
     pub fn load(path: &str, files: &SbFileSystem) -> Result<Self> {
         let mut file = files
-            .open(path, 0)
+            .open(path)
             .map_err(|e| anyhow::anyhow!("cannot open font '{}': error {}", path, e))?;
 
         // ── File header ─────────────────────────────────────────────

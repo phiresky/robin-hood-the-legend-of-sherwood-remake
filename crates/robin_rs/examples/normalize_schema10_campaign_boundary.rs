@@ -52,11 +52,8 @@ fn main() {
     assert_eq!(prefix["type"], "rng_prefix");
 
     let mut profiles = ProfileManager::new();
-    let mut cpf = robin_engine::sbfile::SbFile::open(
-        "Data/Configuration/profile.cpf",
-        robin_engine::sbfile::SB_FILE_READ,
-    )
-    .expect("open profile.cpf");
+    let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
+        .expect("open profile.cpf");
     profiles
         .load_all_legacy_cpf(&mut cpf)
         .expect("parse profile.cpf");

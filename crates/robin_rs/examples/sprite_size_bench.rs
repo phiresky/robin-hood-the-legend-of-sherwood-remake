@@ -244,7 +244,7 @@ fn bench_maps(data_dir: &Path, tmp: &Path, max: usize, codec: CodecOpts) -> Resu
     for map_path in &maps {
         let original_bytes = fs::metadata(map_path)?.len();
 
-        let mut file = SbFile::open(map_path.to_str().unwrap(), sbfile::SB_FILE_READ)
+        let mut file = SbFile::open(map_path.to_str().unwrap())
             .map_err(|e| anyhow!("open {}: {e}", map_path.display()))?;
         let pic = Picture::load_sixteen_from_stream(&mut file)
             .with_context(|| format!("decode {}", map_path.display()))?;

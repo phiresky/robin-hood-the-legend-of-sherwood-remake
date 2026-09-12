@@ -195,7 +195,6 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SB_FILE_READ;
 
     const NOTTINGHAM_MISSION_ID: u32 = 0x4153;
 
@@ -218,7 +217,7 @@ mod tests {
         temporary.write_all(bytes).unwrap();
         temporary.flush().unwrap();
         let path = temporary.path().to_str().unwrap();
-        let mut file = SbFile::open(path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

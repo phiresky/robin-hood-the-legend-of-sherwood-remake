@@ -282,7 +282,7 @@ fn open_bank_storage(bks_path: &str, files: &SbFileSystem) -> Result<BankStorage
     }
 
     let bytes = files
-        .open(bks_path, 0)
+        .open(bks_path)
         .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
         .into_shared_bytes();
     if !bytes.len().is_multiple_of(2) {

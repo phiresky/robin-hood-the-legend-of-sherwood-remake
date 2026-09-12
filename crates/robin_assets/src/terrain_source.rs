@@ -1,7 +1,7 @@
 //! Terrain candidate ordering and checked optional reads. Encoding eligibility
 //! (including authored PNG overlays) and shipping precedence remain caller policy.
 
-use robin_data_io::sbfile::{SB_FILE_READ, SbFile, SbFileSystem};
+use robin_data_io::sbfile::{SbFile, SbFileSystem};
 
 pub fn candidate_paths(root: &str, ambiance: &str, map: &str, extension: &str) -> [String; 3] {
     [
@@ -22,7 +22,7 @@ pub fn open_candidate(path: &str, files: &SbFileSystem) -> Result<Option<SbFile>
         return Ok(None);
     }
     files
-        .open(path, SB_FILE_READ)
+        .open(path)
         .map(Some)
         .map_err(|status| format!("failed to open terrain image '{path}': {status}"))
 }

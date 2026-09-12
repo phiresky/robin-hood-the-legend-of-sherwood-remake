@@ -1012,11 +1012,8 @@ pub(super) fn initialize_headless_engine(
     timing: &robin_engine::audio_durations::AudioDurations,
 ) -> (Engine, LevelAssets, robin_engine::scb::ScbFile) {
     let mut profile_manager = robin_engine::profiles::ProfileManager::new();
-    let mut cpf = robin_engine::sbfile::SbFile::open(
-        "Data/Configuration/profile.cpf",
-        robin_engine::sbfile::SB_FILE_READ,
-    )
-    .expect("open profile.cpf");
+    let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
+        .expect("open profile.cpf");
     profile_manager
         .load_all_legacy_cpf(&mut cpf)
         .expect("parse profile.cpf");
@@ -1124,11 +1121,8 @@ pub(super) fn initialize_engine(
     robin_rs::ingame_menu::resources::MenuText,
 ) {
     let mut pm = robin_engine::profiles::ProfileManager::new();
-    let mut cpf = robin_engine::sbfile::SbFile::open(
-        "Data/Configuration/profile.cpf",
-        robin_engine::sbfile::SB_FILE_READ,
-    )
-    .expect("open profile.cpf");
+    let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
+        .expect("open profile.cpf");
     pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
     pm.import_beam_mes("Data/Levels");
 

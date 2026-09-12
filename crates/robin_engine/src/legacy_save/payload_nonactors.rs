@@ -484,7 +484,7 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     struct NoScript;
 
@@ -504,7 +504,7 @@ mod tests {
         temporary.write_all(bytes).unwrap();
         temporary.flush().unwrap();
         let path = temporary.path().to_str().unwrap();
-        let mut file = SbFile::open(path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

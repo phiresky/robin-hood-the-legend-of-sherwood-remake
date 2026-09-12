@@ -668,12 +668,6 @@ pub fn install_preloaded_asset<P: AsRef<Path>>(path: P, bytes: Vec<u8>) -> Resul
     global().install_preloaded_asset(path, bytes)
 }
 
-/// Read through the runtime mounts, then fall back to a direct host path on
-/// native for call sites that have not yet been migrated to virtual paths.
-pub fn read<P: AsRef<Path>>(path: P) -> Result<Vec<u8>, AssetError> {
-    read_shared(path).map(AssetBytes::into_vec)
-}
-
 /// Read through the runtime mounts without copying memory-mounted bytes.
 pub fn read_shared<P: AsRef<Path>>(path: P) -> Result<AssetBytes, AssetError> {
     let path = path.as_ref();

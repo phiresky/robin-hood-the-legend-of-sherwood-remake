@@ -163,7 +163,7 @@ impl MissionResourceEnvironment {
         self.files
             .as_ref()
             .ok_or_else(|| format!("required RHS {path} absent from closed mission resources"))?
-            .open(path, 0)
+            .open(path)
             .map_err(|error| format!("Unable to open RHS file {path}: {error}"))
     }
 }
@@ -789,7 +789,7 @@ impl SpriteScriptor {
     pub fn load_all_profiles_legacy(
         path: &str,
     ) -> Result<(u32, Vec<(String, SpriteInfo)>), String> {
-        let mut file = SbFile::open(path, 0).map_err(|e| format!("open rhs {path}: {e}"))?;
+        let mut file = SbFile::open(path).map_err(|e| format!("open rhs {path}: {e}"))?;
 
         // File starts with a u32 bank signature followed by u16 num_profiles.
         let signature = LegacyReader::new(&mut file)

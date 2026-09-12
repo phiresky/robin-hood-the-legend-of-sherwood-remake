@@ -888,7 +888,7 @@ fn load_profiles_with_files(
     let cpf_path = "Data/Configuration/profile.cpf";
     tracing::info!("Profiles: loading legacy CPF {cpf_path}");
     let mut file = files
-        .open(cpf_path, engine_sbfile::SB_FILE_READ)
+        .open(cpf_path)
         .map_err(|status| InitError::ContentProfilesOpen {
             path: cpf_path,
             status,

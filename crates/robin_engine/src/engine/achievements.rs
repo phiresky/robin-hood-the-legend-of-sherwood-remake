@@ -764,11 +764,9 @@ mod tests {
         };
         use crate::campaign::{Campaign, CampaignValue};
         let root = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
-        let mut file = crate::sbfile::SbFile::open(
-            &format!("{root}/Data/Configuration/profile.cpf"),
-            crate::sbfile::SB_FILE_READ,
-        )
-        .expect("open full-game profiles");
+        let mut file =
+            crate::sbfile::SbFile::open(&format!("{root}/Data/Configuration/profile.cpf"))
+                .expect("open full-game profiles");
         let mut profiles = crate::profiles::ProfileManager::new();
         profiles
             .load_all_legacy_cpf(&mut file)

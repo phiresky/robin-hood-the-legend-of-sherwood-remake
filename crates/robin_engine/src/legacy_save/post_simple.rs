@@ -503,13 +503,13 @@ mod tests {
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
 
     fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
         let mut temporary = NamedTempFile::new().unwrap();
         temporary.write_all(bytes).unwrap();
         temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap(), SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 

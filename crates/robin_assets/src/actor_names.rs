@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use robin_data_io::sbfile::{SB_FILE_READ, SbFile, SbFileSystem};
+use robin_data_io::sbfile::{SbFile, SbFileSystem};
 use robin_engine::element_kinds::BonusItemType;
 use robin_engine::level_data::{
     LoadedLevel, LoadedMission, LoadedProtoLevel, WaypointCommand, load_level_with_files,
@@ -403,7 +403,7 @@ fn load_profile_manager(datadir: &Path, files: &SbFileSystem) -> Result<ProfileM
     }
     let cpf_path = data_dir.join("Configuration").join("profile.cpf");
     let mut file = files
-        .open(&cpf_path.to_string_lossy(), SB_FILE_READ)
+        .open(&cpf_path.to_string_lossy())
         .map_err(|e| LoadError::Profiles(format!("open {}: error {e}", cpf_path.display())))?;
     let mut mgr = ProfileManager::new();
     mgr.load_all_legacy_cpf(&mut file)

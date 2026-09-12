@@ -471,7 +471,6 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use crate::sbfile::SB_FILE_READ;
 
     #[test]
     fn failed_seek_retains_position_and_reports_context() {
@@ -491,7 +490,7 @@ mod tests {
         fixture.write_all(bytes).unwrap();
         fixture.flush().unwrap();
         let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 
@@ -539,7 +538,7 @@ mod tests {
         let mut fixture = tempfile::NamedTempFile::new().unwrap();
         fixture.write_all(&[0x34]).unwrap();
         let path = fixture.path().to_string_lossy().into_owned();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         let mut reader = LegacyReader::new(&mut file);
 
         let error = reader

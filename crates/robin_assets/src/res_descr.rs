@@ -143,7 +143,7 @@ pub fn load(path: &str) -> Result<LevelDescriptors> {
 /// Read descriptors through caller-owned preparation authority.
 pub fn load_with_files(path: &str, files: &SbFileSystem) -> Result<LevelDescriptors> {
     let file = files
-        .open(path, 0)
+        .open(path)
         .map_err(|e| anyhow!("open '{path}': error {e}"))?;
     decode(&file.into_shared_bytes()).with_context(|| format!("decode descriptor '{path}'"))
 }
@@ -163,7 +163,7 @@ pub fn resolve(
         return Ok(Some(descriptor.clone()));
     }
     let path = format!("Data/Text/{filename}");
-    match files.open(&path, 0) {
+    match files.open(&path) {
         Ok(file) => decode(&file.into_shared_bytes())
             .map(Some)
             .with_context(|| format!("decode descriptor '{path}'")),
@@ -426,7 +426,7 @@ mod tests {
     fn load_demo_leicester_red() {
         // Requires the demo data directory to be present.
         let path = "Data/Text/RHLevelSB.red";
-        let file_check = SbFile::open(path, 0);
+        let file_check = SbFile::open(path);
         if file_check.is_err() {
             eprintln!("Skipping .red load test — data file not found");
             return;

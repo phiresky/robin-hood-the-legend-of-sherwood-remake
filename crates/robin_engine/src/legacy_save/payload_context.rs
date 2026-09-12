@@ -414,7 +414,7 @@ mod tests {
 
     use super::*;
     use crate::legacy_save::payload_vm::LegacyVmMemberValue;
-    use crate::sbfile::{SB_FILE_READ, SbFile};
+    use crate::sbfile::SbFile;
     use crate::scb::{ClassEntry, MemberVariable, ScType, TypeTag};
 
     fn scb() -> ScbFile {
@@ -466,7 +466,7 @@ mod tests {
         fixture.write_all(bytes).unwrap();
         fixture.flush().unwrap();
         let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path, SB_FILE_READ).unwrap();
+        let mut file = SbFile::open(&path).unwrap();
         read(&mut LegacyReader::new(&mut file))
     }
 
