@@ -28,7 +28,10 @@ pub use robin_assets::original_text::LANGUAGE_FOLDERS;
 pub fn register_language_data_paths() {
     let _ = SbFile::add_alternate_path(robin_assets::original_text::FALLBACK_LOCALE_FOLDER);
     for &folder in LANGUAGE_FOLDERS {
-        if SbFile::exists(folder) {
+        if robin_engine::sbfile::global_file_system()
+            .try_exists(folder)
+            .unwrap_or_else(|error| panic!("inspect parity language folder {folder}: {error}"))
+        {
             tracing::info!(folder, "detected parity replay language folder");
             let _ = SbFile::add_alternate_path(folder);
             return;
