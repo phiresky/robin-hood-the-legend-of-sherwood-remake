@@ -16,7 +16,6 @@ use crate::scb::{MemberVariable, ScbFile, TypeTag};
 
 use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacySectorRef};
 
-const NULL_U32: u32 = u32::MAX;
 const NULL_U16: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

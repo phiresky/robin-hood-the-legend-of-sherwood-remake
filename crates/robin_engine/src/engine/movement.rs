@@ -10,6 +10,8 @@ use super::door_pass::{
 use super::*;
 use crate::coordinates::{MapBBox, MapPoint, MapVec};
 use crate::element::EntityId;
+#[cfg(test)]
+use crate::element::ActiveDoorPass;
 use crate::entities::EntitySlots;
 use crate::movement::ActiveMovement;
 use crate::order::OrderType;

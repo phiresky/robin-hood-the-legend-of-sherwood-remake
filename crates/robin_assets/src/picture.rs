@@ -359,7 +359,7 @@ impl Picture {
         // rewind and parse as the legacy Sixteen format.
         let start = file.tell();
         let mut head = [0u8; 12];
-        file.serialize_bytes(&mut head)
+        file.read(&mut head)
             .map_err(|e| anyhow!("read terrain header: {e}"))?;
         if is_jxl_signature(&head) {
             let total = usize::try_from(
@@ -371,7 +371,7 @@ impl Picture {
             let mut blob = Vec::with_capacity(total);
             blob.extend_from_slice(&head);
             blob.resize(total, 0);
-            file.serialize_bytes(&mut blob[head.len()..])
+            file.read(&mut blob[head.len()..])
                 .map_err(|e| anyhow!("read terrain body: {e}"))?;
             return Self::load_jxl_rgb565(&blob);
         }
