@@ -23,7 +23,6 @@ use robin_engine::coordinates::ScreenBBox;
 use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::focus_manager::WidgetGroupable;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiEventData, UiMsg, UiState,
     resource_widget_id::{
@@ -38,7 +37,7 @@ use super::{WidgetBase, WidgetInput};
 ///
 /// `second_state` tracks which visual/logical state the toggle is in.
 /// Each activation flips the state. `group_focused` / `group_selected`
-/// come from the [`WidgetGroupable`] mixin and let an owning focus
+/// come from the widget state and let an owning focus
 /// manager override the rendered sprite to the menu BUTTON_FOCUSED /
 /// BUTTON_SELECTED styles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -460,66 +459,6 @@ impl WidgetToggleButton {
     }
 }
 
-// ── WidgetGroupable trait impl ─────────────────────────────────────
-//
-// Glue for `FocusManager` so a toggle button can be dropped into the
-// group navigation chain via `add_groupable`.
-//
-// `focus_manager` owns a compact navigation-event type, so widget events
-// are adapted at this boundary and keep payload-heavy UI dispatch out of
-// the keyboard/gamepad navigation layer.
-
-fn ui_event_to_focus_event(event: crate::ui::UiEvent) -> Option<crate::focus_manager::UiEvent> {
-    use crate::focus_manager::{UiEvent as FmEvent, UiEventType as FmType};
-    let msg_type = match event.msg_type {
-        UiMsg::WidgetFocused | UiMsg::WidgetUnfocused => FmType::FocusChanged,
-        UiMsg::WidgetActivated => FmType::Activated,
-        UiMsg::WidgetReactivated => FmType::SelectionChanged,
-        _ => return None,
-    };
-    Some(FmEvent {
-        msg_type,
-        origin: event.origin_widget_id as crate::focus_manager::WidgetId,
-    })
-}
-
-fn translate(events: Vec<UiEvent>) -> Vec<crate::focus_manager::UiEvent> {
-    events
-        .into_iter()
-        .filter_map(ui_event_to_focus_event)
-        .collect()
-}
-
-impl WidgetGroupable for WidgetToggleButton {
-    fn widget_id(&self) -> crate::focus_manager::WidgetId {
-        self.base.id as crate::focus_manager::WidgetId
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.base.enabled
-    }
-
-    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
-        WidgetToggleButton::is_mouse_inside(self, point)
-    }
-
-    fn hide_focus(&mut self, hide: bool) {
-        WidgetToggleButton::hide_focus(self, hide);
-    }
-
-    fn set_group_focused(&mut self, focused: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetToggleButton::set_group_focused(self, focused))
-    }
-
-    fn set_group_selected(&mut self, selected: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetToggleButton::set_group_selected(self, selected))
-    }
-
-    fn activate(&mut self) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetToggleButton::activate(self))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,18 +785,6 @@ mod tests {
         assert!(w.is_focused());
         w.base.state = UiState::PushedFirst;
         assert!(!w.is_focused());
-    }
-
-    #[test]
-    fn trait_impl_routes_to_inherent_methods() {
-        use crate::focus_manager::UiEventType;
-        let mut w = test_widget();
-        let g: &mut dyn WidgetGroupable = &mut w;
-        assert_eq!(g.widget_id(), 1);
-        assert!(g.is_enabled());
-        let events = g.activate();
-        assert_eq!(events[0].msg_type, UiEventType::Activated);
-        assert_eq!(events[0].origin, 1);
     }
 }
 

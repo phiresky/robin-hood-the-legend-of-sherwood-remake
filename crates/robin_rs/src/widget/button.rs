@@ -26,7 +26,6 @@ use robin_engine::coordinates::ScreenBBox;
 use robin_engine::coordinates::ScreenPoint;
 use serde::{Deserialize, Serialize};
 
-use crate::focus_manager::WidgetGroupable;
 use crate::ui::{
     KeyState, MouseButtons, UiEvent, UiMsg, UiState,
     resource_widget_id::{
@@ -429,63 +428,6 @@ impl WidgetButton {
 /// numeric compare suffices.
 fn max_state(a: UiState, b: UiState) -> UiState {
     if (a as u8) >= (b as u8) { a } else { b }
-}
-
-// ── WidgetGroupable trait impl ─────────────────────────────────────
-//
-// Glue for `FocusManager` so a menu button can be dropped into the group
-// navigation chain via `add_groupable`. Parallels `WidgetToggleButton`'s
-// impl (see `widget/toggle.rs`).
-
-fn ui_event_to_focus_event(event: crate::ui::UiEvent) -> Option<crate::focus_manager::UiEvent> {
-    use crate::focus_manager::{UiEvent as FmEvent, UiEventType as FmType};
-    let msg_type = match event.msg_type {
-        UiMsg::WidgetFocused | UiMsg::WidgetUnfocused => FmType::FocusChanged,
-        UiMsg::WidgetActivated => FmType::Activated,
-        UiMsg::WidgetReactivated => FmType::SelectionChanged,
-        _ => return None,
-    };
-    Some(FmEvent {
-        msg_type,
-        origin: event.origin_widget_id as crate::focus_manager::WidgetId,
-    })
-}
-
-fn translate(events: Vec<UiEvent>) -> Vec<crate::focus_manager::UiEvent> {
-    events
-        .into_iter()
-        .filter_map(ui_event_to_focus_event)
-        .collect()
-}
-
-impl WidgetGroupable for WidgetButton {
-    fn widget_id(&self) -> crate::focus_manager::WidgetId {
-        self.base.id as crate::focus_manager::WidgetId
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.base.enabled
-    }
-
-    fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
-        WidgetButton::is_mouse_inside(self, point)
-    }
-
-    fn hide_focus(&mut self, hide: bool) {
-        WidgetButton::hide_focus(self, hide);
-    }
-
-    fn set_group_focused(&mut self, focused: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetButton::set_group_focused(self, focused))
-    }
-
-    fn set_group_selected(&mut self, selected: bool) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetButton::set_group_selected(self, selected))
-    }
-
-    fn activate(&mut self) -> Vec<crate::focus_manager::UiEvent> {
-        translate(WidgetButton::activate(self))
-    }
 }
 
 #[cfg(test)]

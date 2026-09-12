@@ -315,7 +315,7 @@ pub async fn show_gameplay(
             }
             return false;
         }
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     }
 }
 

@@ -8,6 +8,8 @@ mod listbox;
 mod picture;
 mod radio;
 mod slider;
+#[cfg(test)]
+mod test_support;
 mod toggle;
 
 // Sim-side widget state (campaign-derived derived values) lives in
@@ -30,9 +32,8 @@ pub use toggle::WidgetToggleButton;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{
-    MouseButtons, ProbeCode, RendererAlphaConstant, RendererBase, RendererBitmap, RendererListbox,
-    RendererShadow, RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState,
-    resource_widget_id,
+    MouseButtons, ProbeCode, RendererBase, RendererBitmap, RendererListbox, RendererShadow,
+    RendererText, ResourceId, UiEvent, UiEventData, UiMsg, UiProbe, UiState, resource_widget_id,
 };
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
 
@@ -112,7 +113,6 @@ pub enum WidgetRenderer {
     None,
     Bitmap(RendererBitmap),
     Shadow(RendererShadow),
-    Alpha(RendererAlphaConstant),
     Text(RendererText),
     Listbox(RendererListbox),
 }
@@ -124,7 +124,6 @@ impl WidgetRenderer {
             Self::None => None,
             Self::Bitmap(r) => Some(&r.base),
             Self::Shadow(r) => Some(&r.base),
-            Self::Alpha(r) => Some(&r.base),
             Self::Text(r) => Some(&r.shadow.base),
             Self::Listbox(r) => Some(&r.base),
         }
@@ -136,7 +135,6 @@ impl WidgetRenderer {
             Self::None => None,
             Self::Bitmap(r) => Some(&mut r.base),
             Self::Shadow(r) => Some(&mut r.base),
-            Self::Alpha(r) => Some(&mut r.base),
             Self::Text(r) => Some(&mut r.shadow.base),
             Self::Listbox(r) => Some(&mut r.base),
         }
@@ -144,18 +142,12 @@ impl WidgetRenderer {
 
     /// Hit-test a point against the renderer's area.
     ///
-    /// For an `Alpha` renderer this short-circuits to `false` whenever
-    /// the current alpha level is 0 — a fully-faded widget cannot
-    /// receive clicks. Otherwise routes through
-    /// `RendererBase::is_real_point`, which performs a per-pixel
+    /// Routes through `RendererBase::is_real_point`, which performs a per-pixel
     /// transparency test against the widget's surface (honouring an
     /// attached `AlphaMask` if the wiring layer baked one from the
     /// bound sprite — see `widget_bridge::attach_alpha_masks`).
     pub fn is_real_point(&self, point: ScreenPoint) -> bool {
-        match self {
-            Self::Alpha(r) => r.is_real_point(point),
-            _ => self.base().is_some_and(|b| b.is_real_point(point)),
-        }
+        self.base().is_some_and(|b| b.is_real_point(point))
     }
 
     /// Set the bounding box on the underlying renderer.
@@ -166,8 +158,10 @@ impl WidgetRenderer {
     }
 
     /// Set the resource ID on the underlying renderer.
-    pub fn set_resource(&mut self, id: ResourceId) -> bool {
-        self.base_mut().is_some_and(|b| b.set_resource(id))
+    pub fn set_resource(&mut self, id: ResourceId) {
+        if let Some(base) = self.base_mut() {
+            base.set_resource(id);
+        }
     }
 
     /// Set text on the underlying renderer.

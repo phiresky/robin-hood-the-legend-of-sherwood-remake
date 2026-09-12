@@ -460,7 +460,11 @@ pub fn default_modal_cursor<'a>(
 
 impl ModalInputState {
     pub fn new() -> Self {
-        Self::default()
+        let mut state = Self::default();
+        // Establish the empty-key baseline before the first event is polled.
+        // UiKeyboard's first refresh does not emit transitions.
+        state.keyboard.refresh(&state.raw_keyboard, 0);
+        state
     }
 
     /// Update from a window event. Returns the event unchanged so the
@@ -597,6 +601,23 @@ impl ModalInputState {
         self.virt_x = vx as f32;
         self.virt_y = vy as f32;
     }
+}
+
+#[test]
+fn first_modal_frame_observes_a_new_key_press() {
+    let mut input = ModalInputState::new();
+    input
+        .raw_keyboard
+        .keys
+        .insert(winit::keyboard::KeyCode::Enter);
+    let frame = input.as_widget_input();
+    assert!(frame.keyboard.has_changed());
+    assert_eq!(
+        frame
+            .keyboard
+            .get_state_of_key(winit::keyboard::KeyCode::Enter),
+        crate::ui::KeyState::KeyDown,
+    );
 }
 
 // ─── Rendering bridge ───────────────────────────────────────────────
