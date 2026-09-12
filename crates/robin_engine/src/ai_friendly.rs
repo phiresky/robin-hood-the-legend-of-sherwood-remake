@@ -206,17 +206,7 @@ impl FriendlyAi {
             .has_boundary_work()
             .then(|| std::mem::take(&mut self.base.outbox.actor));
         self.base
-            .outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                outgoing_state: self.base.current_state,
-                outgoing_substate: self.base.current_substate,
-                incoming_state: state,
-                incoming_substate: substate,
-                source,
-                actor_effects_before_callback,
-            }));
+            .queue_state_change(state, substate, source, actor_effects_before_callback);
 
         self.base.set_ai_state(state);
         self.base.current_substate = substate;
@@ -616,119 +606,15 @@ impl FriendlyAi {
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
-        self.base.couldnt_reachpoint = false;
-        self.base.already_on_point = false;
-        self.base.already_turned = false;
-
-        // Static AI freeze discards stimuli after the engine-side script
-        // filter. It is not the per-NPC AILOCK_FREEZE retention bit.
-        if static_ai_frozen {
-            self.base.register_log_line(LogLineType::EventRefused, 1);
-            return false;
-        }
-
-        // Script lock — queue non-gameflow stimuli when
-        // `remember_events` is set so the script can drain them later.
-        if self.base.script_locked {
-            if self.base.remember_events {
-                match stimulus_type {
-                    StimulusType::EventDone | StimulusType::EventReachPoint => {
-                        // Gameflow commands — ignore.
-                    }
-                    _ => {
-                        self.base.stimulus_queue.push(*stimulus);
-                    }
-                }
-            }
-            self.base.register_log_line(LogLineType::EventRefused, 2);
-            return false;
-        }
-
-        // Every non-script AILOCK flag retains stimuli. Original's separate
-        // global freeze discard gate is not the per-NPC AILOCK_FREEZE bit.
-        if !self.base.locks_flag_field.is_empty() {
-            self.base.stimulus_queue.push(*stimulus);
-            self.base.register_log_line(LogLineType::EventRefused, 3);
-            return false;
-        }
-
-        // WonderingWaspInArmour gate.
-        if self.base.current_substate == Substate::WonderingWaspInArmour {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventWaspAway => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 4);
-                    return false;
-                }
-            }
-        }
-
-        // WonderingUnderNet gate.
-        if self.base.current_substate == Substate::WonderingUnderNet {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventNetAway => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 5);
-                    return false;
-                }
-            }
-        }
-
-        // FleeingMerryManLeaveMap gate.  Reached by civilian
-        // merry-men running off the map after rescue, so this gate
-        // is civilian-relevant.
-        if self.base.current_substate == Substate::FleeingMerryManLeaveMap
-            && stimulus_type != StimulusType::EventReachPoint
+        if !self
+            .base
+            .admit_think_before_role_gates(stimulus, static_ai_frozen)
         {
-            self.base.register_log_line(LogLineType::EventRefused, 6);
             return false;
         }
 
-        // Reset standing-around timer.
-        self.base.standing_around_timer = 0;
-
-        // Stale-timer handling.
-        if self.base.timer_is_running {
-            if self.base.current_substate != self.base.substate_at_last_timer_launch {
-                self.base.timer_is_running = false;
-            }
-        } else if stimulus_type == StimulusType::EventTimer
-            && self.base.current_substate != self.base.substate_at_last_timer_launch
-        {
-            self.base.register_log_line(LogLineType::EventRefused, 9);
+        if !self.base.admit_think_after_role_gates(stimulus, ctx) {
             return false;
-        }
-
-        // Dead guys ignore everything.  Defence-in-depth — scripts
-        // and cross-NPC actions can still fire stimuli at a corpse
-        // even though the tick loop normally skips them.
-        if ctx.self_is_dead {
-            self.base.register_log_line(LogLineType::EventRefused, 10);
-            return false;
-        }
-
-        // SleepingUnconscious refusal for non-recovery stimuli.
-        if self.base.current_substate == Substate::SleepingUnconscious
-            && stimulus_type != StimulusType::EventFitAgain
-        {
-            self.base.register_log_line(LogLineType::EventRefused, 11);
-            return false;
-        }
-
-        // Recovery is only valid when unconscious or napping; refused
-        // even when unconscious if the actor is being carried.
-        if stimulus_type == StimulusType::EventFitAgain {
-            match self.base.current_substate {
-                Substate::SleepingUnconscious | Substate::SleepingNapping => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 12);
-                    return false;
-                }
-            }
-            if ctx.posture == crate::element::Posture::Carried {
-                self.base.register_log_line(LogLineType::EventRefused, 7);
-                return false;
-            }
         }
 
         // These three stimuli are consumed by the common

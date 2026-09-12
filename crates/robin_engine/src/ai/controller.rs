@@ -891,17 +891,12 @@ impl AiController {
     ) {
         if self.current_substate != substate {
             let actor_effects_before_callback = std::mem::take(&mut self.outbox.actor);
-            self.outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                    outgoing_state: self.current_state,
-                    outgoing_substate: self.current_substate,
-                    incoming_state: state,
-                    incoming_substate: substate,
-                    source: AiStateChangeSource::SelfActor,
-                    actor_effects_before_callback: Some(actor_effects_before_callback),
-                }));
+            self.queue_state_change(
+                state,
+                substate,
+                AiStateChangeSource::SelfActor,
+                Some(actor_effects_before_callback),
+            );
         }
         self.set_ai_state(state);
         self.current_substate = substate;
@@ -5921,3 +5916,160 @@ impl ConsiderationAccumulator {
 
 #[cfg(test)]
 mod tests;
+
+impl AiController {
+    /// Shared freeze/lock and substate gates, before role-specific admission.
+    pub(crate) fn admit_think_before_role_gates(
+        &mut self,
+        stimulus: &Stimulus,
+        static_ai_frozen: bool,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        self.couldnt_reachpoint = false;
+        self.already_on_point = false;
+        self.already_turned = false;
+
+        // Static AI freeze discards stimuli after the engine-side script
+        // filter. It is not the per-NPC AILOCK_FREEZE retention bit.
+        if static_ai_frozen {
+            self.register_log_line(LogLineType::EventRefused, 1);
+            return false;
+        }
+
+        // Script lock — queue non-gameflow stimuli when
+        // `remember_events` is set so the script can drain them later.
+        if self.script_locked {
+            if self.remember_events {
+                match stimulus_type {
+                    StimulusType::EventDone | StimulusType::EventReachPoint => {
+                        // Gameflow commands — ignore.
+                    }
+                    _ => {
+                        self.stimulus_queue.push(*stimulus);
+                    }
+                }
+            }
+            self.register_log_line(LogLineType::EventRefused, 2);
+            return false;
+        }
+
+        // Every non-script AILOCK flag retains stimuli. Original's separate
+        // global freeze discard gate is not the per-NPC AILOCK_FREEZE bit.
+        if !self.locks_flag_field.is_empty() {
+            self.stimulus_queue.push(*stimulus);
+            self.register_log_line(LogLineType::EventRefused, 3);
+            return false;
+        }
+
+        // WonderingWaspInArmour gate.
+        if self.current_substate == Substate::WonderingWaspInArmour {
+            match stimulus_type {
+                StimulusType::EventLoseConsciousness | StimulusType::EventWaspAway => {}
+                _ => {
+                    self.register_log_line(LogLineType::EventRefused, 4);
+                    return false;
+                }
+            }
+        }
+
+        // WonderingUnderNet gate.
+        if self.current_substate == Substate::WonderingUnderNet {
+            match stimulus_type {
+                StimulusType::EventLoseConsciousness | StimulusType::EventNetAway => {}
+                _ => {
+                    self.register_log_line(LogLineType::EventRefused, 5);
+                    return false;
+                }
+            }
+        }
+
+        // FleeingMerryManLeaveMap gate.  Reached by civilian
+        // merry-men running off the map after rescue, so this gate
+        // is civilian-relevant.
+        if self.current_substate == Substate::FleeingMerryManLeaveMap
+            && stimulus_type != StimulusType::EventReachPoint
+        {
+            self.register_log_line(LogLineType::EventRefused, 6);
+            return false;
+        }
+
+        true
+    }
+
+    /// Shared timer/death/recovery gates, after the enemy physical-injury gate.
+    pub(crate) fn admit_think_after_role_gates(
+        &mut self,
+        stimulus: &Stimulus,
+        ctx: &AiContext,
+    ) -> bool {
+        let stimulus_type = stimulus.stimulus_type;
+        // Reset standing-around timer.
+        self.standing_around_timer = 0;
+
+        // Stale-timer handling.
+        if self.timer_is_running {
+            if self.current_substate != self.substate_at_last_timer_launch {
+                self.timer_is_running = false;
+            }
+        } else if stimulus_type == StimulusType::EventTimer
+            && self.current_substate != self.substate_at_last_timer_launch
+        {
+            self.register_log_line(LogLineType::EventRefused, 9);
+            return false;
+        }
+
+        // Dead guys ignore everything.  Defence-in-depth — scripts
+        // and cross-NPC actions can still fire stimuli at a corpse
+        // even though the tick loop normally skips them.
+        if ctx.self_is_dead {
+            self.register_log_line(LogLineType::EventRefused, 10);
+            return false;
+        }
+
+        // SleepingUnconscious refusal for non-recovery stimuli.
+        if self.current_substate == Substate::SleepingUnconscious
+            && stimulus_type != StimulusType::EventFitAgain
+        {
+            self.register_log_line(LogLineType::EventRefused, 11);
+            return false;
+        }
+
+        // Recovery is only valid when unconscious or napping; refused
+        // even when unconscious if the actor is being carried.
+        if stimulus_type == StimulusType::EventFitAgain {
+            match self.current_substate {
+                Substate::SleepingUnconscious | Substate::SleepingNapping => {}
+                _ => {
+                    self.register_log_line(LogLineType::EventRefused, 12);
+                    return false;
+                }
+            }
+            if ctx.posture == crate::element::Posture::Carried {
+                self.register_log_line(LogLineType::EventRefused, 7);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub(crate) fn queue_state_change(
+        &mut self,
+        state: AiState,
+        substate: Substate,
+        source: AiStateChangeSource,
+        actor_effects_before_callback: Option<AiActorOutbox>,
+    ) {
+        self.outbox
+            .reentrant
+            .owner_work
+            .push(AiOwnerWork::StateChange(AiStateChangeNotification {
+                outgoing_state: self.current_state,
+                outgoing_substate: self.current_substate,
+                incoming_state: state,
+                incoming_substate: substate,
+                source,
+                actor_effects_before_callback,
+            }));
+    }
+}

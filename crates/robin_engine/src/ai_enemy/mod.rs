@@ -1925,17 +1925,7 @@ impl EnemyAi {
                 _ => AiStateChangeSource::SelfActor,
             };
             self.base
-                .outbox
-                .reentrant
-                .owner_work
-                .push(AiOwnerWork::StateChange(AiStateChangeNotification {
-                    outgoing_state: self.base.current_state,
-                    outgoing_substate: self.base.current_substate,
-                    incoming_state: state,
-                    incoming_substate: substate,
-                    source,
-                    actor_effects_before_callback,
-                }));
+                .queue_state_change(state, substate, source, actor_effects_before_callback);
         }
         if opens_eyes {
             self.base
@@ -2559,73 +2549,10 @@ impl EnemyAi {
     ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
-        // The original clears callback-produced completion flags again after
-        // an accepted filter and before evaluating the remaining gates.
-        self.base.couldnt_reachpoint = false;
-        self.base.already_on_point = false;
-        self.base.already_turned = false;
-
-        // Script event filtering runs at the engine dispatch site
-        // before this `think()` is invoked — see
-        // `Engine::filter_stimulus`.  The freeze and script-lock
-        // checks below run after that.
-
-        // The original game's global AI freeze is distinct
-        // from both engine FreezeAll and the per-NPC AILOCK_FREEZE bit. The
-        // NPC still scans detection, but decision-tick admission discards each event.
-        if static_ai_frozen {
-            self.base.register_log_line(LogLineType::EventRefused, 1);
-            return false;
-        }
-
-        // Check script lock
-        if self.base.script_locked {
-            if self.base.remember_events {
-                match stimulus_type {
-                    StimulusType::EventDone | StimulusType::EventReachPoint => {
-                        // Gameflow commands — ignore
-                    }
-                    _ => {
-                        self.base.stimulus_queue.push(*stimulus);
-                    }
-                }
-            }
-            self.base.register_log_line(LogLineType::EventRefused, 2);
-            return false;
-        }
-
-        // Every non-script AILOCK flag retains stimuli. Original's separate
-        // global freeze discard gate is not the per-NPC AILOCK_FREEZE bit;
-        // engine-wide Rust freeze is handled before NPC update work.
-        if !self.base.locks_flag_field.is_empty() {
-            self.base.stimulus_queue.push(*stimulus);
-            self.base.register_log_line(LogLineType::EventRefused, 3);
-            return false;
-        }
-
-        // Special substates that block most events
-        if self.base.current_substate == Substate::WonderingWaspInArmour {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventWaspAway => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 4);
-                    return false;
-                }
-            }
-        }
-        if self.base.current_substate == Substate::WonderingUnderNet {
-            match stimulus_type {
-                StimulusType::EventLoseConsciousness | StimulusType::EventNetAway => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 5);
-                    return false;
-                }
-            }
-        }
-        if self.base.current_substate == Substate::FleeingMerryManLeaveMap
-            && stimulus_type != StimulusType::EventReachPoint
+        if !self
+            .base
+            .admit_think_before_role_gates(stimulus, static_ai_frozen)
         {
-            self.base.register_log_line(LogLineType::EventRefused, 6);
             return false;
         }
 
@@ -2650,53 +2577,8 @@ impl EnemyAi {
             }
         }
 
-        // Reset standing around timer
-        self.base.standing_around_timer = 0;
-
-        // Handle timer messages — ignore stale timers
-        if self.base.timer_is_running {
-            if self.base.current_substate != self.base.substate_at_last_timer_launch {
-                // Kill stale timer
-                self.base.timer_is_running = false;
-            }
-        } else if stimulus_type == StimulusType::EventTimer
-            && self.base.current_substate != self.base.substate_at_last_timer_launch
-        {
-            self.base.register_log_line(LogLineType::EventRefused, 9);
+        if !self.base.admit_think_after_role_gates(stimulus, ctx) {
             return false;
-        }
-
-        // Dead guys ignore everything.
-        // Defence-in-depth: the tick loop normally skips dead entities, but
-        // scripts and cross-NPC actions can still fire stimuli at a corpse.
-        if ctx.self_is_dead {
-            self.base.register_log_line(LogLineType::EventRefused, 10);
-            return false;
-        }
-
-        // Unconscious NPCs ignore all messages except recovery
-        if self.base.current_substate == Substate::SleepingUnconscious
-            && stimulus_type != StimulusType::EventFitAgain
-        {
-            self.base.register_log_line(LogLineType::EventRefused, 11);
-            return false;
-        }
-
-        // Recovery is only valid when unconscious or napping — and if
-        // carried, refused even when unconscious ("it's a little
-        // late to be awaken" when posture == Carried).
-        if stimulus_type == StimulusType::EventFitAgain {
-            match self.base.current_substate {
-                Substate::SleepingUnconscious | Substate::SleepingNapping => {}
-                _ => {
-                    self.base.register_log_line(LogLineType::EventRefused, 12);
-                    return false;
-                }
-            }
-            if ctx.posture == crate::element::Posture::Carried {
-                self.base.register_log_line(LogLineType::EventRefused, 7);
-                return false;
-            }
         }
 
         // Handle special events processed during decision-tick admission. In Original
