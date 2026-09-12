@@ -374,170 +374,7 @@ impl TitbitRenderer {
 
             let titbit = &all[self.render_cursor];
             self.render_cursor += 1;
-            // Blinking titbits hide during the "off" portion of the cycle.
-            if titbit.blinking && blink_off {
-                continue;
-            }
-
-            // Fog owns whether supplier-attached world feedback may be
-            // presented. Filtering before the Counter split keeps sprite and
-            // text titbits from leaking actors through explored cells.
-            if let Some(supplier) = titbit.element_supplier {
-                let Some(entity_id) = engine.entity_id_for_index(supplier.0) else {
-                    continue;
-                };
-                if !engine.fog_entity_visible(entity_id) {
-                    continue;
-                }
-            }
-
-            // Counter titbits render their phase (damage number) as
-            // text via `hud_text::render_counter_titbits`, not through
-            // the sprite path. Skip here.
-            if titbit.kind == TitbitKind::Counter {
-                continue;
-            }
-
-            // ── Visibility guards (per-kind checks) ──
-
-            // QuickAction: only show when the managing PC is selected
-            // (or the titbit is blinking).
-            if matches!(
-                titbit.kind,
-                TitbitKind::QuickAction | TitbitKind::QuickActionRun
-            ) && !titbit.blinking
-            {
-                let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
-                    continue;
-                };
-                if !engine
-                    .hero_selection(host.local_seat)
-                    .iter()
-                    .any(|&id| id.index() == mgr)
-                {
-                    continue;
-                }
-            }
-
-            // DangerPoint: only show when the managing PC is selected.
-            if titbit.kind == TitbitKind::DangerPoint {
-                let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
-                    continue;
-                };
-                if !engine
-                    .hero_selection(host.local_seat)
-                    .iter()
-                    .any(|&id| id.index() == mgr)
-                {
-                    continue;
-                }
-            }
-
-            // Emoticon: skip if entity is blipped or hidden in a
-            // building (i.e. the entity must be active and outside a
-            // building, and not blipped).  The `draw_hidden` debug
-            // toggle (`MSG_SWITCH_MASKED_DISPLAY`) overrides the
-            // blipped / in-building skip so the inspector can see AI
-            // reactions through walls — active+alive guard stays.
-            if titbit.kind == TitbitKind::Emoticon
-                && let Some(supplier) = titbit.element_supplier
-                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
-                && let Some(entity) = engine.get_entity(entity_id)
-            {
-                let elem = entity.element_data();
-                if !elem.active {
-                    continue;
-                }
-                if !host.frontend.input.feedback.draw_hidden
-                    && (elem.blipped || elem.hidden_in_building)
-                {
-                    continue;
-                }
-            }
-
-            // WeakStunned/Speak: skip if entity is out of order or
-            // inactive.
-            if matches!(titbit.kind, TitbitKind::WeakStunned | TitbitKind::Speak)
-                && let Some(supplier) = titbit.element_supplier
-                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
-                && let Some(entity) = engine.get_entity(entity_id)
-                && !entity.is_active()
-            {
-                continue;
-            }
-
-            // Speak: also skip when the supplier is blipped or hidden
-            // inside a building — the speak titbit only renders when
-            // the entity is neither blipped nor inside a building.
-            if titbit.kind == TitbitKind::Speak
-                && let Some(supplier) = titbit.element_supplier
-                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
-                && let Some(entity) = engine.get_entity(entity_id)
-            {
-                let elem = entity.element_data();
-                if elem.blipped || elem.hidden_in_building {
-                    continue;
-                }
-            }
-
-            // WorkIcon: skip if entity is inactive.
-            if titbit.kind == TitbitKind::WorkIcon
-                && let Some(supplier) = titbit.element_supplier
-                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
-                && let Some(entity) = engine.get_entity(entity_id)
-                && !entity.is_active()
-            {
-                continue;
-            }
-
-            // WorkIcon: also skip while the men-to-blazon conversion
-            // screen is up — the per-PC work icon is suppressed for
-            // the duration of the conversion UI.
-            if titbit.kind == TitbitKind::WorkIcon && engine.is_men_to_blazon_conversion_mode() {
-                continue;
-            }
-
-            // WorkIcon BowTraining: skip when the PC's profile lacks
-            // `Action::Bow` — hides the bow-training icon for PCs
-            // who can't currently use a bow even if their work icon
-            // is set to BowTraining.
-            if titbit.kind == TitbitKind::WorkIcon
-                && titbit.sprite_row == SpriteRow::WorkIconBowTraining as u16
-                && let Some(supplier) = titbit.element_supplier
-                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
-                && let Some(entity) = engine.get_entity(entity_id)
-            {
-                let has_bow = entity.pc_data().is_some_and(|pc| {
-                    assets
-                        .profile_manager
-                        .get_character(pc.profile_index)
-                        .is_some_and(|p| p.has_action(Action::Bow))
-                });
-                if !has_bow {
-                    continue;
-                }
-            }
-
-            // Ghost: blink at half rate.  Only renders when the
-            // alternating phase `(frame_counter / GHOST_BLINK) & 0x1`
-            // is set.
-            if titbit.kind == TitbitKind::Ghost
-                && (engine.frame_counter() / robin_engine::titbit::GHOST_BLINK) & 0x1 == 0
-            {
-                continue;
-            }
-
-            // UnconsciousStar: per-frame animation gate.  The stars
-            // sprite is restricted to the idle KO animations
-            // (`BeingUnconscious{,Bow,Sword}`); during the falling /
-            // transition frames between knockout and the idle-unconscious
-            // animation the titbit exists but is not drawn.
-            if titbit.kind == TitbitKind::UnconsciousStar
-                && let Some(supplier) = titbit.element_supplier
-                && !engine
-                    .entity_id_for_index(supplier.0)
-                    .is_some_and(|id| engine.can_have_unconscious_stars(id))
-            {
+            if !titbit_visible(host, engine, assets, titbit, blink_off) {
                 continue;
             }
 
@@ -564,130 +401,341 @@ impl TitbitRenderer {
                 continue;
             };
 
-            // GunImpact uses an alpha-red-only blend that produces an
-            // additive red muzzle flash.  Approximate with additive
-            // blend + red tint; the underlying sprite is already red-heavy
-            // so additive blending lands close.
-            let gun_impact = titbit.kind == TitbitKind::GunImpact;
-
-            // Per-draw blend + tint derived from the kind.
-            let (blend, tint) = if gun_impact {
-                (BlendMode::Add, [1.0, 0.0, 0.0, 1.0])
-            } else {
-                // For star titbits the keyed alpha applies to the
-                // shadow/keyed colour, not to every coloured pixel —
-                // `load_row` already bakes that keyed shadow alpha
-                // into the texture.
-                (BlendMode::Blend, [1.0, 1.0, 1.0, 1.0])
-            };
-
-            // Convert 3D world position to 2D map: (x, y - z).
-            let map_pt = engine_coordinates::MapPoint::from_world_xyz(
-                titbit.position.x,
-                titbit.position.y,
-                titbit.position.z,
-            );
-
-            // ── QuickAction: special positioning ──
-            // QA icons sit at positionMap - (0.5*spriteWidth,
-            // spriteHeight + 50), i.e., 50px above the entity, anchored
-            // at bottom-center. QuickActionRun gets +3 X offset.
-            if matches!(
-                titbit.kind,
-                TitbitKind::QuickAction | TitbitKind::QuickActionRun
-            ) {
-                let supplier_attached = titbit.element_supplier.is_some();
-                let (mut dst_x, dst_y) = quick_action_map_origin(
-                    map_pt.x,
-                    map_pt.y,
-                    w,
-                    h,
-                    ox as i32,
-                    oy as i32,
-                    supplier_attached,
-                );
-                if titbit.kind == TitbitKind::QuickActionRun {
-                    dst_x += 3;
-                }
-                renderer.enqueue_external_texture(
-                    view,
-                    world_titbit_rect(host.viewport(), dst_x, dst_y, w, h),
-                    [0.0, 0.0, 1.0, 1.0],
-                    tint,
-                    blend,
-                );
-                continue;
-            }
-
-            let (dst_x, dst_y) = match titbit.kind {
-                // These kinds explicitly set their sprite position in the original game;
-                // Blit-box generation then adds the cropped-frame offset.
-                TitbitKind::Emoticon => {
-                    let row = titbit.sprite_row;
-                    let (vertical_offset, center_vertical) = if row
-                        == SpriteRow::EmoticonThunderstorm as u16
-                        || row == SpriteRow::EmoticonCloud as u16
-                    {
-                        (25, false)
-                    } else if row == SpriteRow::EmoticonDrunken as u16
-                        || row == SpriteRow::EmoticonSun as u16
-                    {
-                        (15, true)
-                    } else {
-                        // GrowingQMark, QMark, XMark, Zzz, Ko
-                        (12, true)
-                    };
-                    let center_w = row_mw.unwrap_or(w);
-                    let center_h = row_mh.unwrap_or(h);
-                    let x = floor_centered(map_pt.x, center_w) + ox as i32;
-                    let y = if center_vertical {
-                        floor_centered(map_pt.y - vertical_offset as f32, center_h) + oy as i32
-                    } else {
-                        floor_anchor(map_pt.y, vertical_offset) + oy as i32
-                    };
-                    (x, y)
-                }
-                TitbitKind::UnconsciousStar if titbit.element_supplier.is_some() => (
-                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
-                ),
-                TitbitKind::WeakStunned | TitbitKind::AppleSmell | TitbitKind::Speak => (
-                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
-                ),
-                TitbitKind::Lock | TitbitKind::Hidden => (
-                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(map_pt.y, row_mh.unwrap_or(h)) + oy as i32,
-                ),
-                TitbitKind::DangerPoint => (
-                    floor_centered(map_pt.x, w) + ox as i32,
-                    floor_centered(map_pt.y, h) + oy as i32,
-                ),
-
-                // These kinds rely on the original game's final sprite-centering step
-                // pass. That center includes the current frame offset, so the
-                // offset cancels out when blit-box generation adds it.
-                TitbitKind::Water | TitbitKind::Plouf | TitbitKind::WorkIcon => {
-                    (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h))
-                }
-                TitbitKind::GunImpact
-                | TitbitKind::Smoke
-                | TitbitKind::Dust
-                | TitbitKind::Ghost
-                | TitbitKind::UnconsciousStar => {
-                    (floor_centered(map_pt.x, w), floor_bottom(map_pt.y, h))
-                }
-                _ => (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h)),
-            };
+            let placement = titbit_placement(titbit, (w, h), (ox, oy), (row_mw, row_mh));
             renderer.enqueue_external_texture(
                 view,
-                world_titbit_rect(host.viewport(), dst_x, dst_y, w, h),
+                world_titbit_rect(
+                    host.viewport(),
+                    placement.x,
+                    placement.y,
+                    placement.width,
+                    placement.height,
+                ),
                 [0.0, 0.0, 1.0, 1.0],
-                tint,
-                blend,
+                placement.tint,
+                if placement.additive {
+                    BlendMode::Add
+                } else {
+                    BlendMode::Blend
+                },
             );
         }
         self.render_host_preview_if_due(host, engine, renderer, f32::INFINITY, display_order_max);
+    }
+}
+
+fn titbit_visible(
+    host: &HostDraw<'_>,
+    engine: &PresentationView<'_>,
+    assets: &engine_api::LevelAssets,
+    titbit: &robin_engine::titbit::TitbitInfo,
+    blink_off: bool,
+) -> bool {
+    // Blinking titbits hide during the "off" portion of the cycle.
+    if titbit.blinking && blink_off {
+        return false;
+    }
+
+    // Fog owns whether supplier-attached world feedback may be
+    // presented. Filtering before the Counter split keeps sprite and
+    // text titbits from leaking actors through explored cells.
+    if let Some(supplier) = titbit.element_supplier {
+        let Some(entity_id) = engine.entity_id_for_index(supplier.0) else {
+            return false;
+        };
+        if !engine.fog_entity_visible(entity_id) {
+            return false;
+        }
+    }
+
+    // Counter titbits render their phase (damage number) as
+    // text via `hud_text::render_counter_titbits`, not through
+    // the sprite path. Skip here.
+    if titbit.kind == TitbitKind::Counter {
+        return false;
+    }
+
+    // ── Visibility guards (per-kind checks) ──
+
+    // QuickAction: only show when the managing PC is selected
+    // (or the titbit is blinking).
+    if matches!(
+        titbit.kind,
+        TitbitKind::QuickAction | TitbitKind::QuickActionRun
+    ) && !titbit.blinking
+    {
+        let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
+            return false;
+        };
+        if !engine
+            .hero_selection(host.local_seat)
+            .iter()
+            .any(|&id| id.index() == mgr)
+        {
+            return false;
+        }
+    }
+
+    // DangerPoint: only show when the managing PC is selected.
+    if titbit.kind == TitbitKind::DangerPoint {
+        let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
+            return false;
+        };
+        if !engine
+            .hero_selection(host.local_seat)
+            .iter()
+            .any(|&id| id.index() == mgr)
+        {
+            return false;
+        }
+    }
+
+    // Emoticon: skip if entity is blipped or hidden in a
+    // building (i.e. the entity must be active and outside a
+    // building, and not blipped).  The `draw_hidden` debug
+    // toggle (`MSG_SWITCH_MASKED_DISPLAY`) overrides the
+    // blipped / in-building skip so the inspector can see AI
+    // reactions through walls — active+alive guard stays.
+    if titbit.kind == TitbitKind::Emoticon
+        && let Some(supplier) = titbit.element_supplier
+        && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
+        && let Some(entity) = engine.get_entity(entity_id)
+    {
+        let elem = entity.element_data();
+        if !elem.active {
+            return false;
+        }
+        if !host.frontend.input.feedback.draw_hidden && (elem.blipped || elem.hidden_in_building) {
+            return false;
+        }
+    }
+
+    // WeakStunned/Speak: skip if entity is out of order or
+    // inactive.
+    if matches!(titbit.kind, TitbitKind::WeakStunned | TitbitKind::Speak)
+        && let Some(supplier) = titbit.element_supplier
+        && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
+        && let Some(entity) = engine.get_entity(entity_id)
+        && !entity.is_active()
+    {
+        return false;
+    }
+
+    // Speak: also skip when the supplier is blipped or hidden
+    // inside a building — the speak titbit only renders when
+    // the entity is neither blipped nor inside a building.
+    if titbit.kind == TitbitKind::Speak
+        && let Some(supplier) = titbit.element_supplier
+        && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
+        && let Some(entity) = engine.get_entity(entity_id)
+    {
+        let elem = entity.element_data();
+        if elem.blipped || elem.hidden_in_building {
+            return false;
+        }
+    }
+
+    // WorkIcon: skip if entity is inactive.
+    if titbit.kind == TitbitKind::WorkIcon
+        && let Some(supplier) = titbit.element_supplier
+        && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
+        && let Some(entity) = engine.get_entity(entity_id)
+        && !entity.is_active()
+    {
+        return false;
+    }
+
+    // WorkIcon: also skip while the men-to-blazon conversion
+    // screen is up — the per-PC work icon is suppressed for
+    // the duration of the conversion UI.
+    if titbit.kind == TitbitKind::WorkIcon && engine.is_men_to_blazon_conversion_mode() {
+        return false;
+    }
+
+    // WorkIcon BowTraining: skip when the PC's profile lacks
+    // `Action::Bow` — hides the bow-training icon for PCs
+    // who can't currently use a bow even if their work icon
+    // is set to BowTraining.
+    if titbit.kind == TitbitKind::WorkIcon
+        && titbit.sprite_row == SpriteRow::WorkIconBowTraining as u16
+        && let Some(supplier) = titbit.element_supplier
+        && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
+        && let Some(entity) = engine.get_entity(entity_id)
+    {
+        let has_bow = entity.pc_data().is_some_and(|pc| {
+            assets
+                .profile_manager
+                .get_character(pc.profile_index)
+                .is_some_and(|p| p.has_action(Action::Bow))
+        });
+        if !has_bow {
+            return false;
+        }
+    }
+
+    // Ghost: blink at half rate.  Only renders when the
+    // alternating phase `(frame_counter / GHOST_BLINK) & 0x1`
+    // is set.
+    if titbit.kind == TitbitKind::Ghost
+        && (engine.frame_counter() / robin_engine::titbit::GHOST_BLINK) & 0x1 == 0
+    {
+        return false;
+    }
+
+    // UnconsciousStar: per-frame animation gate.  The stars
+    // sprite is restricted to the idle KO animations
+    // (`BeingUnconscious{,Bow,Sword}`); during the falling /
+    // transition frames between knockout and the idle-unconscious
+    // animation the titbit exists but is not drawn.
+    if titbit.kind == TitbitKind::UnconsciousStar
+        && let Some(supplier) = titbit.element_supplier
+        && !engine
+            .entity_id_for_index(supplier.0)
+            .is_some_and(|id| engine.can_have_unconscious_stars(id))
+    {
+        return false;
+    }
+
+    true
+}
+
+/// Map-space placement is independent of GPU ownership and viewport zoom.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+struct TitbitPlacement {
+    x: i32,
+    y: i32,
+    width: u16,
+    height: u16,
+    additive: bool,
+    tint: [f32; 4],
+}
+
+fn titbit_placement(
+    titbit: &robin_engine::titbit::TitbitInfo,
+    (w, h): (u16, u16),
+    (ox, oy): (i16, i16),
+    (row_mw, row_mh): (Option<u16>, Option<u16>),
+) -> TitbitPlacement {
+    // GunImpact uses an alpha-red-only blend that produces an
+    // additive red muzzle flash.  Approximate with additive
+    // blend + red tint; the underlying sprite is already red-heavy
+    // so additive blending lands close.
+    let gun_impact = titbit.kind == TitbitKind::GunImpact;
+
+    // Per-draw blend + tint derived from the kind.
+    let tint = if gun_impact {
+        [1.0, 0.0, 0.0, 1.0]
+    } else {
+        // For star titbits the keyed alpha applies to the
+        // shadow/keyed colour, not to every coloured pixel —
+        // `load_row` already bakes that keyed shadow alpha
+        // into the texture.
+        [1.0, 1.0, 1.0, 1.0]
+    };
+
+    // Convert 3D world position to 2D map: (x, y - z).
+    let map_pt = engine_coordinates::MapPoint::from_world_xyz(
+        titbit.position.x,
+        titbit.position.y,
+        titbit.position.z,
+    );
+
+    // ── QuickAction: special positioning ──
+    // QA icons sit at positionMap - (0.5*spriteWidth,
+    // spriteHeight + 50), i.e., 50px above the entity, anchored
+    // at bottom-center. QuickActionRun gets +3 X offset.
+    if matches!(
+        titbit.kind,
+        TitbitKind::QuickAction | TitbitKind::QuickActionRun
+    ) {
+        let supplier_attached = titbit.element_supplier.is_some();
+        let (mut dst_x, dst_y) = quick_action_map_origin(
+            map_pt.x,
+            map_pt.y,
+            w,
+            h,
+            ox as i32,
+            oy as i32,
+            supplier_attached,
+        );
+        if titbit.kind == TitbitKind::QuickActionRun {
+            dst_x += 3;
+        }
+        return TitbitPlacement {
+            x: dst_x,
+            y: dst_y,
+            width: w,
+            height: h,
+            additive: gun_impact,
+            tint,
+        };
+    }
+
+    let (dst_x, dst_y) = match titbit.kind {
+        // These kinds explicitly set their sprite position in the original game;
+        // Blit-box generation then adds the cropped-frame offset.
+        TitbitKind::Emoticon => {
+            let row = titbit.sprite_row;
+            let (vertical_offset, center_vertical) = if row
+                == SpriteRow::EmoticonThunderstorm as u16
+                || row == SpriteRow::EmoticonCloud as u16
+            {
+                (25, false)
+            } else if row == SpriteRow::EmoticonDrunken as u16
+                || row == SpriteRow::EmoticonSun as u16
+            {
+                (15, true)
+            } else {
+                // GrowingQMark, QMark, XMark, Zzz, Ko
+                (12, true)
+            };
+            let center_w = row_mw.unwrap_or(w);
+            let center_h = row_mh.unwrap_or(h);
+            let x = floor_centered(map_pt.x, center_w) + ox as i32;
+            let y = if center_vertical {
+                floor_centered(map_pt.y - vertical_offset as f32, center_h) + oy as i32
+            } else {
+                floor_anchor(map_pt.y, vertical_offset) + oy as i32
+            };
+            (x, y)
+        }
+        TitbitKind::UnconsciousStar if titbit.element_supplier.is_some() => (
+            floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+            floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
+        ),
+        TitbitKind::WeakStunned | TitbitKind::AppleSmell | TitbitKind::Speak => (
+            floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+            floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
+        ),
+        TitbitKind::Lock | TitbitKind::Hidden => (
+            floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+            floor_centered(map_pt.y, row_mh.unwrap_or(h)) + oy as i32,
+        ),
+        TitbitKind::DangerPoint => (
+            floor_centered(map_pt.x, w) + ox as i32,
+            floor_centered(map_pt.y, h) + oy as i32,
+        ),
+
+        // These kinds rely on the original game's final sprite-centering step
+        // pass. That center includes the current frame offset, so the
+        // offset cancels out when blit-box generation adds it.
+        TitbitKind::Water | TitbitKind::Plouf | TitbitKind::WorkIcon => {
+            (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h))
+        }
+        TitbitKind::GunImpact
+        | TitbitKind::Smoke
+        | TitbitKind::Dust
+        | TitbitKind::Ghost
+        | TitbitKind::UnconsciousStar => (floor_centered(map_pt.x, w), floor_bottom(map_pt.y, h)),
+        _ => (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h)),
+    };
+    TitbitPlacement {
+        x: dst_x,
+        y: dst_y,
+        width: w,
+        height: h,
+        additive: gun_impact,
+        tint,
     }
 }
 
@@ -906,6 +954,51 @@ fn alpha_from_rgb565_blue(px: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placement_preserves_kind_anchors_offsets_and_additive_tint() {
+        let mut titbit = robin_engine::titbit::TitbitInfo {
+            kind: TitbitKind::Water,
+            phase: 0,
+            sprite_row: 0,
+            sprite_frame: 0,
+            frame_count: 1,
+            element_supplier: None,
+            element_manager: None,
+            layer: 0,
+            position: engine_coordinates::WorldPoint3D::new(100.0, 200.0, 20.0),
+            display_order: 0.0,
+            blinking: false,
+            id: robin_engine::titbit::TitbitId::new(0).unwrap(),
+        };
+        for (kind, expected) in [
+            (TitbitKind::Water, (90, 175)),
+            (TitbitKind::GunImpact, (90, 170)),
+            (TitbitKind::Lock, (83, 169)),
+            (TitbitKind::Speak, (83, 159)),
+            (TitbitKind::DangerPoint, (93, 179)),
+            (TitbitKind::QuickAction, (93, 179)),
+            (TitbitKind::QuickActionRun, (96, 179)),
+        ] {
+            titbit.kind = kind;
+            let placement = titbit_placement(&titbit, (20, 10), (3, 4), (Some(40), Some(30)));
+            assert_eq!((placement.x, placement.y), expected, "{kind:?}");
+            assert_eq!((placement.width, placement.height), (20, 10));
+            assert_eq!(placement.additive, kind == TitbitKind::GunImpact);
+            assert_eq!(
+                placement.tint,
+                if placement.additive {
+                    [1.0, 0.0, 0.0, 1.0]
+                } else {
+                    [1.0; 4]
+                }
+            );
+        }
+        titbit.kind = TitbitKind::QuickAction;
+        titbit.element_supplier = Some(robin_engine::titbit::ElementHandle(0));
+        let placement = titbit_placement(&titbit, (20, 10), (3, 4), (Some(40), Some(30)));
+        assert_eq!((placement.x, placement.y), (93, 124));
+    }
 
     #[test]
     fn world_indicator_offsets_and_sizes_follow_zoom() {

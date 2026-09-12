@@ -8,7 +8,7 @@
 //! ambient emitters.
 
 use robin_engine::coordinates::MapPoint;
-use robin_engine::sound_kinds as engine_sound_kinds;
+use robin_engine::sound as engine_sound_kinds;
 use serde::{Deserialize, Serialize};
 
 use robin_engine::profiles::{ArmorMaterial, WeaponMaterial};
@@ -71,10 +71,8 @@ const IMPACT_MATERIAL_TABLE: [[u32; 3]; 4] = [
 
 // ─── Enums ──────────────────────────────────────────────────────────
 
-// Sim-side sound classification enums live in robin_engine::sound_kinds.
-pub(crate) use robin_engine::sound_kinds::{
-    ExclamationGroup, ImpactKind, Jingle, MusicMode, StrikeKind,
-};
+// Sim-side sound classification enums live in robin_engine::sound.
+pub(crate) use robin_engine::sound::{ExclamationGroup, ImpactKind, Jingle, MusicMode, StrikeKind};
 
 /// Sound engine operational mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,7 +267,7 @@ pub trait AudioBackend {
 
 // ─── SoundManager ───────────────────────────────────────────────────
 
-// SoundSimState now lives in robin_engine::sound_kinds (re-exported via
+// SoundSimState now lives in robin_engine::sound (re-exported via
 // `crate::sound` stub from engine). Re-export here for callers that
 // reach for it via robin_rs::sound::SoundSimState.
 pub use engine_sound_kinds::SoundSimState;
