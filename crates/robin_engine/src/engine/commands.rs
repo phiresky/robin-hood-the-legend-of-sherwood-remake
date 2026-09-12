@@ -407,6 +407,9 @@ impl EngineInner {
         // recording PC, keyed by the resolved Action (portrait bar)
         // so the macro-icon strip can render per-step titbit frames.
         self.record_macro_step_for(seat, cmd, assets);
+        // Keep routing exhaustive here. Family helpers only handle admitted
+        // commands, and there is deliberately no shared epilogue: a family's
+        // early return must finish this command without any later mutation.
         match cmd {
             Noop => {} // consumed input, no action
             ScriptKeyPressed { virtual_key } => {
@@ -535,100 +538,24 @@ impl EngineInner {
             }
 
             // ── Action bar ──────────────────────────────────────
-            SelectAction {
-                pc_id,
-                action_index,
-            } => {
-                let selected_before = self.players.seats[seat].selection.clone();
-                if self.select_pc_action_by_index_from_message(
+            SelectAction { .. }
+            | SelectResolvedAction { .. }
+            | SelectPlannedAction { .. }
+            | SelectPlannedShieldProtected { .. }
+            | CancelPlannedAction
+            | CancelAction { .. }
+            | UnselectAllActions
+            | MouseRightDown
+            | MouseRightUp => {
+                self.dispatch_selection_input_command(
+                    sim,
                     assets,
                     seat,
-                    *pc_id,
-                    *action_index as u8,
-                ) {
-                    self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
-                }
-            }
-            SelectResolvedAction { pc_id, action } => {
-                let selected_before = self.players.seats[seat].selection.clone();
-                self.set_pc_action_from_message(assets, seat, *pc_id, *action);
-                self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
-            }
-            SelectPlannedAction { pc_id, action } => {
-                if !self.players.seats[seat].selection.contains(pc_id) {
-                    tracing::warn!(?pc_id, ?action, "ignored planned action for unselected PC");
-                    return;
-                }
-                self.players.seats[seat].planned_action =
-                    if self.players.seats[seat].planned_action == *action {
-                        crate::profiles::Action::NoAction
-                    } else {
-                        *action
-                    };
-                self.players.seats[seat].planned_shield_target = None;
-            }
-            SelectPlannedShieldProtected {
-                actor,
-                protected_pc,
-            } => {
-                let planned = self.players.seats[seat].planned_action;
-                if !self.players.seats[seat].selection.contains(actor)
-                    || !matches!(
-                        planned,
-                        crate::profiles::Action::Shield | crate::profiles::Action::BigShield
-                    )
-                {
-                    tracing::warn!(
-                        ?actor,
-                        ?protected_pc,
-                        ?planned,
-                        "ignored invalid planned shield protectee"
-                    );
-                    return;
-                }
-                let valid = self
-                    .get_entity(*protected_pc)
-                    .and_then(crate::element::Entity::pc_data)
-                    .is_some_and(|pc| pc.life_points > 0);
-                if !valid {
-                    tracing::warn!(
-                        ?protected_pc,
-                        "ignored unavailable planned shield protectee"
-                    );
-                    return;
-                }
-                self.players.seats[seat].planned_shield_target = Some((*actor, *protected_pc));
-            }
-            CancelPlannedAction => {
-                self.players.seats[seat].planned_action = crate::profiles::Action::NoAction;
-                self.players.seats[seat].planned_shield_target = None;
-            }
-            CancelAction { pc_id } => {
-                self.set_pc_action_from_message(
-                    assets,
-                    seat,
-                    *pc_id,
-                    crate::profiles::Action::NoAction,
+                    cmd,
+                    recorded_nested_selection_action,
                 );
             }
-            UnselectAllActions => {
-                for pc_id in self.players.seats[seat].selection.clone() {
-                    self.unselect_action(pc_id);
-                }
-                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
-            }
-            MouseRightDown => {
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::SetRightMouseDown { down: true });
-            }
-            MouseRightUp => {
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::SetRightMouseDown { down: false });
-            }
+
             ClearShootList { pc_id } => {
                 // Clear the retained human-instruction FIFO. Keep the
                 // broader pending-element cleanup for pre-instruction work that
@@ -697,73 +624,32 @@ impl EngineInner {
             StandUp => self.apply_stand_up(sim, seat),
 
             // ── Selection ───────────────────────────────────────
-            SelectPc { pc_id, append } => {
-                self.dispatch_pc_selection(
+            SelectPc { .. }
+            | TogglePcSelection { .. }
+            | UnselectPc { .. }
+            | BoxSelect { .. }
+            | BoxUnselect { .. }
+            | SelectAllPcs
+            | UnselectAllPcs
+            | AssignQuickGroup { .. }
+            | RecallQuickGroup { .. }
+            | SelectByPortrait { .. }
+            | SelectTacticalUnits { .. }
+            | BoxSelectTacticalUnits { .. }
+            | ClearTacticalSelection
+            | PinTacticalSelection
+            | UnpinTacticalGroup { .. }
+            | SelectTacticalGroup { .. }
+            | PageTacticalPortraits { .. } => {
+                self.dispatch_selection_input_command(
+                    sim,
                     assets,
                     seat,
-                    pc_id,
-                    append,
+                    cmd,
                     recorded_nested_selection_action,
                 );
             }
-            TogglePcSelection { pc_id } => {
-                self.toggle_pc_selection(assets, seat, *pc_id);
-                self.update_recording_after_selection_change();
-            }
-            UnselectPc { pc_id } => {
-                if self.players.seats[seat].selection.contains(pc_id) {
-                    self.unselect_single_pc(*pc_id);
-                    self.update_recording_after_selection_change();
-                    self.emit_character_selection_followups();
-                }
-            }
-            BoxSelect { pt1, pt2, shift } => {
-                self.apply_box_select(assets, seat, *pt1, *pt2, *shift);
-                self.update_recording_after_selection_change();
-            }
-            BoxUnselect { pt1, pt2 } => {
-                self.apply_box_unselect(seat, *pt1, *pt2);
-                self.update_recording_after_selection_change();
-            }
-            SelectAllPcs => {
-                self.select_all_pcs(assets, seat);
-                self.update_recording_after_selection_change();
-            }
-            UnselectAllPcs => {
-                self.unselect_all_pcs(seat);
-                self.update_recording_after_selection_change();
-            }
-            AssignQuickGroup { index } => {
-                self.assign_quick_group(seat, *index as usize);
-            }
-            RecallQuickGroup { index } => {
-                self.recall_quick_group(assets, seat, *index as usize);
-                self.update_recording_after_selection_change();
-            }
-            SelectByPortrait {
-                portrait_index,
-                append,
-            } => {
-                self.dispatch_portrait_selection(assets, seat, portrait_index, append);
-            }
-            SelectTacticalUnits { soldiers, append } => {
-                self.select_tactical_units(seat, soldiers, *append);
-            }
-            BoxSelectTacticalUnits { pt1, pt2, shift } => {
-                self.box_select_tactical_units(seat, *pt1, *pt2, *shift);
-            }
-            ClearTacticalSelection => {
-                self.players.tactical.ensure_seat(seat).selection.clear();
-            }
-            PinTacticalSelection => self.pin_tactical_selection(seat),
-            UnpinTacticalGroup { group_id } => self.unpin_tactical_group(seat, *group_id),
-            SelectTacticalGroup { group_id, append } => {
-                if !append {
-                    self.unselect_all_pcs(seat);
-                }
-                self.select_tactical_group(seat, *group_id, *append);
-            }
-            PageTacticalPortraits { delta } => self.page_tactical_portraits(seat, *delta),
+
             MoveTacticalUnits {
                 soldiers,
                 destination,
@@ -822,91 +708,24 @@ impl EngineInner {
             }
 
             // ── QA macro recording ─────────────────────────────
-            StopRecordingMacro => {
-                self.stop_recording_macro();
+            StopRecordingMacro
+            | StartMacro { .. }
+            | DeleteMacro { .. }
+            | StartRecordingMacro { .. }
+            | ChangeQaMemory { .. }
+            | QueueQuickAction { .. }
+            | MakeQueuedActionFast { .. } => {
+                self.dispatch_quick_action_command(sim, display, assets, seat, cmd);
             }
-            StartMacro { pc, slot } => {
-                self.apply_start_macro(sim, display, assets, *pc, *slot);
-            }
-            DeleteMacro { pc, slot } => {
-                self.apply_delete_macro(display, *pc, *slot);
-            }
-            StartRecordingMacro { pc, slot } => {
-                self.apply_start_recording_macro(seat, *pc, *slot);
-            }
-            ChangeQaMemory { slot } => {
-                self.apply_change_qa_memory(seat, *slot);
-            }
-            QueueQuickAction { action, command } => {
-                let command = command.to_player_command();
-                self.apply_queue_quick_action(sim, display, assets, seat, *action, &command);
-            }
-            MakeQueuedActionFast { pc_id } => {
-                self.apply_make_queued_action_fast(sim, *pc_id);
-            }
-            SetLockAlt(on) => {
-                self.players.seats[seat].is_lock_alt = *on;
-            }
-            KeyControl => {
-                self.players.seats[seat].action_before_control =
-                    self.players.seats[seat].selected_action;
-                self.save_action_for_selected_pcs(seat);
-                // Park every selected PC at NoAction so the held ctrl
-                // key lets the follow-up move command run unobstructed.
-                // The per-PC `current_action` write + `unselect_action`
-                // loop matches the body of `set_pc_action` for the
-                // NoAction path, skipping the rubber-band /
-                // `ignore_next_drag` side-effects (those belong to the
-                // action-pick flow, not a modifier key).
-                for id in self.players.seats[seat].selection.clone() {
-                    let cur = self
-                        .get_entity(id)
-                        .and_then(|e| e.pc_data())
-                        .map(|pc| pc.current_action)
-                        .unwrap_or(crate::profiles::Action::NoAction);
-                    if cur != crate::profiles::Action::NoAction {
-                        self.unselect_action(id);
-                    }
-                    if let Some(entity) = self.get_entity_mut(id)
-                        && let Some(pc) = entity.pc_data_mut()
-                    {
-                        pc.current_action = crate::profiles::Action::NoAction;
-                    }
-                }
-                self.feedback
-                    .pending_side_effects
-                    .invalidate_trajectory_preview = true;
-                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
-            }
-            #[cfg(not(target_os = "macos"))]
-            KeyReleaseControl => {
-                // Original restores the messenger-global action captured on
-                // Ctrl press, then fans that one action over the selection.
-                let restore = self.players.seats[seat].action_before_control;
-                let ids = self.players.seats[seat].selection.clone();
-                for id in ids {
-                    let cur = match self.get_entity(id).and_then(|e| e.pc_data()) {
-                        Some(pc) => pc.current_action,
-                        None => continue,
-                    };
-                    if cur != restore {
-                        self.unselect_action(id);
-                    }
-                    if let Some(entity) = self.get_entity_mut(id)
-                        && let Some(pc) = entity.pc_data_mut()
-                    {
-                        pc.current_action = restore;
-                    }
-                }
-                self.players.seats[seat].selected_action = restore;
-                self.feedback
-                    .pending_side_effects
-                    .invalidate_trajectory_preview = true;
-            }
-            #[cfg(target_os = "macos")]
-            KeyReleaseControl => {
-                // macOS uses ctrl as stop-action, so releasing ctrl
-                // does NOT restore the pre-ctrl action.  No-op.
+
+            SetLockAlt(..) | KeyControl | KeyReleaseControl => {
+                self.dispatch_selection_input_command(
+                    sim,
+                    assets,
+                    seat,
+                    cmd,
+                    recorded_nested_selection_action,
+                );
             }
 
             // ── Per-frame aim orientation ──────────────────────
@@ -1010,6 +829,351 @@ impl EngineInner {
             }
 
             // ── Minimap ─────────────────────────────────────────
+            MinimapResize { .. }
+            | MinimapMouseDown { .. }
+            | MinimapMouseMove { .. }
+            | MinimapMouseUp { .. }
+            | CenterCameraOnPoint { .. }
+            | MinimapRightClick
+            | MinimapToggle
+            | SelectFollowElement { .. }
+            | ClearNpcDoubleStatusBarFlags
+            | SetAmountOfSpeaking { .. }
+            | SetFixHardReactionTimes { .. }
+            | SetFogOfWar { .. }
+            | SetTimedMissionsEnabled { .. }
+            | SetDynamicAmbienceEnabled { .. }
+            | SetCombatGestureRules { .. }
+            | SetUnbindingEnabled { .. }
+            | SetCleanHandsNpcKillsInvalidate { .. }
+            | SetReusableCloaks { .. }
+            | SetItemGameplayConfig { .. }
+            | SetNoiseDistractionFeedback { .. }
+            | SetSherwoodTrading { .. }
+            | SetDiplomacyEnabled { .. }
+            | SetNpcFactionWars { .. }
+            | SetDiplomacyRelationship { .. } => {
+                self.dispatch_camera_control_command(assets, seat, cmd);
+            }
+
+            HeroSpeak { pc_id, expression } => {
+                self.hero_speaking(assets, *pc_id, *expression);
+            }
+
+            // Host-side record of a drained modal. The actual
+            // dismissal happens in the game session loop; the engine
+            // has no state to mutate for this variant — carrying it in
+            // the command stream is what lets replays auto-dismiss.
+            ModalDismiss { .. } => {}
+
+            // ── Seat lifecycle ──────────────────────────────────
+            // The target seat is in the command payload, NOT the
+            // dispatch `seat` parameter — the host can issue these
+            // on behalf of a peer that hasn't materialised yet.
+            ConnectSeat {
+                player_id: target,
+                nickname,
+            } => {
+                self.dispatch_connect_seat(target, nickname);
+            }
+            DisconnectSeat { player_id: target } => {
+                self.dispatch_disconnect_seat(target);
+            }
+        }
+    }
+
+    /// Applies one already-admitted command from the selection input family.
+    /// The exhaustive outer dispatcher selects this family after macro recording.
+    fn dispatch_selection_input_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        seat: usize,
+        cmd: &PlayerCommand,
+        recorded_nested_selection_action: bool,
+    ) {
+        use PlayerCommand::*;
+        match cmd {
+            SelectAction {
+                pc_id,
+                action_index,
+            } => {
+                let selected_before = self.players.seats[seat].selection.clone();
+                if self.select_pc_action_by_index_from_message(
+                    assets,
+                    seat,
+                    *pc_id,
+                    *action_index as u8,
+                ) {
+                    self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
+                }
+            }
+            SelectResolvedAction { pc_id, action } => {
+                let selected_before = self.players.seats[seat].selection.clone();
+                self.set_pc_action_from_message(assets, seat, *pc_id, *action);
+                self.close_player_select_action_stop_callbacks(sim, assets, selected_before);
+            }
+            SelectPlannedAction { pc_id, action } => {
+                if !self.players.seats[seat].selection.contains(pc_id) {
+                    tracing::warn!(?pc_id, ?action, "ignored planned action for unselected PC");
+                    return;
+                }
+                self.players.seats[seat].planned_action =
+                    if self.players.seats[seat].planned_action == *action {
+                        crate::profiles::Action::NoAction
+                    } else {
+                        *action
+                    };
+                self.players.seats[seat].planned_shield_target = None;
+            }
+            SelectPlannedShieldProtected {
+                actor,
+                protected_pc,
+            } => {
+                let planned = self.players.seats[seat].planned_action;
+                if !self.players.seats[seat].selection.contains(actor)
+                    || !matches!(
+                        planned,
+                        crate::profiles::Action::Shield | crate::profiles::Action::BigShield
+                    )
+                {
+                    tracing::warn!(
+                        ?actor,
+                        ?protected_pc,
+                        ?planned,
+                        "ignored invalid planned shield protectee"
+                    );
+                    return;
+                }
+                let valid = self
+                    .get_entity(*protected_pc)
+                    .and_then(crate::element::Entity::pc_data)
+                    .is_some_and(|pc| pc.life_points > 0);
+                if !valid {
+                    tracing::warn!(
+                        ?protected_pc,
+                        "ignored unavailable planned shield protectee"
+                    );
+                    return;
+                }
+                self.players.seats[seat].planned_shield_target = Some((*actor, *protected_pc));
+            }
+            CancelPlannedAction => {
+                self.players.seats[seat].planned_action = crate::profiles::Action::NoAction;
+                self.players.seats[seat].planned_shield_target = None;
+            }
+            CancelAction { pc_id } => {
+                self.set_pc_action_from_message(
+                    assets,
+                    seat,
+                    *pc_id,
+                    crate::profiles::Action::NoAction,
+                );
+            }
+            UnselectAllActions => {
+                for pc_id in self.players.seats[seat].selection.clone() {
+                    self.unselect_action(pc_id);
+                }
+                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
+            }
+            MouseRightDown => {
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::SetRightMouseDown { down: true });
+            }
+            MouseRightUp => {
+                self.feedback
+                    .pending_side_effects
+                    .host_events
+                    .push(super::HostEvent::SetRightMouseDown { down: false });
+            }
+            SelectPc { pc_id, append } => {
+                self.dispatch_pc_selection(
+                    assets,
+                    seat,
+                    pc_id,
+                    append,
+                    recorded_nested_selection_action,
+                );
+            }
+            TogglePcSelection { pc_id } => {
+                self.toggle_pc_selection(assets, seat, *pc_id);
+                self.update_recording_after_selection_change();
+            }
+            UnselectPc { pc_id } => {
+                if self.players.seats[seat].selection.contains(pc_id) {
+                    self.unselect_single_pc(*pc_id);
+                    self.update_recording_after_selection_change();
+                    self.emit_character_selection_followups();
+                }
+            }
+            BoxSelect { pt1, pt2, shift } => {
+                self.apply_box_select(assets, seat, *pt1, *pt2, *shift);
+                self.update_recording_after_selection_change();
+            }
+            BoxUnselect { pt1, pt2 } => {
+                self.apply_box_unselect(seat, *pt1, *pt2);
+                self.update_recording_after_selection_change();
+            }
+            SelectAllPcs => {
+                self.select_all_pcs(assets, seat);
+                self.update_recording_after_selection_change();
+            }
+            UnselectAllPcs => {
+                self.unselect_all_pcs(seat);
+                self.update_recording_after_selection_change();
+            }
+            AssignQuickGroup { index } => {
+                self.assign_quick_group(seat, *index as usize);
+            }
+            RecallQuickGroup { index } => {
+                self.recall_quick_group(assets, seat, *index as usize);
+                self.update_recording_after_selection_change();
+            }
+            SelectByPortrait {
+                portrait_index,
+                append,
+            } => {
+                self.dispatch_portrait_selection(assets, seat, portrait_index, append);
+            }
+            SelectTacticalUnits { soldiers, append } => {
+                self.select_tactical_units(seat, soldiers, *append);
+            }
+            BoxSelectTacticalUnits { pt1, pt2, shift } => {
+                self.box_select_tactical_units(seat, *pt1, *pt2, *shift);
+            }
+            ClearTacticalSelection => {
+                self.players.tactical.ensure_seat(seat).selection.clear();
+            }
+            PinTacticalSelection => self.pin_tactical_selection(seat),
+            UnpinTacticalGroup { group_id } => self.unpin_tactical_group(seat, *group_id),
+            SelectTacticalGroup { group_id, append } => {
+                if !append {
+                    self.unselect_all_pcs(seat);
+                }
+                self.select_tactical_group(seat, *group_id, *append);
+            }
+            PageTacticalPortraits { delta } => self.page_tactical_portraits(seat, *delta),
+            SetLockAlt(on) => {
+                self.players.seats[seat].is_lock_alt = *on;
+            }
+            KeyControl => {
+                self.players.seats[seat].action_before_control =
+                    self.players.seats[seat].selected_action;
+                self.save_action_for_selected_pcs(seat);
+                // Park every selected PC at NoAction so the held ctrl
+                // key lets the follow-up move command run unobstructed.
+                // The per-PC `current_action` write + `unselect_action`
+                // loop matches the body of `set_pc_action` for the
+                // NoAction path, skipping the rubber-band /
+                // `ignore_next_drag` side-effects (those belong to the
+                // action-pick flow, not a modifier key).
+                for id in self.players.seats[seat].selection.clone() {
+                    let cur = self
+                        .get_entity(id)
+                        .and_then(|e| e.pc_data())
+                        .map(|pc| pc.current_action)
+                        .unwrap_or(crate::profiles::Action::NoAction);
+                    if cur != crate::profiles::Action::NoAction {
+                        self.unselect_action(id);
+                    }
+                    if let Some(entity) = self.get_entity_mut(id)
+                        && let Some(pc) = entity.pc_data_mut()
+                    {
+                        pc.current_action = crate::profiles::Action::NoAction;
+                    }
+                }
+                self.feedback
+                    .pending_side_effects
+                    .invalidate_trajectory_preview = true;
+                self.players.seats[seat].selected_action = crate::profiles::Action::NoAction;
+            }
+            #[cfg(not(target_os = "macos"))]
+            KeyReleaseControl => {
+                // Original restores the messenger-global action captured on
+                // Ctrl press, then fans that one action over the selection.
+                let restore = self.players.seats[seat].action_before_control;
+                let ids = self.players.seats[seat].selection.clone();
+                for id in ids {
+                    let cur = match self.get_entity(id).and_then(|e| e.pc_data()) {
+                        Some(pc) => pc.current_action,
+                        None => continue,
+                    };
+                    if cur != restore {
+                        self.unselect_action(id);
+                    }
+                    if let Some(entity) = self.get_entity_mut(id)
+                        && let Some(pc) = entity.pc_data_mut()
+                    {
+                        pc.current_action = restore;
+                    }
+                }
+                self.players.seats[seat].selected_action = restore;
+                self.feedback
+                    .pending_side_effects
+                    .invalidate_trajectory_preview = true;
+            }
+            #[cfg(target_os = "macos")]
+            KeyReleaseControl => {
+                // macOS uses ctrl as stop-action, so releasing ctrl
+                // does NOT restore the pre-ctrl action.  No-op.
+            }
+
+            _ => {
+                unreachable!("command routed to the wrong dispatch_selection_input_command family")
+            }
+        }
+    }
+
+    /// Applies one already-admitted command from the quick action family.
+    /// The exhaustive outer dispatcher selects this family after macro recording.
+    fn dispatch_quick_action_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut CameraDisplayState,
+        assets: &LevelAssets,
+        seat: usize,
+        cmd: &PlayerCommand,
+    ) {
+        use PlayerCommand::*;
+        match cmd {
+            StopRecordingMacro => {
+                self.stop_recording_macro();
+            }
+            StartMacro { pc, slot } => {
+                self.apply_start_macro(sim, display, assets, *pc, *slot);
+            }
+            DeleteMacro { pc, slot } => {
+                self.apply_delete_macro(display, *pc, *slot);
+            }
+            StartRecordingMacro { pc, slot } => {
+                self.apply_start_recording_macro(seat, *pc, *slot);
+            }
+            ChangeQaMemory { slot } => {
+                self.apply_change_qa_memory(seat, *slot);
+            }
+            QueueQuickAction { action, command } => {
+                let command = command.to_player_command();
+                self.apply_queue_quick_action(sim, display, assets, seat, *action, &command);
+            }
+            MakeQueuedActionFast { pc_id } => {
+                self.apply_make_queued_action_fast(sim, *pc_id);
+            }
+            _ => unreachable!("command routed to the wrong dispatch_quick_action_command family"),
+        }
+    }
+
+    /// Applies one already-admitted command from the camera control family.
+    /// The exhaustive outer dispatcher selects this family after macro recording.
+    fn dispatch_camera_control_command(
+        &mut self,
+        assets: &LevelAssets,
+        seat: usize,
+        cmd: &PlayerCommand,
+    ) {
+        use PlayerCommand::*;
+        match cmd {
             MinimapResize { base, corner_size } => {
                 let screen = Self::director_camera_view_size();
                 self.feedback
@@ -1284,29 +1448,7 @@ impl EngineInner {
                 self.reconcile_diplomacy_runtime();
                 self.refresh_fog_of_war(assets, true);
             }
-            HeroSpeak { pc_id, expression } => {
-                self.hero_speaking(assets, *pc_id, *expression);
-            }
-
-            // Host-side record of a drained modal. The actual
-            // dismissal happens in the game session loop; the engine
-            // has no state to mutate for this variant — carrying it in
-            // the command stream is what lets replays auto-dismiss.
-            ModalDismiss { .. } => {}
-
-            // ── Seat lifecycle ──────────────────────────────────
-            // The target seat is in the command payload, NOT the
-            // dispatch `seat` parameter — the host can issue these
-            // on behalf of a peer that hasn't materialised yet.
-            ConnectSeat {
-                player_id: target,
-                nickname,
-            } => {
-                self.dispatch_connect_seat(target, nickname);
-            }
-            DisconnectSeat { player_id: target } => {
-                self.dispatch_disconnect_seat(target);
-            }
+            _ => unreachable!("command routed to the wrong dispatch_camera_control_command family"),
         }
     }
 
