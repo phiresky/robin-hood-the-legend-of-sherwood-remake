@@ -515,9 +515,6 @@ impl crate::engine::EngineInner {
         // the target's pre-event moving state, then calls
         // sends the target `EVENT_STOP` synchronously, and only afterwards
         // samples the destination and authorizes/builds the replacement.
-        // End the immutable entity borrows before entering that nested Think.
-        let _ = owner_entity;
-        let _ = target_entity;
         if stop_npc {
             self.send_seek_stop_to_npc(sim, assets, target);
         }
