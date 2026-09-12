@@ -389,8 +389,9 @@ pub fn choose_mouse_pointer_for_no_action(
             .level
             .sectors
             .get(usize::from(patch_sector_idx))
-            .map(|s| s.sector_type.is_patch())
-            .unwrap_or(false);
+            .expect("same-frame mouse sector must identify an admitted grid sector")
+            .sector_type
+            .is_patch();
         // `find_patch_for_grid_sector` returns `None` only when no
         // mission script is loaded; in that state we can't evaluate
         // patch doors and fall through to the default cursor logic.

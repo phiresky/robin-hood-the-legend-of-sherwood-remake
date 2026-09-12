@@ -902,6 +902,8 @@ impl BackendState {
             };
         }
         if let Some(buffer) = ready {
+            // The start helper logs failures and updates FinishedJingle/Empty;
+            // resume has no separate completion result to publish.
             let _ = self.start_pending_channel(index, buffer);
         }
     }
@@ -964,6 +966,7 @@ impl BackendState {
             self.music_finished_event = true;
         }
         if let Some(buffer) = ready {
+            // The start helper logs failures and publishes music_finished_event.
             let _ = self.start_pending_music(buffer);
         }
     }

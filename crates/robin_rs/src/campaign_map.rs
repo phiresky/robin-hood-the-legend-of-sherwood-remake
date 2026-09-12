@@ -625,6 +625,163 @@ impl CampaignMapModalState {
         };
     }
 
+    fn handle_scroll_event(&mut self, event: &GameEvent, transform: MenuTransform) -> bool {
+        let pointer = (self.input.virt_x as i32, self.input.virt_y as i32);
+        let ids: &[usize] = if self.details_open {
+            &[TEXT_VIEW, HISTORY_VIEW]
+        } else if self.achievement_overview {
+            &[AWARDS_VIEW]
+        } else if self.presentation == CampaignPresentationMode::SherwoodMuseum {
+            &[GALLERY_VIEW]
+        } else if self.presentation == CampaignPresentationMode::ProgressTree {
+            &[TREE_VIEW]
+        } else {
+            &[]
+        };
+        let mut consumed = false;
+        for &id in ids {
+            if self.scroll_views[id].handle_event(event, transform, pointer) {
+                consumed = true;
+                break;
+            }
+        }
+
+        consumed
+    }
+
+    fn handle_detail_event(
+        &mut self,
+        event: GameEvent,
+        transform: MenuTransform,
+    ) -> Option<GameEvent> {
+        if self.details_open {
+            let history = (560.0..992.0).contains(&self.input.virt_x);
+            let step = match event {
+                GameEvent::KeyDown {
+                    keycode: Keycode::PageDown,
+                    ..
+                } => Some(if history {
+                    5
+                } else {
+                    DETAIL_VISIBLE_LINES as i32
+                }),
+                GameEvent::KeyDown {
+                    keycode: Keycode::PageUp,
+                    ..
+                } => Some(if history {
+                    -5
+                } else {
+                    -(DETAIL_VISIBLE_LINES as i32)
+                }),
+                GameEvent::MouseWheel(_) => continue,
+                _ => None,
+            };
+            if let Some(step) = step {
+                self.scroll_details(step, history);
+                return None;
+            }
+        }
+        if self.details_open && !self.graph.nodes.is_empty() {
+            match event {
+                GameEvent::KeyDown {
+                    keycode: Keycode::Left | Keycode::Right,
+                    ..
+                } => {
+                    let step = if matches!(
+                        event,
+                        GameEvent::KeyDown {
+                            keycode: Keycode::Left,
+                            ..
+                        }
+                    ) {
+                        -1
+                    } else {
+                        1
+                    };
+                    self.selected_progress = self
+                        .selected_progress
+                        .saturating_add_signed(step)
+                        .min(self.graph.nodes.len() - 1);
+                    self.exhibit_grid =
+                        ExhibitGridNavigator::new(self.graph.nodes.len(), self.selected_progress);
+                    self.selected_play = 0;
+                    self.scroll_views[HISTORY_VIEW].reset();
+                    self.details_open = true;
+                    self.scroll_views[TEXT_VIEW].reset();
+                    self.replay_status.clear();
+                    self.sync_scroll_views(true);
+                    return None;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Escape,
+                    ..
+                } => {
+                    self.details_open = false;
+                    return None;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up | Keycode::Down,
+                    ..
+                } => {
+                    let count = self
+                        .graph
+                        .nodes
+                        .get(self.selected_progress)
+                        .map_or(0, |node| node.plays.len());
+                    let step = if matches!(
+                        event,
+                        GameEvent::KeyDown {
+                            keycode: Keycode::Up,
+                            ..
+                        }
+                    ) {
+                        -1
+                    } else {
+                        1
+                    };
+                    self.selected_play = self
+                        .selected_play
+                        .saturating_add_signed(step)
+                        .min(count.saturating_sub(1));
+                    if count > 0 {
+                        self.scroll_views[HISTORY_VIEW].reveal(self.selected_play);
+                    }
+                    self.replay_status.clear();
+                    return None;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
+                    ..
+                } => {
+                    self.watch_selected_play();
+                    return None;
+                }
+                GameEvent::MouseDown(x, y, 1, clicks) => {
+                    let (x, y) = transform.from_screen(x, y);
+                    self.input.virt_x = x as f32;
+                    self.input.virt_y = y as f32;
+                    if let Some(index) = self.scroll_views[HISTORY_VIEW].row_at(x, y) {
+                        if index < self.graph.nodes[self.selected_progress].plays.len() {
+                            self.selected_play = index;
+                            self.replay_status.clear();
+                            if clicks >= 2 {
+                                self.watch_selected_play();
+                            }
+                        }
+                        return None;
+                    }
+                    if (560..992).contains(&x) && (630..666).contains(&y) {
+                        self.watch_selected_play();
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Some(event)
+    }
+
     fn handle_events(
         &mut self,
         events: Vec<GameEvent>,
@@ -651,154 +808,12 @@ impl CampaignMapModalState {
             }
             self.sync_scroll_views(false);
             self.input.update_from_event(&event, transform);
-            let pointer = (self.input.virt_x as i32, self.input.virt_y as i32);
-            let ids: &[usize] = if self.details_open {
-                &[TEXT_VIEW, HISTORY_VIEW]
-            } else if self.achievement_overview {
-                &[AWARDS_VIEW]
-            } else if self.presentation == CampaignPresentationMode::SherwoodMuseum {
-                &[GALLERY_VIEW]
-            } else if self.presentation == CampaignPresentationMode::ProgressTree {
-                &[TREE_VIEW]
-            } else {
-                &[]
-            };
-            let mut consumed = false;
-            for &id in ids {
-                if self.scroll_views[id].handle_event(&event, transform, pointer) {
-                    consumed = true;
-                    break;
-                }
-            }
-            if consumed {
+            if self.handle_scroll_event(&event, transform) {
                 continue;
             }
-            if self.details_open {
-                let history = (560.0..992.0).contains(&self.input.virt_x);
-                let step = match event {
-                    GameEvent::KeyDown {
-                        keycode: Keycode::PageDown,
-                        ..
-                    } => Some(if history {
-                        5
-                    } else {
-                        DETAIL_VISIBLE_LINES as i32
-                    }),
-                    GameEvent::KeyDown {
-                        keycode: Keycode::PageUp,
-                        ..
-                    } => Some(if history {
-                        -5
-                    } else {
-                        -(DETAIL_VISIBLE_LINES as i32)
-                    }),
-                    GameEvent::MouseWheel(_) => continue,
-                    _ => None,
-                };
-                if let Some(step) = step {
-                    self.scroll_details(step, history);
-                    continue;
-                }
-            }
-            if self.details_open && !self.graph.nodes.is_empty() {
-                match event {
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Left | Keycode::Right,
-                        ..
-                    } => {
-                        let step = if matches!(
-                            event,
-                            GameEvent::KeyDown {
-                                keycode: Keycode::Left,
-                                ..
-                            }
-                        ) {
-                            -1
-                        } else {
-                            1
-                        };
-                        self.selected_progress = self
-                            .selected_progress
-                            .saturating_add_signed(step)
-                            .min(self.graph.nodes.len() - 1);
-                        self.exhibit_grid = ExhibitGridNavigator::new(
-                            self.graph.nodes.len(),
-                            self.selected_progress,
-                        );
-                        self.selected_play = 0;
-                        self.scroll_views[HISTORY_VIEW].reset();
-                        self.details_open = true;
-                        self.scroll_views[TEXT_VIEW].reset();
-                        self.replay_status.clear();
-                        self.sync_scroll_views(true);
-                        continue;
-                    }
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Escape,
-                        ..
-                    } => {
-                        self.details_open = false;
-                        continue;
-                    }
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Up | Keycode::Down,
-                        ..
-                    } => {
-                        let count = self
-                            .graph
-                            .nodes
-                            .get(self.selected_progress)
-                            .map_or(0, |node| node.plays.len());
-                        let step = if matches!(
-                            event,
-                            GameEvent::KeyDown {
-                                keycode: Keycode::Up,
-                                ..
-                            }
-                        ) {
-                            -1
-                        } else {
-                            1
-                        };
-                        self.selected_play = self
-                            .selected_play
-                            .saturating_add_signed(step)
-                            .min(count.saturating_sub(1));
-                        if count > 0 {
-                            self.scroll_views[HISTORY_VIEW].reveal(self.selected_play);
-                        }
-                        self.replay_status.clear();
-                        continue;
-                    }
-                    GameEvent::KeyDown {
-                        keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
-                        ..
-                    } => {
-                        self.watch_selected_play();
-                        continue;
-                    }
-                    GameEvent::MouseDown(x, y, 1, clicks) => {
-                        let (x, y) = transform.from_screen(x, y);
-                        self.input.virt_x = x as f32;
-                        self.input.virt_y = y as f32;
-                        if let Some(index) = self.scroll_views[HISTORY_VIEW].row_at(x, y) {
-                            if index < self.graph.nodes[self.selected_progress].plays.len() {
-                                self.selected_play = index;
-                                self.replay_status.clear();
-                                if clicks >= 2 {
-                                    self.watch_selected_play();
-                                }
-                            }
-                            continue;
-                        }
-                        if (560..992).contains(&x) && (630..666).contains(&y) {
-                            self.watch_selected_play();
-                            continue;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            let Some(event) = self.handle_detail_event(event, transform) else {
+                continue;
+            };
             match event {
                 GameEvent::KeyDown {
                     keycode: Keycode::Char(b'r' | b'd' | b'b'),
@@ -1554,13 +1569,11 @@ fn render_campaign_progress(
     let ProgressViewState {
         selected,
         presentation,
-        show_achievement_badges,
-        lifetime_totals,
-        browsing,
         achievement_overview,
         details_scroll,
         history_scroll,
         selected_play,
+        ..
     } = view;
     let mut capture_views;
     let views = if let Some(views) = scroll_views {
@@ -1596,6 +1609,60 @@ fn render_campaign_progress(
         GALLERY_VIEW
     }]
     .offset();
+    render_progress_header(renderer, transform, graph, assets, view);
+    let font = assets
+        .progress_font
+        .as_ref()
+        .expect("campaign manager needs a readable font");
+
+    if achievement_overview {
+        render_progress_achievements(renderer, transform, graph, assets, views);
+        return;
+    }
+    if graph.nodes.is_empty() {
+        progress_text(
+            renderer,
+            font,
+            transform,
+            "No campaign missions in this content.",
+            32,
+            184,
+            960,
+        );
+        return;
+    }
+    let node = &graph.nodes[selected];
+    if details_scroll.is_some() {
+        render_mission_details(
+            renderer,
+            transform,
+            node,
+            assets,
+            views,
+            selected_play,
+            replay_status,
+        );
+        return;
+    }
+    render_progress_cards(renderer, transform, graph, assets, view, views, card_offset);
+    render_progress_summary(renderer, transform, graph, assets, view);
+}
+
+fn render_progress_header(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    assets: &CampaignMapAssets,
+    view: ProgressViewState,
+) {
+    let ProgressViewState {
+        presentation,
+        show_achievement_badges,
+        lifetime_totals,
+        achievement_overview,
+        details_scroll,
+        ..
+    } = view;
     // Opaque panels isolate the text from both the map artwork and the menu beneath it.
     progress_rect(
         renderer,
@@ -1703,79 +1770,80 @@ fn render_campaign_progress(
         960,
     );
     progress_rect(renderer, transform, (32, 162, 960, 1), (70, 79, 59));
+}
 
-    if achievement_overview {
-        let mut earned = graph.lifetime_achievements.earned();
-        earned.union_with(graph.campaign_achievements.earned());
-        let card_width = (views[AWARDS_VIEW].content_width() - 48) / 2;
-        for (index, badge) in crate::achievement_hud::permanent_badge_presentations(earned)
-            .skip(views[AWARDS_VIEW].offset() * 2)
-            .take(4)
-            .enumerate()
-        {
-            let x = 32 + index as i32 % 2 * (card_width + 32);
-            let y = 176 + index as i32 / 2 * 236;
-            progress_rect(renderer, transform, (x, y, card_width, 220), (12, 20, 13));
-            let current = graph.campaign_achievements.get(badge.id);
-            let archived = graph.lifetime_achievements.get(badge.id);
-            draw_achievement_badge_icon(
-                renderer,
-                badge.id,
-                badge.earned,
-                transform.origin_x + x + 10,
-                transform.origin_y + y + 8,
-            );
-            progress_text(
-                renderer,
-                font,
-                transform,
-                &badge.label,
-                x + 38,
-                y + 6,
-                card_width - 54,
-            );
-            progress_text(
-                renderer,
-                font,
-                transform,
-                permanent_achievement_status(current, archived),
-                x + 38,
-                y + 40,
-                card_width - 54,
-            );
-            use robin_engine::achievement::AchievementId;
-            // TODO: Localize these descriptions with the campaign manager labels.
-            let requirement = match badge.id {
-                AchievementId::CleanHands => {
-                    "Complete one campaign, winning every required mission without causing a death. Deaths caused by NPCs also count if enabled."
-                }
-                AchievementId::Ghost => {
-                    "Complete one campaign, winning every required mission without any gang member being seen by a living enemy."
-                }
-                AchievementId::PileOBones => {
-                    "Have at least 10 people knocked out, tied, netted, carried, or dead in one building at once, then win the mission."
-                }
-                _ => badge.id.description(),
-            };
-            let wrapped = layout::wrap_text_for_box_font(font, requirement, card_width - 32, 4);
-            for (line, text) in wrapped.lines.iter().enumerate() {
-                progress_text(
-                    renderer,
-                    font,
-                    transform,
-                    &text.text,
-                    x + 16,
-                    y + 78 + line as i32 * 23,
-                    card_width - 32,
-                );
+fn render_progress_achievements(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    assets: &CampaignMapAssets,
+    views: &[ScrollView; 5],
+) {
+    let font = assets
+        .progress_font
+        .as_ref()
+        .expect("campaign manager needs a readable font");
+    let mut earned = graph.lifetime_achievements.earned();
+    earned.union_with(graph.campaign_achievements.earned());
+    let card_width = (views[AWARDS_VIEW].content_width() - 48) / 2;
+    for (index, badge) in crate::achievement_hud::permanent_badge_presentations(earned)
+        .skip(views[AWARDS_VIEW].offset() * 2)
+        .take(4)
+        .enumerate()
+    {
+        let x = 32 + index as i32 % 2 * (card_width + 32);
+        let y = 176 + index as i32 / 2 * 236;
+        progress_rect(renderer, transform, (x, y, card_width, 220), (12, 20, 13));
+        let current = graph.campaign_achievements.get(badge.id);
+        let archived = graph.lifetime_achievements.get(badge.id);
+        draw_achievement_badge_icon(
+            renderer,
+            badge.id,
+            badge.earned,
+            transform.origin_x + x + 10,
+            transform.origin_y + y + 8,
+        );
+        progress_text(
+            renderer,
+            font,
+            transform,
+            &badge.label,
+            x + 38,
+            y + 6,
+            card_width - 54,
+        );
+        progress_text(
+            renderer,
+            font,
+            transform,
+            permanent_achievement_status(current, archived),
+            x + 38,
+            y + 40,
+            card_width - 54,
+        );
+        use robin_engine::achievement::AchievementId;
+        // TODO: Localize these descriptions with the campaign manager labels.
+        let requirement = match badge.id {
+            AchievementId::CleanHands => {
+                "Complete one campaign, winning every required mission without causing a death. Deaths caused by NPCs also count if enabled."
             }
+            AchievementId::Ghost => {
+                "Complete one campaign, winning every required mission without any gang member being seen by a living enemy."
+            }
+            AchievementId::PileOBones => {
+                "Have at least 10 people knocked out, tied, netted, carried, or dead in one building at once, then win the mission."
+            }
+            _ => badge.id.description(),
+        };
+        let wrapped = layout::wrap_text_for_box_font(font, requirement, card_width - 32, 4);
+        for (line, text) in wrapped.lines.iter().enumerate() {
             progress_text(
                 renderer,
                 font,
                 transform,
-                &current_achievement_status(current),
+                &text.text,
                 x + 16,
-                y + 190,
+                y + 78 + line as i32 * 23,
                 card_width - 32,
             );
         }
@@ -1783,57 +1851,61 @@ fn render_campaign_progress(
             renderer,
             font,
             transform,
-            "Earned achievements stay with this player when you load an older save.",
-            32,
-            656,
-            960,
+            &current_achievement_status(current),
+            x + 16,
+            y + 190,
+            card_width - 32,
         );
-        progress_text(
-            renderer,
-            font,
-            transform,
-            "Campaign awards cannot combine missions from different playthroughs.",
-            32,
-            686,
-            960,
-        );
-        progress_text(
-            renderer,
-            font,
-            transform,
-            "PgUp/PgDn or wheel: browse   A: missions   Esc: back",
-            32,
-            722,
-            960,
-        );
-        views[AWARDS_VIEW].draw_skin(renderer, transform, &assets.scrollbar);
-        return;
     }
-    if graph.nodes.is_empty() {
-        progress_text(
-            renderer,
-            font,
-            transform,
-            "No campaign missions in this content.",
-            32,
-            184,
-            960,
-        );
-        return;
-    }
-    let node = &graph.nodes[selected];
-    if details_scroll.is_some() {
-        render_mission_details(
-            renderer,
-            transform,
-            node,
-            assets,
-            views,
-            selected_play,
-            replay_status,
-        );
-        return;
-    }
+    progress_text(
+        renderer,
+        font,
+        transform,
+        "Earned achievements stay with this player when you load an older save.",
+        32,
+        656,
+        960,
+    );
+    progress_text(
+        renderer,
+        font,
+        transform,
+        "Campaign awards cannot combine missions from different playthroughs.",
+        32,
+        686,
+        960,
+    );
+    progress_text(
+        renderer,
+        font,
+        transform,
+        "PgUp/PgDn or wheel: browse   A: missions   Esc: back",
+        32,
+        722,
+        960,
+    );
+    views[AWARDS_VIEW].draw_skin(renderer, transform, &assets.scrollbar);
+}
+
+fn render_progress_cards(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    assets: &CampaignMapAssets,
+    view: ProgressViewState,
+    views: &[ScrollView; 5],
+    card_offset: usize,
+) {
+    let ProgressViewState {
+        selected,
+        presentation,
+        ..
+    } = view;
+    let gallery = presentation == CampaignPresentationMode::SherwoodMuseum;
+    let font = assets
+        .progress_font
+        .as_ref()
+        .expect("campaign manager needs a readable font");
     if presentation == CampaignPresentationMode::ProgressTree {
         for (_, child, rect) in visible_progress_cards(graph, presentation, selected, card_offset) {
             let (x, y, _, h) = rect;
@@ -1951,6 +2023,28 @@ fn render_campaign_progress(
         (588, 490, 216, 36),
         false,
     );
+}
+
+fn render_progress_summary(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    graph: &CampaignProgressGraph,
+    assets: &CampaignMapAssets,
+    view: ProgressViewState,
+) {
+    let ProgressViewState {
+        selected,
+        presentation,
+        show_achievement_badges,
+        browsing,
+        ..
+    } = view;
+    let node = &graph.nodes[selected];
+    let gallery = presentation == CampaignPresentationMode::SherwoodMuseum;
+    let font = assets
+        .progress_font
+        .as_ref()
+        .expect("campaign manager needs a readable font");
     progress_rect(renderer, transform, (32, 534, 960, 1), (91, 94, 67));
     progress_text(
         renderer,
