@@ -344,45 +344,53 @@ fn door_belongs_to_ai_house(door_type: crate::gate::DoorType) -> bool {
 /// Narrow, process-local diagnostics for the Save050 area-search point-count
 /// mismatch. Environment reads and stderr output must remain outside engine
 /// state so enabling this cannot affect snapshots, hashes, or simulation RNG.
+fn seek_area_owner_position_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SEEK_AREA_OWNER_POSITION",
+            [
+                "PARITY_DEBUG_SEEK_AREA_FRAME",
+                "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
+            ],
+        )
+    })
+}
+
 fn seek_area_owner_position_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some()
+    seek_area_owner_position_debug_gate().enabled()
 }
 
 fn seek_area_owner_position_debug_matches(frame: u32, creation_order: u32) -> bool {
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for SEEKAREA diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SEEK_AREA_FRAME").is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == expected)
+    seek_area_owner_position_debug_gate().matches([Some(frame), Some(creation_order)])
 }
 
 /// Opt-in, stderr-only provenance for the Save024
 /// swordfight observation reconsideration fighter-list mismatch. Keep the enable
 /// check ahead of identity lookup so the disabled path performs no additional
 /// world reads.
+fn reconsider_observation_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_RECONSIDER_OBSERVATION",
+            [
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME",
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER",
+                "PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE",
+            ],
+        )
+    })
+}
+
 fn reconsider_observation_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_RECONSIDER_OBSERVATION").is_some()
+    reconsider_observation_debug_gate().enabled()
 }
 
 fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle: u32) -> bool {
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for RECONSIDER diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_FRAME")
-        .is_none_or(|expected| frame == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_CREATION_ORDER")
-            .is_none_or(|expected| creation_order == expected)
-        && parse_filter("PARITY_DEBUG_RECONSIDER_OBSERVATION_OWNER_HANDLE")
-            .is_none_or(|expected| handle == expected)
+    reconsider_observation_debug_gate().matches([Some(frame), Some(creation_order), Some(handle)])
 }
 
 #[derive(Debug)]
@@ -3254,6 +3262,21 @@ impl EngineInner {
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         )
+    }
+
+    /// Resolve an NPC and its current building sector at the dispatch boundary.
+    /// Split-borrow translators continue to use the entity-based primitive.
+    #[track_caller]
+    pub(in crate::engine) fn ai_context_for(
+        &self,
+        npc_id: EntityId,
+        frame: u32,
+        scratch: &SimScratch,
+        assets: &LevelAssets,
+    ) -> AiContext {
+        let entity = self.expect_entity(npc_id, "building AI dispatch context");
+        let building_sector = self.entity_building_sector(entity.element_data().sector());
+        self.ai_context_from_entity(entity, frame, building_sector, scratch, assets)
     }
 }
 

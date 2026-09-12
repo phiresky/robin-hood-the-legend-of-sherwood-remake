@@ -28,7 +28,7 @@ fn damage_animation_posture(posture: Posture) -> Posture {
 /// Animation category for combat state transitions.
 ///
 /// Used by the damage-translation paths (sword / push / hit / arrow).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CombatAnimations {
     pub(super) falling_back: crate::order::OrderType,
     pub(super) dying_forward: crate::order::OrderType,
@@ -94,7 +94,7 @@ pub(super) fn select_combat_animations(
 }
 
 /// Push-damage animation set, selected based on posture and action state.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct PushDamageAnimations {
     /// The falling-pushed animation to play.
     pub(super) falling: crate::order::OrderType,
@@ -215,5 +215,51 @@ pub(in crate::engine) fn select_hit_fall_animation(
         // Hit-damage translation just terminates for these postures —
         // no animation needed.
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_damage_posture_family_preserves_every_action_state() {
+        for raw_posture in 0..=Posture::Cloaked as u32 {
+            let posture = Posture::try_from(raw_posture).expect("defined posture");
+            let reference = match posture {
+                Posture::Undefined
+                | Posture::Upright
+                | Posture::Spy
+                | Posture::Cloaked
+                | Posture::LeaningOut
+                | Posture::Leisure
+                | Posture::Siesta
+                | Posture::CarryingCorpse
+                | Posture::HelpingToClimb
+                | Posture::CarryingOnShoulders
+                | Posture::AnonymousArcher
+                | Posture::Sitting => Posture::Upright,
+                Posture::Crouched | Posture::SimulatingBeggar | Posture::Tree => Posture::Crouched,
+                other => other,
+            };
+            assert_eq!(damage_animation_posture(posture), reference);
+            for raw_action in 0..=ActionState::Listening as u32 {
+                let action = ActionState::try_from(raw_action).expect("defined action state");
+                assert_eq!(
+                    select_combat_animations(posture, action),
+                    select_combat_animations(reference, action)
+                );
+                assert_eq!(
+                    select_push_damage_animations(posture, action),
+                    select_push_damage_animations(reference, action)
+                );
+                for harder in [false, true] {
+                    assert_eq!(
+                        select_hit_fall_animation(posture, action, harder),
+                        select_hit_fall_animation(reference, action, harder)
+                    );
+                }
+            }
+        }
     }
 }

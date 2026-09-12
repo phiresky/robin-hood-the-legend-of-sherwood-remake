@@ -8,8 +8,11 @@
 mod immediate;
 mod instruct_commands;
 mod owner_dispatch;
+mod owner_preflight;
+use owner_preflight::PreparedOwnerInstruction;
 mod phase;
 mod script_sync;
+mod teleport;
 
 use super::movement::MovePathOutcome;
 use super::*;
@@ -734,9 +737,8 @@ impl BowTransitionContext<'_> {
         target_x: f32,
         target_y: f32,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, target_x, target_y, id);
-        order.compute_direction = false;
+        let order =
+            new_translation_order(self.next_order_id, order_type, (target_x, target_y), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 
@@ -1112,9 +1114,12 @@ impl TurnCommandContext<'_> {
         order_type: crate::order::OrderType,
         compute_direction: bool,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = compute_direction;
+        let order = new_translation_order(
+            self.next_order_id,
+            order_type,
+            (0.0, 0.0),
+            compute_direction,
+        );
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -1640,9 +1645,7 @@ impl NpcStateCommandContext<'_> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -1794,9 +1797,7 @@ impl NpcAttentionCommandContext<'_> {
         elem_idx: usize,
         order_type: crate::order::OrderType,
     ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        order.compute_direction = false;
+        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
@@ -3993,4 +3994,19 @@ mod canonical_door_invariant_tests {
         );
         required_unlock_door_id(Some(&element), crate::sequence::SequenceId(3), 0);
     }
+}
+
+/// Allocate at the translator's exact emission point. Direction policy is
+/// explicit: recovery orders intentionally retain Order's ordinary policy,
+/// whereas these posture-local translators generally disable recomputation.
+pub(in crate::engine) fn new_translation_order(
+    next_order_id: &mut u32,
+    order_type: crate::order::OrderType,
+    target: (f32, f32),
+    compute_direction: bool,
+) -> crate::order::Order {
+    let id = crate::order::alloc_order_id(next_order_id);
+    let mut order = crate::order::Order::new(order_type, target.0, target.1, id);
+    order.compute_direction = compute_direction;
+    order
 }

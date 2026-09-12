@@ -71,22 +71,8 @@ impl EngineInner {
                 continue;
             }
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let mut ctx = {
-                let entity = self.world.entities.get(member).unwrap_or_else(|| {
-                    panic!(
-                        "RemoveAllSubordinates member {} vanished before forced return to duty",
-                        member.index()
-                    )
-                });
-                let building_sector = self.entity_building_sector(entity.element_data().sector());
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
+            let mut ctx =
+                { self.ai_context_for(member, self.control.frame_counter, &scratch, assets) };
             self.refresh_selected_default_wait_identity(member, &mut ctx);
             let tick_data = self.build_npc_tick_data(sim, member, assets);
             {
@@ -337,22 +323,7 @@ impl EngineInner {
             // the new hearing event is dispatched: the original game updates AI directly
             // and does not consume unrelated deferred stimuli here.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let ctx = {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "one-shot noise listener {} disappeared before synchronous Think",
-                        npc_id.index()
-                    )
-                });
-                let building_sector = self.entity_building_sector(entity.element_data().sector());
-                self.ai_context_from_entity(
-                    entity,
-                    self.control.frame_counter,
-                    building_sector,
-                    &scratch,
-                    assets,
-                )
-            };
+            let ctx = { self.ai_context_for(npc_id, self.control.frame_counter, &scratch, assets) };
             let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
             self.dispatch_think_with_drain_mode(
                 sim,

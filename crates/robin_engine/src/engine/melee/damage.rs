@@ -9,21 +9,26 @@ fn provoke_roll_succeeds(roll: u32, fighting_ability: u16) -> bool {
     (roll as f32) < 0.2_f32 * f32::from(fighting_ability)
 }
 
+fn good_strike_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_GOOD_STRIKE_FRAME",
+                "PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER",
+            ],
+        )
+    })
+}
+
 fn good_strike_lifecycle_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_GOOD_STRIKE_LIFECYCLE").is_some()
+    good_strike_lifecycle_debug_gate().enabled()
 }
 
 fn good_strike_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for GOOD_STRIKE diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_GOOD_STRIKE_FRAME").is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_GOOD_STRIKE_CREATION_ORDER")
-            .is_none_or(|expected| expected == creation_order)
+    good_strike_lifecycle_debug_gate().matches([Some(frame), Some(creation_order)])
 }
 
 /// Scale the FallingHit launch vector to length 30
