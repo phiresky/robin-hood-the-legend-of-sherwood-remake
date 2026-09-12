@@ -12,13 +12,10 @@ pub(crate) struct FrontendPointerSequence {
     mouse_way: crate::mouse_way::MouseWay,
 }
 
-impl<'de> Deserialize<'de> for FrontendPointerSequence {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "live pointer sequences cannot be restored",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    FrontendPointerSequence,
+    "live pointer sequences cannot be restored"
+);
 
 impl FrontendPointerSequence {
     pub(crate) fn capture(&self) -> &FrontendPointerCapture {

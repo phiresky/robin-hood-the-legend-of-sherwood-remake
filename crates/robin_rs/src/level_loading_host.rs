@@ -412,7 +412,11 @@ pub fn probe_background_map_dims_with_files(
     if let Some(dd) = shipping {
         for key in &shipping_keys {
             if let Some(bytes) = dd.raw_asset(key) {
-                return Picture::terrain_dimensions(bytes).ok();
+                return Picture::terrain_dimensions(bytes)
+                    .inspect_err(
+                        |error| tracing::warn!(%error, %key, "Invalid terrain dimension header"),
+                    )
+                    .ok();
             }
         }
     }
@@ -435,15 +439,24 @@ pub fn probe_background_map_dims_with_files(
         if let Some(file) = open_for_probe(&png_path)? {
             let bytes = file.into_shared_bytes();
             let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-            let reader = decoder.read_info().ok()?;
+            let reader = decoder
+                .read_info()
+                .inspect_err(
+                    |error| tracing::warn!(%error, %png_path, "Invalid terrain PNG header"),
+                )
+                .ok()?;
             let info = reader.info();
             return Some((
-                u16::try_from(info.width).ok()?,
-                u16::try_from(info.height).ok()?,
+                u16::try_from(info.width).inspect_err(|error| tracing::warn!(%error, %png_path, "Terrain width exceeds supported range")).ok()?,
+                u16::try_from(info.height).inspect_err(|error| tracing::warn!(%error, %png_path, "Terrain height exceeds supported range")).ok()?,
             ));
         }
         if let Some(file) = open_for_probe(path)? {
-            return Picture::terrain_dimensions(&file.into_shared_bytes()).ok();
+            return Picture::terrain_dimensions(&file.into_shared_bytes())
+                .inspect_err(
+                    |error| tracing::warn!(%error, %path, "Invalid terrain dimension header"),
+                )
+                .ok();
         }
     }
     None

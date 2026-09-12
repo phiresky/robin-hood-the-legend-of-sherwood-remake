@@ -1483,13 +1483,10 @@ impl Serialize for ReplayExportTask {
     }
 }
 
-impl<'de> Deserialize<'de> for ReplayExportTask {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "replay export tasks must be constructed by their consumer",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    ReplayExportTask,
+    "replay export tasks must be constructed by their consumer"
+);
 
 impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
     fn try_take(&mut self) -> Option<Result<Arc<[u8]>, String>> {
