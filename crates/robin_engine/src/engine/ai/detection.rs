@@ -2334,7 +2334,6 @@ impl EngineInner {
         view_radius_cache: &OwnerViewRadiusCache,
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
-        use crate::element::Posture;
 
         let pc_snapshots = world.pcs.as_slice();
         let unconscious_soldiers = world.unconscious_soldiers.as_slice();
