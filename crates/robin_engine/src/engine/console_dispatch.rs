@@ -143,29 +143,7 @@ impl EngineInner {
         use ConsoleCommand::*;
         match cmd {
             // ── Campaign value mutations ─────────────────────────
-            GiveMoney { amount, show_help } => {
-                // Panic on missing campaign — matches `campaign_mut_or_panic`'s
-                // contract for cheats issued outside a mission.
-                self.add_campaign_value(CampaignValue::Ransom, *amount as i32);
-                // Always prints "Money !" first, then emits a four-line
-                // help listing (`Try also the following:`, the three
-                // CASH suggestions) when called without args, then
-                // applies the default.  We join everything into one
-                // newline-delimited response — the overlay splits on
-                // `\n` so each line renders separately.
-                let mut out = String::from("Money !");
-                if *show_help {
-                    out.push_str(
-                        "\nTry also the following :\n\
-                         CASH CENT\n\
-                         CASH THOUSAND\n\
-                         CASH TENTHOUSAND\n\
-                         CASH HUNDREDTHOUSAND",
-                    );
-                }
-                out.push_str(&format!("\n{amount} gold added."));
-                ConsoleResponse::Ok(out)
-            }
+            GiveMoney { amount, show_help } => self.console_give_money(*amount, *show_help),
             GiveBlazon { amount } => {
                 self.campaign_mut_or_panic()
                     .add_value(CampaignValue::Blazon, *amount as i32);
@@ -207,67 +185,7 @@ impl EngineInner {
                 self.mission_domain.state.quit_lost = true;
                 ConsoleResponse::Ok("Mission lost !".to_string())
             }
-            WinMission => {
-                // No-op in Sherwood; otherwise adds mission-stat money
-                // (soldier + bonus − collected) + rescue PCs + pending
-                // bonus-blazon pickups to the campaign totals before
-                // calling `engine.win(true)`.
-                let in_sherwood = Some(&self.mission_domain.campaign)
-                    .and_then(|c| {
-                        let idx = c.current_mission_idx?;
-                        Some(
-                            c.missions[idx].profile(&assets.profile_manager).location
-                                == crate::profiles::MissionLocation::Sherwood,
-                        )
-                    })
-                    .unwrap_or(false);
-                if in_sherwood {
-                    // Whole cheat is gated on `location != SHERWOOD`.
-                    return ConsoleResponse::Ok(String::new());
-                }
-
-                let money_delta = self.mission_domain.mission_stat.soldier_money as i32
-                    + self.mission_domain.mission_stat.bonus_money as i32
-                    - self.mission_domain.mission_stat.collected_money as i32;
-
-                // Sum quantities of still-active BONUS_BLAZON pickups
-                // left on the map.
-                let mut pending_blazons: i32 = 0;
-                for (_, bonus) in self.world.entities.bonuses() {
-                    if bonus.element.active && bonus.object.object_type == ObjectType::BonusBlazon {
-                        pending_blazons += bonus.object.quantity as i32;
-                    }
-                }
-
-                self.add_campaign_value(CampaignValue::Ransom, money_delta);
-                if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
-                    // Per-mission rescue-PC table — adds recruits
-                    // matching the current mission filename (e.g.
-                    // S01_Not_VL → Stutely + Paysan A/B/C).
-                    let added = campaign.rescue_pcs_for_current_mission_win(
-                        &assets.profile_manager,
-                        self.control.sim_config.difficulty,
-                    );
-                    if added > 0 {
-                        tracing::info!("WIN cheat: rescued {added} PC(s)");
-                    }
-                    campaign.add_value(CampaignValue::Blazon, pending_blazons);
-                }
-                // Rust's HUD is immediate-mode so no widget rebuild is
-                // needed, but we still push the information-bars
-                // command so script-side consumers see the hook.
-                if let Some(effects) = self
-                    .scripts
-                    .mission
-                    .as_mut()
-                    .map(|s| s.script_effects_mut())
-                {
-                    effects.emit_engine(EngineCommand::UpdateInformationBars);
-                }
-                self.win(true);
-                self.mission_domain.state.quit_won = true;
-                ConsoleResponse::Ok("Mission won !".to_string())
-            }
+            WinMission => self.console_win_mission(assets),
             WinCampaign => {
                 // Sets `ARESStateSucceeded = 9` on the shared mission
                 // profile.  Rust profiles are `Arc`-shared, so we stash
@@ -572,225 +490,13 @@ impl EngineInner {
             }
 
             // ── Commands needing features not yet implemented ────
-            Nuke => {
-                // Prints "Nuking ..." before walking every soldier,
-                // launches a damage(1000, 1000) sequence per victim,
-                // then prints "Nuked N soldiers".
-                let victims: Vec<_> = self
-                    .world
-                    .entities
-                    .soldiers()
-                    .map(|(id, _)| id.into())
-                    .collect();
-                let count = victims.len();
-                for id in victims {
-                    self.launch_damage(id, 1000, 1000);
-                }
-                ConsoleResponse::Ok(format!("Nuking ...\nNuked {count} soldiers"))
-            }
-            Wakeup => {
-                // Walk every NPC and, if unconscious, force concussion
-                // to `31` — one above `CONCUSSION_WAKEUP_THRESHOLD` —
-                // which drops them back to conscious via the normal
-                // threshold transition in `set_concussion`.
-                let ids: Vec<EntityId> = self
-                    .world
-                    .entities
-                    .npcs()
-                    .filter_map(|(id, e)| {
-                        if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
-                            Some(id.into())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                for id in ids {
-                    // Route through `apply_concussion` so the guards
-                    // (invulnerable / tied / carried / script-locked)
-                    // fire AND the WentUnconscious / WokeUp outcome
-                    // side-effects get dispatched to
-                    // `pending_concussion_side_effects` for
-                    // `perform_hourglass` to drain.
-                    self.apply_concussion(sim, assets, id, 31, false);
-                }
-                ConsoleResponse::Ok("Wake up !".to_string())
-            }
-            BudSpencer => {
-                // Knock out every Lacklandist soldier via
-                // concussion(100) + posture LYING + a trivial Wait
-                // sequence element.  Concussion application reads the
-                // target's own invulnerable / tied / carried state via
-                // `concussion_ctx_for`.
-                let ids: Vec<_> = self
-                    .world
-                    .entities
-                    .soldier_ids_for_camp(Camp::Lacklandists)
-                    .collect();
-                for id in ids {
-                    // Route through `apply_concussion` so a swordfighting
-                    // victim is dropped from opponents' lists and gets
-                    // the unconscious-star titbit + lose-consciousness
-                    // stimulus.
-                    self.apply_concussion(sim, assets, id, 100, false);
-                    if let Some(entity) = self.get_entity_mut(id) {
-                        entity.set_posture(Posture::Lying);
-                    }
-                    self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
-                }
-                ConsoleResponse::Ok("NPCs knocked out !".to_string())
-            }
-            Honolulu => {
-                // Body only runs when there is a selected view element
-                // and it is an NPC; otherwise it falls through silently.
-                // The success path always prints "Honolulu" first, then
-                // one of three branches keyed on the host-resolved target:
-                //  1. selection is active → deactivate + lock AI +
-                //     stash in tracker + clear selection + "Bye…"
-                //  2. target is inactive → reactivate it + unlock AI +
-                //     "I'm back!"
-                //  3. otherwise → three-line usage help
-                //
-                // Live hosts resolve an empty current selection from their
-                // `last_actor_in_honolulu` latch before frame admission.
-                let Some(id) = *selected_view_element else {
-                    // No selection / not an NPC falls through with zero
-                    // output.
-                    return ConsoleResponse::Ok(String::new());
-                };
-                let Some(entity) = self.get_entity(id) else {
-                    return ConsoleResponse::Ok(format!(
-                        "Error: selected entity {id:?} no longer exists"
-                    ));
-                };
-                if !entity.is_npc() {
-                    return ConsoleResponse::Ok(String::new());
-                }
-                let active_now = self
-                    .get_entity(id)
-                    .map(|e| e.element_data().active)
-                    .unwrap_or(false);
-
-                if active_now {
-                    // Send this NPC on vacation.
-                    if let Some(entity) = self.get_entity_mut(id) {
-                        entity.element_data_mut().active = false;
-                        if let Some(npc) = entity.npc_data_mut()
-                            && let Some(base) = npc.ai_brain.base_mut()
-                        {
-                            base.non_script_lock(AiLockFlags::FREEZE);
-                        }
-                    }
-                    if let Some(host) = dev.as_deref_mut() {
-                        host.last_actor_in_honolulu = Some(id);
-                    }
-                    *selected_view_element = None;
-                    return ConsoleResponse::Ok("Honolulu\nBye, I'm on holiday.".to_string());
-                }
-
-                // Reactivate the host-resolved vacation NPC.
-                if let Some(entity) = self.get_entity_mut(id) {
-                    entity.element_data_mut().active = true;
-                    if let Some(npc) = entity.npc_data_mut()
-                        && let Some(base) = npc.ai_brain.base_mut()
-                    {
-                        base.non_script_unlock(AiLockFlags::FREEZE);
-                    }
-                    return ConsoleResponse::Ok("Honolulu\nI'm back!".to_string());
-                }
-
-                // Fallback: three-line usage help.
-                ConsoleResponse::Ok(
-                    "Honolulu\n\
-                     Cheat couldn't be performed. There are two possibilities to do this cheat:\n\
-                     (1) Enable a view cone, then use this cheat to send this guy to Honolulu\n\
-                     (2) If (1) already done: Disable view cone, use this cheat to get last guy back from Honolulu."
-                        .to_string(),
-                )
-            }
-            Morpheus => {
-                // Always prints "MORPHEUS" first, then gates on
-                // selection being an NPC.  On success: concussion 100
-                // + posture LYING + Wait element + clear selection +
-                // "Sleep well...".  On failure (no selection / not NPC):
-                // the "please enable view cone" message.  Concussion
-                // application reads the target's own invulnerable /
-                // tied / carried state via `concussion_ctx_for`.
-                let is_npc = selected_view_element
-                    .and_then(|id| self.get_entity(id).map(|e| e.is_npc()))
-                    .unwrap_or(false);
-                if !is_npc {
-                    return ConsoleResponse::Ok(
-                        "MORPHEUS\n\
-                         Please enable view cone of a NPC before using this command."
-                            .to_string(),
-                    );
-                }
-                let id = selected_view_element.expect("NPC-selected implies id present");
-                // Route through `apply_concussion` so the KO side-effects
-                // (drop from sword-fight opponents' lists,
-                // unconscious-star titbit, lose-consciousness stimulus)
-                // fire — a direct `set_concussion` call would skip them.
-                self.apply_concussion(sim, assets, id, 100, false);
-                if let Some(entity) = self.get_entity_mut(id) {
-                    entity.set_posture(Posture::Lying);
-                }
-                self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
-                *selected_view_element = None;
-                ConsoleResponse::Ok("MORPHEUS\nSleep well...".to_string())
-            }
-            Hades => {
-                // Always prints "HADES" first, gates on selected NPC.
-                // On success: zero life points (alert green, sleeping
-                // state with the "forever" substate, close eyes,
-                // detectable cleanup, dying animation) + clear selection
-                // + "Sleep well... forever!".  The full cascade lives
-                // in `EngineInner::handle_death`, which needs
-                // `&LevelAssets`, so we queue the victim on
-                // `pending_hades_kills` and `perform_hourglass` drains.
-                let is_npc = selected_view_element
-                    .and_then(|id| self.get_entity(id).map(|e| e.is_npc()))
-                    .unwrap_or(false);
-                if !is_npc {
-                    return ConsoleResponse::Ok(
-                        "HADES\n\
-                         Please enable view cone of a NPC before using this command."
-                            .to_string(),
-                    );
-                }
-                let id = selected_view_element.expect("NPC-selected implies id present");
-                self.orders.pending_hades_kills.push(id);
-                *selected_view_element = None;
-                ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
-            }
-            LastManStanding => {
-                // Prints "Last man standing" unconditionally, then
-                // either deactivates every NPC other than the selected
-                // and prints "Lonely hero...", or prints the
-                // no-selection error.
-                let Some(keep) = *selected_view_element else {
-                    return ConsoleResponse::Ok(
-                        "Last man standing\n\
-                         Please enable view cone of a NPC before using this command."
-                            .to_string(),
-                    );
-                };
-                let ids: Vec<EntityId> = self.world.entities.npc_ids().collect::<Vec<_>>();
-                for id in ids {
-                    if id == keep {
-                        continue;
-                    }
-                    if let Some(entity) = self.get_entity_mut(id) {
-                        entity.element_data_mut().active = false;
-                        if let Some(npc) = entity.npc_data_mut()
-                            && let Some(base) = npc.ai_brain.base_mut()
-                        {
-                            base.non_script_lock(AiLockFlags::FREEZE);
-                        }
-                    }
-                }
-                ConsoleResponse::Ok("Last man standing\nLonely hero...".to_string())
-            }
+            Nuke => self.console_nuke(),
+            Wakeup => self.console_wake_npcs(sim, assets),
+            BudSpencer => self.console_knock_out_enemy_soldiers(sim, assets),
+            Honolulu => self.console_honolulu(dev.as_deref_mut(), selected_view_element),
+            Morpheus => self.console_morpheus(sim, assets, selected_view_element),
+            Hades => self.console_hades(selected_view_element),
+            LastManStanding => self.console_last_man_standing(selected_view_element),
             DiesIrae => {
                 // Prints "Dies irae" banner, toggles
                 // `ai_global.ezekiel_2517`, then prints either "Mine is
@@ -805,25 +511,7 @@ impl EngineInner {
                 };
                 ConsoleResponse::Ok(format!("Dies irae\n{status}"))
             }
-            RoterAlarm => {
-                // Sets attentive mode on every soldier — silent cheat,
-                // emits no console output.
-                let soldier_ids: Vec<EntityId> = self
-                    .world
-                    .entities
-                    .soldiers()
-                    .map(|(id, _)| id.into())
-                    .collect();
-                for id in soldier_ids {
-                    self.set_soldier_attentive_mode_from(
-                        id,
-                        true,
-                        false,
-                        crate::engine::soldier_helpers::AttentiveModeCaller::ConsoleCheat,
-                    );
-                }
-                ConsoleResponse::Ok(String::new())
-            }
+            RoterAlarm => self.console_alert_soldiers(),
             MisterSandman => {
                 // For every PC, launch a damage(100, 0) sequence —
                 // hp=100, concussion=0, *not* the reverse.  Swapping
@@ -835,28 +523,7 @@ impl EngineInner {
                 }
                 ConsoleResponse::Ok("Sweet dreams !".to_string())
             }
-            Coma => {
-                // Needs a selected PC and at least one amulet, then
-                // launches hp=10000 / concussion=0 damage on the first
-                // selected PC.
-                let selected = self.players.seats[0].selection.first().copied();
-                let amulets = Some(&self.mission_domain.campaign)
-                    .map(|c| c.get_value(CampaignValue::Amulets))
-                    .unwrap_or(0);
-                match (selected, amulets) {
-                    (None, _) => {
-                        ConsoleResponse::Ok("Please, select the PC to make sleep.".to_string())
-                    }
-                    (Some(_), n) if n < 1 => ConsoleResponse::Ok(
-                        "There not enough amulets left to put the selected PC in the coma."
-                            .to_string(),
-                    ),
-                    (Some(id), _) => {
-                        self.launch_damage(id, 10000, 0);
-                        ConsoleResponse::Ok("Coma !".to_string())
-                    }
-                }
-            }
+            Coma => self.console_coma(),
             Reinforcement => {
                 // Silent cheat: queue a reinforcement request here,
                 // and let `drain_pending_reinforcements` perform the
@@ -864,43 +531,7 @@ impl EngineInner {
                 self.orders.pending_reinforcements.push(None);
                 ConsoleResponse::Ok(String::new())
             }
-            SanPetrus => {
-                // Unconditionally prints "San Petrus", then either the
-                // no-selection error or — per selected PC — launches a
-                // hp=10000 / concussion=0 damage sequence and prints
-                // `"<profile name> has been recalled by San Petrus."`.
-                let selected = self.players.seats[0].selection.clone();
-                if selected.is_empty() {
-                    return ConsoleResponse::Ok(
-                        "San Petrus\nYou must select at least one PC.".to_string(),
-                    );
-                }
-                let mut out = String::from("San Petrus");
-                // Resolve profile names before mutating via
-                // `launch_damage` so the campaign borrow stays clean.
-                let names: Vec<String> = selected
-                    .iter()
-                    .map(|&id| {
-                        let profile_idx = self
-                            .get_entity(id)
-                            .and_then(|e| e.pc_data())
-                            .map(|pc| pc.profile_index);
-                        match (profile_idx, Some(&self.mission_domain.campaign)) {
-                            (Some(idx), Some(_)) => assets
-                                .profile_manager
-                                .get_character(idx)
-                                .map(|p| p.profile_name.to_string())
-                                .unwrap_or_else(|| format!("PC {id:?}")),
-                            _ => format!("PC {id:?}"),
-                        }
-                    })
-                    .collect();
-                for (id, name) in selected.iter().zip(names.iter()) {
-                    self.launch_damage(*id, 10000, 0);
-                    out.push_str(&format!("\n{name} has been recalled by San Petrus."));
-                }
-                ConsoleResponse::Ok(out)
-            }
+            SanPetrus => self.console_san_petrus(assets),
             WaspMaster => {
                 // Always prints "Wasps", then either the typo-preserved
                 // error or force-sets every selected PC's wasp ammo to
@@ -926,49 +557,7 @@ impl EngineInner {
                     "You must selected at meast one PC.",
                 )
             }
-            GiveAmmo => {
-                // For every PC, force all 3 action slots to 999.
-                // Forcing ammo also re-enables the slot when the amount
-                // is non-zero — that ripple fires here via
-                // `enable_pc_action` so a PC who had run out of a given
-                // action can fire again immediately.
-                let pcs: Vec<_> = self
-                    .world
-                    .pc_ids
-                    .iter()
-                    .filter_map(|&id| {
-                        self.get_entity(id).and_then(|e| match e {
-                            Entity::Pc(pc) => Some((
-                                id,
-                                pc.pc.profile_index,
-                                self.pc_description_index_for_pc_data(&pc.pc)?,
-                            )),
-                            _ => None,
-                        })
-                    })
-                    .collect();
-                for (id, profile_idx, status_idx) in pcs {
-                    let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
-                        continue;
-                    };
-                    let actions = match assets.profile_manager.get_character(profile_idx) {
-                        Some(p) => p.actions,
-                        None => continue,
-                    };
-                    if let Some(desc) = campaign.characters.get_mut(status_idx) {
-                        for action in actions {
-                            desc.status.force_set_ammo(action, 999);
-                        }
-                    }
-                    // Re-enable every slot now that it has ammo again.
-                    for action in actions {
-                        if action != crate::profiles::Action::NoAction {
-                            self.enable_pc_action(assets, id, action);
-                        }
-                    }
-                }
-                ConsoleResponse::Ok("Ammunition !".to_string())
-            }
+            GiveAmmo => self.console_give_ammo(assets),
             Lukas { pcs } => {
                 // Resolve each single-letter initial (R/J/T/S/W/M/A/B/C)
                 // to a PC via the character profile index, then inflict
@@ -982,45 +571,7 @@ impl EngineInner {
                 }
                 ConsoleResponse::Ok("PCs knocked out !".to_string())
             }
-            Call { actor, method } => {
-                // Dispatch a named method on a named actor; the only
-                // methods actually reachable from the shipping console
-                // are `HideInterface` / `DisplayInterface` on a PC.
-                // The original console identifies the actor by hex
-                // pointer; the Rust port uses a single-letter initial
-                // instead, since `EntityId` is a stable index rather
-                // than a raw memory address.
-                //
-                // We flip the per-PC `interface_hidden` flag and emit
-                // the "Hiding interface for PC(...)" /
-                // "Displaying interface for PC(...)" response.
-                // The HUD portrait row is derived from live PC entities
-                // and filters on `pc_data().interface_hidden`.
-                let mut ch = actor.chars();
-                let (Some(c), None) = (ch.next(), ch.next()) else {
-                    return ConsoleResponse::Ok("CALL: expected single PC initial.".to_string());
-                };
-                let ids = self.resolve_pcs_by_initials(assets, &c.to_string());
-                let Some(&id) = ids.first() else {
-                    return ConsoleResponse::Ok("CALL: no such PC.".to_string());
-                };
-                let hide = match method.to_ascii_uppercase().as_str() {
-                    "HIDEINTERFACE" => true,
-                    "DISPLAYINTERFACE" => false,
-                    _ => {
-                        return ConsoleResponse::Ok(format!("CALL: unknown method {method}."));
-                    }
-                };
-                if let Some(pc) = self.get_entity_mut(id).and_then(|e| e.pc_data_mut()) {
-                    pc.interface_hidden = hide;
-                }
-                let verb = if hide { "Hiding" } else { "Displaying" };
-                ConsoleResponse::Ok(format!(
-                    "{verb} interface for PC({}:{})",
-                    c.to_ascii_uppercase(),
-                    id.index()
-                ))
-            }
+            Call { actor, method } => self.console_call_actor(assets, actor, method),
             Fps => {
                 // Idempotent set (not a toggle): unconditionally
                 // enables FPS display and prints "FPS displayed."
@@ -1149,6 +700,501 @@ impl EngineInner {
             }
             UsageError(msg) => ConsoleResponse::Ok((*msg).to_string()),
         }
+    }
+
+    fn console_give_money(&mut self, amount: u32, show_help: bool) -> ConsoleResponse {
+        // Panic on missing campaign — matches `campaign_mut_or_panic`'s
+        // contract for cheats issued outside a mission.
+        self.add_campaign_value(CampaignValue::Ransom, amount as i32);
+        // Always prints "Money !" first, then emits a four-line
+        // help listing (`Try also the following:`, the three
+        // CASH suggestions) when called without args, then
+        // applies the default.  We join everything into one
+        // newline-delimited response — the overlay splits on
+        // `\n` so each line renders separately.
+        let mut out = String::from("Money !");
+        if show_help {
+            out.push_str(
+                "\nTry also the following :\n\
+                 CASH CENT\n\
+                 CASH THOUSAND\n\
+                 CASH TENTHOUSAND\n\
+                 CASH HUNDREDTHOUSAND",
+            );
+        }
+        out.push_str(&format!("\n{amount} gold added."));
+        ConsoleResponse::Ok(out)
+    }
+
+    fn console_win_mission(&mut self, assets: &LevelAssets) -> ConsoleResponse {
+        // No-op in Sherwood; otherwise adds mission-stat money
+        // (soldier + bonus − collected) + rescue PCs + pending
+        // bonus-blazon pickups to the campaign totals before
+        // calling `engine.win(true)`.
+        let in_sherwood = Some(&self.mission_domain.campaign)
+            .and_then(|c| {
+                let idx = c.current_mission_idx?;
+                Some(
+                    c.missions[idx].profile(&assets.profile_manager).location
+                        == crate::profiles::MissionLocation::Sherwood,
+                )
+            })
+            .unwrap_or(false);
+        if in_sherwood {
+            // Whole cheat is gated on `location != SHERWOOD`.
+            return ConsoleResponse::Ok(String::new());
+        }
+
+        let money_delta = self.mission_domain.mission_stat.soldier_money as i32
+            + self.mission_domain.mission_stat.bonus_money as i32
+            - self.mission_domain.mission_stat.collected_money as i32;
+
+        // Sum quantities of still-active BONUS_BLAZON pickups
+        // left on the map.
+        let mut pending_blazons: i32 = 0;
+        for (_, bonus) in self.world.entities.bonuses() {
+            if bonus.element.active && bonus.object.object_type == ObjectType::BonusBlazon {
+                pending_blazons += bonus.object.quantity as i32;
+            }
+        }
+
+        self.add_campaign_value(CampaignValue::Ransom, money_delta);
+        if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
+            // Per-mission rescue-PC table — adds recruits
+            // matching the current mission filename (e.g.
+            // S01_Not_VL → Stutely + Paysan A/B/C).
+            let added = campaign.rescue_pcs_for_current_mission_win(
+                &assets.profile_manager,
+                self.control.sim_config.difficulty,
+            );
+            if added > 0 {
+                tracing::info!("WIN cheat: rescued {added} PC(s)");
+            }
+            campaign.add_value(CampaignValue::Blazon, pending_blazons);
+        }
+        // Rust's HUD is immediate-mode so no widget rebuild is
+        // needed, but we still push the information-bars
+        // command so script-side consumers see the hook.
+        if let Some(effects) = self
+            .scripts
+            .mission
+            .as_mut()
+            .map(|s| s.script_effects_mut())
+        {
+            effects.emit_engine(EngineCommand::UpdateInformationBars);
+        }
+        self.win(true);
+        self.mission_domain.state.quit_won = true;
+        ConsoleResponse::Ok("Mission won !".to_string())
+    }
+
+    fn console_nuke(&mut self) -> ConsoleResponse {
+        // Prints "Nuking ..." before walking every soldier,
+        // launches a damage(1000, 1000) sequence per victim,
+        // then prints "Nuked N soldiers".
+        let victims: Vec<_> = self
+            .world
+            .entities
+            .soldiers()
+            .map(|(id, _)| id.into())
+            .collect();
+        let count = victims.len();
+        for id in victims {
+            self.launch_damage(id, 1000, 1000);
+        }
+        ConsoleResponse::Ok(format!("Nuking ...\nNuked {count} soldiers"))
+    }
+
+    fn console_wake_npcs(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
+        // Walk every NPC and, if unconscious, force concussion
+        // to `31` — one above `CONCUSSION_WAKEUP_THRESHOLD` —
+        // which drops them back to conscious via the normal
+        // threshold transition in `set_concussion`.
+        let ids: Vec<EntityId> = self
+            .world
+            .entities
+            .npcs()
+            .filter_map(|(id, e)| {
+                if e.human_data().map(|h| h.unconscious).unwrap_or(false) {
+                    Some(id.into())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for id in ids {
+            // Route through `apply_concussion` so the guards
+            // (invulnerable / tied / carried / script-locked)
+            // fire AND the WentUnconscious / WokeUp outcome
+            // side-effects get dispatched to
+            // `pending_concussion_side_effects` for
+            // `perform_hourglass` to drain.
+            self.apply_concussion(sim, assets, id, 31, false);
+        }
+        ConsoleResponse::Ok("Wake up !".to_string())
+    }
+
+    fn console_knock_out_enemy_soldiers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+    ) -> ConsoleResponse {
+        // Knock out every Lacklandist soldier via
+        // concussion(100) + posture LYING + a trivial Wait
+        // sequence element.  Concussion application reads the
+        // target's own invulnerable / tied / carried state via
+        // `concussion_ctx_for`.
+        let ids: Vec<_> = self
+            .world
+            .entities
+            .soldier_ids_for_camp(Camp::Lacklandists)
+            .collect();
+        for id in ids {
+            // Route through `apply_concussion` so a swordfighting
+            // victim is dropped from opponents' lists and gets
+            // the unconscious-star titbit + lose-consciousness
+            // stimulus.
+            self.apply_concussion(sim, assets, id, 100, false);
+            if let Some(entity) = self.get_entity_mut(id) {
+                entity.set_posture(Posture::Lying);
+            }
+            self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
+        }
+        ConsoleResponse::Ok("NPCs knocked out !".to_string())
+    }
+
+    fn console_honolulu(
+        &mut self,
+        mut dev: Option<&mut DevState>,
+        selected_view_element: &mut Option<EntityId>,
+    ) -> ConsoleResponse {
+        // Body only runs when there is a selected view element
+        // and it is an NPC; otherwise it falls through silently.
+        // The success path always prints "Honolulu" first, then
+        // one of three branches keyed on the host-resolved target:
+        //  1. selection is active → deactivate + lock AI +
+        //     stash in tracker + clear selection + "Bye…"
+        //  2. target is inactive → reactivate it + unlock AI +
+        //     "I'm back!"
+        //  3. otherwise → three-line usage help
+        //
+        // Live hosts resolve an empty current selection from their
+        // `last_actor_in_honolulu` latch before frame admission.
+        let Some(id) = *selected_view_element else {
+            // No selection / not an NPC falls through with zero
+            // output.
+            return ConsoleResponse::Ok(String::new());
+        };
+        let Some(entity) = self.get_entity(id) else {
+            return ConsoleResponse::Ok(format!("Error: selected entity {id:?} no longer exists"));
+        };
+        if !entity.is_npc() {
+            return ConsoleResponse::Ok(String::new());
+        }
+        let active_now = self
+            .get_entity(id)
+            .map(|e| e.element_data().active)
+            .unwrap_or(false);
+
+        if active_now {
+            // Send this NPC on vacation.
+            if let Some(entity) = self.get_entity_mut(id) {
+                entity.element_data_mut().active = false;
+                if let Some(npc) = entity.npc_data_mut()
+                    && let Some(base) = npc.ai_brain.base_mut()
+                {
+                    base.non_script_lock(AiLockFlags::FREEZE);
+                }
+            }
+            if let Some(host) = dev.as_deref_mut() {
+                host.last_actor_in_honolulu = Some(id);
+            }
+            *selected_view_element = None;
+            return ConsoleResponse::Ok("Honolulu\nBye, I'm on holiday.".to_string());
+        }
+
+        // Reactivate the host-resolved vacation NPC.
+        if let Some(entity) = self.get_entity_mut(id) {
+            entity.element_data_mut().active = true;
+            if let Some(npc) = entity.npc_data_mut()
+                && let Some(base) = npc.ai_brain.base_mut()
+            {
+                base.non_script_unlock(AiLockFlags::FREEZE);
+            }
+            return ConsoleResponse::Ok("Honolulu\nI'm back!".to_string());
+        }
+
+        // Fallback: three-line usage help.
+        ConsoleResponse::Ok(
+            "Honolulu\n\
+             Cheat couldn't be performed. There are two possibilities to do this cheat:\n\
+             (1) Enable a view cone, then use this cheat to send this guy to Honolulu\n\
+             (2) If (1) already done: Disable view cone, use this cheat to get last guy back from Honolulu."
+                .to_string(),
+        )
+    }
+
+    fn console_morpheus(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        selected_view_element: &mut Option<EntityId>,
+    ) -> ConsoleResponse {
+        // Always prints "MORPHEUS" first, then gates on
+        // selection being an NPC.  On success: concussion 100
+        // + posture LYING + Wait element + clear selection +
+        // "Sleep well...".  On failure (no selection / not NPC):
+        // the "please enable view cone" message.  Concussion
+        // application reads the target's own invulnerable /
+        // tied / carried state via `concussion_ctx_for`.
+        let is_npc = selected_view_element
+            .and_then(|id| self.get_entity(id).map(|e| e.is_npc()))
+            .unwrap_or(false);
+        if !is_npc {
+            return ConsoleResponse::Ok(
+                "MORPHEUS\n\
+                 Please enable view cone of a NPC before using this command."
+                    .to_string(),
+            );
+        }
+        let id = selected_view_element.expect("NPC-selected implies id present");
+        // Route through `apply_concussion` so the KO side-effects
+        // (drop from sword-fight opponents' lists,
+        // unconscious-star titbit, lose-consciousness stimulus)
+        // fire — a direct `set_concussion` call would skip them.
+        self.apply_concussion(sim, assets, id, 100, false);
+        if let Some(entity) = self.get_entity_mut(id) {
+            entity.set_posture(Posture::Lying);
+        }
+        self.launch_element(SequenceElement::new(1, Command::Wait, Some(id)));
+        *selected_view_element = None;
+        ConsoleResponse::Ok("MORPHEUS\nSleep well...".to_string())
+    }
+
+    fn console_hades(&mut self, selected_view_element: &mut Option<EntityId>) -> ConsoleResponse {
+        // Always prints "HADES" first, gates on selected NPC.
+        // On success: zero life points (alert green, sleeping
+        // state with the "forever" substate, close eyes,
+        // detectable cleanup, dying animation) + clear selection
+        // + "Sleep well... forever!".  The full cascade lives
+        // in `EngineInner::handle_death`, which needs
+        // `&LevelAssets`, so we queue the victim on
+        // `pending_hades_kills` and `perform_hourglass` drains.
+        let is_npc = selected_view_element
+            .and_then(|id| self.get_entity(id).map(|e| e.is_npc()))
+            .unwrap_or(false);
+        if !is_npc {
+            return ConsoleResponse::Ok(
+                "HADES\n\
+                 Please enable view cone of a NPC before using this command."
+                    .to_string(),
+            );
+        }
+        let id = selected_view_element.expect("NPC-selected implies id present");
+        self.orders.pending_hades_kills.push(id);
+        *selected_view_element = None;
+        ConsoleResponse::Ok("HADES\nSleep well... forever!".to_string())
+    }
+
+    fn console_last_man_standing(
+        &mut self,
+        selected_view_element: &mut Option<EntityId>,
+    ) -> ConsoleResponse {
+        // Prints "Last man standing" unconditionally, then
+        // either deactivates every NPC other than the selected
+        // and prints "Lonely hero...", or prints the
+        // no-selection error.
+        let Some(keep) = *selected_view_element else {
+            return ConsoleResponse::Ok(
+                "Last man standing\n\
+                 Please enable view cone of a NPC before using this command."
+                    .to_string(),
+            );
+        };
+        let ids: Vec<EntityId> = self.world.entities.npc_ids().collect::<Vec<_>>();
+        for id in ids {
+            if id == keep {
+                continue;
+            }
+            if let Some(entity) = self.get_entity_mut(id) {
+                entity.element_data_mut().active = false;
+                if let Some(npc) = entity.npc_data_mut()
+                    && let Some(base) = npc.ai_brain.base_mut()
+                {
+                    base.non_script_lock(AiLockFlags::FREEZE);
+                }
+            }
+        }
+        ConsoleResponse::Ok("Last man standing\nLonely hero...".to_string())
+    }
+
+    fn console_alert_soldiers(&mut self) -> ConsoleResponse {
+        // Sets attentive mode on every soldier — silent cheat,
+        // emits no console output.
+        let soldier_ids: Vec<EntityId> = self
+            .world
+            .entities
+            .soldiers()
+            .map(|(id, _)| id.into())
+            .collect();
+        for id in soldier_ids {
+            self.set_soldier_attentive_mode_from(
+                id,
+                true,
+                false,
+                crate::engine::soldier_helpers::AttentiveModeCaller::ConsoleCheat,
+            );
+        }
+        ConsoleResponse::Ok(String::new())
+    }
+
+    fn console_coma(&mut self) -> ConsoleResponse {
+        // Needs a selected PC and at least one amulet, then
+        // launches hp=10000 / concussion=0 damage on the first
+        // selected PC.
+        let selected = self.players.seats[0].selection.first().copied();
+        let amulets = Some(&self.mission_domain.campaign)
+            .map(|c| c.get_value(CampaignValue::Amulets))
+            .unwrap_or(0);
+        match (selected, amulets) {
+            (None, _) => ConsoleResponse::Ok("Please, select the PC to make sleep.".to_string()),
+            (Some(_), n) if n < 1 => ConsoleResponse::Ok(
+                "There not enough amulets left to put the selected PC in the coma.".to_string(),
+            ),
+            (Some(id), _) => {
+                self.launch_damage(id, 10000, 0);
+                ConsoleResponse::Ok("Coma !".to_string())
+            }
+        }
+    }
+
+    fn console_san_petrus(&mut self, assets: &LevelAssets) -> ConsoleResponse {
+        // Unconditionally prints "San Petrus", then either the
+        // no-selection error or — per selected PC — launches a
+        // hp=10000 / concussion=0 damage sequence and prints
+        // `"<profile name> has been recalled by San Petrus."`.
+        let selected = self.players.seats[0].selection.clone();
+        if selected.is_empty() {
+            return ConsoleResponse::Ok("San Petrus\nYou must select at least one PC.".to_string());
+        }
+        let mut out = String::from("San Petrus");
+        // Resolve profile names before mutating via
+        // `launch_damage` so the campaign borrow stays clean.
+        let names: Vec<String> = selected
+            .iter()
+            .map(|&id| {
+                let profile_idx = self
+                    .get_entity(id)
+                    .and_then(|e| e.pc_data())
+                    .map(|pc| pc.profile_index);
+                match (profile_idx, Some(&self.mission_domain.campaign)) {
+                    (Some(idx), Some(_)) => assets
+                        .profile_manager
+                        .get_character(idx)
+                        .map(|p| p.profile_name.to_string())
+                        .unwrap_or_else(|| format!("PC {id:?}")),
+                    _ => format!("PC {id:?}"),
+                }
+            })
+            .collect();
+        for (id, name) in selected.iter().zip(names.iter()) {
+            self.launch_damage(*id, 10000, 0);
+            out.push_str(&format!("\n{name} has been recalled by San Petrus."));
+        }
+        ConsoleResponse::Ok(out)
+    }
+
+    fn console_give_ammo(&mut self, assets: &LevelAssets) -> ConsoleResponse {
+        // For every PC, force all 3 action slots to 999.
+        // Forcing ammo also re-enables the slot when the amount
+        // is non-zero — that ripple fires here via
+        // `enable_pc_action` so a PC who had run out of a given
+        // action can fire again immediately.
+        let pcs: Vec<_> = self
+            .world
+            .pc_ids
+            .iter()
+            .filter_map(|&id| {
+                self.get_entity(id).and_then(|e| match e {
+                    Entity::Pc(pc) => Some((
+                        id,
+                        pc.pc.profile_index,
+                        self.pc_description_index_for_pc_data(&pc.pc)?,
+                    )),
+                    _ => None,
+                })
+            })
+            .collect();
+        for (id, profile_idx, status_idx) in pcs {
+            let Some(campaign) = Some(&mut self.mission_domain.campaign) else {
+                continue;
+            };
+            let actions = match assets.profile_manager.get_character(profile_idx) {
+                Some(p) => p.actions,
+                None => continue,
+            };
+            if let Some(desc) = campaign.characters.get_mut(status_idx) {
+                for action in actions {
+                    desc.status.force_set_ammo(action, 999);
+                }
+            }
+            // Re-enable every slot now that it has ammo again.
+            for action in actions {
+                if action != crate::profiles::Action::NoAction {
+                    self.enable_pc_action(assets, id, action);
+                }
+            }
+        }
+        ConsoleResponse::Ok("Ammunition !".to_string())
+    }
+
+    fn console_call_actor(
+        &mut self,
+        assets: &LevelAssets,
+        actor: &str,
+        method: &str,
+    ) -> ConsoleResponse {
+        // Dispatch a named method on a named actor; the only
+        // methods actually reachable from the shipping console
+        // are `HideInterface` / `DisplayInterface` on a PC.
+        // The original console identifies the actor by hex
+        // pointer; the Rust port uses a single-letter initial
+        // instead, since `EntityId` is a stable index rather
+        // than a raw memory address.
+        //
+        // We flip the per-PC `interface_hidden` flag and emit
+        // the "Hiding interface for PC(...)" /
+        // "Displaying interface for PC(...)" response.
+        // The HUD portrait row is derived from live PC entities
+        // and filters on `pc_data().interface_hidden`.
+        let mut ch = actor.chars();
+        let (Some(c), None) = (ch.next(), ch.next()) else {
+            return ConsoleResponse::Ok("CALL: expected single PC initial.".to_string());
+        };
+        let ids = self.resolve_pcs_by_initials(assets, &c.to_string());
+        let Some(&id) = ids.first() else {
+            return ConsoleResponse::Ok("CALL: no such PC.".to_string());
+        };
+        let hide = match method.to_ascii_uppercase().as_str() {
+            "HIDEINTERFACE" => true,
+            "DISPLAYINTERFACE" => false,
+            _ => {
+                return ConsoleResponse::Ok(format!("CALL: unknown method {method}."));
+            }
+        };
+        if let Some(pc) = self.get_entity_mut(id).and_then(|e| e.pc_data_mut()) {
+            pc.interface_hidden = hide;
+        }
+        let verb = if hide { "Hiding" } else { "Displaying" };
+        ConsoleResponse::Ok(format!(
+            "{verb} interface for PC({}:{})",
+            c.to_ascii_uppercase(),
+            id.index()
+        ))
     }
 
     /// Force the ammo counter for `action` to `amount` on every
@@ -1662,5 +1708,116 @@ mod tests {
             engine.run_console_command(sim, &assets(), &mut dev, &mut None, "NUKE"),
             ConsoleResponse::Unknown
         );
+    }
+
+    #[test]
+    fn actor_cheat_admission_marks_attempt_even_when_selection_is_missing() {
+        let sim = crate::sim_rng::test_context();
+        let assets = assets();
+        for (command, expected) in [
+            (ConsoleCommand::Honolulu, ""),
+            (
+                ConsoleCommand::Morpheus,
+                "MORPHEUS\nPlease enable view cone of a NPC before using this command.",
+            ),
+            (
+                ConsoleCommand::Hades,
+                "HADES\nPlease enable view cone of a NPC before using this command.",
+            ),
+            (
+                ConsoleCommand::LastManStanding,
+                "Last man standing\nPlease enable view cone of a NPC before using this command.",
+            ),
+        ] {
+            let mut engine = EngineInner::new();
+            let mut selected = None;
+            let response =
+                engine.dispatch_sim_console_command(&sim, &assets, &mut selected, &command);
+            assert_eq!(response, ConsoleResponse::Ok(expected.to_owned()));
+            assert_eq!(selected, None);
+            assert_eq!(
+                engine.mission_domain.cheat_used_flags,
+                CHEAT_CONSOLE_COMMAND
+            );
+            assert!(engine.orders.pending_hades_kills.is_empty());
+            assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        }
+    }
+
+    #[test]
+    fn honolulu_reports_a_missing_selected_entity_without_clearing_it() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        let id = EntityId::new(999, crate::entity_id::EntityIdKind::Soldier);
+        let mut selected = Some(id);
+        let response = engine.dispatch_sim_console_command(
+            &sim,
+            &assets(),
+            &mut selected,
+            &ConsoleCommand::Honolulu,
+        );
+        assert_eq!(
+            response,
+            ConsoleResponse::Ok(format!("Error: selected entity {id:?} no longer exists")),
+        );
+        assert_eq!(selected, Some(id));
+    }
+
+    #[test]
+    fn honolulu_retains_host_latch_and_reactivates_resolved_npc_without_host_state() {
+        let sim = crate::sim_rng::test_context();
+        let assets = assets();
+        let mut engine = EngineInner::new();
+        let mut dev = DevState::default();
+        let id = engine.add_test_entity(soldier(false));
+        let mut selected = Some(id);
+        assert_eq!(
+            engine.dispatch_console_command(
+                &sim,
+                &assets,
+                &mut dev,
+                &mut selected,
+                &ConsoleCommand::Honolulu,
+            ),
+            ConsoleResponse::Ok("Honolulu\nBye, I'm on holiday.".to_owned()),
+        );
+        assert_eq!(selected, None);
+        assert_eq!(dev.last_actor_in_honolulu, Some(id));
+        assert!(!engine.get_entity(id).unwrap().element_data().active);
+
+        selected = Some(id);
+        assert_eq!(
+            engine.dispatch_sim_console_command(
+                &sim,
+                &assets,
+                &mut selected,
+                &ConsoleCommand::Honolulu,
+            ),
+            ConsoleResponse::Ok("Honolulu\nI'm back!".to_owned()),
+        );
+        assert_eq!(selected, Some(id));
+        assert!(engine.get_entity(id).unwrap().element_data().active);
+    }
+
+    #[test]
+    fn call_validates_actor_before_method_and_does_not_launch_work_on_error() {
+        let sim = crate::sim_rng::test_context();
+        let mut engine = EngineInner::new();
+        for (actor, expected) in [
+            ("RR", "CALL: expected single PC initial."),
+            ("R", "CALL: no such PC."),
+        ] {
+            let response = engine.dispatch_sim_console_command(
+                &sim,
+                &assets(),
+                &mut None,
+                &ConsoleCommand::Call {
+                    actor: actor.to_owned(),
+                    method: "UNKNOWN".to_owned(),
+                },
+            );
+            assert_eq!(response, ConsoleResponse::Ok(expected.to_owned()));
+            assert_eq!(engine.orders.sequence_manager.sequence_count(), 0);
+        }
     }
 }
