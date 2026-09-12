@@ -347,3 +347,7 @@ test = true
 [[example]]
 name = "verify_rollback"
 test = true
+
+[[example]]
+name = "pak_res_roundtrip"
+test = true

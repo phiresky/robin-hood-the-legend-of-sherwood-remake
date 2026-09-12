@@ -311,11 +311,6 @@ impl WidgetRadioButton {
         self.focus_hidden = hide;
     }
 
-    /// Always returns `true`.
-    pub fn is_sleeping(&self) -> bool {
-        true
-    }
-
     /// Hit-test for the focus manager: bbox + per-pixel transparency
     /// via `WidgetBase::is_inside` → `RendererBase::is_real_point`
     /// (samples an `AlphaMask` baked from the bound sprite if the
@@ -364,10 +359,6 @@ impl WidgetGroupable for WidgetRadioButton {
 
     fn is_enabled(&self) -> bool {
         self.base.enabled
-    }
-
-    fn is_sleeping(&self) -> bool {
-        WidgetRadioButton::is_sleeping(self)
     }
 
     fn is_mouse_inside(&self, point: ScreenPoint) -> bool {

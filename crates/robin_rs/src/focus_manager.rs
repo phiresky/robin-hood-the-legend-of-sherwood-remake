@@ -387,8 +387,6 @@ pub trait WidgetGroupable {
     fn widget_id(&self) -> WidgetId;
     /// Whether the widget is enabled (can receive focus).
     fn is_enabled(&self) -> bool;
-    /// Whether the widget is sleeping (inactive).
-    fn is_sleeping(&self) -> bool;
     /// Whether the given point is inside this widget's bounds.
     fn is_mouse_inside(&self, point: ScreenPoint) -> bool;
     /// Show or hide the focus indicator.

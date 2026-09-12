@@ -442,26 +442,12 @@ fn activate_disabled_silent() {
 }
 
 #[test]
-fn is_sleeping_true_in_default() {
-    let btn = make_menu_button();
-    assert!(btn.is_sleeping());
-}
-
-#[test]
-fn is_sleeping_false_in_focused() {
-    let mut btn = make_menu_button();
-    btn.base.state = UiState::Focused;
-    assert!(!btn.is_sleeping());
-}
-
-#[test]
 fn groupable_trait_routes() {
     use crate::focus_manager::{UiEventType, WidgetGroupable};
     let mut btn = make_menu_button();
     let g: &mut dyn WidgetGroupable = &mut btn;
     assert_eq!(g.widget_id(), 1);
     assert!(g.is_enabled());
-    assert!(g.is_sleeping());
     let events = g.activate();
     assert_eq!(events[0].msg_type, UiEventType::Activated);
     assert_eq!(events[0].origin, 1);

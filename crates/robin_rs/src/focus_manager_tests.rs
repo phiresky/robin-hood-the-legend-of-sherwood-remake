@@ -7,7 +7,6 @@ use std::rc::Rc;
 struct MockGroupable {
     id: WidgetId,
     enabled: bool,
-    sleeping: bool,
     mouse_rect: Option<(f32, f32, f32, f32)>, // (x1, y1, x2, y2)
     group_members: Vec<WidgetId>,
     deselected_by_peer: Option<Rc<Cell<bool>>>,
@@ -18,7 +17,6 @@ impl MockGroupable {
         Self {
             id,
             enabled: true,
-            sleeping: false,
             mouse_rect: None,
             group_members: Vec::new(),
             deselected_by_peer: None,
@@ -47,9 +45,6 @@ impl WidgetGroupable for MockGroupable {
     }
     fn is_enabled(&self) -> bool {
         self.enabled
-    }
-    fn is_sleeping(&self) -> bool {
-        self.sleeping
     }
     fn is_mouse_inside(&self, point: ScreenPoint) -> bool {
         if let Some((x1, y1, x2, y2)) = self.mouse_rect {

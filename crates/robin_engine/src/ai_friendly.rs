@@ -425,8 +425,6 @@ impl FriendlyAi {
         // see `Engine::filter_stimulus` and the matching note in
         // ai_enemy::think.
 
-        self.update_new_task_priority(stimulus);
-
         let return_value = match stimulus_type {
             // Expected events
             StimulusType::EventReachPoint
@@ -836,11 +834,6 @@ impl FriendlyAi {
             .think_recursion_depth
             .saturating_sub(1)
             .saturating_sub(open);
-    }
-
-    /// Civilian-side new-task-priority hook is intentionally empty.
-    fn update_new_task_priority(&mut self, _stimulus: &Stimulus) {
-        // Intentionally empty.
     }
 
     // -----------------------------------------------------------------------
@@ -1915,13 +1908,6 @@ impl FriendlyAi {
             .update(ReportType::Body, seek_pos);
         self.base.face_position_3d_with_ctx(seek_pos, ctx);
         self.base.launch_timer(AI_FIRST_LOOK_TIME as u32, ctx.frame);
-    }
-
-    /// Standard procedure when a civilian sees an object.
-    ///
-    /// Intentionally empty — no civilian reaction is implemented.
-    pub fn event_sees_object_standard_procedure(&mut self, _object: ObjectHandle) {
-        // Intentionally empty.
     }
 
     /// Alert a nearby soldier.
@@ -3322,18 +3308,19 @@ mod tests {
     }
 
     #[test]
-    fn event_sees_object_is_noop() {
+    fn think_alerting_event_sees_object_is_noop() {
+        let sim = crate::sim_rng::test_context();
         let mut ai = FriendlyAi::new(1);
-        ai.event_sees_object_standard_procedure(42);
-        assert_eq!(ai.base.current_state, AiState::Default);
-    }
+        let mut stimulus = Stimulus::new(StimulusType::EventSeesObject);
+        stimulus.info = StimulusInfo::Object(AiEntityHandle::new(42));
+        // Include queued effects, not just the current state/substate.
+        let before = bitcode::encode(&ai);
 
-    #[test]
-    fn update_new_task_priority_is_noop() {
-        let mut ai = FriendlyAi::new(1);
-        let stimulus = Stimulus::new(StimulusType::EventTimer);
-        ai.update_new_task_priority(&stimulus);
-        // Should not panic or change state
+        let result =
+            ai.think_alerting_event(&sim, &stimulus, &AiContext::test_fixture(), None, None);
+
+        assert!(!result);
+        assert_eq!(bitcode::encode(&ai), before);
     }
 
     #[test]
