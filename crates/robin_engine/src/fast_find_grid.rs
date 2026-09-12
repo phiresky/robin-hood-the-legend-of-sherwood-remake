@@ -25,55 +25,14 @@ use geo::Rect;
 // SectorIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::level::sectors` (the flat grid sector
 /// table).  Wraps [`nonmax::NonMaxU32`] so `Option<SectorIndex>` is
 /// 4 bytes via niche optimization.  Distinct from a sector *number*
 /// (the script-facing `i16` id) and from `BuildingIdx` (which indexes
 /// the building table); this is the FastFindGrid array slot.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct SectorIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(SectorIndex, u32);
-
-impl SectorIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<SectorIndex> for u32 {
-    #[inline]
-    fn from(i: SectorIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<SectorIndex> for usize {
-    #[inline]
-    fn from(i: SectorIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for SectorIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct SectorIndex(pub nonmax::NonMaxU32), u32
+);
 
 // ─── Constants ───────────────────────────────────────────────────
 
@@ -183,54 +142,13 @@ pub enum ImpactType {
 // LineIndex — nominal newtype
 // ---------------------------------------------------------------------------
 
+crate::bitcode_adapters::define_index_newtype!(
 /// Index into `FastFindGrid::level::lines` (motion / elevation / repulsive
 /// grid lines).  Wraps [`nonmax::NonMaxU32`] so `Option<LineIndex>` is
 /// 4 bytes via niche optimization.  Distinct from [`crate::jump_line::JumpLineIndex`]
 /// which indexes `level::jump_lines`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    robin_state_hash_derive::StateHash,
-)]
-pub struct LineIndex(pub nonmax::NonMaxU32);
-
-crate::bitcode_adapters::impl_native_bitcode_index!(LineIndex, u32);
-
-impl LineIndex {
-    #[inline]
-    pub fn new(v: u32) -> Option<Self> {
-        nonmax::NonMaxU32::new(v).map(Self)
-    }
-    #[inline]
-    pub fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-impl From<LineIndex> for u32 {
-    #[inline]
-    fn from(i: LineIndex) -> u32 {
-        i.0.get()
-    }
-}
-impl From<LineIndex> for usize {
-    #[inline]
-    fn from(i: LineIndex) -> usize {
-        i.0.get() as usize
-    }
-}
-impl std::fmt::Display for LineIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.get().fmt(f)
-    }
-}
+pub struct LineIndex(pub nonmax::NonMaxU32), u32
+);
 
 /// A line stored in the grid, representing the properties of a level
 /// line that are relevant for pathfinding collision queries.

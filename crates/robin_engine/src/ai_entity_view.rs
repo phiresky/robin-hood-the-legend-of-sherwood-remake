@@ -679,6 +679,11 @@ pub fn entity_view_from_entity(
 
     let is_unconscious = human.is_some_and(|human| human.unconscious);
     let active = elem.active;
+    // This mixed-kind projection deliberately includes pickups and scenery.
+    // They have no actor state; `kind` remains authoritative for interpreting
+    // the existing wire-compatible null sentinel below.
+    // TODO: make actor-only view fields optional together in a versioned view
+    // schema, rather than changing just one field and its many fixture users.
     let action_state = actor.map(|a| a.action_state).unwrap_or_default();
     let passing_door = actor.is_some_and(|a| a.active_door_pass.is_some());
     let obstacle_idx = elem.obstacle_index();

@@ -111,13 +111,10 @@ impl RuntimeMask {
         // When absent we cannot apply to actors, so skip.
         let character_polyline: Vec<MapPoint> = raw
             .character_polyline
-            .as_ref()
-            .map(|pts| {
-                pts.iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .iter()
+            .flatten()
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+            .collect();
         if character_polyline.is_empty() && (raw.mask_type & MASK_CHARACTER) != 0 {
             // Declared character mask but no polyline — skip, since the
             // polyline test would early-exit on empty anyway.
@@ -126,13 +123,10 @@ impl RuntimeMask {
 
         let projectile_polyline: Vec<MapPoint> = raw
             .projectile_polyline
-            .as_ref()
-            .map(|pts| {
-                pts.iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .iter()
+            .flatten()
+            .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
+            .collect();
 
         // Last-write-wins semantics for `lower_y_for_mask`: both the
         // character and projectile init passes write to the same scalar,

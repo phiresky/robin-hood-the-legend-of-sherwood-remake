@@ -242,18 +242,44 @@ pub fn record_parity_flight_step(step: ParityFlightStep) {
 }
 
 /// Finish and return the current thread's movement capture.
-pub fn take_parity_movement_capture() -> Vec<ParityMovementStep> {
-    CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+/// `None` means no capture was started (or it was already drained); an active
+/// capture with no recorded events returns `Some(Vec::new())`.
+pub fn take_parity_movement_capture() -> Option<Vec<ParityMovementStep>> {
+    CAPTURE.with(|capture| capture.borrow_mut().take())
 }
 
-pub fn take_parity_flight_capture() -> Vec<ParityFlightStep> {
-    FLIGHT_CAPTURE.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+pub fn take_parity_flight_capture() -> Option<Vec<ParityFlightStep>> {
+    FLIGHT_CAPTURE.with(|capture| capture.borrow_mut().take())
 }
 
-pub fn take_parity_move_box_extractions() -> Vec<ParityMoveBoxExtraction> {
-    MOVE_BOX_EXTRACTIONS.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+pub fn take_parity_move_box_extractions() -> Option<Vec<ParityMoveBoxExtraction>> {
+    MOVE_BOX_EXTRACTIONS.with(|capture| capture.borrow_mut().take())
 }
 
-pub fn take_parity_late_movement_retranslations() -> Vec<EntityId> {
-    LATE_RETRANSLATIONS.with(|capture| capture.borrow_mut().take().unwrap_or_default())
+pub fn take_parity_late_movement_retranslations() -> Option<Vec<EntityId>> {
+    LATE_RETRANSLATIONS.with(|capture| capture.borrow_mut().take())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn capture_absence_is_distinct_from_empty_capture() {
+        super::begin_parity_movement_capture();
+        assert!(super::take_parity_movement_capture().unwrap().is_empty());
+        assert!(super::take_parity_flight_capture().unwrap().is_empty());
+        assert!(
+            super::take_parity_move_box_extractions()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            super::take_parity_late_movement_retranslations()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(super::take_parity_movement_capture().is_none());
+        assert!(super::take_parity_flight_capture().is_none());
+        assert!(super::take_parity_move_box_extractions().is_none());
+        assert!(super::take_parity_late_movement_retranslations().is_none());
+    }
 }

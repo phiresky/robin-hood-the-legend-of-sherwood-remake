@@ -741,6 +741,14 @@ impl std::ops::Sub for MapVec {
     }
 }
 
+impl std::ops::Neg for MapVec {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Self::new(-self.x, -self.y)
+    }
+}
+
 impl std::ops::AddAssign for MapVec {
     #[inline]
     fn add_assign(&mut self, o: Self) {
