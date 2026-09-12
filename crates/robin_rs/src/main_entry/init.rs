@@ -86,7 +86,10 @@ pub enum InitError {
     },
 
     #[error("Failed to open {path}: error {status}")]
-    ContentProfilesOpen { path: &'static str, status: i32 },
+    ContentProfilesOpen {
+        path: &'static str,
+        status: robin_engine::sbfile::SbFileError,
+    },
 
     #[error("Failed to read profiles from {path}: error {source}")]
     ContentProfilesRead {
@@ -338,7 +341,9 @@ fn add_language_folder() {
                 return;
             }
             Ok(false) => {}
-            Err(error) => tracing::warn!(folder, error, "Cannot inspect candidate language folder"),
+            Err(error) => {
+                tracing::warn!(folder, %error, "Cannot inspect candidate language folder")
+            }
         }
     }
     tracing::info!(
@@ -1132,7 +1137,7 @@ mod tests {
             (
                 InitError::DataDirectoryInstall {
                     path: "/game".to_owned(),
-                    status: -1,
+                    status: robin_engine::sbfile::SbFileError::NotFound,
                 },
                 InitErrorCategory::DataDirectory,
             ),
@@ -1145,7 +1150,7 @@ mod tests {
             (
                 InitError::ContentProfilesOpen {
                     path: "Data/Configuration/profile.cpf",
-                    status: -2,
+                    status: robin_engine::sbfile::SbFileError::NoFile,
                 },
                 InitErrorCategory::Content,
             ),
@@ -1186,11 +1191,14 @@ mod tests {
 
         let profile = InitError::ContentProfilesOpen {
             path: "Data/Configuration/profile.cpf",
-            status: -7,
+            status: robin_engine::sbfile::SbFileError::BadArchive,
         };
         assert_eq!(
             profile.to_string(),
-            "Failed to open Data/Configuration/profile.cpf: error -7"
+            format!(
+                "Failed to open Data/Configuration/profile.cpf: error {}",
+                robin_engine::sbfile::SbFileError::BadArchive
+            )
         );
     }
 

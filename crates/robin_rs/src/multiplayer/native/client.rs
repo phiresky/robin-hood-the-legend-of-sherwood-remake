@@ -1831,36 +1831,16 @@ pub(super) async fn send_client_outgoing(
 
 #[cfg(test)]
 pub(super) fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
-    match outgoing {
-        NetOutbound::Input {
-            origin_frame,
-            command,
-        } => Ok(NetMsg::Input {
-            origin_frame,
-            command,
-        }),
-        NetOutbound::ReadyToSim { frame } => Ok(NetMsg::ReadyToSim { frame }),
-        NetOutbound::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        } => Ok(NetMsg::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        }),
-        NetOutbound::SnapshotTransitionReady { id } => Ok(NetMsg::SnapshotTransitionReady { id }),
-        NetOutbound::StateHash { .. } | NetOutbound::InitialSnapshot { .. } => {
-            Err("native client attempted a host-only multiplayer publication".to_owned())
-        }
-        NetOutbound::ContentRequest { .. }
-        | NetOutbound::ContentReject { .. }
-        | NetOutbound::ContentReady { .. }
-        | NetOutbound::ContentPrepared { .. } => {
-            Err("native client queued a content-admission message after gameplay began".to_owned())
-        }
-        _ => Err("outbound message is not a direct native gameplay frame".to_owned()),
-    }
+    let (incoming, _receiver) = std::sync::mpsc::channel();
+    crate::multiplayer::client_outgoing::prepare(
+        outgoing,
+        &incoming,
+        &Default::default(),
+        crate::multiplayer::client_outgoing::ClientPublicationAuthority {
+            co_sign_allowed: false,
+            durable_public_key: None,
+        },
+    )
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "outgoing publication has no wire frame".to_owned())
 }
