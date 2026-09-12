@@ -163,7 +163,7 @@ pub fn read_job_config(path: &Path) -> Result<VerifierJobConfigV1, JobConfigErro
             limit: MAX_JOB_CONFIG_BYTES,
         });
     }
-    crate::strict_json::from_slice(&bytes)
+    robin_run_protocol::strict_json::from_slice(&bytes)
         .map_err(|error| JobConfigError::Decode(error.to_string()))
 }
 
