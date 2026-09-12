@@ -1560,8 +1560,9 @@ impl EngineInner {
                 .ai_brain
                 .enemy()
                 .unwrap_or_else(|| panic!("active soldier {handle} has no EnemyAi brain"));
-            let (has_formation, fighting_ability, bow_profile) =
+            let (soldier_profile, fighting_ability, bow_profile) =
                 self.soldier_profile_facts(assets, s, EntityId::Soldier(SoldierId(handle)));
+            let has_formation = soldier_profile.formation;
             let is_archer_unit = snapshots::is_archer_from_bow(bow_profile);
             let bow_max_range = bow_profile
                 .map(|bow| {
