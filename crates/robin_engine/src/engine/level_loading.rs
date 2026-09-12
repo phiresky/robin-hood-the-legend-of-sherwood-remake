@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::coordinates::{MapBBox, MapPoint};
-use crate::element::{BonusItemTypeExt, Entity, EntityId};
+use crate::element::{Entity, EntityId};
 
 mod entities;
 mod environment;
