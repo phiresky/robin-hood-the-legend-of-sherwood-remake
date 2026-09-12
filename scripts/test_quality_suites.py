@@ -165,6 +165,27 @@ class QualitySuitesTests(unittest.TestCase):
         self.run_suite("fixtures-fullgame", expected=1)
         self.assertFalse(self.log.exists())
 
+    def test_converter_fixtures_are_selected_exactly_for_their_distribution(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        expected = {
+            "fixtures-demo": [
+                "tests::authentic_demo_start_sxt_is_a_sixteen_picture",
+                "tests::authentic_demo_root_has_exact_typed_edition",
+            ],
+            "fixtures-fullgame": ["tests::authentic_fullgame_root_has_exact_typed_edition"],
+        }
+        for suite, names in expected.items():
+            with self.subTest(suite=suite):
+                if self.log.exists():
+                    self.log.unlink()
+                self.run_suite(suite)
+                calls = [call for call in self.calls() if "convert_datadir" in call]
+                self.assertEqual(calls, [
+                    ["test", "--locked", "-p", "robin_rs", "--features", "tools",
+                     "--bin", "convert_datadir", name, "--", "--ignored", "--exact"]
+                    for name in names
+                ])
+
     def test_host_gate_enables_and_selects_the_real_backend(self):
         self.run_suite("host")
         call = self.calls()[0]

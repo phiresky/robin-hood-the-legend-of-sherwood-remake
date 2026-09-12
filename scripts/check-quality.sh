@@ -159,11 +159,14 @@ case "$1" in
         cargo test --locked -p robin_assets --lib frame_holder::tests::test_sprite_bank_packed_data_present -- --ignored --exact
         cargo test --locked -p robin_assets --lib frame_holder::tests::test_validate_all_sprite_bank_streams -- --ignored --exact
         cargo test --locked -p robin_assets demo_script -- --ignored
+        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_start_sxt_is_a_sixteen_picture -- --ignored --exact
+        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_demo_root_has_exact_typed_edition -- --ignored --exact
         ;;
     fixtures-fullgame)
         : "${ROBINHOOD_DATA_DIR:?Set ROBINHOOD_DATA_DIR to the full-game root containing Data/}"
         cargo test --locked -p robin_engine --lib profiles::tests::load_fullgame_profile_json -- --ignored --exact
         cargo test --locked -p robin_assets fullgame_scripts -- --ignored
+        cargo test --locked -p robin_rs --features tools --bin convert_datadir tests::authentic_fullgame_root_has_exact_typed_edition -- --ignored --exact
         ;;
     *) printf 'unknown quality suite: %s\n' "$1" >&2; exit 2 ;;
 esac
