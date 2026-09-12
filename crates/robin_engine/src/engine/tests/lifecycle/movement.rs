@@ -102,8 +102,11 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
 fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let assets = LevelAssets::new();
+    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
+    let pending_victim =
+        engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
+    complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.set_engine_locked(true);
     let pending_owner = EntityId::Pc(crate::entity_id::PcId(319));
     let pending_sequence = engine.orders.sequence_manager.launch_element(
@@ -114,10 +117,7 @@ fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
             crate::order::OrderType::WalkingUpright,
         ),
     );
-    engine
-        .orders
-        .pending_hades_kills
-        .push(EntityId::new(99, crate::element::EntityIdKind::Soldier));
+    engine.orders.pending_hades_kills.push(pending_victim);
 
     begin_hourglass_phase_capture();
     let result = engine
