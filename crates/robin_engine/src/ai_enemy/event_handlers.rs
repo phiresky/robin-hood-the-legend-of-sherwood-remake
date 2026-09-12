@@ -3415,3 +3415,4 @@ impl EnemyAi {
         false
     }
 }
+use super::ThinkEnv;
