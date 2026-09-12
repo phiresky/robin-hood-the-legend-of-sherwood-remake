@@ -674,7 +674,7 @@ fn sector_and_script_zone_schemas_keep_table_order_and_conditional_apex() {
     for number in [31, 17, 49, 63] {
         crate::engine::test_support::ensure_ordinary_sector(&mut inner, number, 2);
     }
-    let grid = &mut inner.world.fast_grid;
+    let grid = std::sync::Arc::make_mut(&mut inner.world.fast_grid);
     grid.level_mut().sectors[0].sector_type |= crate::sector::SectorType::DOOR;
     grid.level_mut().sectors[1].sector_type |= crate::sector::SectorType::LIFT;
     grid.level_mut().sectors[2].sector_type |= crate::sector::SectorType::APEX;
@@ -815,9 +815,7 @@ fn populated_manager_schemas_match_original_encoders() {
         *tolerance = 1.25;
         *speed_factor = 2.0;
     }
-    inner
-        .world
-        .fast_grid
+    std::sync::Arc::make_mut(&mut inner.world.fast_grid)
         .level_mut()
         .jump_lines
         .push(crate::jump_line::JumpLine::new(
@@ -899,7 +897,7 @@ fn populated_manager_schemas_match_original_encoders() {
     sequence.elements[1].cross_postponed = Some((sequence_id, 4));
     inner.orders.next_order_id = 12;
     let reference = SequenceElementRef::new(sequence_id, 2);
-    inner.orders.timer_elements.push(TimerEntry {
+    inner.orders.timer_elements.push(crate::engine::TimerEntry {
         element_ref: reference,
         remaining: -3,
     });
