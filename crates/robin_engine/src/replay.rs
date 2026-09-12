@@ -1516,7 +1516,7 @@ mod tests {
             .move_box_half_diagonals
             .push(crate::coordinates::MoveBoxHalfDiagonal::new(1.0, 1.0));
         assets.navigation.level_grid = std::sync::Arc::new(level_grid);
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         let mut graph_bytes = Vec::new();
         graph_bytes.extend_from_slice(&1_u16.to_le_bytes());
         graph_bytes.extend_from_slice(&1.0_f32.to_le_bytes());

@@ -356,7 +356,7 @@ fn mission_stat_resets_on_new_mission() {
     engine.mission_domain.mission_stat.add_collected_money(500);
     engine.mission_domain.short_briefings.add(42, true);
 
-    let loaded = crate::level_data::LoadedLevel::empty_for_test();
+    let loaded = crate::level_data::LoadedLevel::empty();
     let _ = engine.initialize_from_mission(
         sim,
         &mut assets,

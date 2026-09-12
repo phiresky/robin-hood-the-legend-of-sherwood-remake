@@ -2213,7 +2213,7 @@ mod tests {
         let mut assets = LevelAssets::new();
         let fixture = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
             .expect("fixture campaign");
-        let loaded = robin_engine::level_data::LoadedLevel::empty_for_test();
+        let loaded = robin_engine::level_data::LoadedLevel::empty();
         let ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
         let (r, g, b) = ambiance.night_color_rgb();
         PreparedMission {

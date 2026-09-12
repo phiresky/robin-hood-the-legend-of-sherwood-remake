@@ -983,7 +983,7 @@ mod legacy_grid_topology_tests {
 
     #[test]
     fn retains_mixed_door_jump_order_and_sparse_special_sector_slots() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.grid_chunk_order = vec![
             ProtoGridChunk::Lift,
             ProtoGridChunk::Building,
@@ -1084,7 +1084,7 @@ mod legacy_grid_topology_tests {
             ..LegacyGridTopologyAssets::default()
         });
 
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         let mut first = door(false);
         first.door_type = 1;
         first.sector_out = 0;
@@ -1213,7 +1213,7 @@ mod legacy_grid_topology_tests {
     #[test]
     fn tactic_seek_position_resolves_sparse_slot_to_exact_sector_object() {
         let mut assets = LevelAssets::new();
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: Vec::new(),
@@ -1287,7 +1287,7 @@ mod legacy_grid_topology_tests {
             ],
             ..LegacyGridTopologyAssets::default()
         });
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: vec![RawAmbushPoint {
@@ -1319,7 +1319,7 @@ mod legacy_grid_topology_tests {
 
     #[test]
     fn archery_waypoint_resolves_to_exact_motion_sector_after_loading() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: Vec::new(),
             ambush_points: Vec::new(),
@@ -1961,7 +1961,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn door_stage_keeps_building_and_standalone_authored_order() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::Building {
                 doors: vec![door(1), door(2)],
@@ -1992,7 +1992,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn door_stage_rejects_illegal_standalone_type_with_context() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors {
             doors: vec![door(4)],
         }];
@@ -2012,7 +2012,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn script_preflight_rejects_authored_level_without_startup_when_enabled() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::StandaloneDoors { doors: Vec::new() }];
         let builder = MissionLevelBuilder::new("missing-script", true, &loaded);
 
@@ -2026,7 +2026,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn no_script_mode_still_constructs_doors_lifts_and_sector_links() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::StandaloneDoors {
                 doors: vec![door(3)],
@@ -2236,7 +2236,7 @@ mod mission_level_builder_tests {
             ],
             ..LegacyGridTopologyAssets::default()
         });
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.tactic_data = Some(RawTacticData {
             reinforcement_points: vec![RawReinforcementPoint {
                 x: 10,
@@ -2346,7 +2346,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_stage_requires_one_tenant_record_per_building() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::Building {
             doors: vec![door(1)],
         }];
@@ -2376,7 +2376,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_without_doors_is_valid_when_it_has_no_tenants() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![RawBuildingEntry::Building { doors: Vec::new() }];
         loaded.mission.building_tenants = vec![RawBuildingTenants {
             tenant_element_indices: Vec::new(),
@@ -2395,7 +2395,7 @@ mod mission_level_builder_tests {
 
     #[test]
     fn building_trap_tenant_uses_canonical_adapted_first_door() {
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.proto.buildings = vec![
             RawBuildingEntry::StandaloneDoors {
                 doors: vec![door(3)],

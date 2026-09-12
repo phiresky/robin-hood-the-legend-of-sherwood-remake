@@ -1304,7 +1304,7 @@ impl Engine {
             campaign.current_mission_idx = Some(0);
         }
 
-        let loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let loaded = crate::level_data::LoadedLevel::empty();
         Self::new(EngineArgs {
             campaign,
             level: LevelLoadArgs {
@@ -5627,7 +5627,7 @@ mod tests {
 
         let mut assets = LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles);
-        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut loaded = crate::level_data::LoadedLevel::empty();
         loaded.mission.soldiers.push(crate::level_data::RawSoldier {
             position_x: 0,
             position_y: 0,

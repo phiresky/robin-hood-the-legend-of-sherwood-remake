@@ -1836,7 +1836,7 @@ mod tests {
                     assets: &mut assets,
                     level_directory: "",
                     progress: &mut |_| {},
-                    loaded: robin_engine::level_data::LoadedLevel::empty_for_test(),
+                    loaded: robin_engine::level_data::LoadedLevel::empty(),
                     bg_pixel_dims: (0.0, 0.0),
                 },
                 ground_mark_sprite: None,

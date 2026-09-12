@@ -1782,7 +1782,7 @@ mod tests {
         profile.id = 1;
         profile.mission_filename = "Mission".into();
         profile.proto_level_filename = "ProtoLevel".into();
-        let mut level = robin_engine::level_data::LoadedLevel::empty_for_test();
+        let mut level = robin_engine::level_data::LoadedLevel::empty();
         level.mission.header.map_filename = "TerrainMap".into();
         let sim_config = robin_engine::engine::SimConfig {
             script_enabled: false,
