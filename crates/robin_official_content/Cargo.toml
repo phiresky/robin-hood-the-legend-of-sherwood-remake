@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 robin_assets.workspace = true
+robin_util.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
@@ -14,5 +15,5 @@ sha2.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true

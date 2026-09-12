@@ -40,12 +40,12 @@
 
 # Local agent worktrees
 /.worktrees
+/.agents/
 
 # Sandbox-created empty dotfiles
 /.bash_profile
 /.bashrc
 /.gitconfig
-/.gitmodules
 /.mcp.json
 /.profile
 /.ripgreprc
@@ -70,7 +70,7 @@
 
 __pycache__/
 
-# temporary
+# Local corpora and generated experimentation outputs (never source inputs).
 
 /parity-hang-diagnostics
 /parity-random-save-replays*
@@ -79,4 +79,7 @@ __pycache__/
 /concept-maps
 /factorio-mods
 /mission-maps
-/mods
+# Ignore locally installed mods, but show additions to the tracked examples.
+/mods/*
+!/mods/multi-team-demos/
+!/mods/timed-ambience-demo/

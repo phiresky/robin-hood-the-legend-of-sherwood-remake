@@ -17,13 +17,13 @@ native-admission = ["dep:robin_spellforge", "dep:libc", "dep:sha2", "dep:hex", "
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 robin_spellforge = { workspace = true, optional = true }
-libc = { version = "0.2", optional = true }
+libc = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [dependencies]
-base64 = "0.23"
+base64.workspace = true
 bitcode.workspace = true
 robin_engine.workspace = true
 serde = { workspace = true, features = ["derive"] }

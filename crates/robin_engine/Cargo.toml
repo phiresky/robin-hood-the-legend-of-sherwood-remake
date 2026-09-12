@@ -19,7 +19,8 @@ original-parity = []
 
 [dependencies]
 robin_content = { workspace = true, features = ["simulation-codecs"] }
-serde-value = "0.7"
+serde-value.workspace = true
+hex.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde-big-array = "0.5"

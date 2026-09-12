@@ -13,6 +13,8 @@
 //! overlays, user profile/localization state, and the persistent sound-duration
 //! cache. Those inputs are deliberately not laundered into this content proof.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
@@ -520,19 +522,8 @@ fn validate_locale_component(locale: &str) -> Result<()> {
 }
 
 fn validate_relative_path(path: &str) -> Result<()> {
-    let path = Path::new(path);
-    if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || path
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        bail!(
-            "source closure path is not a canonical relative path: {}",
-            path.display()
-        );
-    }
-    Ok(())
+    robin_util::asset_fs::validate_canonical_relative_path(path)
+        .with_context(|| format!("source closure path is not a canonical relative path: {path}"))
 }
 
 fn normalize_shipping_reference(path: &str) -> Result<String> {

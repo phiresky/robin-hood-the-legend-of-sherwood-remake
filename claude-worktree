@@ -1,13 +1,15 @@
 #!/bin/bash
-set -e
-name="$1"
-if [ -z "$name" ]; then
+set -euo pipefail
+name="${1:-}"
+if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
     echo "Usage: claude-worktree <name>"
     echo "Reads agent prompt from stdin."
     exit 1
 fi
+repo_root="$(git rev-parse --show-toplevel)"
+cd -- "$repo_root"
 dir=".worktrees/$name"
-branch="worktree-$name"
+branch="$name"
 base="main"
 
 prompt="$(cat)"
@@ -22,17 +24,21 @@ if [ -d "$dir" ]; then
 fi
 
 git worktree add "$dir" -b "$branch" "$base"
-git -C "$dir" submodule update --init --recursive
 git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
 mkdir -p "$dir/.codex"
-cat > "$dir/.codex/config.toml" <<EOF
-[permissions.sccache-workspace.filesystem]
-"$git_common_dir" = "write"
-"/home/phire/.cache/sccache" = "write"
-"/home/phire/.cargo" = "write"
-"/home/phire/.local/share/robin_hood" = "write"
-EOF
-if [ "$AGENT" = "codex" ]; then
+toml_path_permission() {
+    local path=${1//\\/\\\\}
+    path=${path//\"/\\\"}
+    printf '"%s" = "write"\n' "$path"
+}
+{
+    printf '[permissions.sccache-workspace.filesystem]\n'
+    toml_path_permission "$git_common_dir"
+    toml_path_permission "${XDG_CACHE_HOME:-$HOME/.cache}/sccache"
+    toml_path_permission "${CARGO_HOME:-$HOME/.cargo}"
+    toml_path_permission "${XDG_DATA_HOME:-$HOME/.local/share}/robin_hood"
+} > "$dir/.codex/config.toml"
+if [ "${AGENT:-}" = "codex" ]; then
     cmd="codex $(printf '%q' "$prompt")"
 else
     cmd="claude --permission-mode acceptEdits $(printf '%q' "$prompt")"

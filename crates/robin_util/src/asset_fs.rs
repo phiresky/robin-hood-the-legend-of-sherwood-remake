@@ -57,6 +57,48 @@ pub enum AssetError {
     },
 }
 
+/// Validate the lexical structure of a portable relative asset path without
+/// normalizing it. Unlike `Path::components`, this rejects `a/./b` and `a//b`
+/// rather than silently removing segments. Boundary-specific text limits,
+/// Unicode rules, and ASCII whitelists remain the caller's responsibility.
+/// This does not replace containment checks when opening a filesystem path.
+pub fn validate_canonical_relative_path(path: &str) -> Result<(), AssetError> {
+    if path.contains(['\\', ':'])
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err(AssetError::InvalidPath(path.into()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod canonical_relative_path_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_noncanonical_segments_without_host_path_normalization() {
+        for path in [
+            "", "/a", "a/", "a//b", "a/./b", "a/../b", ".", "..", "a\\b", "C:a",
+        ] {
+            assert!(validate_canonical_relative_path(path).is_err(), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn preserves_names_for_boundary_specific_text_policies() {
+        for path in [
+            "Data/Levels/mission.json",
+            "équipe/a b.png",
+            "a.../b",
+            ".hidden/file",
+        ] {
+            validate_canonical_relative_path(path).unwrap();
+        }
+    }
+}
+
 /// Cheaply cloned immutable asset bytes.
 ///
 /// Shipping missions keep one copy of each file in their mounted bundle. An
