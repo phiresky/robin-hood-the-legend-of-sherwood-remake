@@ -90,6 +90,7 @@ impl Default for BrowserRankedTransportState {
 pub struct ClientHandle {
     session_metadata: Rc<RefCell<Option<super::ClientSessionMetadata>>>,
     ranked_setup_tx: async_channel::Sender<Option<OfficialRankedSessionSetupV1>>,
+    ranked_setup_sent: Cell<bool>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
     ranked_local_public_key: Rc<Cell<Option<PublicKey32>>>,
     ranked_authenticated_host_public_key: PublicKey32,
@@ -101,38 +102,6 @@ pub struct ClientHandle {
 impl ClientHandle {
     pub fn session_metadata(&self) -> Option<super::ClientSessionMetadata> {
         self.session_metadata.borrow().clone()
-    }
-
-    pub fn session_id(&self) -> Option<robin_engine::multiplayer::MultiplayerSessionId> {
-        self.session_metadata().map(|session| session.session_id)
-    }
-
-    pub fn assigned_seat(&self) -> Option<PlayerId> {
-        self.session_metadata().map(|session| session.seat)
-    }
-
-    pub fn mission_seed(&self) -> Option<u64> {
-        self.session_metadata().map(|session| session.mission_seed)
-    }
-
-    pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
-        self.session_metadata().map(|session| session.sim_config)
-    }
-
-    pub fn mission_id(&self) -> Option<String> {
-        self.session_metadata().map(|session| session.mission_id)
-    }
-
-    pub fn speech_timing_locale(&self) -> Option<String> {
-        self.session_metadata()
-            .and_then(|session| session.speech_timing_locale)
-    }
-
-    /// The outer option distinguishes a pending handshake from an explicit
-    /// `None`, which authoritatively selects base `Data/Sounds` timing.
-    pub fn speech_timing_authority(&self) -> Option<Option<String>> {
-        self.session_metadata()
-            .map(|session| session.speech_timing_locale)
     }
 
     pub fn content_offer(&self) -> Option<robin_engine::multiplayer::DistributedModOffer> {
@@ -155,6 +124,14 @@ impl ClientHandle {
                 .validate()
                 .map_err(|error| format!("invalid local official ranked-session setup: {error}"))?;
         }
+        // As on native, resolving setup is a one-shot decision, even if its
+        // channel send fails. Queue capacity alone cannot enforce this once
+        // the first value has been consumed by the admission task.
+        if self.ranked_setup_sent.replace(true) {
+            return Err(
+                "browser ranked-session configuration was installed more than once".to_string(),
+            );
+        }
         self.ranked_setup_tx
             .try_send(setup)
             .map_err(|error| match error {
@@ -172,7 +149,8 @@ impl ClientHandle {
     }
 
     pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, String> {
-        self.assigned_seat()
+        self.session_metadata()
+            .map(|session| session.seat)
             .ok_or_else(|| "browser multiplayer Welcome has not assigned a ranked seat".to_string())
     }
 
@@ -235,6 +213,7 @@ pub fn connect_client(
     Ok(ClientHandle {
         session_metadata,
         ranked_setup_tx,
+        ranked_setup_sent: Cell::new(false),
         ranked_lifecycle,
         ranked_local_public_key,
         ranked_authenticated_host_public_key,
@@ -1744,6 +1723,58 @@ async fn mark_invitation_redeemed(session_id: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    fn setup_handle(
+        ranked_setup_tx: async_channel::Sender<Option<super::OfficialRankedSessionSetupV1>>,
+    ) -> super::ClientHandle {
+        super::ClientHandle {
+            session_metadata: Default::default(),
+            ranked_setup_tx,
+            ranked_setup_sent: super::Cell::new(false),
+            ranked_lifecycle: std::sync::Arc::new(std::sync::Mutex::new(
+                super::RankedSessionLifecycle::awaiting_prepared_inputs(),
+            )),
+            ranked_local_public_key: Default::default(),
+            ranked_authenticated_host_public_key: super::PublicKey32::from_bytes([1; 32]),
+            content_offer: Default::default(),
+            startup_error: Default::default(),
+            cancellation: Default::default(),
+        }
+    }
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn ranked_setup_is_one_shot_after_the_first_value_is_consumed() {
+        let (tx, rx) = async_channel::bounded(1);
+        let handle = setup_handle(tx);
+        handle.install_ranked_session_setup(None).unwrap();
+        assert!(rx.try_recv().unwrap().is_none());
+        assert!(
+            handle
+                .install_ranked_session_setup(None)
+                .unwrap_err()
+                .contains("more than once")
+        );
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn failed_ranked_setup_send_is_not_retryable_like_native() {
+        let (tx, rx) = async_channel::bounded(1);
+        let handle = setup_handle(tx);
+        drop(rx);
+        assert!(
+            handle
+                .install_ranked_session_setup(None)
+                .unwrap_err()
+                .contains("no longer running")
+        );
+        assert!(
+            handle
+                .install_ranked_session_setup(None)
+                .unwrap_err()
+                .contains("more than once")
+        );
+    }
+
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn begin_sim_requires_admission_and_a_live_local_receiver() {
         let (tx, rx) = std::sync::mpsc::channel();
