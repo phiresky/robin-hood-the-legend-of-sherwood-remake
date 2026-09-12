@@ -19,6 +19,7 @@ use crate::cursor::CursorRenderer;
 use crate::game::{Game, GameCallbacks};
 use crate::gfx_types::GameEvent;
 use crate::host::Host;
+use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, mission_description,
@@ -2110,7 +2111,12 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
             SherwoodCampaignFlow::PseudoDebrief { mut state } => {
                 let outcome = if let Some(resources) = menu_resources.as_ref() {
                     let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    state.tick(event_pump, renderer, resources, cursor)
+                    state.tick(&mut ModalScreenIo {
+                        window: event_pump,
+                        renderer,
+                        resources,
+                        cursor: cursor.as_ref(),
+                    })
                 } else {
                     tracing::warn!(
                         "Pseudo-mission debriefing resources disappeared — acknowledging it"
@@ -2205,8 +2211,12 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                 let resources =
                     required_menu_resources(menu_resources, "Sherwood mission confirmation");
                 let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-                let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(&cursor))
-                else {
+                let Some(confirmed) = state.tick(&mut ModalScreenIo {
+                    window: event_pump,
+                    renderer,
+                    resources,
+                    cursor: Some(&cursor),
+                }) else {
                     *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation { state, action });
                     return Ok(HandlerAction::Proceed);
                 };
