@@ -187,26 +187,7 @@ pub fn profiles_from_document(
             .remove(order_field);
     }
     let result: crate::profiles::ProfileManager = decode(document)?;
-    for soldier in &result.soldiers {
-        for (name, value) in [
-            ("intelligence", soldier.intelligence),
-            ("courage", soldier.courage),
-            ("initiative", soldier.initiative),
-            ("pride", soldier.pride),
-            ("shooting", soldier.shooting),
-            ("fighting", soldier.fighting),
-            ("endurance", soldier.endurance),
-        ] {
-            if value > 100 {
-                return Err(format!(
-                    "soldier {:?} {name} must be in 0..=100",
-                    soldier.filename
-                ));
-            }
-        }
-    }
-    // TODO: Share comprehensive cross-reference validation with the CPF and
-    // mission loaders, including weapon IDs and all authored action ranges.
+    result.validate()?;
     Ok(result)
 }
 
