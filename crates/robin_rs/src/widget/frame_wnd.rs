@@ -4,8 +4,6 @@
 //! collects events, and manages refresh probes. Widgets are positioned
 //! relative to the frame's origin.
 
-#[cfg(test)]
-use robin_engine::coordinates as engine_coordinates;
 use serde::{Deserialize, Serialize};
 
 use crate::ui::{UiEvent, UiMsg, UiProbe};
