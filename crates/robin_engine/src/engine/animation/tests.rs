@@ -5,6 +5,116 @@ use crate::element::{
 use crate::engine::EngineInner;
 
 #[test]
+fn motion_phase_stages_beggar_handoffs_without_advancing_the_order() {
+    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
+    let id = EntityId::Pc(crate::entity_id::PcId(7));
+    let mut outcomes = AnimCompletionOutcomes::default();
+    for (anim_type, entering) in [
+        (OrderType::TransitionWaitingUprightSimulatingBeggar, true),
+        (OrderType::TransitionSimulatingBeggarWaitingUpright, false),
+    ] {
+        ActorMotionPhase {
+            entity_id: id,
+            anim_type,
+            motion_state: MotionState::Done,
+            antagonist: None,
+        }
+        .apply_start_feedback(&mut pc, false, &mut outcomes);
+        assert_eq!(
+            outcomes.execute_sides.beggar_coin_flags.last(),
+            Some(&(id, entering))
+        );
+        assert_eq!(
+            outcomes.execute_sides.beggar_wait_handoffs.last(),
+            Some(&(id, entering))
+        );
+        assert!(
+            outcomes.seq_advance.is_empty(),
+            "callbacks precede order advancement"
+        );
+    }
+    assert_eq!(
+        outcomes.execute_sides.beggar_coin_flags,
+        vec![(id, true), (id, false)]
+    );
+}
+
+#[test]
+fn posture_phase_preserves_reusable_cloak_completion_policy() {
+    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
+    let id = EntityId::Pc(crate::entity_id::PcId(7));
+    let phase = ActorMotionPhase {
+        entity_id: id,
+        anim_type: OrderType::TransitionWaitingCapeWaitingUpright,
+        motion_state: MotionState::Done,
+        antagonist: None,
+    };
+    let mut outcomes = AnimCompletionOutcomes::default();
+    let mut injuries = Vec::new();
+    phase.apply_posture_completion(
+        &mut pc,
+        Some(Command::EnterCloak),
+        true,
+        &mut injuries,
+        &mut outcomes,
+    );
+    assert_eq!(pc.posture(), Posture::Cloaked);
+    assert!(outcomes.execute_sides.hidden_titbit_removals.is_empty());
+    phase.apply_posture_completion(
+        &mut pc,
+        Some(Command::EnterCloak),
+        false,
+        &mut injuries,
+        &mut outcomes,
+    );
+    assert_eq!(pc.posture(), Posture::Upright);
+    assert_eq!(outcomes.execute_sides.hidden_titbit_removals, vec![id]);
+    assert!(injuries.is_empty());
+}
+
+#[test]
+fn execute_result_retains_entry_identity_and_consumes_only_loop_arms() {
+    let sim = crate::sim_rng::test_context();
+    let mut pc = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
+    let mut sequence_manager = crate::sequence::SequenceManager::new();
+    let mut next_order_id = 1;
+    let mut sides = ExecuteSideOutcomes::default();
+    let mut ctx = ArmCtx {
+        entity_id: EntityId::Pc(crate::entity_id::PcId(7)),
+        is_npc: false,
+        is_unconscious: false,
+        seq_id: crate::sequence::SequenceId(42),
+        elem_idx: 3,
+        sequence_manager: &mut sequence_manager,
+        next_order_id: &mut next_order_id,
+        side_outcomes: &mut sides,
+    };
+    for (order, raw, expected) in [
+        (
+            OrderType::Rolling,
+            MotionState::Aborted,
+            MotionState::Aborted,
+        ),
+        (
+            OrderType::Rolling,
+            MotionState::Terminated,
+            MotionState::Terminated,
+        ),
+        (
+            OrderType::WaitingSword,
+            MotionState::Terminated,
+            MotionState::InProgress,
+        ),
+    ] {
+        let result = finish_actor_execute_result(&sim, &mut pc, order, Some(raw), &mut ctx);
+        assert_eq!(result.entry_seq_id, crate::sequence::SequenceId(42));
+        assert_eq!(result.entry_elem_idx, 3);
+        assert_eq!(result.order_type, order);
+        assert_eq!(result.motion, expected);
+    }
+}
+
+#[test]
 fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion() {
     let mut pc = Entity::Pc(ActorPc {
         element: {

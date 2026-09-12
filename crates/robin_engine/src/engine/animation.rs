@@ -2648,6 +2648,425 @@ pub(super) struct ActorExecuteResult {
     pub motion: MotionState,
 }
 
+/// One already-executed order, shared by the ordered post-sprite phases.
+/// This snapshot carries no engine borrow and never dispatches callbacks itself.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ActorMotionPhase {
+    entity_id: EntityId,
+    anim_type: OrderType,
+    motion_state: MotionState,
+    antagonist: Option<EntityId>,
+}
+
+impl ActorMotionPhase {
+    fn record_derived_effects(
+        &self,
+        entity: &mut Entity,
+        order_is_initialising: bool,
+        special_speech_id: Option<u32>,
+        special_sprite_before_perform: Option<(u16, u16)>,
+        completion_outcomes: &mut AnimCompletionOutcomes,
+    ) {
+        let Self {
+            entity_id,
+            anim_type,
+            motion_state,
+            antagonist,
+            ..
+        } = *self;
+        if anim_type == OrderType::TransitionHelpingClimbingDown
+            && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
+        {
+            let sprite = entity.sprite();
+            completion_outcomes
+                .shoulder_helper_dismounts
+                .push(ShoulderHelperDismount {
+                    helper_id: entity_id,
+                    carried_id,
+                    initialising: order_is_initialising,
+                    motion: motion_state,
+                    helper_frame: sprite.current_frame,
+                    helper_frame_count: sprite.frame_count,
+                });
+        }
+        if let Entity::Soldier(soldier) = entity {
+            match anim_type {
+                OrderType::WaitingUpright => {
+                    // The original game stores desired attentiveness on
+                    // the soldier actor itself. Rust's
+                    // equivalent exists only on EnemyAi, while
+                    // generic actor fixtures may deliberately
+                    // use a skeletal Soldier with AiBrain::None.
+                    // There is no requested attentive state to
+                    // reconcile for that representation.
+                    if soldier.npc.ai_brain.enemy().is_some() {
+                        completion_outcomes
+                            .execute_sides
+                            .waiting_upright
+                            .push(entity_id);
+                    }
+                }
+                OrderType::WaitingAlerted => {
+                    soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
+                        panic!("WaitingAlerted soldier {entity_id:?} has no enemy AI state")
+                    });
+                    // Both corrections in the Original's arm
+                    // are decided in the drain so they stay
+                    // ordered per-soldier as `Execute` runs them.
+                    completion_outcomes
+                        .execute_sides
+                        .waiting_alerted
+                        .push(entity_id);
+                }
+                _ => {}
+            }
+        }
+        if entity.is_pc()
+            && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
+            && motion_state == MotionState::Terminated
+        {
+            completion_outcomes.corpse_drop_done.push(entity_id);
+        }
+        let special_remark_now = special_speech_id
+            .zip(special_sprite_before_perform)
+            .is_some_and(|(speech_id, before_perform)| {
+                let sprite = entity.sprite();
+                special_remark_due_for_execute(
+                    speech_id,
+                    before_perform,
+                    (sprite.current_frame, sprite.frame_count),
+                )
+            });
+        if special_remark_now {
+            completion_outcomes
+                .execute_sides
+                .special_remark
+                .push(entity_id);
+        }
+        apply_soldier_execute_side_effects(
+            entity,
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_npc_execute_side_effects(
+            entity,
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+    }
+
+    fn apply_start_feedback(
+        &self,
+        entity: &mut Entity,
+        current_element_script_driven: bool,
+        completion_outcomes: &mut AnimCompletionOutcomes,
+    ) {
+        let Self {
+            entity_id,
+            anim_type,
+            motion_state,
+            ..
+        } = *self;
+        // Universal walk/run Start handler — applies
+        // to all actor kinds (PC included).  Must run
+        // *before* `tick_entity_movement` on the next
+        // tick consults `is_moving()`, otherwise the
+        // actor walks-in-place.
+        apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
+        super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
+        // Universal handlers (run for any actor type).
+        let rejected_dead_idle_posture_request =
+            rejected_dead_idle_posture_callback_required(entity, anim_type, motion_state);
+        apply_active_animation_start_state_side_effect(entity, anim_type, motion_state);
+        if rejected_dead_idle_posture_request {
+            completion_outcomes
+                .execute_sides
+                .rejected_dead_idle_posture_requests
+                .push(entity_id);
+        }
+        if forwards_pc_bow_action_on_start(
+            entity,
+            anim_type,
+            motion_state,
+            current_element_script_driven,
+        ) {
+            completion_outcomes
+                .execute_sides
+                .pc_bow_equip_action
+                .push(entity_id);
+        }
+        // Original-game bow-unequip transition start for a player character:
+        // empty quiver disables the Bow action regardless of
+        // the script flag; otherwise only non-script elements
+        // forward MSG_UNSELECT_ACTION(BOW). The ammo read
+        // needs `&mut self`, so defer the whole decision.
+        if entity.is_pc()
+            && motion_state == MotionState::Start
+            && matches!(
+                anim_type,
+                OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
+            )
+        {
+            completion_outcomes
+                .execute_sides
+                .pc_bow_unequip_action
+                .push((entity_id, current_element_script_driven));
+        }
+        if entity.is_pc() && motion_state == MotionState::Done {
+            match anim_type {
+                OrderType::TransitionWaitingUprightSimulatingBeggar => {
+                    completion_outcomes
+                        .execute_sides
+                        .beggar_coin_flags
+                        .push((entity_id, true));
+                    completion_outcomes
+                        .execute_sides
+                        .beggar_wait_handoffs
+                        .push((entity_id, true));
+                }
+                OrderType::TransitionSimulatingBeggarWaitingUpright => {
+                    completion_outcomes
+                        .execute_sides
+                        .beggar_coin_flags
+                        .push((entity_id, false));
+                    completion_outcomes
+                        .execute_sides
+                        .beggar_wait_handoffs
+                        .push((entity_id, false));
+                }
+                OrderType::TransitionWaitingUprightHelpingClimbing => {
+                    completion_outcomes
+                        .execute_sides
+                        .pc_helping_climb_action
+                        .push(entity_id);
+                }
+                _ => {}
+            }
+        }
+        if entity.is_pc()
+            && matches!(
+                anim_type,
+                OrderType::TransitionCrouchingUp | OrderType::TransitionCrouchingDown
+            )
+            && matches!(motion_state, MotionState::Done | MotionState::Terminated)
+        {
+            completion_outcomes
+                .execute_sides
+                .stature_change_end
+                .push(entity_id);
+        }
+    }
+
+    fn apply_interaction_effects(
+        &self,
+        entity: &mut Entity,
+        taking_net_order_was_done: bool,
+        completion_outcomes: &mut AnimCompletionOutcomes,
+    ) {
+        let Self {
+            entity_id,
+            anim_type,
+            motion_state,
+            antagonist,
+            ..
+        } = *self;
+        apply_taking_net_side_effect(
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            taking_net_order_was_done,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_waking_up_done_side_effect(
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_pc_taking_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_pc_target_interaction_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            antagonist,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+    }
+
+    fn apply_combat_recovery(
+        &self,
+        entity: &mut Entity,
+        profiles: &crate::profiles::ProfileManager,
+        principal_frames_from_now: Option<i16>,
+        tiredness_probe: Option<(u32, u32)>,
+        striking_down_sword_direction_goal: Option<i16>,
+        completion_outcomes: &mut AnimCompletionOutcomes,
+    ) {
+        let Self {
+            entity_id,
+            anim_type,
+            motion_state,
+            antagonist,
+            ..
+        } = *self;
+        apply_sword_parry_side_effect(entity, anim_type, motion_state, principal_frames_from_now);
+        apply_under_net_termination_side_effect(entity, anim_type, motion_state);
+        apply_smalltalk_start_and_recovery_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            profiles,
+            tiredness_probe,
+        );
+        apply_striking_down_sword_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            antagonist,
+            striking_down_sword_direction_goal,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
+        apply_shield_transition_side_effect(entity, anim_type, motion_state);
+        if anim_type == OrderType::RaisingShield && motion_state == MotionState::Done {
+            crate::bow_shot::refresh_retained_shield_obstacle(entity, profiles);
+        }
+    }
+
+    fn apply_posture_completion(
+        &self,
+        entity: &mut Entity,
+        cur_command: Option<Command>,
+        reusable_cloaks_enabled: bool,
+        combat_injury_terminated: &mut Vec<EntityId>,
+        completion_outcomes: &mut AnimCompletionOutcomes,
+    ) {
+        let Self {
+            entity_id,
+            anim_type,
+            motion_state,
+            antagonist,
+            ..
+        } = *self;
+        apply_pc_disguise_exit_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            cur_command,
+            reusable_cloaks_enabled,
+            entity_id,
+            &mut completion_outcomes.execute_sides,
+        );
+        apply_standing_up_start_side_effect(entity, anim_type, motion_state);
+        apply_carried_start_side_effect(entity, anim_type, motion_state);
+        apply_falling_start_side_effect(entity, anim_type, motion_state);
+        apply_falling_completion_side_effect(entity, anim_type, motion_state);
+        apply_dying_start_side_effect(entity, anim_type, motion_state);
+        apply_being_dead_start_side_effect(entity, anim_type, motion_state);
+        apply_combat_injury_side_effect(
+            entity,
+            anim_type,
+            motion_state,
+            entity_id,
+            combat_injury_terminated,
+        );
+        if matches!(motion_state, MotionState::Done) {
+            let strike = match anim_type {
+                OrderType::StrikingLeftSmalltalk | OrderType::StrikingLowLeftSmalltalk => {
+                    Some(crate::weapons::SwordStrike::SmalltalkLeft)
+                }
+                OrderType::StrikingRightSmalltalk | OrderType::StrikingLowRightSmalltalk => {
+                    Some(crate::weapons::SwordStrike::SmalltalkRight)
+                }
+                _ => None,
+            };
+            if let Some(strike) = strike {
+                completion_outcomes.execute_sides.smalltalk_strikes.push((
+                    entity_id,
+                    antagonist.expect("smalltalk strike order must retain its antagonist"),
+                    strike,
+                ));
+            }
+        }
+    }
+}
+
+/// Resolve the per-arm return only after all derived side effects were staged.
+/// This does not advance the sequence: the owner coordinator must first drain
+/// callbacks, then apply TERMINATED to its then-live sequence identity.
+fn finish_actor_execute_result(
+    sim: &crate::sim_rng::SimulationContext,
+    entity: &mut Entity,
+    anim_type: OrderType,
+    motion: Option<MotionState>,
+    arm_ctx: &mut ArmCtx<'_>,
+) -> ActorExecuteResult {
+    let entity_id = arm_ctx.entity_id;
+    let seq_id = arm_ctx.seq_id;
+    let elem_idx = arm_ctx.elem_idx;
+    let outcome = motion.map(|m| dispatch_arm_completion(sim, anim_type, m, arm_ctx));
+    // These execution branches mutate the live order in place and
+    // assign a new ID rather than selecting another order. Mirror
+    // the changed object after the arm runs; manager
+    // selection alone cannot update the explicit actor-order
+    // snapshot.
+    let mutated_installed_order = matches!(
+        anim_type,
+        OrderType::WaitingUprightBored
+            | OrderType::WaitingUprightBoredRandom
+            | OrderType::LyingStuckUnderNet
+            | OrderType::WriggleUnderNet
+    )
+    .then(|| {
+        arm_ctx
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .and_then(|element| element.current_order())
+            .map(|order| crate::element::InstalledActorOrder {
+                order_id: order.order_id,
+                order_type: order.order_type,
+            })
+    })
+    .flatten();
+    if let Some(installed_order) = mutated_installed_order {
+        entity
+            .actor_data_mut()
+            .expect("in-place order mutation owner lost actor data")
+            .installed_order = Some(installed_order);
+    }
+    let effective_motion = match outcome.unwrap_or_else(|| {
+        panic!(
+            "actor {entity_id:?} {anim_type:?} produced no Execute motion at {seq_id:?}/{elem_idx}"
+        )
+    }) {
+        ExecuteOutcome::Forward(motion) => motion,
+        ExecuteOutcome::Consumed => MotionState::InProgress,
+    };
+    ActorExecuteResult {
+        order_type: anim_type,
+        entry_seq_id: seq_id,
+        entry_elem_idx: elem_idx,
+        motion: effective_motion,
+    }
+}
+
 impl EngineInner {
     pub(super) fn finish_patch_transition_for(
         &mut self,
@@ -4190,299 +4609,44 @@ impl EngineInner {
                     // TRANSITION_SITTING / BEGGAR_SHOWING_FACE) — it
                     // applies to both soldier and civilian NPCs.
                     if let Some(motion_state) = motion {
-                        if anim_type == OrderType::TransitionHelpingClimbingDown
-                            && let Some(carried_id) = entity.pc_data().and_then(|pc| pc.carried)
-                        {
-                            let sprite = entity.sprite();
-                            completion_outcomes.shoulder_helper_dismounts.push(
-                                ShoulderHelperDismount {
-                                    helper_id: entity_id,
-                                    carried_id,
-                                    initialising: order_is_initialising,
-                                    motion: motion_state,
-                                    helper_frame: sprite.current_frame,
-                                    helper_frame_count: sprite.frame_count,
-                                },
-                            );
-                        }
-                        if let Entity::Soldier(soldier) = entity {
-                            match anim_type {
-                                OrderType::WaitingUpright => {
-                                    // The original game stores desired attentiveness on
-                                    // the soldier actor itself. Rust's
-                                    // equivalent exists only on EnemyAi, while
-                                    // generic actor fixtures may deliberately
-                                    // use a skeletal Soldier with AiBrain::None.
-                                    // There is no requested attentive state to
-                                    // reconcile for that representation.
-                                    if soldier.npc.ai_brain.enemy().is_some() {
-                                        completion_outcomes
-                                            .execute_sides
-                                            .waiting_upright
-                                            .push(entity_id);
-                                    }
-                                }
-                                OrderType::WaitingAlerted => {
-                                    soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
-                                        panic!(
-                                            "WaitingAlerted soldier {entity_id:?} has no enemy AI state"
-                                        )
-                                    });
-                                    // Both corrections in the Original's arm
-                                    // are decided in the drain so they stay
-                                    // ordered per-soldier as `Execute` runs them.
-                                    completion_outcomes
-                                        .execute_sides
-                                        .waiting_alerted
-                                        .push(entity_id);
-                                }
-                                _ => {}
-                            }
-                        }
-                        if entity.is_pc()
-                            && anim_type == OrderType::TransitionCarryingCorpseWaitingUpright
-                            && motion_state == MotionState::Terminated
-                        {
-                            completion_outcomes.corpse_drop_done.push(entity_id);
-                        }
-                        let special_remark_now = special_speech_id
-                            .zip(special_sprite_before_perform)
-                            .is_some_and(|(speech_id, before_perform)| {
-                                let sprite = entity.sprite();
-                                special_remark_due_for_execute(
-                                    speech_id,
-                                    before_perform,
-                                    (sprite.current_frame, sprite.frame_count),
-                                )
-                            });
-                        if special_remark_now {
-                            completion_outcomes
-                                .execute_sides
-                                .special_remark
-                                .push(entity_id);
-                        }
-                        apply_soldier_execute_side_effects(
-                            entity,
+                        let phase = ActorMotionPhase {
+                            entity_id,
                             anim_type,
                             motion_state,
                             antagonist,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
-                        );
-                        apply_npc_execute_side_effects(
+                        };
+                        phase.record_derived_effects(
                             entity,
-                            anim_type,
-                            motion_state,
-                            antagonist,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
+                            order_is_initialising,
+                            special_speech_id,
+                            special_sprite_before_perform,
+                            &mut completion_outcomes,
                         );
-                        // Universal walk/run Start handler — applies
-                        // to all actor kinds (PC included).  Must run
-                        // *before* `tick_entity_movement` on the next
-                        // tick consults `is_moving()`, otherwise the
-                        // actor walks-in-place.
-                        apply_actor_walk_start_side_effect(entity, anim_type, motion_state);
-                        super::jump::apply_jump_down_takeoff_drop(entity, anim_type, motion_state);
-                        // Universal handlers (run for any actor type).
-                        let rejected_dead_idle_posture_request =
-                            rejected_dead_idle_posture_callback_required(
-                                entity,
-                                anim_type,
-                                motion_state,
-                            );
-                        apply_active_animation_start_state_side_effect(
+                        phase.apply_start_feedback(
                             entity,
-                            anim_type,
-                            motion_state,
-                        );
-                        if rejected_dead_idle_posture_request {
-                            completion_outcomes
-                                .execute_sides
-                                .rejected_dead_idle_posture_requests
-                                .push(entity_id);
-                        }
-                        if forwards_pc_bow_action_on_start(
-                            entity,
-                            anim_type,
-                            motion_state,
                             current_element_script_driven,
-                        ) {
-                            completion_outcomes
-                                .execute_sides
-                                .pc_bow_equip_action
-                                .push(entity_id);
-                        }
-                        // Original-game bow-unequip transition start for a player character:
-                        // empty quiver disables the Bow action regardless of
-                        // the script flag; otherwise only non-script elements
-                        // forward MSG_UNSELECT_ACTION(BOW). The ammo read
-                        // needs `&mut self`, so defer the whole decision.
-                        if entity.is_pc()
-                            && motion_state == MotionState::Start
-                            && matches!(
-                                anim_type,
-                                OrderType::TransitionUnequipBow
-                                    | OrderType::TransitionUnequipBowAnonymous
-                            )
-                        {
-                            completion_outcomes
-                                .execute_sides
-                                .pc_bow_unequip_action
-                                .push((entity_id, current_element_script_driven));
-                        }
-                        if entity.is_pc() && motion_state == MotionState::Done {
-                            match anim_type {
-                                OrderType::TransitionWaitingUprightSimulatingBeggar => {
-                                    completion_outcomes
-                                        .execute_sides
-                                        .beggar_coin_flags
-                                        .push((entity_id, true));
-                                    completion_outcomes
-                                        .execute_sides
-                                        .beggar_wait_handoffs
-                                        .push((entity_id, true));
-                                }
-                                OrderType::TransitionSimulatingBeggarWaitingUpright => {
-                                    completion_outcomes
-                                        .execute_sides
-                                        .beggar_coin_flags
-                                        .push((entity_id, false));
-                                    completion_outcomes
-                                        .execute_sides
-                                        .beggar_wait_handoffs
-                                        .push((entity_id, false));
-                                }
-                                OrderType::TransitionWaitingUprightHelpingClimbing => {
-                                    completion_outcomes
-                                        .execute_sides
-                                        .pc_helping_climb_action
-                                        .push(entity_id);
-                                }
-                                _ => {}
-                            }
-                        }
-                        if entity.is_pc()
-                            && matches!(
-                                anim_type,
-                                OrderType::TransitionCrouchingUp
-                                    | OrderType::TransitionCrouchingDown
-                            )
-                            && matches!(motion_state, MotionState::Done | MotionState::Terminated)
-                        {
-                            completion_outcomes
-                                .execute_sides
-                                .stature_change_end
-                                .push(entity_id);
-                        }
-                        apply_taking_net_side_effect(
-                            anim_type,
-                            motion_state,
-                            antagonist,
-                            entity_id,
+                            &mut completion_outcomes,
+                        );
+                        phase.apply_interaction_effects(
+                            entity,
                             taking_net_order_was_done,
-                            &mut completion_outcomes.execute_sides,
+                            &mut completion_outcomes,
                         );
-                        apply_waking_up_done_side_effect(
-                            anim_type,
-                            motion_state,
-                            antagonist,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
-                        );
-                        apply_pc_taking_side_effect(
+                        phase.apply_combat_recovery(
                             entity,
-                            anim_type,
-                            motion_state,
-                            antagonist,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
-                        );
-                        apply_pc_target_interaction_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
-                            antagonist,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
-                        );
-                        apply_sword_parry_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
-                            principal_frames_from_now,
-                        );
-                        apply_under_net_termination_side_effect(entity, anim_type, motion_state);
-                        apply_smalltalk_start_and_recovery_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
                             &assets.profile_manager,
+                            principal_frames_from_now,
                             tiredness_probe,
-                        );
-                        apply_striking_down_sword_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
-                            antagonist,
                             striking_down_sword_direction_goal,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
+                            &mut completion_outcomes,
                         );
-                        apply_arrow_extraction_start_side_effect(entity, anim_type, motion_state);
-                        apply_shield_transition_side_effect(entity, anim_type, motion_state);
-                        if anim_type == OrderType::RaisingShield
-                            && motion_state == MotionState::Done
-                        {
-                            crate::bow_shot::refresh_retained_shield_obstacle(
-                                entity,
-                                &assets.profile_manager,
-                            );
-                        }
-                        apply_pc_disguise_exit_side_effect(
+                        phase.apply_posture_completion(
                             entity,
-                            anim_type,
-                            motion_state,
                             cur_command,
                             reusable_cloaks_enabled,
-                            entity_id,
-                            &mut completion_outcomes.execute_sides,
-                        );
-                        apply_standing_up_start_side_effect(entity, anim_type, motion_state);
-                        apply_carried_start_side_effect(entity, anim_type, motion_state);
-                        apply_falling_start_side_effect(entity, anim_type, motion_state);
-                        apply_falling_completion_side_effect(entity, anim_type, motion_state);
-                        apply_dying_start_side_effect(entity, anim_type, motion_state);
-                        apply_being_dead_start_side_effect(entity, anim_type, motion_state);
-                        apply_combat_injury_side_effect(
-                            entity,
-                            anim_type,
-                            motion_state,
-                            entity_id,
                             &mut combat_injury_terminated,
+                            &mut completion_outcomes,
                         );
-                        if matches!(motion_state, MotionState::Done) {
-                            let strike = match anim_type {
-                                OrderType::StrikingLeftSmalltalk
-                                | OrderType::StrikingLowLeftSmalltalk => {
-                                    Some(crate::weapons::SwordStrike::SmalltalkLeft)
-                                }
-                                OrderType::StrikingRightSmalltalk
-                                | OrderType::StrikingLowRightSmalltalk => {
-                                    Some(crate::weapons::SwordStrike::SmalltalkRight)
-                                }
-                                _ => None,
-                            };
-                            if let Some(strike) = strike {
-                                completion_outcomes.execute_sides.smalltalk_strikes.push((
-                                    entity_id,
-                                    antagonist.expect(
-                                        "smalltalk strike order must retain its antagonist",
-                                    ),
-                                    strike,
-                                ));
-                            }
-                        }
                         if matches!(motion_state, MotionState::Done)
                             && let Some(crate::order::OrderCompletion::UnlockDoor { door_id }) =
                                 order_completion
@@ -4533,51 +4697,13 @@ impl EngineInner {
                         next_order_id: &mut self.orders.next_order_id,
                         side_outcomes: &mut completion_outcomes.execute_sides,
                     };
-                    let outcome =
-                        motion.map(|m| dispatch_arm_completion(sim, anim_type, m, &mut arm_ctx));
-                    // These execution branches mutate the live order in place and
-                    // assign a new ID rather than selecting another order. Mirror
-                    // the changed object after the arm runs; manager
-                    // selection alone cannot update the explicit actor-order
-                    // snapshot.
-                    let mutated_installed_order = matches!(
+                    execute_result = Some(finish_actor_execute_result(
+                        sim,
+                        entity,
                         anim_type,
-                        OrderType::WaitingUprightBored
-                            | OrderType::WaitingUprightBoredRandom
-                            | OrderType::LyingStuckUnderNet
-                            | OrderType::WriggleUnderNet
-                    )
-                    .then(|| {
-                        arm_ctx
-                            .sequence_manager
-                            .get_element(seq_id, elem_idx)
-                            .and_then(|element| element.current_order())
-                            .map(|order| crate::element::InstalledActorOrder {
-                                order_id: order.order_id,
-                                order_type: order.order_type,
-                            })
-                    })
-                    .flatten();
-                    if let Some(installed_order) = mutated_installed_order {
-                        entity
-                            .actor_data_mut()
-                            .expect("in-place order mutation owner lost actor data")
-                            .installed_order = Some(installed_order);
-                    }
-                    let effective_motion = match outcome.unwrap_or_else(|| {
-                        panic!(
-                            "actor {entity_id:?} {anim_type:?} produced no Execute motion at {seq_id:?}/{elem_idx}"
-                        )
-                    }) {
-                        ExecuteOutcome::Forward(motion) => motion,
-                        ExecuteOutcome::Consumed => MotionState::InProgress,
-                    };
-                    execute_result = Some(ActorExecuteResult {
-                        order_type: anim_type,
-                        entry_seq_id: seq_id,
-                        entry_elem_idx: elem_idx,
-                        motion: effective_motion,
-                    });
+                        motion,
+                        &mut arm_ctx,
+                    ));
                     break 'actor;
                 }
 
