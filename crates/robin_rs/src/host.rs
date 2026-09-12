@@ -217,11 +217,10 @@ impl FrontendPreferences {
 
 impl ApplicationContext {
     pub(crate) fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
-        let (key_config, custom_key_config) = self.active_key_configs()?;
-        let preferences = self.with_active_profile(|profile| {
+        let preferences = self.with_active_profile_and_keys(|profile, keys| {
             FrontendPreferences::new(
-                key_config,
-                custom_key_config,
+                keys.active.clone(),
+                keys.custom.clone(),
                 profile.gameplay_config,
                 &profile.graphic_config,
             )

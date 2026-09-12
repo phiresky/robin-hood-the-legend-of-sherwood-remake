@@ -1145,6 +1145,152 @@ fn unavailable_or_missing_active_profiles_never_invoke_the_reader() {
 }
 
 #[test]
+fn profile_and_key_projection_holds_both_locks_until_values_are_copied() {
+    let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "coherent.marker");
+    let services = context.required_services().unwrap();
+    context
+        .with_active_profile_and_keys(|profile, keys| {
+            // Deterministic contention checks: neither a profile switch nor a
+            // key edit can publish while the combined reader is projecting.
+            assert!(matches!(
+                services.player_profiles.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            assert!(matches!(
+                services.key_configs.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            assert_eq!(profile.id, 0);
+            assert_eq!(
+                keys.active.get_binding("ZoomIn").unwrap().primary_key,
+                Some(KeyCode::F4)
+            );
+        })
+        .unwrap();
+
+    let before = context.host_snapshot().unwrap();
+    let next = context
+        .with_player_profiles_mut(|profiles| {
+            let next = profiles.create_profile("Second".into(), DifficultyLevel::Hard);
+            let profile = &mut profiles.profiles[next];
+            profile.gameplay_config.control_tactical_units =
+                !before.preferences.control_tactical_units();
+            profile.graphic_config.native_refresh_presentation =
+                !before.preferences.native_refresh_presentation();
+            (next, profile.id)
+        })
+        .unwrap();
+    context
+        .with_key_configs_mut(|keys| {
+            let keys = keys.entry_or_default(next.1);
+            keys.active.set_binding("ZoomIn", Some(KeyCode::F6), None);
+            keys.custom.set_binding("ZoomIn", Some(KeyCode::F7), None);
+        })
+        .unwrap();
+    context
+        .with_player_profiles_mut(|profiles| profiles.set_active(next.0))
+        .unwrap();
+    let after = context.host_snapshot().unwrap();
+    assert_eq!(
+        after
+            .preferences
+            .key_config()
+            .get_binding("ZoomIn")
+            .unwrap()
+            .primary_key,
+        Some(KeyCode::F6)
+    );
+    assert_eq!(
+        after
+            .preferences
+            .custom_key_config()
+            .get_binding("ZoomIn")
+            .unwrap()
+            .primary_key,
+        Some(KeyCode::F7)
+    );
+    assert_ne!(
+        after.preferences.control_tactical_units(),
+        before.preferences.control_tactical_units()
+    );
+    assert_ne!(
+        after.preferences.native_refresh_presentation(),
+        before.preferences.native_refresh_presentation()
+    );
+    assert_eq!(
+        before
+            .preferences
+            .key_config()
+            .get_binding("ZoomIn")
+            .unwrap()
+            .primary_key,
+        Some(KeyCode::F4)
+    );
+}
+
+#[test]
+fn combined_profile_reader_preserves_missing_profile_and_keys_errors() {
+    assert!(
+        ApplicationContext::default()
+            .with_active_profile_and_keys(|_, _| panic!(
+                "unavailable services must not invoke reader"
+            ))
+            .is_err()
+    );
+    let context = context(
+        0,
+        DifficultyLevel::Medium,
+        KeyCode::F4,
+        "missing-keys.marker",
+    );
+    let services = context.required_services().unwrap();
+    services.key_configs.lock().unwrap().configs.clear();
+    assert_eq!(
+        context.host_snapshot().unwrap_err(),
+        "ApplicationContext has no key config for active profile 0"
+    );
+    for index in [None, Some(usize::MAX)] {
+        services.player_profiles.lock().unwrap().active_index = index;
+        let error = context
+            .with_active_profile_and_keys(|_, _| panic!("missing profile must not invoke reader"))
+            .unwrap_err();
+        assert_eq!(error, "ApplicationContext has no active player profile");
+        assert_eq!(context.host_snapshot().unwrap_err(), error);
+    }
+    assert!(services.player_profiles.try_lock().is_ok());
+    assert!(services.key_configs.try_lock().is_ok());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn combined_profile_reader_preserves_poison_errors_and_releases_other_lock() {
+    let context = context(
+        0,
+        DifficultyLevel::Medium,
+        KeyCode::F4,
+        "poison-keys.marker",
+    );
+    let services = context.required_services().unwrap();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _keys = services.key_configs.lock().unwrap();
+        panic!("poison key store for regression");
+    }));
+    assert_eq!(
+        context.host_snapshot().unwrap_err(),
+        "ApplicationContext key-config lock poisoned"
+    );
+    assert!(services.player_profiles.try_lock().is_ok());
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _profiles = services.player_profiles.lock().unwrap();
+        panic!("poison profiles for regression");
+    }));
+    assert_eq!(
+        context.host_snapshot().unwrap_err(),
+        "ApplicationContext player-profile lock poisoned"
+    );
+}
+
+#[test]
 fn context_snapshots_release_locks_before_await() {
     let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "lock.marker");
 
