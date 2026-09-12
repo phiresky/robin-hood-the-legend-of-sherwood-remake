@@ -149,24 +149,10 @@ impl MenuScreenState {
         self.window_layers.len()
     }
 
-    // The legacy emergency-exit / input-translator-flag plumbing is
-    // not modeled on `MenuScreenState` — we open one `show_*` modal at
-    // a time rather than maintaining a modal-window layer stack, so
-    // the pop-all-layers + set-flag behaviour has no in-flight state
-    // to act on. The observable behaviours are still covered:
-    //   * Emergency-exit on external events → every `show_*` treats
-    //     `GameEvent::Quit` as dismiss; debriefing uniquely escalates
-    //     it to `DebriefingOutcome::EmergencyEnd` so the caller can
-    //     propagate `GameCode::Quit` (see `game_session.rs`).
-    //   * Game-input-translator enable (only quick-load needs it) →
-    //     `show_debriefing` takes a physical quick-load key supplied
-    //     by the caller.
-    //     supplied by the caller.
-    //   * Translator-flag save/disable/restore around a nested modal:
-    //     the equivalent call site (`game_session.rs` →
-    //     `show_mission_description`) doesn't consult an input
-    //     translator inside the modal at all, so the save/restore
-    //     wrapper is observably a no-op.
+    // Legacy emergency-exit and input-translator flags are not owned here.
+    // The mission driver owns cooperative modal states and their exit results;
+    // nested mission-description/purchase states interpret their own input
+    // without saving or restoring a separate translator flag.
 }
 
 // ═══════════════════════════════════════════════════════════════════

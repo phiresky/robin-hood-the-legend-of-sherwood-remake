@@ -52,7 +52,7 @@ pub mod trading;
 pub mod widget_bridge;
 pub mod yesno;
 
-pub use buy_blazons::{BuyBlazonsOutcome, show_buy_blazons};
+pub use buy_blazons::BuyBlazonsOutcome;
 pub use debriefing::{DebriefingModalState, DebriefingOutcome, show_debriefing};
 pub(crate) use dialogue::show_dialogue_batch;
 pub use dialogue::{
@@ -60,7 +60,7 @@ pub use dialogue::{
 };
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use leaderboard::MissionEndLeaderboardScreen;
-pub use mission_state::{MissionStatePopupState, show_mission_state_popup};
+pub use mission_state::MissionStatePopupState;
 pub use modal_net::ModalNet;
 pub use options::{OptionsOutcome, show_options};
 pub use pause::{PauseMenu, PauseMenuOutcome};
