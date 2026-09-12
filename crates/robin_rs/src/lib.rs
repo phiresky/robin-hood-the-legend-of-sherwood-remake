@@ -256,7 +256,6 @@ pub(crate) use leaderboard::ranked_session as leaderboard_ranked_session;
 pub(crate) use leaderboard::receipt_watcher as leaderboard_receipt_watcher;
 pub(crate) use leaderboard::service as leaderboard_service;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use leaderboard::storage as leaderboard_storage;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
 pub mod lua_session;

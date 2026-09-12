@@ -34,13 +34,11 @@ use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 
 mod frontend;
-pub(crate) use frontend::{
-    FrontendPreferenceEffects, HostContextSnapshot, QueueStripAnimations, QueueStripIdentity,
-};
 pub use frontend::{
     FrontendPreferences, FrontendPresentation, FrontendResources, HostFrontend, HostTitbitPreview,
     InteractionReset, ItemEffectPreview, PrintScreenRequest, QueueStripAnimation,
 };
+pub(crate) use frontend::{HostContextSnapshot, QueueStripIdentity};
 mod effects;
 mod transport;
 mod viewport;

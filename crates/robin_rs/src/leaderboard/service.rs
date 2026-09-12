@@ -11,15 +11,17 @@ use crate::leaderboard_http::{
 use crate::leaderboard_preferences::{
     LeaderboardApiBaseUrl, LeaderboardPreferences, LeaderboardPreferencesError,
 };
+#[cfg(test)]
+use robin_run_protocol::ReplayArtifactV1;
 use robin_run_protocol::{
     CampaignContentManifestV1, CampaignContinuationPreflightGrantV1,
     CampaignContinuationPreflightRequestV1, ContentManifestV1, Digest32, FreshRunPreflightGrantV1,
     FreshRunPreflightRequestV1, LeaderboardMetadataV1, LeaderboardPageV1, LeaderboardQueryV1,
     PublishedRulesetV1, RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1,
-    ReplayArtifactV1, RulesConfigIdentityV1, SignedSubmissionV1, SubmissionAcceptedV1,
-    SubmissionOfferRequestV1, SubmissionOfferV1, SubmissionOwnerStatusChallengeRequestV1,
-    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
-    SubmissionOwnerStatusResponseV1, Validate, VersionedBuildManifest,
+    RulesConfigIdentityV1, SignedSubmissionV1, SubmissionAcceptedV1, SubmissionOfferRequestV1,
+    SubmissionOfferV1, SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
+    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1, Validate,
+    VersionedBuildManifest,
 };
 use serde::de::DeserializeOwned;
 use std::sync::Arc;

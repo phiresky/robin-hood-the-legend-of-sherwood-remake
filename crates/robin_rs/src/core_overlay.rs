@@ -13,7 +13,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result, anyhow};
 use robin_assets::shipping_datadir::SHIPPING_DATADIR_VERSION;
 #[cfg(not(target_arch = "wasm32"))]
-use robin_engine::sbfile::{SBFILE_ERROR_PATH_ALREADY_PRESENT, SBFILE_NO_ERROR};
+use robin_engine::sbfile::SbFileError;
 use robin_run_protocol::Digest32;
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 use robin_run_protocol::{
@@ -235,7 +235,7 @@ fn read_native_asset(root: &Path, path: &str) -> Result<Vec<u8>> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn mount_validated_native_directory<B: AsRef<[u8]>>(
     root: &Path,
-    mut mount: impl FnMut(&str) -> i32,
+    mut mount: impl FnMut(&str) -> Result<(), SbFileError>,
     mut read_visible: impl FnMut(&str) -> Result<B>,
 ) -> Result<CoreOverlayManifest> {
     let manifest = read_validated_assets(
@@ -247,8 +247,8 @@ pub fn mount_validated_native_directory<B: AsRef<[u8]>>(
         .to_str()
         .ok_or_else(|| anyhow!("core overlay path is not UTF-8: {}", root.display()))?;
     match mount(root_utf8) {
-        SBFILE_NO_ERROR | SBFILE_ERROR_PATH_ALREADY_PRESENT => {}
-        status => {
+        Ok(()) | Err(SbFileError::PathAlreadyPresent) => {}
+        Err(status) => {
             return Err(anyhow!(
                 "register core overlay directory {}: file error {status}",
                 root.display()
@@ -567,7 +567,7 @@ mod tests {
         let file_system = SbFileSystem::new(Arc::new(AssetVfs::new()));
         assert_eq!(
             file_system.set_primary_path(primary.path().to_str().unwrap()),
-            SBFILE_NO_ERROR
+            Ok(())
         );
         let manifest = mount_validated_native_directory(
             overlay.path(),
@@ -595,7 +595,7 @@ mod tests {
                 directory.path(),
                 |_| {
                     mounted.set(true);
-                    SBFILE_NO_ERROR
+                    Ok(())
                 },
                 |_| -> Result<Vec<u8>> {
                     panic!("visibility probe must not run before a validated mount")
@@ -639,7 +639,7 @@ mod tests {
             overlay.path(),
             |_| {
                 std::fs::write(overlay.path().join(replaced), b"changed during mount").unwrap();
-                SBFILE_NO_ERROR
+                Ok(())
             },
             |path| Ok(std::fs::read(overlay.path().join(path))?),
         )
@@ -721,11 +721,15 @@ mod tests {
         let overlay = materialize_repo_overlay();
         let error = mount_validated_native_directory(
             overlay.path(),
-            |_| -77,
+            |_| Err(SbFileError::Sealed),
             |_| -> Result<Vec<u8>> { panic!("visibility probe must not run after a failed mount") },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("file error -77"));
+        assert!(
+            error
+                .to_string()
+                .contains("filesystem mount configuration is sealed")
+        );
     }
 
     #[cfg(unix)]

@@ -673,7 +673,7 @@ impl CampaignMapModalState {
                 } else {
                     -(DETAIL_VISIBLE_LINES as i32)
                 }),
-                GameEvent::MouseWheel(_) => continue,
+                GameEvent::MouseWheel(_) => return None,
                 _ => None,
             };
             if let Some(step) = step {

@@ -114,7 +114,7 @@ pub enum LocalizationError {
         source: std::io::Error,
     },
     #[error("failed to install language resource lookup (file status {0})")]
-    FileLookup(i32),
+    FileLookup(robin_engine::sbfile::SbFileError),
     #[error("failed to install shipping language resources: {0:#}")]
     Shipping(anyhow::Error),
     #[error(
@@ -591,7 +591,7 @@ fn loose_path_exists(root: &str, relative: &str, files: &SbFileSystem) -> bool {
             tracing::warn!(
                 root,
                 relative,
-                status,
+                %status,
                 "Cannot inspect optional language pack content"
             );
             false
@@ -684,11 +684,9 @@ fn install_file_lookup(
             .map(|pack| pack.data_root.as_str())
             .filter(|root| *root != selected)
     });
-    let status =
-        files.set_presentation_locale(selected, fallback, active.map(|pack| pack.locale.as_str()));
-    if status != robin_engine::sbfile::SBFILE_NO_ERROR {
-        return Err(LocalizationError::FileLookup(status));
-    }
+    files
+        .set_presentation_locale(selected, fallback, active.map(|pack| pack.locale.as_str()))
+        .map_err(LocalizationError::FileLookup)?;
     if let Some(shipping) = shipping {
         let shipping_locale = active
             .filter(|pack| pack.data_root.is_empty())
