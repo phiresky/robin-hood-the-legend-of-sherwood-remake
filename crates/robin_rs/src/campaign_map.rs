@@ -1389,10 +1389,7 @@ fn progress_rect(
         transform.origin_y + y,
         w,
         h,
-        color.0,
-        color.1,
-        color.2,
-        255,
+        [color.0, color.1, color.2, 255],
     );
 }
 
@@ -1438,45 +1435,49 @@ fn fit_progress_text_by(
     Cow::Owned(candidate)
 }
 
-#[test]
-fn progress_text_fitting_borrows_labels_and_preserves_grapheme_truncation() {
-    use std::borrow::Cow;
-    use unicode_segmentation::UnicodeSegmentation;
+#[cfg(test)]
+mod text_fitting_tests {
+    use super::*;
+    #[test]
+    fn progress_text_fitting_borrows_labels_and_preserves_grapheme_truncation() {
+        use std::borrow::Cow;
+        use unicode_segmentation::UnicodeSegmentation;
 
-    let measure = |text: &str| text.chars().count() as i32;
-    for text in ["", "abc", "e\u{0301}clair", "👩‍💻🏹ab", "a b c"] {
-        for width in -1..=measure(text) + 4 {
-            // Reference the previous reverse scan, including its too-small-width policy.
-            let expected = if measure(text) <= width {
-                text.to_owned()
-            } else {
-                let mut end = text.len();
-                for (index, _) in text.grapheme_indices(true).rev() {
-                    end = index;
-                    if measure(&format!("{}...", &text[..end])) <= width {
-                        break;
+        let measure = |text: &str| text.chars().count() as i32;
+        for text in ["", "abc", "e\u{0301}clair", "👩‍💻🏹ab", "a b c"] {
+            for width in -1..=measure(text) + 4 {
+                // Reference the previous reverse scan, including its too-small-width policy.
+                let expected = if measure(text) <= width {
+                    text.to_owned()
+                } else {
+                    let mut end = text.len();
+                    for (index, _) in text.grapheme_indices(true).rev() {
+                        end = index;
+                        if measure(&format!("{}...", &text[..end])) <= width {
+                            break;
+                        }
                     }
+                    format!("{}...", &text[..end])
+                };
+                let actual = fit_progress_text_by(text, width, measure);
+                assert_eq!(actual, expected, "{text:?}, {width}");
+                if measure(text) <= width {
+                    assert!(matches!(actual, Cow::Borrowed(_)));
+                    assert_eq!(actual.as_ptr(), text.as_ptr());
                 }
-                format!("{}...", &text[..end])
-            };
-            let actual = fit_progress_text_by(text, width, measure);
-            assert_eq!(actual, expected, "{text:?}, {width}");
-            if measure(text) <= width {
-                assert!(matches!(actual, Cow::Borrowed(_)));
-                assert_eq!(actual.as_ptr(), text.as_ptr());
             }
         }
     }
-}
 
-#[test]
-fn progress_text_fitting_measures_complete_marked_candidates() {
-    let result = fit_progress_text_by("abcd", 2, |candidate| match candidate {
-        "abcd" | "abc..." => 10,
-        "ab..." => 2,
-        _ => panic!("the reverse scan should stop on the first fitting candidate"),
-    });
-    assert_eq!(result, "ab...");
+    #[test]
+    fn progress_text_fitting_measures_complete_marked_candidates() {
+        let result = fit_progress_text_by("abcd", 2, |candidate| match candidate {
+            "abcd" | "abc..." => 10,
+            "ab..." => 2,
+            _ => panic!("the reverse scan should stop on the first fitting candidate"),
+        });
+        assert_eq!(result, "ab...");
+    }
 }
 
 fn progress_button(
@@ -1918,9 +1919,7 @@ fn render_progress_cards(
                     transform.origin_y + (py + ph / 2).clamp(170, 472),
                     transform.origin_x + x,
                     transform.origin_y + y + h / 2,
-                    114,
-                    111,
-                    74,
+                    [114, 111, 74],
                 );
             }
         }
@@ -2209,14 +2208,14 @@ fn draw_achievement_badge_icon(
             renderer.draw_line_screen(x + 2, y + 11, x + 4, y + 9, color);
             renderer.draw_line_screen(x + 4, y + 9, x + 6, y + 11, color);
             renderer.draw_line_screen(x + 6, y + 11, x + 8, y + 9, color);
-            renderer.render_gpu_rect(x + 4, y + 5, 1, 1, 245, 225, 160, 255);
-            renderer.render_gpu_rect(x + 8, y + 5, 1, 1, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x + 4, y + 5, 1, 1, [245, 225, 160, 255]);
+            renderer.render_gpu_rect(x + 8, y + 5, 1, 1, [245, 225, 160, 255]);
         }
         AchievementId::PileOBones => {
             renderer.draw_line_screen(x + 1, y + 2, x + 11, y + 11, color);
             renderer.draw_line_screen(x + 11, y + 2, x + 1, y + 11, color);
-            renderer.render_gpu_rect(x, y + 1, 3, 3, 245, 225, 160, 255);
-            renderer.render_gpu_rect(x + 10, y + 10, 3, 3, 245, 225, 160, 255);
+            renderer.render_gpu_rect(x, y + 1, 3, 3, [245, 225, 160, 255]);
+            renderer.render_gpu_rect(x + 10, y + 10, 3, 3, [245, 225, 160, 255]);
         }
         _ => {
             renderer.draw_rect_outline_screen(x + 2, y + 5, x + 11, y + 12, color);
@@ -2666,10 +2665,7 @@ fn render_campaign_map(
             transform.origin_y,
             MAP_W,
             MAP_H,
-            52,
-            43,
-            27,
-            255,
+            [52, 43, 27, 255],
         );
         renderer.draw_rect_outline_screen(
             transform.origin_x,
@@ -2799,10 +2795,7 @@ fn render_tooltip(
             transform.origin_y + short_desc.y,
             220,
             tooltip_height,
-            42,
-            32,
-            18,
-            235,
+            [42, 32, 18, 235],
         );
         renderer.draw_rect_outline_screen(
             transform.origin_x + short_desc.x,
@@ -2821,10 +2814,7 @@ fn render_tooltip(
             transform.origin_y + short_desc.y + 98,
             220,
             246,
-            42,
-            32,
-            18,
-            235,
+            [42, 32, 18, 235],
         );
     }
 
@@ -2957,10 +2947,7 @@ fn draw_close_button(
             transform.origin_y + 5,
             21,
             21,
-            80,
-            45,
-            35,
-            255,
+            [80, 45, 35, 255],
         );
     }
     if hovered {

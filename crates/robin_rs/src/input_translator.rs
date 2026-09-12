@@ -325,7 +325,7 @@ impl InputTranslator {
     }
 
     /// Look up which [`GameKey`] a physical key is bound to.
-    pub fn translate_key(&self, key: KeyCode) -> Option<GameKey> {
+    fn translate_key(&self, key: KeyCode) -> Option<GameKey> {
         self.bindings
             .iter()
             .find_map(|(game_key, binding)| (*binding == Some(key)).then_some(game_key))
@@ -333,12 +333,12 @@ impl InputTranslator {
 
     // --- Dead zones ---
 
-    pub fn clear_dead_zones(&mut self) {
+    fn clear_dead_zones(&mut self) {
         self.dead_zones.clear();
     }
 
     /// Add a rectangular dead zone defined by two corner points.
-    pub fn add_dead_zone(&mut self, a: ScreenPoint, b: ScreenPoint) {
+    fn add_dead_zone(&mut self, a: ScreenPoint, b: ScreenPoint) {
         let min_x = a.x.min(b.x);
         let max_x = a.x.max(b.x);
         let min_y = a.y.min(b.y);
