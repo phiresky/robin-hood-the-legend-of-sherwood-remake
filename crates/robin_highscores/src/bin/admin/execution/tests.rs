@@ -2026,7 +2026,6 @@ impl PublicationFixture {
         let mut config = self.config.clone();
         let restore_sources = self.restore_sources.clone();
         let first = published.first.clone();
-        let status = published.status.clone();
         let first_manifest = &published.first_manifest;
         let archived_units = first_manifest
             .files
