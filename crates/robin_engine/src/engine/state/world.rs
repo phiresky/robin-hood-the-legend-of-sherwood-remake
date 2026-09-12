@@ -575,6 +575,7 @@ mod tests {
 
     #[test]
     fn empty_world_accepts_empty_level_attachments() {
+        // Successful validation is the assertion: this must not panic.
         WorldState::new().validate_level_attachments(&LevelAssets::new(), 0);
     }
 
@@ -617,6 +618,7 @@ mod tests {
 
     #[test]
     fn retired_pc_may_be_absent_from_original_registry() {
+        // A retired actor remains a valid world even without a live registry entry.
         let mut world = WorldState::new();
         let id = EntityId::Pc(crate::entity_id::PcId(0));
         world
