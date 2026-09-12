@@ -107,6 +107,7 @@ pub mod spellforge;
 pub mod sprite;
 pub mod sprite_script;
 pub mod sprite_variant;
+pub mod static_arc;
 pub mod stealth;
 pub mod tactical_control;
 pub mod titbit;
