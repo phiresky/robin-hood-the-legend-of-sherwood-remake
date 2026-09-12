@@ -92,129 +92,15 @@ impl Database {
             published_ruleset,
             competition_manifest,
         )?;
-        let session_genesis_sha256 = signed_offer
-            .session_genesis
-            .canonical_digest()
-            .map_err(|error| DbError::Corrupt(format!("stored session genesis digest: {error}")))?;
-        if verified.authenticated_participant_claims != signed_offer.participant_claims
-            || verified.replay_session_transcript.session_genesis_sha256 != session_genesis_sha256
-            || verified.replay_session_transcript.replay_session_id
-                != signed_offer.session_genesis.claim.replay_session_id
-            || verified.max_concurrent_players != signed_offer.max_concurrent_players
-            || verified.participant_instance_count != signed_offer.participant_instance_count
-            || verified.campaign_aggregation_consent
-                != stored_signed.submission.campaign_aggregation_consent
-            || result.competition_manifest_sha256 != signed_offer.competition_manifest_sha256
-        {
-            return Err(DbError::ResultInvariant(
-                "verifier session transcript does not match the exact signed offer".to_owned(),
-            ));
-        }
-        if usize::from(verified.participant_instance_count)
-            != verified.authenticated_participant_claims.len()
-        {
-            return Err(DbError::ResultInvariant(
-                "ranked participant count includes an unsigned or unauthenticated instance"
-                    .to_owned(),
-            ));
-        }
-        compare_blob(
+        let scope_kind = check_offer_matches_result(
+            &mut tx,
+            submission_id,
             &submitted,
-            "replay_sha256",
-            result.artifacts.replay.artifact.sha256.as_bytes(),
-        )?;
-        if nonnegative_u64(submitted.try_get("replay_bytes")?, "replay_bytes")?
-            != result.artifacts.replay.artifact.byte_length
-            || nonnegative_u64(
-                submitted.try_get("starting_campaign_bytes")?,
-                "starting_campaign_bytes",
-            )? != result.artifacts.starting_campaign.byte_length
-        {
-            return Err(DbError::ResultInvariant(
-                "verifier artifact byte lengths differ from stored uploads".to_owned(),
-            ));
-        }
-        compare_blob(
-            &submitted,
-            "build_manifest_id",
-            result.build_manifest_sha256.as_bytes(),
-        )?;
-        compare_blob(
-            &submitted,
-            "content_manifest_id",
-            result.content_manifest_sha256.as_bytes(),
-        )?;
-        compare_blob(
-            &submitted,
-            "config_id",
-            result.rules_config_sha256.as_bytes(),
-        )?;
-        compare_blob(
-            &submitted,
-            "ruleset_id",
-            result.ruleset_manifest_sha256.as_bytes(),
-        )?;
-        compare_blob(
-            &submitted,
-            "starting_campaign_sha256",
-            verified.starting_campaign.sha256.as_bytes(),
-        )?;
-        let scope_kind = match verified.scope_kind {
-            RunScopeKindV1::IndividualLevel => "individual_level",
-            RunScopeKindV1::Campaign => "campaign",
-        };
-        compare_value(&submitted, "scope_kind", scope_kind)?;
-        let expected_max_concurrent: i64 = submitted.try_get("max_concurrent_players")?;
-        let expected_instances: i64 = submitted.try_get("participant_instance_count")?;
-        if expected_max_concurrent != i64::from(verified.max_concurrent_players)
-            || expected_instances != i64::from(verified.participant_instance_count)
-        {
-            return Err(DbError::ResultInvariant(
-                "verifier-derived session counts differ from the signed offer".to_owned(),
-            ));
-        }
-
-        let submitted_participants = sqlx::query(
-            "SELECT seat, participant_instance_id, public_key, public_disclosure \
-             FROM submission_participants \
-             WHERE submission_id = ? ORDER BY seat, participant_instance_id",
+            &stored_signed,
+            result,
+            verified,
         )
-        .bind(submission_id)
-        .fetch_all(&mut *tx)
         .await?;
-        if submitted_participants.len() != verified.authenticated_participant_claims.len() {
-            return Err(DbError::ResultInvariant(
-                "verifier did not authenticate every claimed participant".to_owned(),
-            ));
-        }
-        for (stored, verified) in submitted_participants
-            .into_iter()
-            .zip(&verified.authenticated_participant_claims)
-        {
-            if stored.try_get::<i64, _>("seat")? != i64::from(verified.seat)
-                || stored
-                    .try_get::<Vec<u8>, _>("participant_instance_id")?
-                    .as_slice()
-                    != verified.participant_instance_id.as_bytes()
-                || stored.try_get::<Vec<u8>, _>("public_key")?.as_slice()
-                    != verified.public_key.as_bytes()
-                || stored.try_get::<String, _>("public_disclosure")?
-                    != match verified.public_disclosure {
-                        ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
-                        ParticipantPublicDisclosureV1::Anonymous => "anonymous",
-                    }
-            {
-                return Err(DbError::ResultInvariant(
-                    "verifier-derived participant roster differs from signed claims".to_owned(),
-                ));
-            }
-        }
-
-        if verified.outcome != TerminalOutcomeV1::Won {
-            return Err(DbError::ResultInvariant(
-                "only verifier-derived successful terminal runs can rank".to_owned(),
-            ));
-        }
         let PublicationDocuments {
             verification_result_json,
             result_sha256,
@@ -594,59 +480,7 @@ impl Database {
         .bind(now)
         .execute(&mut *tx)
         .await?;
-        for (role, artifact) in [
-            ("starting", &verified.starting_campaign),
-            ("final", &verified.final_campaign),
-        ] {
-            ensure_live_campaign_object(&mut tx, artifact).await?;
-            sqlx::query(
-                "INSERT INTO verified_run_campaign_objects (run_id, role, sha256) \
-                 VALUES (?, ?, ?)",
-            )
-            .bind(&run_id)
-            .bind(role)
-            .bind(artifact.sha256.as_bytes().as_slice())
-            .execute(&mut *tx)
-            .await?;
-        }
-        for achievement in &verified.achievements {
-            sqlx::query(
-                "INSERT INTO verified_run_achievements \
-                 (run_id, achievement_id, earned, evaluation, evidence_json) \
-                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .bind(&run_id)
-            .bind(achievement.achievement_id.as_str())
-            .bind(i64::from(achievement.is_awarded()))
-            .bind(achievement_evaluation_name(achievement.evaluation))
-            .bind(
-                serde_json::to_string(&achievement.evidence)
-                    .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        for metric in requested {
-            let value = match metric.as_str() {
-                "original_score" => verified.original_score_delta,
-                "fastest_success" => {
-                    i64::try_from(verified.active_simulation_ticks).map_err(|_| {
-                        DbError::ResultInvariant(
-                            "simulation tick count does not fit SQLite INTEGER".to_owned(),
-                        )
-                    })?
-                }
-                _ => unreachable!("requested metrics were validated above"),
-            };
-            sqlx::query(
-                "INSERT INTO verified_run_metrics (run_id, metric, value) VALUES (?, ?, ?)",
-            )
-            .bind(&run_id)
-            .bind(metric)
-            .bind(value)
-            .execute(&mut *tx)
-            .await?;
-        }
+        insert_verified_run_details(&mut tx, &run_id, verified, &requested).await?;
         let accepted = sqlx::query(
             "UPDATE submissions SET status = 'accepted', lease_owner = NULL, \
                 lease_expires_at_ms = NULL, updated_at_ms = ? \
@@ -688,6 +522,198 @@ impl Database {
         tx.commit().await?;
         Ok(run_id)
     }
+}
+
+/// Validate the indexed and signed session together under the acceptance lock.
+/// No publication write can precede this complete roster/artifact comparison.
+async fn insert_verified_run_details(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    run_id: &str,
+    verified: &robin_run_protocol::VerifiedRunV1,
+    requested: &[String],
+) -> Result<(), DbError> {
+    for (role, artifact) in [
+        ("starting", &verified.starting_campaign),
+        ("final", &verified.final_campaign),
+    ] {
+        ensure_live_campaign_object(tx, artifact).await?;
+        sqlx::query(
+            "INSERT INTO verified_run_campaign_objects (run_id, role, sha256) \
+             VALUES (?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(role)
+        .bind(artifact.sha256.as_bytes().as_slice())
+        .execute(&mut **tx)
+        .await?;
+    }
+    for achievement in &verified.achievements {
+        sqlx::query(
+            "INSERT INTO verified_run_achievements \
+             (run_id, achievement_id, earned, evaluation, evidence_json) \
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(run_id)
+        .bind(achievement.achievement_id.as_str())
+        .bind(i64::from(achievement.is_awarded()))
+        .bind(achievement_evaluation_name(achievement.evaluation))
+        .bind(
+            serde_json::to_string(&achievement.evidence)
+                .map_err(|error| DbError::ResultInvariant(error.to_string()))?,
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+    for metric in requested {
+        let value = match metric.as_str() {
+            "original_score" => verified.original_score_delta,
+            "fastest_success" => i64::try_from(verified.active_simulation_ticks).map_err(|_| {
+                DbError::ResultInvariant(
+                    "simulation tick count does not fit SQLite INTEGER".to_owned(),
+                )
+            })?,
+            _ => unreachable!("requested metrics were validated above"),
+        };
+        sqlx::query("INSERT INTO verified_run_metrics (run_id, metric, value) VALUES (?, ?, ?)")
+            .bind(run_id)
+            .bind(metric)
+            .bind(value)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+async fn check_offer_matches_result(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    submission_id: &str,
+    submitted: &SqliteRow,
+    signed: &robin_run_protocol::SignedSubmissionV1,
+    result: &VerificationResultV1,
+    verified: &robin_run_protocol::VerifiedRunV1,
+) -> Result<&'static str, DbError> {
+    let signed_offer = &signed.submission.offer;
+    let session_genesis_sha256 = signed_offer
+        .session_genesis
+        .canonical_digest()
+        .map_err(|error| DbError::Corrupt(format!("stored session genesis digest: {error}")))?;
+    if verified.authenticated_participant_claims != signed_offer.participant_claims
+        || verified.replay_session_transcript.session_genesis_sha256 != session_genesis_sha256
+        || verified.replay_session_transcript.replay_session_id
+            != signed_offer.session_genesis.claim.replay_session_id
+        || verified.max_concurrent_players != signed_offer.max_concurrent_players
+        || verified.participant_instance_count != signed_offer.participant_instance_count
+        || verified.campaign_aggregation_consent != signed.submission.campaign_aggregation_consent
+        || result.competition_manifest_sha256 != signed_offer.competition_manifest_sha256
+    {
+        return Err(DbError::ResultInvariant(
+            "verifier session transcript does not match the exact signed offer".to_owned(),
+        ));
+    }
+    if usize::from(verified.participant_instance_count)
+        != verified.authenticated_participant_claims.len()
+    {
+        return Err(DbError::ResultInvariant(
+            "ranked participant count includes an unsigned or unauthenticated instance".to_owned(),
+        ));
+    }
+    compare_blob(
+        &submitted,
+        "replay_sha256",
+        result.artifacts.replay.artifact.sha256.as_bytes(),
+    )?;
+    if nonnegative_u64(submitted.try_get("replay_bytes")?, "replay_bytes")?
+        != result.artifacts.replay.artifact.byte_length
+        || nonnegative_u64(
+            submitted.try_get("starting_campaign_bytes")?,
+            "starting_campaign_bytes",
+        )? != result.artifacts.starting_campaign.byte_length
+    {
+        return Err(DbError::ResultInvariant(
+            "verifier artifact byte lengths differ from stored uploads".to_owned(),
+        ));
+    }
+    compare_blob(
+        &submitted,
+        "build_manifest_id",
+        result.build_manifest_sha256.as_bytes(),
+    )?;
+    compare_blob(
+        &submitted,
+        "content_manifest_id",
+        result.content_manifest_sha256.as_bytes(),
+    )?;
+    compare_blob(
+        &submitted,
+        "config_id",
+        result.rules_config_sha256.as_bytes(),
+    )?;
+    compare_blob(
+        &submitted,
+        "ruleset_id",
+        result.ruleset_manifest_sha256.as_bytes(),
+    )?;
+    compare_blob(
+        &submitted,
+        "starting_campaign_sha256",
+        verified.starting_campaign.sha256.as_bytes(),
+    )?;
+    let scope_kind = match verified.scope_kind {
+        RunScopeKindV1::IndividualLevel => "individual_level",
+        RunScopeKindV1::Campaign => "campaign",
+    };
+    compare_value(&submitted, "scope_kind", scope_kind)?;
+    let expected_max_concurrent: i64 = submitted.try_get("max_concurrent_players")?;
+    let expected_instances: i64 = submitted.try_get("participant_instance_count")?;
+    if expected_max_concurrent != i64::from(verified.max_concurrent_players)
+        || expected_instances != i64::from(verified.participant_instance_count)
+    {
+        return Err(DbError::ResultInvariant(
+            "verifier-derived session counts differ from the signed offer".to_owned(),
+        ));
+    }
+
+    let submitted_participants = sqlx::query(
+        "SELECT seat, participant_instance_id, public_key, public_disclosure \
+         FROM submission_participants \
+         WHERE submission_id = ? ORDER BY seat, participant_instance_id",
+    )
+    .bind(submission_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    if submitted_participants.len() != verified.authenticated_participant_claims.len() {
+        return Err(DbError::ResultInvariant(
+            "verifier did not authenticate every claimed participant".to_owned(),
+        ));
+    }
+    for (stored, verified) in submitted_participants
+        .into_iter()
+        .zip(&verified.authenticated_participant_claims)
+    {
+        if stored.try_get::<i64, _>("seat")? != i64::from(verified.seat)
+            || stored
+                .try_get::<Vec<u8>, _>("participant_instance_id")?
+                .as_slice()
+                != verified.participant_instance_id.as_bytes()
+            || stored.try_get::<Vec<u8>, _>("public_key")?.as_slice()
+                != verified.public_key.as_bytes()
+            || stored.try_get::<String, _>("public_disclosure")?
+                != match verified.public_disclosure {
+                    ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
+                    ParticipantPublicDisclosureV1::Anonymous => "anonymous",
+                }
+        {
+            return Err(DbError::ResultInvariant(
+                "verifier-derived participant roster differs from signed claims".to_owned(),
+            ));
+        }
+    }
+
+    if verified.outcome != TerminalOutcomeV1::Won {
+        return Err(DbError::ResultInvariant(
+            "only verifier-derived successful terminal runs can rank".to_owned(),
+        ));
+    }
+    Ok(scope_kind)
 }
 
 /// SQL-ready verifier-authored columns; this projection cannot authorize chain advancement.

@@ -2805,92 +2805,22 @@ impl Database {
                     "campaign chain changes immutable board identity".to_owned(),
                 ));
             }
-            let stored_result: VerificationResultV1 = serde_json::from_str(
-                row.try_get::<String, _>("verification_result_json")?
-                    .as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign verification result: {error}")))?;
-            stored_result.validate().map_err(|error| {
-                DbError::Corrupt(format!("campaign verification result: {error}"))
-            })?;
-            let stored_result_sha256 = stored_result
-                .canonical_digest()
-                .map_err(|error| DbError::Corrupt(format!("campaign result digest: {error}")))?;
-            if stored_result_sha256.as_bytes()
-                != &fixed_32(row.try_get::<Vec<u8>, _>("result_sha256")?)?
-            {
-                return Err(DbError::Corrupt(
-                    "campaign result JSON does not match its stored digest".to_owned(),
-                ));
-            }
+            let CampaignSessionDocuments {
+                result: stored_result,
+                signed,
+                public_proof,
+            } = validate_campaign_session_documents(
+                row,
+                (session_index == 0).then_some(&starting_state),
+                published_ruleset,
+                campaign_content_manifest,
+            )?;
             let VerificationStatusV1::Verified(verified) = &stored_result.status else {
                 return Err(DbError::Corrupt(
                     "accepted campaign row does not contain a verified result".to_owned(),
                 ));
             };
-            let signed: robin_run_protocol::SignedSubmissionV1 = serde_json::from_str(
-                row.try_get::<String, _>("envelope_json")?.as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign submission envelope: {error}")))?;
-            signed.validate().map_err(|error| {
-                DbError::Corrupt(format!("campaign submission envelope: {error}"))
-            })?;
-            if session_index == 0 {
-                let offer = &signed.submission.offer;
-                if offer.starting_state != starting_state {
-                    return Err(DbError::Corrupt(
-                        "campaign genesis offer differs from its indexed starting state".to_owned(),
-                    ));
-                }
-                let ranked = &offer.session_genesis.claim.ranked_session;
-                validate_aggregate_genesis_scope_subject(
-                    ranked.content_edition,
-                    &ranked.content_subject,
-                    &offer.starting_state,
-                )?;
-            }
-            let stored_request: VerificationRequestV1 = serde_json::from_str(
-                row.try_get::<Option<String>, _>("verification_request_json")?
-                    .ok_or_else(|| {
-                        DbError::Corrupt(
-                            "accepted campaign row has no recorded verification request".to_owned(),
-                        )
-                    })?
-                    .as_str(),
-            )
-            .map_err(|error| DbError::Corrupt(format!("campaign verification request: {error}")))?;
-            let stored_request_sha256 = stored_request
-                .canonical_digest()
-                .map_err(|error| DbError::Corrupt(format!("campaign request digest: {error}")))?;
-            if stored_request.submission != signed
-                || stored_request_sha256.as_bytes()
-                    != &fixed_32(row.try_get::<Vec<u8>, _>("verification_request_sha256")?)?
-            {
-                return Err(DbError::Corrupt(
-                    "campaign verification request does not match indexed storage".to_owned(),
-                ));
-            }
-            stored_result
-                .validate_campaign_complete_evidence(
-                    &stored_request,
-                    &published_ruleset.manifest,
-                    Some(campaign_content_manifest),
-                )
-                .map_err(|error| {
-                    DbError::Corrupt(format!("campaign completion evidence: {error}"))
-                })?;
-            let stored_public_proof = stored_public_verification_proof(row)?;
-            let recomputed_public_proof =
-                PublicVerificationProofV1::from_private(&stored_request, &stored_result).map_err(
-                    |error| DbError::Corrupt(format!("campaign public proof projection: {error}")),
-                )?;
-            if stored_public_proof != recomputed_public_proof {
-                return Err(DbError::Corrupt(
-                    "stored campaign public proof differs from its immutable private documents"
-                        .to_owned(),
-                ));
-            }
-            session_public_proofs.push(stored_public_proof);
+            session_public_proofs.push(public_proof);
             let mut row_authenticated_keys = verified
                 .authenticated_participant_claims
                 .iter()
@@ -3956,6 +3886,104 @@ fn is_public_rejection_code(value: &str) -> bool {
         .is_ok()
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CampaignSessionDocuments {
+    result: VerificationResultV1,
+    signed: robin_run_protocol::SignedSubmissionV1,
+    public_proof: PublicVerificationProofV1,
+}
+
+fn validate_campaign_session_documents(
+    row: &SqliteRow,
+    genesis_starting_state: Option<&InitialStateExpectationV1>,
+    published_ruleset: &PublishedRulesetV1,
+    campaign_content_manifest: &CampaignContentManifestV1,
+) -> Result<CampaignSessionDocuments, DbError> {
+    let stored_result: VerificationResultV1 = serde_json::from_str(
+        row.try_get::<String, _>("verification_result_json")?
+            .as_str(),
+    )
+    .map_err(|error| DbError::Corrupt(format!("campaign verification result: {error}")))?;
+    stored_result
+        .validate()
+        .map_err(|error| DbError::Corrupt(format!("campaign verification result: {error}")))?;
+    let stored_result_sha256 = stored_result
+        .canonical_digest()
+        .map_err(|error| DbError::Corrupt(format!("campaign result digest: {error}")))?;
+    if stored_result_sha256.as_bytes() != &fixed_32(row.try_get::<Vec<u8>, _>("result_sha256")?)? {
+        return Err(DbError::Corrupt(
+            "campaign result JSON does not match its stored digest".to_owned(),
+        ));
+    }
+    if !matches!(&stored_result.status, VerificationStatusV1::Verified(_)) {
+        return Err(DbError::Corrupt(
+            "accepted campaign row does not contain a verified result".to_owned(),
+        ));
+    }
+    let signed: robin_run_protocol::SignedSubmissionV1 =
+        serde_json::from_str(row.try_get::<String, _>("envelope_json")?.as_str())
+            .map_err(|error| DbError::Corrupt(format!("campaign submission envelope: {error}")))?;
+    signed
+        .validate()
+        .map_err(|error| DbError::Corrupt(format!("campaign submission envelope: {error}")))?;
+    if let Some(starting_state) = genesis_starting_state {
+        let offer = &signed.submission.offer;
+        if &offer.starting_state != starting_state {
+            return Err(DbError::Corrupt(
+                "campaign genesis offer differs from its indexed starting state".to_owned(),
+            ));
+        }
+        let ranked = &offer.session_genesis.claim.ranked_session;
+        validate_aggregate_genesis_scope_subject(
+            ranked.content_edition,
+            &ranked.content_subject,
+            &offer.starting_state,
+        )?;
+    }
+    let stored_request: VerificationRequestV1 = serde_json::from_str(
+        row.try_get::<Option<String>, _>("verification_request_json")?
+            .ok_or_else(|| {
+                DbError::Corrupt(
+                    "accepted campaign row has no recorded verification request".to_owned(),
+                )
+            })?
+            .as_str(),
+    )
+    .map_err(|error| DbError::Corrupt(format!("campaign verification request: {error}")))?;
+    let stored_request_sha256 = stored_request
+        .canonical_digest()
+        .map_err(|error| DbError::Corrupt(format!("campaign request digest: {error}")))?;
+    if stored_request.submission != signed
+        || stored_request_sha256.as_bytes()
+            != &fixed_32(row.try_get::<Vec<u8>, _>("verification_request_sha256")?)?
+    {
+        return Err(DbError::Corrupt(
+            "campaign verification request does not match indexed storage".to_owned(),
+        ));
+    }
+    stored_result
+        .validate_campaign_complete_evidence(
+            &stored_request,
+            &published_ruleset.manifest,
+            Some(campaign_content_manifest),
+        )
+        .map_err(|error| DbError::Corrupt(format!("campaign completion evidence: {error}")))?;
+    let stored_public_proof = stored_public_verification_proof(row)?;
+    let recomputed_public_proof =
+        PublicVerificationProofV1::from_private(&stored_request, &stored_result).map_err(
+            |error| DbError::Corrupt(format!("campaign public proof projection: {error}")),
+        )?;
+    if stored_public_proof != recomputed_public_proof {
+        return Err(DbError::Corrupt(
+            "stored campaign public proof differs from its immutable private documents".to_owned(),
+        ));
+    }
+    Ok(CampaignSessionDocuments {
+        result: stored_result,
+        signed,
+        public_proof: stored_public_proof,
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;

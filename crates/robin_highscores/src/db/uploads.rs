@@ -2,6 +2,93 @@
 //! No independent pool, repository transaction, or fence is created here.
 use super::*;
 
+async fn register_uploaded_artifacts(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    submission: &NewSubmission,
+    now: i64,
+) -> Result<(i64, i64), DbError> {
+    let replay_bytes = i64::try_from(submission.replay_bytes).map_err(|_| {
+        DbError::ResultInvariant("replay length does not fit SQLite INTEGER".to_owned())
+    })?;
+    let starting_campaign_bytes =
+        i64::try_from(submission.starting_campaign_bytes).map_err(|_| {
+            DbError::ResultInvariant(
+                "starting campaign length does not fit SQLite INTEGER".to_owned(),
+            )
+        })?;
+    sqlx::query(
+        "INSERT INTO replay_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
+         ON CONFLICT(sha256) DO UPDATE SET \
+             purged_at_ms = NULL, purge_state = 'live', purge_token = NULL, \
+             purge_claimed_at_ms = NULL \
+         WHERE replay_objects.purge_state = 'purged'",
+    )
+    .bind(submission.replay_sha256.as_slice())
+    .bind(replay_bytes)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    let replay_object =
+        sqlx::query("SELECT byte_length, purge_state FROM replay_objects WHERE sha256 = ?")
+            .bind(submission.replay_sha256.as_slice())
+            .fetch_one(&mut **tx)
+            .await?;
+    let stored_replay_bytes: i64 = replay_object.try_get("byte_length")?;
+    if stored_replay_bytes != replay_bytes {
+        return Err(DbError::ResultInvariant(
+            "content-addressed replay length conflicts with existing object".to_owned(),
+        ));
+    }
+    if replay_object.try_get::<String, _>("purge_state")? != "live" {
+        return Err(DbError::QueueFull);
+    }
+
+    sqlx::query(
+        "INSERT INTO campaign_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
+         ON CONFLICT(sha256) DO UPDATE SET purge_state = 'live', purge_token = NULL, \
+             purge_claimed_at_ms = NULL, purged_at_ms = NULL \
+         WHERE campaign_objects.byte_length = excluded.byte_length \
+           AND campaign_objects.purge_state = 'purged'",
+    )
+    .bind(submission.starting_campaign_sha256.as_slice())
+    .bind(starting_campaign_bytes)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    let starting_object =
+        sqlx::query("SELECT byte_length, purge_state FROM campaign_objects WHERE sha256 = ?")
+            .bind(submission.starting_campaign_sha256.as_slice())
+            .fetch_one(&mut **tx)
+            .await?;
+    if starting_object.try_get::<i64, _>("byte_length")? != starting_campaign_bytes
+        || starting_object.try_get::<String, _>("purge_state")? != "live"
+    {
+        return Err(DbError::ResultInvariant(
+            "uploaded starting campaign identity is not live and exact".to_owned(),
+        ));
+    }
+
+    Ok((replay_bytes, starting_campaign_bytes))
+}
+async fn ensure_participant_identities(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    participants: &[crate::model::ParticipantClaim],
+) -> Result<(), DbError> {
+    for participant in participants {
+        let exists: i64 =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
+                .bind(participant.public_key.as_slice())
+                .fetch_one(&mut **tx)
+                .await?;
+        if exists == 0 {
+            return Err(DbError::ResultInvariant(format!(
+                "participant seat {} has no registered identity",
+                participant.seat
+            )));
+        }
+    }
+    Ok(())
+}
 impl Database {
     /// Atomically consume a signed submission challenge and acquire the only
     /// lease which may ingest its artifact bytes. Exact retries either resume
@@ -229,19 +316,7 @@ impl Database {
         if occupied >= i64::from(self.max_pending_submissions) {
             return Err(DbError::QueueFull);
         }
-        for participant in &intent.participants {
-            let exists: i64 =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
-                    .bind(participant.public_key.as_slice())
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if exists == 0 {
-                return Err(DbError::ResultInvariant(format!(
-                    "participant seat {} has no registered identity",
-                    participant.seat
-                )));
-            }
-        }
+        ensure_participant_identities(&mut tx, &intent.participants).await?;
         let genesis_used: i64 = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM used_replay_session_geneses \
              WHERE (host_public_key = ? AND replay_session_id = ? AND host_nonce = ?) \
@@ -498,80 +573,10 @@ impl Database {
             return Err(DbError::QueueFull);
         }
 
-        for participant in &submission.participants {
-            let exists: i64 =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identities WHERE public_key = ?)")
-                    .bind(participant.public_key.as_slice())
-                    .fetch_one(&mut *tx)
-                    .await?;
-            if exists == 0 {
-                return Err(DbError::ResultInvariant(format!(
-                    "participant seat {} has no registered identity",
-                    participant.seat
-                )));
-            }
-        }
+        ensure_participant_identities(&mut tx, &submission.participants).await?;
 
-        let replay_bytes = i64::try_from(submission.replay_bytes).map_err(|_| {
-            DbError::ResultInvariant("replay length does not fit SQLite INTEGER".to_owned())
-        })?;
-        let starting_campaign_bytes =
-            i64::try_from(submission.starting_campaign_bytes).map_err(|_| {
-                DbError::ResultInvariant(
-                    "starting campaign length does not fit SQLite INTEGER".to_owned(),
-                )
-            })?;
-        sqlx::query(
-            "INSERT INTO replay_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
-             ON CONFLICT(sha256) DO UPDATE SET \
-                 purged_at_ms = NULL, purge_state = 'live', purge_token = NULL, \
-                 purge_claimed_at_ms = NULL \
-             WHERE replay_objects.purge_state = 'purged'",
-        )
-        .bind(submission.replay_sha256.as_slice())
-        .bind(replay_bytes)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let replay_object =
-            sqlx::query("SELECT byte_length, purge_state FROM replay_objects WHERE sha256 = ?")
-                .bind(submission.replay_sha256.as_slice())
-                .fetch_one(&mut *tx)
-                .await?;
-        let stored_replay_bytes: i64 = replay_object.try_get("byte_length")?;
-        if stored_replay_bytes != replay_bytes {
-            return Err(DbError::ResultInvariant(
-                "content-addressed replay length conflicts with existing object".to_owned(),
-            ));
-        }
-        if replay_object.try_get::<String, _>("purge_state")? != "live" {
-            return Err(DbError::QueueFull);
-        }
-
-        sqlx::query(
-            "INSERT INTO campaign_objects (sha256, byte_length, created_at_ms) VALUES (?, ?, ?) \
-             ON CONFLICT(sha256) DO UPDATE SET purge_state = 'live', purge_token = NULL, \
-                 purge_claimed_at_ms = NULL, purged_at_ms = NULL \
-             WHERE campaign_objects.byte_length = excluded.byte_length \
-               AND campaign_objects.purge_state = 'purged'",
-        )
-        .bind(submission.starting_campaign_sha256.as_slice())
-        .bind(starting_campaign_bytes)
-        .bind(now)
-        .execute(&mut *tx)
-        .await?;
-        let starting_object =
-            sqlx::query("SELECT byte_length, purge_state FROM campaign_objects WHERE sha256 = ?")
-                .bind(submission.starting_campaign_sha256.as_slice())
-                .fetch_one(&mut *tx)
-                .await?;
-        if starting_object.try_get::<i64, _>("byte_length")? != starting_campaign_bytes
-            || starting_object.try_get::<String, _>("purge_state")? != "live"
-        {
-            return Err(DbError::ResultInvariant(
-                "uploaded starting campaign identity is not live and exact".to_owned(),
-            ));
-        }
+        let (replay_bytes, starting_campaign_bytes) =
+            register_uploaded_artifacts(&mut tx, submission, now).await?;
 
         let inserted_submission = sqlx::query(
             "INSERT INTO submissions (\
