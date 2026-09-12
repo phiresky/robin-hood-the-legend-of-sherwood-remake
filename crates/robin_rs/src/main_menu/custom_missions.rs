@@ -106,8 +106,13 @@ pub(crate) async fn show_custom_missions(
         cursor: Some(&cursor),
     };
     loop {
-        match state.tick(&mut io, mods_root) {
+        match state.tick(
+            &mut io,
+            #[cfg(not(target_arch = "wasm32"))]
+            mods_root,
+        ) {
             CustomMissionsTick::Closed(choice) => return choice,
+            #[cfg(not(target_arch = "wasm32"))]
             CustomMissionsTick::Retry => continue,
             CustomMissionsTick::Presented => crate::window::sleep_ui_frame().await,
         }
@@ -116,6 +121,7 @@ pub(crate) async fn show_custom_missions(
 
 enum CustomMissionsTick {
     Presented,
+    #[cfg(not(target_arch = "wasm32"))]
     Retry,
     Closed(Option<CustomMissionChoice>),
 }
@@ -228,7 +234,11 @@ impl CustomMissionsState {
             frame,
         })
     }
-    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>, mods_root: &Path) -> CustomMissionsTick {
+    fn tick(
+        &mut self,
+        io: &mut ModalScreenIo<'_, '_>,
+        #[cfg(not(target_arch = "wasm32"))] mods_root: &Path,
+    ) -> CustomMissionsTick {
         let event_pump = &mut *io.window;
         let renderer = &mut *io.renderer;
         let resources = io.resources;
