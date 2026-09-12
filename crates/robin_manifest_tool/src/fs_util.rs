@@ -182,6 +182,12 @@ mod tests {
         Ok(())
     }
     #[test]
+    fn descriptor_growth_stops_after_one_excess_byte() {
+        let mut reader = std::io::Cursor::new(vec![1; 1024]);
+        assert!(read_bounded(&mut reader, 8, 4).is_err());
+        assert_eq!(reader.position(), 9);
+    }
+    #[test]
     fn path_policy_is_lexical_not_host_normalized() {
         for invalid in ["", "/a", "a/", "a//b", "a/./b", "a/../b", "a\\b"] {
             assert!(!valid_relative_path(invalid), "{invalid}");
