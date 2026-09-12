@@ -4,7 +4,7 @@
 //! instruction with its address, opcode, and operands. Useful for eye-
 //! balling scripts during VM bring-up and for debugging trace divergences.
 
-use crate::scb::{ClassEntry, ScbFile};
+use robin_assets::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::native_name;
 use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode};
 use std::fmt::Write;
@@ -275,7 +275,9 @@ fn bin_symbol(op: BinaryOp) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scb::{self, ClassEntry, Function, MemberVariable, Quad, ScType, ScbFile, TypeTag};
+    use robin_assets::scb::{
+        self, ClassEntry, Function, MemberVariable, Quad, ScType, ScbFile, TypeTag,
+    };
     use robin_engine::vm::Opcode;
 
     #[test]

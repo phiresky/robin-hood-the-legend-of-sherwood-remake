@@ -13,6 +13,7 @@ name = "robin_rs"
 crate-type = ["rlib"]
 
 [dependencies]
+robin_modding_tools = { path = "../robin_modding_tools", default-features = false }
 robin_engine.workspace = true
 robin_assets.workspace = true
 robin_replay_format.workspace = true

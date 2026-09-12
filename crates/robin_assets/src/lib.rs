@@ -18,15 +18,9 @@ mod original_data {
     }
 }
 
-#[cfg(feature = "engine-adapters")]
-pub mod actor_names;
 pub mod binary_reader;
 #[cfg(feature = "engine-adapters")]
 pub mod custom_sprites;
-#[cfg(feature = "engine-adapters")]
-pub mod decompile;
-#[cfg(feature = "engine-adapters")]
-pub mod disasm;
 pub mod frame_holder;
 #[cfg(feature = "engine-adapters")]
 pub mod interface_metadata;
@@ -49,6 +43,7 @@ pub mod shipping_datadir;
 pub mod sprite_codec;
 #[cfg(feature = "engine-adapters")]
 pub mod sprite_groups;
+pub mod sprite_pixels;
 pub mod terrain_source;
 #[cfg(target_arch = "wasm32")]
 mod wasm_alloc;

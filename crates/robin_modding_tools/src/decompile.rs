@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Write};
 
 use crate::actor_names::{ActorNames, ScriptKind};
-use crate::scb::{ClassEntry, ScbFile};
+use robin_assets::scb::{ClassEntry, ScbFile};
 use robin_engine::natives::{native_name, native_signature_by_index};
 use robin_engine::vm::{BinaryOp, Instruction, Symbol, decode_for_preparation};
 
@@ -343,23 +343,107 @@ fn has_side_effect(expr: &Expr) -> bool {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn set_expr(
-    flat: &mut BTreeMap<usize, FlatIR>,
-    exprs: &mut HashMap<Symbol, Expr>,
-    addr: usize,
-    dst: Symbol,
-    expr: Expr,
-    members: &HashMap<usize, &str>,
-    multi_use: &HashSet<Symbol>,
-    param_names: &[String],
-) {
-    if !is_tmp(dst) || (multi_use.contains(&dst) && has_side_effect(&expr)) {
-        let name = sym_var_name(dst, members, param_names);
-        flat.insert(addr, FlatIR::Assign(name.clone(), expr));
-        exprs.insert(dst, Expr::Var(name));
-    } else {
-        exprs.insert(dst, expr);
+/// A function's expression environment. Calls with side effects are retained
+/// when a temporary has multiple uses; pure expressions can be substituted.
+struct Folder<'a> {
+    flat: BTreeMap<usize, FlatIR>,
+    exprs: HashMap<Symbol, Expr>,
+    native_params: Vec<Expr>,
+    script_params: Vec<Expr>,
+    members: &'a HashMap<usize, &'a str>,
+    func_map: &'a HashMap<usize, &'a str>,
+    param_names: &'a [String],
+    multi_use: HashSet<Symbol>,
+}
+
+impl Folder<'_> {
+    fn fold_assignment(&mut self, instruction: &Instruction, i: usize) -> bool {
+        use Instruction::*;
+        match instruction {
+            Aff0IConstant { dst, constant } => {
+                self.set_expr(i, *dst, Expr::Int(*constant));
+            }
+            Aff0FConstant { dst, constant } => {
+                self.set_expr(i, *dst, Expr::Float(*constant));
+            }
+            Aff0Integer { dst, src } | Aff0Float { dst, src } => {
+                let e = self.get_expr(*src);
+                self.set_expr(i, *dst, e);
+            }
+            Binary { op, dst, a, b } => {
+                let le = self.get_expr(*a);
+                let re = self.get_expr(*b);
+                let e = Expr::BinOp(bin_op_str(*op), Box::new(le), Box::new(re));
+                self.set_expr(i, *dst, e);
+            }
+            Aff1CastToInt { dst, src } => {
+                let e = Expr::Cast("int", Box::new(self.get_expr(*src)));
+                self.set_expr(i, *dst, e);
+            }
+            Aff1CastToFloat { dst, src } => {
+                let e = Expr::Cast("float", Box::new(self.get_expr(*src)));
+                self.set_expr(i, *dst, e);
+            }
+            Aff1IMinus { dst, src } | Aff1FMinus { dst, src } => {
+                let e = Expr::Neg(Box::new(self.get_expr(*src)));
+                self.set_expr(i, *dst, e);
+            }
+            Aff1GetParam { dst, param_offset } => {
+                let slot = param_offset / 4;
+                let name = if param_offset % 4 == 0 {
+                    self.param_names
+                        .get(slot as usize)
+                        .cloned()
+                        .unwrap_or_else(|| format!("p{slot}"))
+                } else {
+                    format!("param[{param_offset}]")
+                };
+                self.set_expr(i, *dst, Expr::Var(name));
+            }
+            _ => return false,
+        }
+        true
+    }
+    fn fold_native_call(&mut self, index: u32) -> Expr {
+        let name = native_name(index).to_string();
+        let mut args = std::mem::take(&mut self.native_params);
+
+        // Annotate arguments with known parameter names
+        if let Some(sig) = native_signature_by_index(index) {
+            if sig.params.len() != args.len() {
+                tracing::warn!(
+                    "Decompiler: native {}({}) has {} args but {} known names",
+                    name,
+                    index,
+                    args.len(),
+                    sig.params.len(),
+                );
+            }
+            args = args
+                .into_iter()
+                .enumerate()
+                .map(|(i, arg)| match sig.params.get(i) {
+                    Some(param) => Expr::NamedArg(param.name.to_owned(), Box::new(arg)),
+                    None => arg,
+                })
+                .collect();
+        }
+
+        Expr::Call(name, args)
+    }
+
+    fn get_expr(&self, symbol: Symbol) -> Expr {
+        get_expr(&self.exprs, symbol, self.members, self.param_names)
+    }
+
+    fn set_expr(&mut self, addr: usize, dst: Symbol, expr: Expr) {
+        if !is_tmp(dst) || (self.multi_use.contains(&dst) && has_side_effect(&expr)) {
+            let name = sym_var_name(dst, self.members, self.param_names);
+            self.flat.insert(addr, FlatIR::Assign(name.clone(), expr));
+            self.exprs.insert(dst, Expr::Var(name));
+        } else {
+            self.exprs.insert(dst, expr);
+        }
     }
 }
 
@@ -371,16 +455,24 @@ fn fold_expressions(
     func_map: &HashMap<usize, &str>,
     param_names: &[String],
 ) -> BTreeMap<usize, FlatIR> {
-    let mut flat = BTreeMap::new();
-    let mut exprs: HashMap<Symbol, Expr> = HashMap::new();
-    let mut native_params: Vec<Expr> = Vec::new();
-    let mut script_params: Vec<Expr> = Vec::new();
-
     let end = end.min(instructions.len());
-    let multi_use = count_multi_use_tmps(instructions, start, end);
+    let mut folder = Folder {
+        flat: BTreeMap::new(),
+        exprs: HashMap::new(),
+        native_params: Vec::new(),
+        script_params: Vec::new(),
+        members,
+        func_map,
+        param_names,
+        multi_use: count_multi_use_tmps(instructions, start, end),
+    };
     let mut i = start;
     while i < end {
         use Instruction::*;
+        if folder.fold_assignment(&instructions[i], i) {
+            i += 1;
+            continue;
+        }
         match &instructions[i] {
             Empty | Nop | EndFunction => {
                 i += 1;
@@ -389,251 +481,80 @@ fn fold_expressions(
                 i += 1;
             }
 
-            Aff0IConstant { dst, constant } => {
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    Expr::Int(*constant),
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff0FConstant { dst, constant } => {
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    Expr::Float(*constant),
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff0Integer { dst, src } | Aff0Float { dst, src } => {
-                let e = get_expr(&exprs, *src, members, param_names);
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Binary { op, dst, a, b } => {
-                let le = get_expr(&exprs, *a, members, param_names);
-                let re = get_expr(&exprs, *b, members, param_names);
-                let e = Expr::BinOp(bin_op_str(*op), Box::new(le), Box::new(re));
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff1CastToInt { dst, src } => {
-                let e = Expr::Cast(
-                    "int",
-                    Box::new(get_expr(&exprs, *src, members, param_names)),
-                );
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff1CastToFloat { dst, src } => {
-                let e = Expr::Cast(
-                    "float",
-                    Box::new(get_expr(&exprs, *src, members, param_names)),
-                );
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff1IMinus { dst, src } | Aff1FMinus { dst, src } => {
-                let e = Expr::Neg(Box::new(get_expr(&exprs, *src, members, param_names)));
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
-            Aff1GetParam { dst, param_offset } => {
-                let slot = param_offset / 4;
-                let name = if param_offset % 4 == 0 {
-                    param_names
-                        .get(slot as usize)
-                        .cloned()
-                        .unwrap_or_else(|| format!("p{slot}"))
-                } else {
-                    format!("param[{param_offset}]")
-                };
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *dst,
-                    Expr::Var(name),
-                    members,
-                    &multi_use,
-                    param_names,
-                );
-                i += 1;
-            }
+            Aff0IConstant { .. }
+            | Aff0FConstant { .. }
+            | Aff0Integer { .. }
+            | Aff0Float { .. }
+            | Binary { .. }
+            | Aff1CastToInt { .. }
+            | Aff1CastToFloat { .. }
+            | Aff1IMinus { .. }
+            | Aff1FMinus { .. }
+            | Aff1GetParam { .. } => unreachable!("assignment handled above"),
             Aff1SetParam { dst_offset, src } => {
-                let e = get_expr(&exprs, *src, members, param_names);
-                flat.insert(i, FlatIR::Assign(format!("out_param[{dst_offset}]"), e));
+                let e = folder.get_expr(*src);
+                folder
+                    .flat
+                    .insert(i, FlatIR::Assign(format!("out_param[{dst_offset}]"), e));
                 i += 1;
             }
 
             NativeParam { sym } => {
-                native_params.push(get_expr(&exprs, *sym, members, param_names));
+                folder.native_params.push(folder.get_expr(*sym));
                 i += 1;
             }
             NativeCall { index } => {
-                let name = native_name(*index).to_string();
-                let mut args = std::mem::take(&mut native_params);
-
-                // Annotate arguments with known parameter names
-                if let Some(sig) = native_signature_by_index(*index) {
-                    if sig.params.len() != args.len() {
-                        tracing::warn!(
-                            "Decompiler: native {}({}) has {} args but {} known names",
-                            name,
-                            index,
-                            args.len(),
-                            sig.params.len(),
-                        );
-                    }
-                    for (i, arg) in args.iter_mut().enumerate() {
-                        if let Some(param) = sig.params.get(i) {
-                            *arg = Expr::NamedArg(param.name.to_string(), Box::new(arg.clone()));
-                        }
-                    }
-                }
-
-                let call = Expr::Call(name, args);
-
+                let call = folder.fold_native_call(*index);
                 if i + 1 < end
                     && let Aff1NativeGetReturn { sym } = &instructions[i + 1]
                 {
-                    set_expr(
-                        &mut flat,
-                        &mut exprs,
-                        i,
-                        *sym,
-                        call,
-                        members,
-                        &multi_use,
-                        param_names,
-                    );
+                    folder.set_expr(i, *sym, call);
                     i += 2;
                     continue;
                 }
-                flat.insert(i, FlatIR::Expr(call));
+                folder.flat.insert(i, FlatIR::Expr(call));
                 i += 1;
             }
             Aff1NativeGetReturn { sym } => {
                 // Stray (should have been consumed by NativeCall handler).
                 let e = Expr::Var("__native_ret".into());
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *sym,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
+                folder.set_expr(i, *sym, e);
                 i += 1;
             }
 
             Param { sym } => {
-                script_params.push(get_expr(&exprs, *sym, members, param_names));
+                folder.script_params.push(folder.get_expr(*sym));
                 i += 1;
             }
             Call { addr } => {
                 let target = *addr as usize;
-                let name = func_map
+                let name = folder
+                    .func_map
                     .get(&target)
                     .map(|s| format!("this.{s}"))
                     .unwrap_or_else(|| format!("func_{target}"));
-                let args = std::mem::take(&mut script_params);
+                let args = std::mem::take(&mut folder.script_params);
                 let call = Expr::Call(name, args);
 
                 if i + 1 < end
                     && let Aff1GetReturn { sym } = &instructions[i + 1]
                 {
-                    set_expr(
-                        &mut flat,
-                        &mut exprs,
-                        i,
-                        *sym,
-                        call,
-                        members,
-                        &multi_use,
-                        param_names,
-                    );
+                    folder.set_expr(i, *sym, call);
                     i += 2;
                     continue;
                 }
-                flat.insert(i, FlatIR::Expr(call));
+                folder.flat.insert(i, FlatIR::Expr(call));
                 i += 1;
             }
             Aff1GetReturn { sym } => {
                 let e = Expr::Var("__call_ret".into());
-                set_expr(
-                    &mut flat,
-                    &mut exprs,
-                    i,
-                    *sym,
-                    e,
-                    members,
-                    &multi_use,
-                    param_names,
-                );
+                folder.set_expr(i, *sym, e);
                 i += 1;
             }
 
             ReturnVal { sym } => {
-                let e = get_expr(&exprs, *sym, members, param_names);
-                flat.insert(i, FlatIR::Return(Some(e)));
+                let e = folder.get_expr(*sym);
+                folder.flat.insert(i, FlatIR::Return(Some(e)));
                 i += 1;
                 // Skip compiler epilogue: NOP, RETURN, END_FUNCTION
                 while i < end && matches!(&instructions[i], Nop | Return | EndFunction) {
@@ -644,7 +565,8 @@ fn fold_expressions(
                 // Only emit if it's NOT right after a ReturnVal (those are
                 // already emitted). Check by seeing if the previous flat IR
                 // entry was a Return.
-                let dominated_by_ret = flat
+                let dominated_by_ret = folder
+                    .flat
                     .values()
                     .next_back()
                     .map(|ir| matches!(ir, FlatIR::Return(Some(_))))
@@ -658,14 +580,14 @@ fn fold_expressions(
                     }
                     if j < end {
                         // There's more code after — this is a mid-function return.
-                        flat.insert(i, FlatIR::Return(None));
+                        folder.flat.insert(i, FlatIR::Return(None));
                     }
                 }
                 i += 1;
             }
 
             IfNotZeroGoto { sym, addr } => {
-                let cond = get_expr(&exprs, *sym, members, param_names);
+                let cond = folder.get_expr(*sym);
                 let true_target = *addr as usize;
                 let branch_addr = i;
 
@@ -675,7 +597,7 @@ fn fold_expressions(
                     } = &instructions[i + 1]
                 {
                     let false_target = *false_addr as usize;
-                    flat.insert(
+                    folder.flat.insert(
                         branch_addr,
                         FlatIR::Branch {
                             cond,
@@ -686,7 +608,7 @@ fn fold_expressions(
                     i += 2;
                     continue;
                 }
-                flat.insert(
+                folder.flat.insert(
                     branch_addr,
                     FlatIR::Branch {
                         cond,
@@ -697,7 +619,7 @@ fn fold_expressions(
                 i += 1;
             }
             IfZeroGoto { sym, addr } => {
-                let cond = get_expr(&exprs, *sym, members, param_names);
+                let cond = folder.get_expr(*sym);
                 let zero_target = *addr as usize;
                 let branch_addr = i;
 
@@ -708,7 +630,7 @@ fn fold_expressions(
                 {
                     let nonzero_target = *nonzero_addr as usize;
                     // Normalise: true (nonzero) → nonzero_target
-                    flat.insert(
+                    folder.flat.insert(
                         branch_addr,
                         FlatIR::Branch {
                             cond,
@@ -719,7 +641,7 @@ fn fold_expressions(
                     i += 2;
                     continue;
                 }
-                flat.insert(
+                folder.flat.insert(
                     branch_addr,
                     FlatIR::Branch {
                         cond,
@@ -731,12 +653,12 @@ fn fold_expressions(
             }
 
             Goto { addr } => {
-                flat.insert(i, FlatIR::Goto(*addr as usize));
+                folder.flat.insert(i, FlatIR::Goto(*addr as usize));
                 i += 1;
             }
         }
     }
-    flat
+    folder.flat
 }
 
 // ── Control-flow structuring ─────────────────────────────────
@@ -766,8 +688,8 @@ fn structure_range(flat: &BTreeMap<usize, FlatIR>, start: usize, end: usize) -> 
     structure_range_d(flat, start, end, 0, &targets)
 }
 
-fn collect_goto_targets(flat: &BTreeMap<usize, FlatIR>) -> HashSet<usize> {
-    let mut targets = HashSet::new();
+fn collect_goto_targets(flat: &BTreeMap<usize, FlatIR>) -> BTreeSet<usize> {
+    let mut targets = BTreeSet::new();
     for ir in flat.values() {
         match ir {
             FlatIR::Branch {
@@ -792,7 +714,7 @@ fn structure_range_d(
     start: usize,
     end: usize,
     depth: usize,
-    targets: &HashSet<usize>,
+    targets: &BTreeSet<usize>,
 ) -> Vec<Stmt> {
     // Guard: pathological bytecode (e.g. the sherwood hub) can recursively
     // call us with `start > end`, which `BTreeMap::range` panics on. Clamp
@@ -824,11 +746,7 @@ fn structure_range_d(
     // a `Label` statement at those addresses even though there's no
     // flat IR to execute.
     let mut addrs_set: BTreeSet<usize> = flat.range(start..end).map(|(a, _)| *a).collect();
-    for &t in targets {
-        if t >= start && t < end {
-            addrs_set.insert(t);
-        }
-    }
+    addrs_set.extend(targets.range(start..end).copied());
     let addrs: Vec<usize> = addrs_set.into_iter().collect();
     let mut result = Vec::new();
     let mut idx = 0;
@@ -894,11 +812,10 @@ fn structure_range_d(
 
                 if true_t < false_t {
                     // ── Standard: true_target is the closer (then body) ──
-                    let then_addrs: Vec<usize> =
-                        flat.range(true_t..false_t).map(|(a, _)| *a).collect();
+                    let then_last = flat.range(true_t..false_t).next_back().map(|(&a, _)| a);
 
                     // While-loop: then-body ends with backward goto?
-                    let back_goto = then_addrs.last().and_then(|&a| {
+                    let back_goto = then_last.and_then(|a| {
                         if let FlatIR::Goto(t) = flat[&a]
                             && t <= addr
                         {
@@ -908,7 +825,7 @@ fn structure_range_d(
                     });
 
                     if back_goto.is_some() {
-                        let body_last = *then_addrs.last().unwrap();
+                        let body_last = then_last.unwrap();
                         let body = structure_range_d(flat, true_t, body_last, depth + 1, targets);
                         result.push(Stmt::While {
                             cond: cond.clone(),
@@ -919,7 +836,7 @@ fn structure_range_d(
                     }
 
                     // If-then-else: then-body ends with forward goto past false_t?
-                    let else_goto = then_addrs.last().and_then(|&a| {
+                    let else_goto = then_last.and_then(|a| {
                         if let FlatIR::Goto(t) = flat[&a]
                             && t > false_t
                         {
@@ -930,7 +847,7 @@ fn structure_range_d(
 
                     if let Some(merge) = else_goto {
                         let merge = merge.min(end); // don't escape our range
-                        let then_body_end = *then_addrs.last().unwrap();
+                        let then_body_end = then_last.unwrap();
                         let then_body =
                             structure_range_d(flat, true_t, then_body_end, depth + 1, targets);
                         let else_body = structure_range_d(flat, false_t, merge, depth + 1, targets);
@@ -953,11 +870,10 @@ fn structure_range_d(
                     idx = advance_to(&addrs, false_t);
                 } else {
                     // ── false_target is closer (inverted / far-jump case) ──
-                    let neg_addrs: Vec<usize> =
-                        flat.range(false_t..true_t).map(|(a, _)| *a).collect();
+                    let neg_last = flat.range(false_t..true_t).next_back().map(|(&a, _)| a);
 
                     // While with inverted condition?
-                    let back_goto = neg_addrs.last().and_then(|&a| {
+                    let back_goto = neg_last.and_then(|a| {
                         if let FlatIR::Goto(t) = flat[&a]
                             && t <= addr
                         {
@@ -967,7 +883,7 @@ fn structure_range_d(
                     });
 
                     if back_goto.is_some() {
-                        let body_last = *neg_addrs.last().unwrap();
+                        let body_last = neg_last.unwrap();
                         let body = structure_range_d(flat, false_t, body_last, depth + 1, targets);
                         result.push(Stmt::While {
                             cond: negate_cond(cond),
@@ -2073,7 +1989,7 @@ fn decompile_class(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::scb;
+    use robin_assets::scb;
 
     fn diagnostic_class(name: &str, operations: &[u8]) -> ClassEntry {
         ClassEntry {

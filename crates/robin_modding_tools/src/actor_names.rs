@@ -209,7 +209,7 @@ pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<Actor
             vfs.mount_directory(&data_dir)
                 .map_err(|error| LoadError::Level(format!("shipping mount: {error:#}")))?;
         }
-        let decoded = crate::shipping_datadir::try_load_from(&vfs, Path::new(""))
+        let decoded = robin_assets::shipping_datadir::try_load_from(&vfs, Path::new(""))
             .map_err(|error| LoadError::Level(format!("shipping datadir: {error:#}")))?;
         let files = if decoded.is_some() {
             files.with_asset_vfs(vfs)
@@ -219,11 +219,11 @@ pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<Actor
         (decoded, files)
     };
     #[cfg(target_arch = "wasm32")]
-    let decoded = crate::shipping_datadir::try_load_from(files.asset_vfs(), &data_dir)
+    let decoded = robin_assets::shipping_datadir::try_load_from(files.asset_vfs(), &data_dir)
         .map_err(|error| LoadError::Level(format!("shipping datadir: {error:#}")))?;
     let shipping = decoded
         .map(|decoded| {
-            crate::shipping_datadir::ShippingAssets::install(
+            robin_assets::shipping_datadir::ShippingAssets::install(
                 Arc::new(decoded),
                 files.asset_vfs().clone(),
             )
@@ -249,7 +249,7 @@ pub fn load_from_datadir(datadir: &Path, mission_filename: &str) -> Result<Actor
 pub fn load_from_datadir_with_files(
     datadir: &Path,
     mission_filename: &str,
-    shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
     files: Arc<SbFileSystem>,
 ) -> Result<ActorNames, LoadError> {
     let loaded_profiles;
@@ -306,13 +306,13 @@ fn load_mission_texts(
     datadir: &Path,
     mission_id: u32,
     names: &mut ActorNames,
-    shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
+    shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
     files: Arc<SbFileSystem>,
 ) {
     let data_dir = datadir.join("Data");
 
     // Resolve the `.red` level-descriptor file.
-    let red_name = crate::res_descr::red_filename(mission_id);
+    let red_name = robin_assets::res_descr::red_filename(mission_id);
     let loaded_descriptors;
     let descriptors = if let Some(dd) = shipping.as_ref()
         && let Some(d) = dd.localized_level_descriptors(&red_name)
@@ -321,7 +321,7 @@ fn load_mission_texts(
     } else {
         let red_path = data_dir.join("Text").join(&red_name);
         loaded_descriptors =
-            match crate::res_descr::load_with_files(&red_path.to_string_lossy(), &files) {
+            match robin_assets::res_descr::load_with_files(&red_path.to_string_lossy(), &files) {
                 Ok(d) => d,
                 Err(e) => {
                     tracing::debug!("{}: {e}", red_path.display());
@@ -334,7 +334,7 @@ fn load_mission_texts(
     // Resolve `Data/Text/Level.res`. Locale varies (`2047` = neutral, `1031`
     // = German, …) so search a few locale dirs when the neutral path is
     // missing.
-    let mut text_res = crate::resource_manager::ResourceManager::with_files(files.clone());
+    let mut text_res = robin_assets::resource_manager::ResourceManager::with_files(files.clone());
     if let Some(dd) = shipping.as_ref() {
         if let Err(e) = text_res.attach_or_from_shipping("Data/Text/Level.res", Some(dd)) {
             tracing::debug!("attach shipping Data/Text/Level.res: {e}");
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn shipping_datadir_helper_installs_decoded_mission_in_private_vfs() {
-        use crate::shipping_datadir::{
+        use robin_assets::shipping_datadir::{
             ShippingDatadir, ShippingMission, ShippingMissionRef, encode_mission_native,
             encode_native, zstd_max_compress,
         };
@@ -739,12 +739,12 @@ mod tests {
         // Prepared shipping profiles must take precedence over loose profiles.
         std::fs::write(&profile_path, b"invalid JSON must not be read").unwrap();
         decoded.profiles = Some(profiles);
-        let mut descriptors = crate::res_descr::LevelDescriptors::default();
+        let mut descriptors = robin_assets::res_descr::LevelDescriptors::default();
         descriptors.popup_text.text_table_id = 7;
         descriptors.short_briefing.text_table_id = 9;
         decoded
             .red_files
-            .insert(crate::res_descr::red_filename(0), descriptors);
+            .insert(robin_assets::res_descr::red_filename(0), descriptors);
         // Real TEXT entries exercise the borrowed descriptor's two distinct IDs.
         let mut text_bytes = b"SRES".to_vec();
         text_bytes.extend_from_slice(&0x0100u32.to_le_bytes());
@@ -761,9 +761,9 @@ mod tests {
         text_vfs
             .install_preloaded_asset("text-fixture.res", text_bytes)
             .unwrap();
-        let mut text_resources = crate::resource_manager::ResourceManager::with_files(Arc::new(
-            SbFileSystem::new(text_vfs),
-        ));
+        let mut text_resources = robin_assets::resource_manager::ResourceManager::with_files(
+            Arc::new(SbFileSystem::new(text_vfs)),
+        );
         text_resources
             .attach_resource_file("text-fixture.res")
             .unwrap();
