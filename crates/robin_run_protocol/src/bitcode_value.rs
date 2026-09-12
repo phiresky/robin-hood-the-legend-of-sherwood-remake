@@ -8,18 +8,60 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
-enum Node {
+enum Node<S = String> {
     Null,
     Bool(bool),
     Negative(i64),
     Unsigned(u64),
-    String(String),
+    String(S),
     Array(u64),
     Object(u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Encode, Decode)]
 pub struct BitcodeValue(Vec<Node>);
+
+/// Encoding-only view with the exact owned value's wire layout. String payloads
+/// borrow the diagnostic document instead of being copied on every hash.
+#[derive(Debug, Serialize, Encode)]
+pub struct BitcodeValueRef<'a>(Vec<Node<&'a str>>);
+
+impl<'a> BitcodeValueRef<'a> {
+    pub fn from_value(value: &'a CanonicalValue) -> Result<Self, ProjectionBitcodeError> {
+        value.validate_depth(128)?;
+        let mut nodes = Vec::new();
+        append(value, &mut nodes, |string| string);
+        Ok(Self(nodes))
+    }
+}
+
+fn append<'a, S>(
+    value: &'a CanonicalValue,
+    nodes: &mut Vec<Node<S>>,
+    string: impl Fn(&'a str) -> S + Copy,
+) {
+    match value {
+        CanonicalValue::Null => nodes.push(Node::Null),
+        CanonicalValue::Bool(v) => nodes.push(Node::Bool(*v)),
+        CanonicalValue::Signed(v) if *v < 0 => nodes.push(Node::Negative(*v)),
+        CanonicalValue::Signed(v) => nodes.push(Node::Unsigned(*v as u64)),
+        CanonicalValue::Unsigned(v) => nodes.push(Node::Unsigned(*v)),
+        CanonicalValue::String(v) => nodes.push(Node::String(string(v))),
+        CanonicalValue::Array(values) => {
+            nodes.push(Node::Array(values.len() as u64));
+            for value in values {
+                append(value, nodes, string);
+            }
+        }
+        CanonicalValue::Object(values) => {
+            nodes.push(Node::Object(values.len() as u64));
+            for (key, value) in values {
+                nodes.push(Node::String(string(key)));
+                append(value, nodes, string);
+            }
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectionBitcodeError {
@@ -34,31 +76,8 @@ pub enum ProjectionBitcodeError {
 impl BitcodeValue {
     pub fn from_value(value: &CanonicalValue) -> Result<Self, ProjectionBitcodeError> {
         value.validate_depth(128)?;
-        fn append(value: &CanonicalValue, nodes: &mut Vec<Node>) {
-            match value {
-                CanonicalValue::Null => nodes.push(Node::Null),
-                CanonicalValue::Bool(v) => nodes.push(Node::Bool(*v)),
-                CanonicalValue::Signed(v) if *v < 0 => nodes.push(Node::Negative(*v)),
-                CanonicalValue::Signed(v) => nodes.push(Node::Unsigned(*v as u64)),
-                CanonicalValue::Unsigned(v) => nodes.push(Node::Unsigned(*v)),
-                CanonicalValue::String(v) => nodes.push(Node::String(v.clone())),
-                CanonicalValue::Array(values) => {
-                    nodes.push(Node::Array(values.len() as u64));
-                    for value in values {
-                        append(value, nodes);
-                    }
-                }
-                CanonicalValue::Object(values) => {
-                    nodes.push(Node::Object(values.len() as u64));
-                    for (key, value) in values {
-                        nodes.push(Node::String(key.clone()));
-                        append(value, nodes);
-                    }
-                }
-            }
-        }
         let mut nodes = Vec::new();
-        append(value, &mut nodes);
+        append(value, &mut nodes, str::to_owned);
         Ok(Self(nodes))
     }
 
@@ -124,6 +143,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn borrowed_nodes_preserve_original_owned_wire_layout() {
+        // Independent pre-refactor schema: protects variant indices and the
+        // equivalence of String and &str encoders, including mixed variants.
+        #[derive(Encode)]
+        enum OriginalNode {
+            Null,
+            Bool(bool),
+            Negative(i64),
+            Unsigned(u64),
+            String(String),
+            Array(u64),
+            Object(u64),
+        }
+        #[derive(Encode)]
+        struct OriginalValue(Vec<OriginalNode>);
+        let value = CanonicalValue::Object(BTreeMap::from([(
+            "values".into(),
+            CanonicalValue::Array(vec![
+                CanonicalValue::Null,
+                CanonicalValue::Bool(true),
+                CanonicalValue::Signed(i64::MIN),
+                CanonicalValue::Signed(7),
+                CanonicalValue::Unsigned(u64::MAX),
+                CanonicalValue::String("雪".into()),
+            ]),
+        )]));
+        let original = OriginalValue(vec![
+            OriginalNode::Object(1),
+            OriginalNode::String("values".into()),
+            OriginalNode::Array(6),
+            OriginalNode::Null,
+            OriginalNode::Bool(true),
+            OriginalNode::Negative(i64::MIN),
+            OriginalNode::Unsigned(7),
+            OriginalNode::Unsigned(u64::MAX),
+            OriginalNode::String("雪".into()),
+        ]);
+        assert_eq!(
+            bitcode::encode(&original),
+            bitcode::encode(&BitcodeValueRef::from_value(&value).unwrap())
+        );
+        assert_eq!(
+            bitcode::encode(&original),
+            bitcode::encode(&BitcodeValue::from_value(&value).unwrap())
+        );
+        let too_long = CanonicalValue::String("a".repeat(16 * 1024 + 1));
+        assert!(BitcodeValueRef::from_value(&too_long).is_err());
+    }
+
+    #[test]
     fn native_values_round_trip_and_normalize_integer_signedness() {
         let value = CanonicalValue::Object(BTreeMap::from([
             (
@@ -137,6 +206,10 @@ mod tests {
             ("text".into(), CanonicalValue::String("雪\n\"".into())),
         ]));
         let encoded = bitcode::encode(&BitcodeValue::from_value(&value).unwrap());
+        assert_eq!(
+            encoded,
+            bitcode::encode(&BitcodeValueRef::from_value(&value).unwrap())
+        );
         let decoded: BitcodeValue = bitcode::decode(&encoded).unwrap();
         assert_eq!(decoded.into_value().unwrap(), value);
         assert_eq!(
