@@ -40,6 +40,7 @@ fn waiter_preparation_uses_only_world_and_orders_and_cancels_only_its_owner() {
     orders.pending_path_requests = PendingPathRequestQueue::restore_v48_waiting(vec![
         PendingPathRequest::test_request(owner, waiter, 0),
         PendingPathRequest::test_request(other, other_sequence, 0),
+        PendingPathRequest::test_request(owner, waiter, 0),
     ]);
     orders.failed_path_requests = vec![
         FailedPathRequest::from_pending(PendingPathRequest::test_request(owner, waiter, 0), 0),
@@ -58,8 +59,15 @@ fn waiter_preparation_uses_only_world_and_orders_and_cancels_only_its_owner() {
     assert_eq!(element.retained_movement_goal, None);
     assert!(!orders.sequence_manager.is_registered_to_go(waiter, 0));
     let pending = orders.pending_path_requests.v48_waiting();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].owner, other);
+    // Cancellation retains the logical head as stale so it still consumes
+    // this barrier's processing slot; only the later owner request is removed.
+    assert_eq!(pending.len(), 2);
+    assert_eq!(pending[0].owner, owner);
+    assert_eq!(pending[1].owner, other);
+    assert_eq!(
+        serde_json::to_value(&orders.pending_path_requests).unwrap()["ignore_next_path"],
+        true,
+    );
     assert_eq!(orders.failed_path_requests.len(), 1);
     assert_eq!(orders.failed_path_requests[0].owner, other);
 }
