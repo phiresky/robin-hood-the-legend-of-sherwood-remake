@@ -71,20 +71,18 @@ fn should_collect_strike_estimation_human(
 }
 
 fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for sword-damage lifecycle diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_FRAME")
-        .is_none_or(|expected| expected == frame)
-        && parse_filter("PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_CREATION_ORDER")
-            .is_none_or(|expected| expected == creation_order)
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE",
+            [
+                "PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_FRAME",
+                "PARITY_DEBUG_SWORD_DAMAGE_LIFECYCLE_CREATION_ORDER",
+            ],
+        )
+    })
+    .matches([Some(frame), Some(creation_order)])
 }
 
 impl EngineInner {

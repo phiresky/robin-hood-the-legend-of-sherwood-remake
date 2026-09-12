@@ -68,13 +68,7 @@ fn hearing_gate_debug_config() -> &'static HearingGateDebugConfig {
                 creation_order: 0,
             };
         }
-        let parse_required = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
-            value
-                .parse::<u32>()
-                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
-        };
+        let parse_required = crate::engine::diagnostics::required_u32_env;
         HearingGateDebugConfig {
             enabled,
             frame: parse_required("PARITY_DEBUG_HEARING_GATE_FRAME"),
@@ -101,13 +95,7 @@ fn detectable_list_debug_config() -> &'static DetectableListDebugConfig {
                 creation_order: 0,
             };
         }
-        let parse_required = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
-            value
-                .parse::<u32>()
-                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
-        };
+        let parse_required = crate::engine::diagnostics::required_u32_env;
         DetectableListDebugConfig {
             enabled,
             frame: parse_required("PARITY_DEBUG_DETECTABLE_LIST_FRAME"),
@@ -207,13 +195,7 @@ fn detectable_mutation_debug_config() -> &'static DetectableMutationDebugConfig 
                 }; 3],
             };
         }
-        let parse_required = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("missing required environment variable {name}"));
-            value
-                .parse::<u32>()
-                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
-        };
+        let parse_required = crate::engine::diagnostics::required_u32_env;
         let target = |index: usize| DetectableMutationDebugTarget {
             slot: parse_required(&format!(
                 "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_{index}_SLOT"
@@ -368,15 +350,10 @@ fn visibility_stage_debug_config() -> &'static VisibilityStageDebugConfig {
     static CONFIG: std::sync::OnceLock<VisibilityStageDebugConfig> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
         let enabled = std::env::var_os("PARITY_DEBUG_VISIBILITY_STAGE").is_some();
-        let parse = |name: &str| {
-            if !enabled {
-                return None;
-            }
-            std::env::var(name).ok().map(|value| {
-                value
-                    .parse::<u32>()
-                    .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}"))
-            })
+        let parse = |name| {
+            enabled
+                .then(|| crate::engine::diagnostics::optional_u32_env(name))
+                .flatten()
         };
         VisibilityStageDebugConfig {
             enabled,
@@ -2961,21 +2938,20 @@ impl EngineInner {
                 );
             }
 
-            let debug_them = std::env::var_os("PARITY_DEBUG_THEM_LIFECYCLE").is_some()
-                && std::env::var("PARITY_DEBUG_THEM_FRAME")
-                    .ok()
-                    .is_none_or(|value| {
-                        value.parse::<u32>().unwrap_or_else(|error| {
-                            panic!("invalid PARITY_DEBUG_THEM_FRAME={value:?}: {error}")
-                        }) == universal_frame
-                    })
-                && std::env::var("PARITY_DEBUG_THEM_CREATION_ORDER")
-                    .ok()
-                    .is_none_or(|value| {
-                        value.parse::<u32>().unwrap_or_else(|error| {
-                            panic!("invalid PARITY_DEBUG_THEM_CREATION_ORDER={value:?}: {error}")
-                        }) == original_creation_order
-                    });
+            let debug_them = {
+                use crate::engine::diagnostics::ParityGate;
+                static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+                GATE.get_or_init(|| {
+                    ParityGate::from_env(
+                        "PARITY_DEBUG_THEM_LIFECYCLE",
+                        [
+                            "PARITY_DEBUG_THEM_FRAME",
+                            "PARITY_DEBUG_THEM_CREATION_ORDER",
+                        ],
+                    )
+                })
+                .matches([Some(universal_frame), Some(original_creation_order)])
+            };
             if debug_them {
                 eprintln!(
                     "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",

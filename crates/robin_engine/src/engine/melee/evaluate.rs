@@ -45,44 +45,37 @@ struct ReactiveStepBackDebug {
 }
 
 fn reactive_step_back_debug_config() -> Option<ReactiveStepBackDebug> {
-    std::env::var_os("PARITY_DEBUG_REACTIVE_STEP_BACK")?;
-    let parse_required = |name: &str| {
-        let value = std::env::var(name)
-            .unwrap_or_else(|_| panic!("{name} is required for reactive step-back diagnostic"));
-        value.parse::<u32>().unwrap_or_else(|error| {
-            panic!("invalid {name}={value:?} for reactive step-back diagnostic: {error}")
+    static CONFIG: std::sync::OnceLock<Option<ReactiveStepBackDebug>> = std::sync::OnceLock::new();
+    *CONFIG.get_or_init(|| {
+        std::env::var_os("PARITY_DEBUG_REACTIVE_STEP_BACK")?;
+        let parse_required = crate::engine::diagnostics::required_u32_env;
+        Some(ReactiveStepBackDebug {
+            frame: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME"),
+            creation_order: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER"),
         })
-    };
-    Some(ReactiveStepBackDebug {
-        frame: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME"),
-        creation_order: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER"),
+    })
+}
+
+fn reactive_sword_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_REACTIVE_SWORD",
+            [
+                "PARITY_DEBUG_REACTIVE_SWORD_FRAME",
+                "PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER",
+            ],
+        )
     })
 }
 
 pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
-    if std::env::var_os("PARITY_DEBUG_REACTIVE_SWORD").is_none() {
-        return false;
-    }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for reactive sword diagnostic: {error}")
-            })
-        })
-    };
-    parse_filter("PARITY_DEBUG_REACTIVE_SWORD_FRAME").is_none_or(|value| value == frame)
+    reactive_sword_debug_gate().matches([Some(frame), None])
 }
 
 pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
-    std::env::var("PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER")
-        .ok()
-        .is_none_or(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!(
-                    "invalid PARITY_DEBUG_REACTIVE_SWORD_CREATION_ORDER={value:?} for reactive sword diagnostic: {error}"
-                )
-            }) == creation_order
-        })
+    reactive_sword_debug_gate().matches([None, Some(creation_order)])
 }
 
 pub(super) fn opponent_sword_strike_time_limit(
@@ -2799,7 +2792,7 @@ impl EngineInner {
                 // the frames-from-start-until-action-done query
                 // in the original game for the attacker so the
                 // ring frame can be reconstructed by hand.
-                if std::env::var_os("PARITY_DEBUG_PARADE_TIMER").is_some() {
+                if parade_timer_debug_enabled() {
                     let anim = strike_to_animation(animation_strike);
                     let sprite = &self
                         .get_entity(attacker_id)
@@ -3018,7 +3011,7 @@ impl EngineInner {
             })
             .unwrap_or(0);
 
-        let bad_experience_debug = std::env::var_os("PARITY_DEBUG_BAD_EXPERIENCE").is_some();
+        let bad_experience_debug = bad_experience_debug_enabled();
         if bad_experience_debug {
             let creation_order = self.world.original_creation_order(soldier_id);
             eprintln!(
@@ -3272,4 +3265,14 @@ mod tests {
             "StrikingDownSword is not an Original A-I strike and keeps the unlimited control deadline"
         );
     }
+}
+
+fn parade_timer_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_PARADE_TIMER").is_some())
+}
+
+fn bad_experience_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BAD_EXPERIENCE").is_some())
 }
