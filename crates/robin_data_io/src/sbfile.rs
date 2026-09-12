@@ -1229,7 +1229,7 @@ impl SbFileSystem {
         }
         for overlay in self.overlay_paths.lock().unwrap().iter() {
             if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
-                layers.push(bytes.to_vec());
+                layers.push(bytes.into_vec());
             }
         }
         Ok(layers)
