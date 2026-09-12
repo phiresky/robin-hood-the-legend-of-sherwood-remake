@@ -408,13 +408,9 @@ fn ai_kind_for_class(class: LegacyElementClass) -> Option<LegacyLocalAiKind> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_save::payload_vm::LegacyVmMemberValue;
-    use crate::sbfile::SbFile;
     use crate::scb::{ClassEntry, MemberVariable, ScType, TypeTag};
 
     fn scb() -> ScbFile {
@@ -461,14 +457,7 @@ mod tests {
         }
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     #[test]
     fn decodes_typed_actor_and_nonactor_vm_results() {

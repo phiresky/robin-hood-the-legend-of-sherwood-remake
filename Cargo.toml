@@ -63,7 +63,9 @@ robin_lua = { path = "crates/robin_lua" }
 robin_official_content = { path = "crates/robin_official_content" }
 robin_replay_format = { path = "crates/robin_replay_format" }
 robin_ranked_verification = { path = "crates/robin_ranked_verification" }
-robin_run_protocol = { path = "crates/robin_run_protocol" }
+# Simulation consumers need wire types, not Ed25519. Authentication callers
+# opt into the protocol's authentication feature in their member manifest.
+robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }
 robin_spellforge = { path = "crates/robin_spellforge" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
 robin_util = { path = "crates/robin_util" }
@@ -72,33 +74,53 @@ robin_util = { path = "crates/robin_util" }
 # selections in the member manifests when they differ between consumers.
 anyhow = "1"
 axum = "0.8"
+base64 = "0.23"
 bitcode = { git = "https://github.com/SoftbearStudios/bitcode.git", rev = "7ae88076943b74151e99713f33635ac5a5d4f4bf" }
 bitflags = "2"
 bytemuck = "1"
+clap = "4"
+ed25519-dalek = "3"
 enum-map = "3"
 fastrand = "2"
+fs2 = "0.4"
+futures-util = "0.3"
 geo = "0.33"
 hex = "0.4"
 indexmap = "2"
+libc = "0.2"
 mlua = { version = "0.12", features = ["luau", "send"] }
 rilua = { version = "=0.1.24", features = ["send"] }
 nonmax = "0.5"
+nix = "0.31"
+png = "0.18"
+rand = "0.10"
+rustix = "1"
 serde = "1"
+serde-value = "0.7"
 serde_json = "1"
 sha2 = "0.11"
+smallvec = "1.16"
 sqlx = "0.9"
 syn = "3"
 tempfile = "3"
 thiserror = "2"
+toml = "1.1"
+tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 unicode-security = "0.1.2"
 unicode-segmentation = "1.13"
+url = "2"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "=0.3.77"
 web-time = "1"
+wgpu = { version = "30", default-features = false }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 zstd = "0.14"
 
 [patch.crates-io]
+# Deterministic VM patch provenance and upgrade procedure: vendor/rilua/ROBIN_PATCHES.md.
 rilua = { path = "vendor/rilua" }
 # winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the
 # window center on Windows, so mouse motion stops entirely (we always hide the
@@ -177,7 +199,10 @@ codegen-backend = "llvm"
 [profile.test.package.curve25519-dalek]
 codegen-backend = "llvm"
 
-# Workspace crates stay unoptimized so incremental rebuilds are fast.
+# The wildcard dependency override excludes workspace members. Keep explicit
+# package settings: custom-profile inheritance also affects host build scripts
+# and proc-macros, whose build-override defaults differ from normal libraries.
+# Full-workspace unit graphs, not a leaf-library build, must verify changes.
 [profile.dev.package.robin_rs]
 opt-level = 0
 [profile.dev.package.robin_engine]

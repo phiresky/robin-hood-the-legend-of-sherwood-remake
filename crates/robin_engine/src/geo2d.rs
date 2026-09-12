@@ -96,7 +96,14 @@ pub fn points_near(a: GeoPoint2D, b: GeoPoint2D, epsilon: f32) -> bool {
 /// implement Serialize/Deserialize natively.
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, robin_state_hash_derive::StateHash,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
 )]
 pub struct BBox2D(pub Option<Rect<f32>>);
 
@@ -147,37 +154,37 @@ impl BBox2D {
 
     #[inline]
     pub fn x_min(&self) -> f32 {
-        self.0.unwrap().min().x
+        self.0.expect("bounding box has no defined bounds").min().x
     }
     #[inline]
     pub fn y_min(&self) -> f32 {
-        self.0.unwrap().min().y
+        self.0.expect("bounding box has no defined bounds").min().y
     }
     #[inline]
     pub fn x_max(&self) -> f32 {
-        self.0.unwrap().max().x
+        self.0.expect("bounding box has no defined bounds").max().x
     }
     #[inline]
     pub fn y_max(&self) -> f32 {
-        self.0.unwrap().max().y
+        self.0.expect("bounding box has no defined bounds").max().y
     }
     #[inline]
     pub fn width(&self) -> f32 {
-        let r = self.0.unwrap();
+        let r = self.0.expect("bounding box has no defined bounds");
         r.max().x - r.min().x
     }
     #[inline]
     pub fn center(&self) -> GeoPoint2D {
-        let r = self.0.unwrap();
+        let r = self.0.expect("bounding box has no defined bounds");
         pt((r.min().x + r.max().x) * 0.5, (r.min().y + r.max().y) * 0.5)
     }
     #[inline]
     pub fn top_left(&self) -> GeoPoint2D {
-        self.0.unwrap().min()
+        self.0.expect("bounding box has no defined bounds").min()
     }
     #[inline]
     pub fn bottom_right(&self) -> GeoPoint2D {
-        self.0.unwrap().max()
+        self.0.expect("bounding box has no defined bounds").max()
     }
 
     // ── Expand ──
@@ -329,12 +336,6 @@ impl BBox2D {
         let mut b = *self;
         b.translate(v);
         b
-    }
-}
-
-impl Default for BBox2D {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

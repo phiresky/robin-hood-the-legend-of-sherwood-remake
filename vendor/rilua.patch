@@ -1,0 +1,597 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -43,6 +43,11 @@
+ dynmod = []
+ send = []
+ 
++[dependencies.libm]
++version = "0.2.16"
++default-features = false
++features = ["force-soft-floats"]
++
+ [lib]
+ name = "rilua"
+ path = "src/lib.rs"
+--- a/docs/src/api.md
++++ b/docs/src/api.md
+@@ -558,4 +558,3 @@
+ 
+ C closure upvalues and table entries both require write barriers when
+ mutated through the API.
+-
+--- a/src/compiler/codegen.rs
++++ b/src/compiler/codegen.rs
+@@ -1407,9 +1407,9 @@
+                 if v2 == 0.0 {
+                     return false;
+                 }
+-                (v1 / v2).floor().mul_add(-v2, v1)
++                v1 - libm::floor(v1 / v2) * v2
+             }
+-            OpCode::Pow => v1.powf(v2),
++            OpCode::Pow => libm::pow(v1, v2),
+             OpCode::Unm => -v1,
+             _ => return false,
+         };
+--- a/src/platform.rs
++++ b/src/platform.rs
+@@ -63,11 +63,6 @@
+ 
+     pub(crate) fn strlen(s: *const u8) -> usize;
+ 
+-    // Number parsing / locale
+-    pub(crate) fn strtod(nptr: *const u8, endptr: *mut *mut u8) -> f64;
+-    pub(crate) fn localeconv() -> *const LConv;
+-    pub(crate) fn strcoll(s1: *const u8, s2: *const u8) -> i32;
+-
+     // Time functions (clock, mktime, strftime, setlocale still need FFI;
+     // time(NULL) replaced by current_time() using SystemTime)
+     pub(crate) fn clock() -> ClockT;
+@@ -75,22 +70,124 @@
+     pub(crate) fn strftime(s: *mut u8, max: usize, format: *const u8, tm: *const Tm) -> usize;
+     pub(crate) fn setlocale(category: i32, locale: *const u8) -> *const u8;
+ 
+-    // Character classification and case conversion (ctype.h).
+-    // Used by string.lower, string.upper, and pattern matching.
+-    pub(crate) fn isalpha(c: i32) -> i32;
+-    pub(crate) fn iscntrl(c: i32) -> i32;
+-    pub(crate) fn isdigit(c: i32) -> i32;
+-    pub(crate) fn islower(c: i32) -> i32;
+-    pub(crate) fn ispunct(c: i32) -> i32;
+-    pub(crate) fn isspace(c: i32) -> i32;
+-    pub(crate) fn isupper(c: i32) -> i32;
+-    pub(crate) fn isalnum(c: i32) -> i32;
+-    pub(crate) fn isxdigit(c: i32) -> i32;
+-    pub(crate) fn tolower(c: i32) -> i32;
+-    pub(crate) fn toupper(c: i32) -> i32;
+ }
+ 
+ // ---------------------------------------------------------------------------
++// Deterministic core VM platform functions -- identical on every target
++// ---------------------------------------------------------------------------
++
++#[allow(unsafe_code)]
++mod deterministic_core {
++    use super::LConv;
++
++    pub(super) static LCONV: LConv = LConv {
++        decimal_point: c".".as_ptr().cast(),
++    };
++
++    pub(crate) unsafe fn localeconv() -> *const LConv {
++        &raw const LCONV
++    }
++
++    pub(crate) unsafe fn strtod(nptr: *const u8, endptr: *mut *mut u8) -> f64 {
++        // SAFETY: the VM supplies a valid NUL-terminated byte string.
++        unsafe {
++            if nptr.is_null() {
++                if !endptr.is_null() {
++                    *endptr = nptr.cast_mut();
++                }
++                return 0.0;
++            }
++            let mut len = 0;
++            while *nptr.add(len) != 0 {
++                len += 1;
++            }
++            let bytes = std::slice::from_raw_parts(nptr, len);
++            let start = bytes
++                .iter()
++                .position(|byte| !byte.is_ascii_whitespace())
++                .unwrap_or(len);
++            let Some(rest) = bytes.get(start..) else {
++                return 0.0;
++            };
++            let Ok(text) = std::str::from_utf8(rest) else {
++                if !endptr.is_null() {
++                    *endptr = nptr.cast_mut();
++                }
++                return 0.0;
++            };
++            let mut parsed = (0, 0.0);
++            for end in (1..=text.len())
++                .rev()
++                .filter(|end| text.is_char_boundary(*end))
++            {
++                if let Ok(value) = text[..end].parse::<f64>() {
++                    parsed = (end, value);
++                    break;
++                }
++            }
++            if !endptr.is_null() {
++                *endptr = nptr.add(start + parsed.0).cast_mut();
++            }
++            parsed.1
++        }
++    }
++
++    pub(crate) unsafe fn strcoll(left: *const u8, right: *const u8) -> i32 {
++        unsafe fn bytes<'a>(pointer: *const u8) -> &'a [u8] {
++            let mut len = 0;
++            // SAFETY: caller provides a valid NUL-terminated string.
++            unsafe {
++                while *pointer.add(len) != 0 {
++                    len += 1;
++                }
++                std::slice::from_raw_parts(pointer, len)
++            }
++        }
++        // SAFETY: inherited from this function's C-compatible contract.
++        match unsafe { bytes(left) }.cmp(unsafe { bytes(right) }) {
++            std::cmp::Ordering::Less => -1,
++            std::cmp::Ordering::Equal => 0,
++            std::cmp::Ordering::Greater => 1,
++        }
++    }
++
++    fn byte(c: i32) -> Option<u8> {
++        u8::try_from(c).ok()
++    }
++
++    macro_rules! classify {
++        ($name:ident, $method:ident) => {
++            pub(crate) unsafe fn $name(c: i32) -> i32 {
++                i32::from(byte(c).is_some_and(|value| value.$method()))
++            }
++        };
++    }
++
++    classify!(isalpha, is_ascii_alphabetic);
++    classify!(iscntrl, is_ascii_control);
++    classify!(isdigit, is_ascii_digit);
++    classify!(islower, is_ascii_lowercase);
++    classify!(ispunct, is_ascii_punctuation);
++    classify!(isspace, is_ascii_whitespace);
++    classify!(isupper, is_ascii_uppercase);
++    classify!(isalnum, is_ascii_alphanumeric);
++    classify!(isxdigit, is_ascii_hexdigit);
++
++    pub(crate) unsafe fn tolower(c: i32) -> i32 {
++        byte(c).map_or(c, |value| i32::from(value.to_ascii_lowercase()))
++    }
++
++    pub(crate) unsafe fn toupper(c: i32) -> i32 {
++        byte(c).map_or(c, |value| i32::from(value.to_ascii_uppercase()))
++    }
++}
++
++pub(crate) use deterministic_core::{
++    isalnum, isalpha, iscntrl, isdigit, islower, ispunct, isspace, isupper, isxdigit, localeconv,
++    strcoll, strtod, tolower, toupper,
++};
++
++// ---------------------------------------------------------------------------
+ // WASM stubs -- pure-Rust replacements for all C FFI
+ // ---------------------------------------------------------------------------
+ 
+@@ -195,97 +292,6 @@
+         len
+     }
+ 
+-    // -- Core VM: number parsing / locale --
+-
+-    /// Pure-Rust `strtod` replacement.
+-    ///
+-    /// Parses a NUL-terminated byte string as a float. Handles decimal
+-    /// and leading whitespace. Returns the parsed value and sets `*endptr`
+-    /// to point past the consumed bytes.
+-    pub(crate) unsafe fn strtod(nptr: *const u8, endptr: *mut *mut u8) -> f64 {
+-        // SAFETY: All pointer operations below require that `nptr` points to
+-        // a valid NUL-terminated byte string. The caller (luaO_str2d) ensures
+-        // this by passing a NUL-terminated buffer.
+-        unsafe {
+-            if nptr.is_null() {
+-                if !endptr.is_null() {
+-                    *endptr = nptr.cast_mut();
+-                }
+-                return 0.0;
+-            }
+-
+-            // Read bytes until NUL.
+-            let mut len = 0;
+-            while *nptr.add(len) != 0 {
+-                len += 1;
+-            }
+-            let bytes = std::slice::from_raw_parts(nptr, len);
+-
+-            // Skip leading whitespace.
+-            let start = bytes
+-                .iter()
+-                .position(|b| !b.is_ascii_whitespace())
+-                .unwrap_or(len);
+-
+-            if start >= len {
+-                if !endptr.is_null() {
+-                    *endptr = nptr.cast_mut();
+-                }
+-                return 0.0;
+-            }
+-
+-            let rest = &bytes[start..];
+-
+-            // Try parsing as a Rust float (handles decimal, inf, nan).
+-            let Ok(s) = std::str::from_utf8(rest) else {
+-                if !endptr.is_null() {
+-                    *endptr = nptr.cast_mut();
+-                }
+-                return 0.0;
+-            };
+-
+-            // Try progressively shorter prefixes to find longest valid parse.
+-            let mut best_len = 0;
+-            let mut best_val = 0.0;
+-            for end in (1..=s.len()).rev() {
+-                if let Ok(val) = s[..end].parse::<f64>() {
+-                    best_len = end;
+-                    best_val = val;
+-                    break;
+-                }
+-            }
+-
+-            if !endptr.is_null() {
+-                *endptr = nptr.add(start + best_len).cast_mut();
+-            }
+-            best_val
+-        }
+-    }
+-
+-    /// Returns a static `LConv` with decimal_point = '.'.
+-    static WASM_LCONV: LConv = LConv {
+-        decimal_point: c".".as_ptr().cast(),
+-    };
+-
+-    pub(crate) unsafe fn localeconv() -> *const LConv {
+-        &raw const WASM_LCONV
+-    }
+-
+-    /// Byte-wise string comparison (no locale awareness).
+-    pub(crate) unsafe fn strcoll(s1: *const u8, s2: *const u8) -> i32 {
+-        // SAFETY: Caller must provide valid NUL-terminated strings.
+-        unsafe {
+-            let len1 = strlen(s1);
+-            let len2 = strlen(s2);
+-            let a = std::slice::from_raw_parts(s1, len1);
+-            let b = std::slice::from_raw_parts(s2, len2);
+-            match a.cmp(b) {
+-                std::cmp::Ordering::Less => -1,
+-                std::cmp::Ordering::Equal => 0,
+-                std::cmp::Ordering::Greater => 1,
+-            }
+-        }
+-    }
+ 
+     // -- Time / locale (return errors or zero) --
+ 
+@@ -310,73 +316,13 @@
+         std::ptr::null()
+     }
+ 
+-    // -- Character classification (ASCII-only on WASM) --
+-    // The C ctype functions take an `int` (unsigned char promoted).
+-    // We truncate to u8 and use Rust's ASCII methods.
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isalpha(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_alphabetic())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn iscntrl(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_control())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isdigit(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_digit())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn islower(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_lowercase())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn ispunct(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_punctuation())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isspace(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_whitespace())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isupper(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_uppercase())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isalnum(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_alphanumeric())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn isxdigit(c: i32) -> i32 {
+-        i32::from((c as u8).is_ascii_hexdigit())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn tolower(c: i32) -> i32 {
+-        i32::from((c as u8).to_ascii_lowercase())
+-    }
+-
+-    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+-    pub(crate) unsafe fn toupper(c: i32) -> i32 {
+-        i32::from((c as u8).to_ascii_uppercase())
+-    }
+ }
+ 
+ // Re-export WASM stubs as if they were the extern functions.
+ #[cfg(target_arch = "wasm32")]
+ pub(crate) use wasm_stubs::{
+     clearerr, clock, fclose, ferror, fflush, fgets, fopen, fread, fseek, ftell, fwrite, getc,
+-    isalnum, isalpha, iscntrl, isdigit, islower, ispunct, isspace, isupper, isxdigit, localeconv,
+-    mktime, setlocale, setvbuf, strcoll, strftime, strlen, strtod, tmpfile, tolower, toupper,
+-    ungetc,
++    mktime, setlocale, setvbuf, strftime, strlen, tmpfile, ungetc,
+ };
+ 
+ // ---------------------------------------------------------------------------
+@@ -440,7 +386,6 @@
+ 
+ // SAFETY: LConv only contains a raw pointer to a static byte string.
+ // The WASM static instance is immutable and lives for the program lifetime.
+-#[cfg(target_arch = "wasm32")]
+ #[allow(unsafe_code)]
+ unsafe impl Sync for LConv {}
+ 
+@@ -547,7 +492,8 @@
+ // Standard streams (stdin, stdout, stderr)
+ // ---------------------------------------------------------------------------
+ 
+-#[cfg(target_os = "linux")]
++// Bionic exports the same stdin/stdout/stderr pointer symbols as glibc.
++#[cfg(any(target_os = "linux", target_os = "android"))]
+ #[allow(unsafe_code)]
+ unsafe extern "C" {
+     static stdin: *mut LibcFile;
+@@ -698,11 +644,11 @@
+ #[link(name = "ucrt")]
+ unsafe extern "C" {
+     // Windows reverses parameter order and returns errno_t.
+-    // On 64-bit MSVC, `localtime_s`/`gmtime_s` are header-level wrappers
++    // On Windows (MSVC and MinGW), `localtime_s`/`gmtime_s` are header-level wrappers
+     // that resolve to `_localtime64_s`/`_gmtime64_s` in ucrtbase.dll.
+-    #[cfg_attr(target_env = "msvc", link_name = "_localtime64_s")]
++    #[link_name = "_localtime64_s"]
+     fn localtime_s(result: *mut Tm, timep: *const TimeT) -> i32;
+-    #[cfg_attr(target_env = "msvc", link_name = "_gmtime64_s")]
++    #[link_name = "_gmtime64_s"]
+     fn gmtime_s(result: *mut Tm, timep: *const TimeT) -> i32;
+ }
+ 
+--- a/src/stdlib/base.rs
++++ b/src/stdlib/base.rs
+@@ -1696,6 +1696,6 @@
+     let bytes = state.gc.estimate_memory();
+     let kb = bytes as f64 / 1024.0;
+     #[allow(clippy::cast_possible_truncation)]
+-    state.push(Val::Num(f64::from(kb.floor() as i32)));
++    state.push(Val::Num(f64::from(libm::floor(kb) as i32)));
+     Ok(1)
+ }
+--- a/src/stdlib/math.rs
++++ b/src/stdlib/math.rs
+@@ -1,4 +1,4 @@
+-//! Math library: mathematical functions wrapping Rust's f64 methods.
++//! Math library using one pure-Rust libm implementation on every target.
+ //!
+ //! Reference: `lmathlib.c` in PUC-Rio Lua 5.1.1.
+ 
+@@ -48,77 +48,77 @@
+ 
+ pub fn math_sin(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.sin())
++    push_num(state, libm::sin(x))
+ }
+ 
+ pub fn math_cos(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.cos())
++    push_num(state, libm::cos(x))
+ }
+ 
+ pub fn math_tan(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.tan())
++    push_num(state, libm::tan(x))
+ }
+ 
+ pub fn math_sinh(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.sinh())
++    push_num(state, libm::sinh(x))
+ }
+ 
+ pub fn math_cosh(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.cosh())
++    push_num(state, libm::cosh(x))
+ }
+ 
+ pub fn math_tanh(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.tanh())
++    push_num(state, libm::tanh(x))
+ }
+ 
+ pub fn math_asin(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.asin())
++    push_num(state, libm::asin(x))
+ }
+ 
+ pub fn math_acos(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.acos())
++    push_num(state, libm::acos(x))
+ }
+ 
+ pub fn math_atan(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.atan())
++    push_num(state, libm::atan(x))
+ }
+ 
+ pub fn math_ceil(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.ceil())
++    push_num(state, libm::ceil(x))
+ }
+ 
+ pub fn math_floor(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.floor())
++    push_num(state, libm::floor(x))
+ }
+ 
+ pub fn math_sqrt(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.sqrt())
++    push_num(state, libm::sqrt(x))
+ }
+ 
+ pub fn math_exp(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.exp())
++    push_num(state, libm::exp(x))
+ }
+ 
+ pub fn math_log(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.ln())
++    push_num(state, libm::log(x))
+ }
+ 
+ pub fn math_log10(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    push_num(state, x.log10())
++    push_num(state, libm::log10(x))
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -128,20 +128,19 @@
+ pub fn math_atan2(state: &mut LuaState) -> LuaResult<u32> {
+     let y = state.check_number(1)?;
+     let x = state.check_number(2)?;
+-    push_num(state, y.atan2(x))
++    push_num(state, libm::atan2(y, x))
+ }
+ 
+ pub fn math_fmod(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+     let y = state.check_number(2)?;
+-    // Rust's % operator for f64 is IEEE 754 remainder (same as C fmod).
+-    push_num(state, x % y)
++    push_num(state, libm::fmod(x, y))
+ }
+ 
+ pub fn math_pow(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+     let y = state.check_number(2)?;
+-    push_num(state, x.powf(y))
++    push_num(state, libm::pow(x, y))
+ }
+ 
+ pub fn math_ldexp(state: &mut LuaState) -> LuaResult<u32> {
+@@ -172,7 +171,7 @@
+ /// `math.modf(x)` -- returns integer part and fractional part.
+ pub fn math_modf(state: &mut LuaState) -> LuaResult<u32> {
+     let x = state.check_number(1)?;
+-    let ip = x.trunc();
++    let ip = libm::trunc(x);
+     let fp = x - ip;
+     state.ensure_stack(state.base + 2);
+     state.stack_set(state.base, Val::Num(ip));
+@@ -270,7 +269,7 @@
+                 return Err(state.arg_error(1, "interval is empty"));
+             }
+             #[allow(clippy::cast_precision_loss)]
+-            let result = (r * u as f64).floor() + 1.0;
++            let result = libm::floor(r * u as f64) + 1.0;
+             push_num(state, result)
+         }
+         2 => {
+@@ -281,7 +280,7 @@
+                 return Err(state.arg_error(2, "interval is empty"));
+             }
+             #[allow(clippy::cast_precision_loss)]
+-            let result = (r * (u - l + 1) as f64).floor() + l as f64;
++            let result = libm::floor(r * (u - l + 1) as f64) + l as f64;
+             push_num(state, result)
+         }
+         _ => Err(LuaError::Runtime(RuntimeError {
+--- a/src/stdlib/string.rs
++++ b/src/stdlib/string.rs
+@@ -726,7 +726,7 @@
+     let exp = if n == 0.0 {
+         0
+     } else {
+-        n.abs().log10().floor() as i32
++        libm::floor(libm::log10(n.abs())) as i32
+     };
+ 
+     if exp < -4 || exp >= prec as i32 {
+--- a/src/vm/execute.rs
++++ b/src/vm/execute.rs
+@@ -1422,7 +1422,7 @@
+                         coerce_to_number(c_val, &state.gc),
+                     ) {
+                         // Lua mod: a - floor(a/b)*b
+-                        state.stack_set(ra, Val::Num((nb / nc).floor().mul_add(-nc, nb)));
++                        state.stack_set(ra, Val::Num(nb - libm::floor(nb / nc) * nc));
+                     } else {
+                         state.call_stack[state.ci].saved_pc = pc;
+                         call_bin_tm(
+@@ -1447,7 +1447,7 @@
+                         coerce_to_number(b_val, &state.gc),
+                         coerce_to_number(c_val, &state.gc),
+                     ) {
+-                        state.stack_set(ra, Val::Num(nb.powf(nc)));
++                        state.stack_set(ra, Val::Num(libm::pow(nb, nc)));
+                     } else {
+                         state.call_stack[state.ci].saved_pc = pc;
+                         call_bin_tm(
+--- a/src/vm/value.rs
++++ b/src/vm/value.rs
+@@ -372,7 +372,7 @@
+ 
+     let abs = n.abs();
+     // Number of digits before the decimal point (0-based exponent).
+-    let exp10 = abs.log10().floor() as i32;
++    let exp10 = libm::floor(libm::log10(abs)) as i32;
+ 
+     if (-4..14).contains(&exp10) {
+         // Fixed-point: compute decimal places for 14 significant digits.

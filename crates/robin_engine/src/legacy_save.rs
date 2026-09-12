@@ -55,7 +55,11 @@ pub mod post_hiking;
 pub mod post_sequence_manager;
 pub mod post_simple;
 pub mod post_tail;
+mod read_helpers;
+#[cfg(test)]
+mod test_support;
 pub mod topology_adapter;
+mod vm_schema;
 
 use serde::{Deserialize, Serialize};
 

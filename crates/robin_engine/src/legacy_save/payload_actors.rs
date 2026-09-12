@@ -6,6 +6,7 @@
 //! order by accepting callbacks for the shared Human payload and embedded
 //! quick-action sequences.
 
+use super::read_helpers::{read_point2, read_point3};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -83,21 +84,14 @@ pub fn read_pc_payload<HumanPayload, SequencePayload>(
     ) -> LegacyResult<SequencePayload>,
 ) -> LegacyResult<LegacyPcPayload<HumanPayload, SequencePayload>> {
     reader.scope("actor_pc", |reader| {
-        audit_abi(abi_profile);
-        let start_offset = reader.offset();
-        let pre_human = LegacyPcPreHuman::read(reader, abi_profile, limits, &mut read_sequence)?;
-        let human = reader.scope("human", |reader| read_human(reader, abi_profile))?;
-        let portrait = LegacyPortraitState::read(reader)?;
-        let post_human = LegacyPcPostHuman::read(reader, limits)?;
-        let end_offset = reader.offset();
         Ok(LegacyPcPayload {
             abi_profile,
-            start_offset,
-            pre_human,
-            human,
-            portrait,
-            post_human,
-            end_offset,
+            start_offset: reader.offset(),
+            pre_human: LegacyPcPreHuman::read(reader, abi_profile, limits, &mut read_sequence)?,
+            human: reader.scope("human", |reader| read_human(reader, abi_profile))?,
+            portrait: LegacyPortraitState::read(reader)?,
+            post_human: LegacyPcPostHuman::read(reader, limits)?,
+            end_offset: reader.offset(),
         })
     })
 }
@@ -494,7 +488,6 @@ pub fn read_soldier_leaf(
     reader: &mut LegacyReader<'_>,
     abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacySoldierLeaf> {
-    audit_abi(abi_profile);
     let start_offset = reader.offset();
     reader.read_signature(
         "fingerprint",
@@ -516,17 +509,12 @@ pub fn read_soldier_payload<NpcPayload>(
     read_npc: impl FnOnce(&mut LegacyReader<'_>, LegacySaveAbiProfile) -> LegacyResult<NpcPayload>,
 ) -> LegacyResult<LegacySoldierPayload<NpcPayload>> {
     reader.scope("actor_soldier", |reader| {
-        audit_abi(abi_profile);
-        let start_offset = reader.offset();
-        let npc = reader.scope("npc", |reader| read_npc(reader, abi_profile))?;
-        let leaf = reader.scope("leaf", |reader| read_soldier_leaf(reader, abi_profile))?;
-        let end_offset = reader.offset();
         Ok(LegacySoldierPayload {
             abi_profile,
-            start_offset,
-            npc,
-            leaf,
-            end_offset,
+            start_offset: reader.offset(),
+            npc: reader.scope("npc", |reader| read_npc(reader, abi_profile))?,
+            leaf: reader.scope("leaf", |reader| read_soldier_leaf(reader, abi_profile))?,
+            end_offset: reader.offset(),
         })
     })
 }
@@ -553,7 +541,6 @@ pub fn read_civilian_leaf(
     reader: &mut LegacyReader<'_>,
     abi_profile: LegacySaveAbiProfile,
 ) -> LegacyResult<LegacyCivilianLeaf> {
-    audit_abi(abi_profile);
     let start_offset = reader.offset();
     reader.read_signature(
         "fingerprint",
@@ -575,42 +562,12 @@ pub fn read_civilian_payload<NpcPayload>(
     read_npc: impl FnOnce(&mut LegacyReader<'_>, LegacySaveAbiProfile) -> LegacyResult<NpcPayload>,
 ) -> LegacyResult<LegacyCivilianPayload<NpcPayload>> {
     reader.scope("actor_civilian", |reader| {
-        audit_abi(abi_profile);
-        let start_offset = reader.offset();
-        let npc = reader.scope("npc", |reader| read_npc(reader, abi_profile))?;
-        let leaf = reader.scope("leaf", |reader| read_civilian_leaf(reader, abi_profile))?;
-        let end_offset = reader.offset();
         Ok(LegacyCivilianPayload {
             abi_profile,
-            start_offset,
-            npc,
-            leaf,
-            end_offset,
-        })
-    })
-}
-
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
+            start_offset: reader.offset(),
+            npc: reader.scope("npc", |reader| read_npc(reader, abi_profile))?,
+            leaf: reader.scope("leaf", |reader| read_civilian_leaf(reader, abi_profile))?,
+            end_offset: reader.offset(),
         })
     })
 }
@@ -628,20 +585,10 @@ fn read_bool3(
     })
 }
 
-fn audit_abi(abi_profile: LegacySaveAbiProfile) {
-    match abi_profile {
-        LegacySaveAbiProfile::RetailWindowsX86V48 | LegacySaveAbiProfile::PortLinuxI386V48 => {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
     fn push_u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -659,14 +606,7 @@ mod tests {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn synthetic_pc_payload() -> Vec<u8> {
         let mut bytes = Vec::new();

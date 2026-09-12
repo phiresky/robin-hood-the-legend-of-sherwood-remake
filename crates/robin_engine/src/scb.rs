@@ -25,6 +25,7 @@ pub const SCB_MAGIC: &[u8; 8] = b"SBSCRIPT";
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    num_enum::TryFromPrimitive,
 )]
 pub enum TypeTag {
     NotDefined = 0,
@@ -40,18 +41,7 @@ pub enum TypeTag {
 
 impl TypeTag {
     pub fn from_u8(b: u8) -> Option<Self> {
-        Some(match b {
-            0 => Self::NotDefined,
-            1 => Self::Bool,
-            2 => Self::Int,
-            3 => Self::Float,
-            4 => Self::Void,
-            5 => Self::Event,
-            6 => Self::Function,
-            7 => Self::NativeType,
-            8 => Self::NativeFunction,
-            _ => return None,
-        })
+        Self::try_from(b).ok()
     }
 }
 

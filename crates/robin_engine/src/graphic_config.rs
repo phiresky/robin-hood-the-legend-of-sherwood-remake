@@ -64,7 +64,7 @@ pub struct GraphicConfig {
     /// resolution into a gameplay advantage (see
     /// [`GraphicConfig::logical_resolution_for_surface`]). Disabling this
     /// restores the original fixed 4:3 canvas and presentation letterboxing.
-    #[serde(default = "default_adaptive_widescreen")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub adaptive_widescreen: bool,
 
     /// Show relationship-aware neutral/ally/hostile colours and legends.
@@ -74,20 +74,20 @@ pub struct GraphicConfig {
     /// Present host-only camera/world interpolation between 25 Hz simulation
     /// ticks at the display's vsync cadence. Turning this off restores legacy
     /// one-present-per-tick behavior and the non-vsync swapchain mode.
-    #[serde(default = "default_native_refresh_presentation")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub native_refresh_presentation: bool,
 
     /// Show the authored mission timer when its authoring mode allows it.
-    #[serde(default = "default_enabled")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub show_mission_countdown: bool,
     /// Present canonical runtime ambience changes locally. Disabling this
     /// leaves authoritative visibility and sound-source rules untouched.
-    #[serde(default = "default_enabled")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub dynamic_ambience_visuals: bool,
 
     /// Show the original opaque cursor-shadow pulse while the classic
     /// three-slot quick-action recorder is capturing commands.
-    #[serde(default = "default_quick_action_cursor_pulse")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub quick_action_cursor_pulse: bool,
 }
 
@@ -362,22 +362,6 @@ fn default_shader_preset() -> String {
     String::new()
 }
 
-fn default_adaptive_widescreen() -> bool {
-    true
-}
-
-fn default_native_refresh_presentation() -> bool {
-    true
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_quick_action_cursor_pulse() -> bool {
-    true
-}
-
 impl Default for GraphicConfig {
     fn default() -> Self {
         Self {
@@ -400,7 +384,7 @@ impl Default for GraphicConfig {
             native_refresh_presentation: true,
             show_mission_countdown: true,
             dynamic_ambience_visuals: true,
-            quick_action_cursor_pulse: default_quick_action_cursor_pulse(),
+            quick_action_cursor_pulse: true,
         }
     }
 }

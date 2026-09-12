@@ -940,7 +940,7 @@ fn validate_runtime_verifier_binding(
     Ok(())
 }
 
-fn validate_catalog_covers_server(
+pub fn validate_catalog_covers_server(
     catalog: &VerifierJobConfigCatalogV1,
     server: &ServerConfig,
 ) -> anyhow::Result<()> {

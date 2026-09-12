@@ -15,6 +15,7 @@
 //! created by the exact mission data. No boundary scanning or inferred count
 //! is used.
 
+use super::read_helpers::{hex16, read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -31,25 +32,6 @@ const FINGERPRINT_SEEK_POINT: [u8; 16] = hex16("1d8f13888a44ed97abc70ec98d7132a1
 const FINGERPRINT_ARCHERY_SECTOR: [u8; 16] = hex16("91449b8fa703552a40004516743c9e83");
 const FINGERPRINT_PATHFINDER: [u8; 16] = hex16("899c5131be364a32c1f14c26fd308ac3");
 const FINGERPRINT_MISSION_STAT: [u8; 16] = hex16("959b4584dd5ff50e9dc33b6e995d4437");
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyPostTailLimits {
@@ -151,7 +133,6 @@ impl LegacyEnginePostTitbitsTail {
         context: &dyn LegacyPostTailDecodeContext,
     ) -> LegacyResult<Self> {
         reader.scope("post_titbits_tail", |reader| {
-            audit_abi(abi_profile);
             validate_topology(reader, topology, limits)?;
             let start_offset = reader.offset();
 
@@ -716,60 +697,11 @@ fn read_count_u16(
     Ok(count)
 }
 
-fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<String>,
-) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint3 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-            z: reader.read_f32("z")?,
-        })
-    })
-}
-
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    values: &mut Vec<T>,
-    count: usize,
-    field: impl std::fmt::Display,
-) -> LegacyResult<()> {
-    let offset = reader.offset();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))
-}
-
-fn audit_abi(abi_profile: LegacySaveAbiProfile) {
-    debug_assert!(abi_profile.is_little_endian());
-    debug_assert_eq!(LegacySaveAbiProfile::BOOL_WIDTH, 1);
-    debug_assert_eq!(LegacySaveAbiProfile::WORD_WIDTH, 2);
-    debug_assert_eq!(LegacySaveAbiProfile::LONG_WIDTH, 4);
-    debug_assert_eq!(LegacySaveAbiProfile::ENUM_WIDTH, 4);
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
     use crate::legacy_io::LegacyIoErrorKind;
-    use crate::sbfile::SbFile;
 
     struct NoVm;
 
@@ -841,13 +773,7 @@ mod tests {
         bytes
     }
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut temporary = NamedTempFile::new().unwrap();
-        temporary.write_all(bytes).unwrap();
-        temporary.flush().unwrap();
-        let mut file = SbFile::open(temporary.path().to_str().unwrap()).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn empty_topology(eof_offset: u64) -> LegacyPostTailTopology {
         LegacyPostTailTopology {

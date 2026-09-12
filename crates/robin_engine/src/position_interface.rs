@@ -170,12 +170,6 @@ bitflags! {
 crate::bitcode_adapters::impl_native_bitcode_flags!(PositionComputed, u8);
 crate::bitcode_adapters::impl_native_bitcode_flags!(IncrementComputed, u8);
 
-impl robin_util::state_hash::StateHash for PositionComputed {
-    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Posture
 // ---------------------------------------------------------------------------

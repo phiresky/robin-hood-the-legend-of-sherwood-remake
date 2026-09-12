@@ -7,6 +7,7 @@
 //! [`LegacyLocalAiPayload`] continues through either complete v48 subclass.
 //! No decoder scans for a later fingerprint or guesses byte counts.
 
+use super::read_helpers::{hex16, reserved as reserve};
 use serde::{Deserialize, Serialize};
 
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -29,25 +30,6 @@ const BONHOMIE_FINGERPRINT: [u8; 16] = hex16("6a8a5ae26b698c516e64d1767753cd9d")
 const MALIGNITY_FINGERPRINT: [u8; 16] = hex16("4a5e5b668d2eb6d3b8ec78313111c571");
 const SEEK_POINT_ALL_FINGERPRINT: [u8; 16] = hex16("a9b877b827568572a12866cfa54c26ac");
 const SEEK_POINT_STATUS_FINGERPRINT: [u8; 16] = hex16("1d8f13888a44ed97abc70ec98d7132a1");
-
-const fn hex16(value: &str) -> [u8; 16] {
-    let bytes = value.as_bytes();
-    let mut result = [0; 16];
-    let mut index = 0;
-    while index < 16 {
-        result[index] = (hex_nibble(bytes[index * 2]) << 4) | hex_nibble(bytes[index * 2 + 1]);
-        index += 1;
-    }
-    result
-}
-
-const fn hex_nibble(value: u8) -> u8 {
-    match value {
-        b'0'..=b'9' => value - b'0',
-        b'a'..=b'f' => value - b'a' + 10,
-        _ => panic!("invalid fingerprint hex"),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LegacyLocalAiKind {
@@ -1071,10 +1053,6 @@ fn read_seek_point(
         SEEK_POINT_STATUS_FINGERPRINT,
         "seek-point fingerprint",
     )?;
-    let repeated_frame_when_fully_interesting =
-        reader.read_u32("status.frame_when_fully_interesting")?;
-    let repeated_last_calculated_interest = reader.read_u8("status.last_calculated_interest")?;
-    let repeated_locked = reader.read_bool("status.locked")?;
     Ok(LegacySeekPoint {
         position_x,
         position_y,
@@ -1084,9 +1062,10 @@ fn read_seek_point(
         directions,
         last_calculated_interest,
         locked,
-        repeated_frame_when_fully_interesting,
-        repeated_last_calculated_interest,
-        repeated_locked,
+        repeated_frame_when_fully_interesting: reader
+            .read_u32("status.frame_when_fully_interesting")?,
+        repeated_last_calculated_interest: reader.read_u8("status.last_calculated_interest")?,
+        repeated_locked: reader.read_bool("status.locked")?,
     })
 }
 
@@ -1468,36 +1447,12 @@ fn ensure_count(
     }
 }
 
-fn reserve<T>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-    count: usize,
-) -> LegacyResult<Vec<T>> {
-    let offset = reader.offset();
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))?;
-    Ok(values)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn u16(bytes: &mut Vec<u8>, value: u16) {
         bytes.extend_from_slice(&value.to_le_bytes());

@@ -320,22 +320,11 @@ fn read_location(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyVmL
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-
-    use tempfile::NamedTempFile;
 
     use super::*;
-    use crate::sbfile::SbFile;
     use crate::scb::{ClassEntry, ScType};
 
-    fn with_reader<T>(bytes: &[u8], read: impl FnOnce(&mut LegacyReader<'_>) -> T) -> T {
-        let mut fixture = NamedTempFile::new().unwrap();
-        fixture.write_all(bytes).unwrap();
-        fixture.flush().unwrap();
-        let path = fixture.path().to_string_lossy();
-        let mut file = SbFile::open(&path).unwrap();
-        read(&mut LegacyReader::new(&mut file))
-    }
+    use crate::legacy_save::test_support::with_reader;
 
     fn member(name: &str, address: i32, tag: TypeTag, native_type_name: &str) -> MemberVariable {
         MemberVariable {

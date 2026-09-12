@@ -24,7 +24,7 @@ use super::{
         LegacySequenceAdoptError, LegacySequenceAdoptionPlan, LegacySequenceTopology,
         convert_owner_local_sequence,
     },
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaPlan},
     payload_base::LegacyActorPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
 };
@@ -259,14 +259,8 @@ impl LegacyActorOwnershipAdoptionPlan {
                     )
                 })
                 .transpose()?;
-            let location_prefix = saved
-                .script_members
-                .as_ref()
-                .map(|members| {
-                    vm_arena.owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
-                })
-                .transpose()?
-                .unwrap_or(0);
+            let location_prefix =
+                vm_arena.element_prefix(creation_order, saved.script_members.as_ref())?;
             let mut computed_locations = Vec::new();
             let vm_heap = preflight_vm(
                 engine,

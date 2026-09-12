@@ -161,15 +161,14 @@ pub use content::{
     OfficialContentSubjectV1, OfficialProjectionAudioDurationPolicyV1,
     OfficialProjectionCampaignPolicyV1, OfficialProjectionDifficultyV1,
     OfficialProjectionExecutionPolicyV1, OfficialProjectionExportReportV2,
-    OfficialProjectionExporterIdentityV1, OfficialProjectionExporterIdentityV2,
-    OfficialProjectionHostStatePolicyV1, OfficialProjectionLocalePolicyV1,
-    OfficialProjectionOverlayPolicyV1, OfficialProjectionSourceFormatV1,
-    OfficialProjectionSubjectReceiptV1, OfficialSimulationProjectionReceiptV1,
+    OfficialProjectionExporterIdentityV2, OfficialProjectionHostStatePolicyV1,
+    OfficialProjectionLocalePolicyV1, OfficialProjectionOverlayPolicyV1,
+    OfficialProjectionSourceFormatV1, OfficialProjectionSubjectReceiptV1,
     OfficialSimulationProjectionReceiptV2, OfficialSourceClosureKindV2, OfficialSourceFileV1,
-    OfficialSourceTreeManifestV1, OfficialSourceTreeManifestV2, ResourceLocaleRootV1,
-    SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1, SimulationContentComponentDocumentV1,
-    SimulationContentComponentKindV1, SimulationContentComponentV1, SimulationSpeechTimingSourceV1,
-    demo_content_object_path_v1, official_content_manifest_name_v1, official_content_subjects_v1,
+    OfficialSourceTreeManifestV2, ResourceLocaleRootV1, SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1,
+    SimulationContentComponentDocumentV1, SimulationContentComponentKindV1,
+    SimulationContentComponentV1, SimulationSpeechTimingSourceV1, demo_content_object_path_v1,
+    official_content_manifest_name_v1, official_content_subjects_v1,
     simulation_component_filename_v1, simulation_content_component_relative_path_v1,
     validate_official_content_subjects_v1, validate_official_projection_receipt_matrix_v2,
 };
@@ -1578,61 +1577,6 @@ pub(crate) mod tests {
             validate_official_content_subjects_v1(OfficialContentEditionV1::Demo, &hybrid_demo,)
                 .is_err()
         );
-    }
-
-    #[test]
-    fn projection_receipt_binds_raw_tree_and_exact_content_manifests() {
-        let source_tree = OfficialSourceTreeManifestV1 {
-            schema_version: 1,
-            edition: OfficialContentEditionV1::Demo,
-            source_format: OfficialProjectionSourceFormatV1::LooseNativeV1,
-            files: vec![OfficialSourceFileV1 {
-                path: "Data/Levels/Dem_Lei_MP.RHM".into(),
-                sha256: Digest32::from_bytes([31; 32]),
-                byte_length: 0,
-            }],
-        };
-        assert!(source_tree.validate().is_ok());
-        let subject = official_content_subjects_v1(OfficialContentEditionV1::Demo)
-            .into_iter()
-            .next()
-            .unwrap();
-        let content_manifest = ContentManifestV1 {
-            schema_version: 1,
-            name: official_content_manifest_name_v1(OfficialContentEditionV1::Demo, &subject),
-            edition: OfficialContentEditionV1::Demo,
-            subject,
-            closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 2,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
-            speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
-            components: simulation_components(),
-        };
-        let receipt = OfficialSimulationProjectionReceiptV1 {
-            schema_version: 1,
-            exporter: OfficialProjectionExporterIdentityV1 {
-                exporter_version: 1,
-                source_format: OfficialProjectionSourceFormatV1::LooseNativeV1,
-            },
-            edition: OfficialContentEditionV1::Demo,
-            source_tree_manifest_sha256: source_tree.canonical_digest().unwrap(),
-            source_file_count: 1,
-            subjects: vec![OfficialProjectionSubjectReceiptV1 { content_manifest }],
-        };
-        assert!(receipt.validate().is_ok());
-
-        let mut wrong_name = receipt.clone();
-        wrong_name.subjects[0].content_manifest.name = "operator guess".into();
-        assert!(wrong_name.validate().is_err());
-        let mut hybrid = receipt;
-        hybrid.subjects[0].content_manifest.subject = OfficialContentSubjectV1::Headquarters {
-            mission_id: OFFICIAL_FULL_HEADQUARTERS_MISSION_ID_V1.into(),
-        };
-        assert!(hybrid.validate().is_err());
-
-        let mut repeated_file = source_tree;
-        repeated_file.files.push(repeated_file.files[0].clone());
-        assert!(repeated_file.validate().is_err());
     }
 
     #[test]

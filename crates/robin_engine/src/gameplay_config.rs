@@ -2,10 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-const fn enabled_by_default() -> bool {
-    true
-}
-
 /// Detection radius used by the original game's wasp victim selection.
 pub const CLASSIC_WASP_ACQUISITION_RADIUS: f32 = 50.0;
 /// Rebalanced initial wasp acquisition radius. Chase, sting, and forget
@@ -216,7 +212,7 @@ pub struct GameplayConfig {
     /// Allow custom missions whose explicit package contract requires the
     /// Spellforge Lua runtime. Disabling this never falls back to SCB for a
     /// replacement package because that would launch a different mission.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub enable_spellforge_missions: bool,
 
     /// Use the intended Hard-difficulty reaction-time multiplier instead of
@@ -238,7 +234,7 @@ pub struct GameplayConfig {
     ///
     /// This is on for new and existing profiles. Original-parity replay
     /// sessions override it host-side without rewriting the profile.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub plan_quick_actions: bool,
 
     /// Allow a PC with the Tie contextual action to release a tied NPC.
@@ -246,18 +242,18 @@ pub struct GameplayConfig {
     /// The original game shipped an unused untie-command slot but exposed no
     /// playable interaction. This post-port extension defaults on; disabling
     /// it restores the original input behavior.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub enable_unbinding: bool,
 
     /// Enable world-camera pan, pinch zoom, and inertial motion for touch
     /// input. Tap and drag emulation remains available when this is off.
-    #[serde(default = "default_touch_camera_gestures")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub touch_camera_gestures: bool,
 
     /// Include the live item-production forecast in the Sherwood report.
     /// This is presentation-only and may be disabled independently from the
     /// underlying production simulation.
-    #[serde(default = "default_show_production_forecast")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub show_production_forecast: bool,
 
     /// Enable authoritative Sherwood inventory sales and their trading UI.
@@ -329,23 +325,23 @@ pub struct GameplayConfig {
     /// Keep three rotating recovery points during ordinary single-player
     /// missions. Autosave persistence is host-only and deliberately excluded
     /// from deterministic simulation state.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     #[state_hash(skip)]
     pub autosave_enabled: bool,
 
     /// Enforce time limits authored by Rust JSON missions.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub enable_timed_missions: bool,
 
     /// Advance authored day/night/fog schedules, including perception and
     /// ambience-filtered gameplay sound sources.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub enable_dynamic_ambience: bool,
 
     /// Show mission/player provenance, relative age, and the expanded
     /// selected-save panel in save/load pickers. Disabling this is strictly a
     /// presentation choice: every native save still stores full provenance.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     #[state_hash(skip)]
     pub detailed_save_metadata: bool,
 
@@ -372,7 +368,7 @@ pub struct GameplayConfig {
     pub diplomacy: bool,
     /// Let hostile NPC soldiers perceive and fight one another. Turning this
     /// off leaves conflicts involving a player active.
-    #[serde(default = "enabled_by_default")]
+    #[serde(default = "crate::serde_defaults::enabled")]
     pub npc_faction_wars: bool,
 
     /// Enable shared allied sight, three-state fog, and temporary hostile
@@ -380,14 +376,6 @@ pub struct GameplayConfig {
     /// predate the setting; an explicitly saved choice remains authoritative.
     #[serde(default)]
     pub fog_of_war: bool,
-}
-
-const fn default_touch_camera_gestures() -> bool {
-    true
-}
-
-const fn default_show_production_forecast() -> bool {
-    true
 }
 
 impl Default for GameplayConfig {
@@ -402,7 +390,7 @@ impl Default for GameplayConfig {
             detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
-            show_production_forecast: default_show_production_forecast(),
+            show_production_forecast: true,
             reusable_cloaks: true,
             reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::default(),

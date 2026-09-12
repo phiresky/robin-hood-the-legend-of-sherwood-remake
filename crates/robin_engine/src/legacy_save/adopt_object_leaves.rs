@@ -19,12 +19,11 @@ use crate::{
     order::OrderType,
     patch::PatchIndex,
     profiles::{Action, ProfileManager},
-    scb::TypeTag,
 };
 
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
+    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaPlan},
     payload_base::{LegacyElementRef, LegacyFxPayload},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_nonactors::LegacyObjectPayload,
@@ -397,15 +396,8 @@ impl LegacyObjectLeafAdoptionPlan {
                     require_kind(runtime, entity_id, creation_order, "scroll", |entity| {
                         matches!(entity, Entity::Scroll(_))
                     })?;
-                    let location_prefix = saved
-                        .script_members
-                        .as_ref()
-                        .map(|members| {
-                            vm_arena
-                                .owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
-                        })
-                        .transpose()?
-                        .unwrap_or(0);
+                    let location_prefix =
+                        vm_arena.element_prefix(creation_order, saved.script_members.as_ref())?;
                     let mut computed_locations = Vec::new();
                     let vm_heap = preflight_vm(
                         engine,
@@ -438,15 +430,8 @@ impl LegacyObjectLeafAdoptionPlan {
                     require_kind(runtime, entity_id, creation_order, "target", |entity| {
                         matches!(entity, Entity::Target(_))
                     })?;
-                    let location_prefix = saved
-                        .script_members
-                        .as_ref()
-                        .map(|members| {
-                            vm_arena
-                                .owner_prefix(LegacyVmArenaOwner::Element(creation_order), members)
-                        })
-                        .transpose()?
-                        .unwrap_or(0);
+                    let location_prefix =
+                        vm_arena.element_prefix(creation_order, saved.script_members.as_ref())?;
                     let mut computed_locations = Vec::new();
                     let linked_fxs = saved
                         .linked_fxs
@@ -1176,56 +1161,25 @@ pub(crate) fn preflight_vm(
         .zip(&class.member_variables)
         .enumerate()
     {
-        let expected_kind = if runtime_member.ty.tag == TypeTag::NativeType {
-            match runtime_member.ty.native_type_name.as_str() {
-                "Actor" => LegacyVmMemberKind::ActorRef,
-                "Scroll" => LegacyVmMemberKind::ScrollRef,
-                "Location" => LegacyVmMemberKind::Location,
-                other => {
-                    return Err(LegacyObjectLeafAdoptError::VmSchemaMismatch {
-                        owner_kind: owner_kind.name(),
-                        creation_order,
-                        index,
-                        detail: format!("initialized class uses unsupported native type {other:?}"),
-                    });
-                }
-            }
-        } else {
-            LegacyVmMemberKind::Raw32 {
-                tag: runtime_member.ty.tag,
-            }
-        };
-        if saved_member.schema.name != runtime_member.name
-            || i32::try_from(saved_member.schema.address).ok() != Some(runtime_member.address)
-            || saved_member.schema.kind != expected_kind
-        {
-            return Err(LegacyObjectLeafAdoptError::VmSchemaMismatch {
+        super::vm_schema::check_member_schema(&saved_member.schema, runtime_member).map_err(
+            |detail| LegacyObjectLeafAdoptError::VmSchemaMismatch {
                 owner_kind: owner_kind.name(),
                 creation_order,
                 index,
-                detail: format!(
-                    "saved ({:?}, {}, {:?}) != runtime ({:?}, {}, {:?})",
-                    saved_member.schema.name,
-                    saved_member.schema.address,
-                    saved_member.schema.kind,
-                    runtime_member.name,
-                    runtime_member.address,
-                    expected_kind
-                ),
-            });
-        }
+                detail,
+            },
+        )?;
         let address = saved_member.schema.address as usize;
-        let end = address.saturating_add(4);
-        if end > heap.len() {
-            return Err(LegacyObjectLeafAdoptError::VmHeapRange {
+        let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
+            LegacyObjectLeafAdoptError::VmHeapRange {
                 owner_kind: owner_kind.name(),
                 creation_order,
                 member: saved_member.schema.name.clone(),
                 heap_len: heap.len(),
                 address,
                 end,
-            });
-        }
+            }
+        })?;
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
             (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {

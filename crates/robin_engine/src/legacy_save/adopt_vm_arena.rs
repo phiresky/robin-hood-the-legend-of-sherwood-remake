@@ -13,7 +13,6 @@ use crate::{
     element::Entity,
     engine::{EngineInner, LevelAssets},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
-    scb::TypeTag,
 };
 
 use super::{
@@ -205,6 +204,18 @@ impl LegacyVmArenaPlan {
         })
     }
 
+    /// Elements without script members allocate no Location slots.
+    pub(crate) fn element_prefix(
+        &self,
+        creation_order: u32,
+        members: Option<&LegacyVmMemberSection>,
+    ) -> Result<usize, LegacyVmArenaError> {
+        members
+            .map(|members| self.owner_prefix(LegacyVmArenaOwner::Element(creation_order), members))
+            .transpose()
+            .map(|prefix| prefix.unwrap_or(0))
+    }
+
     /// Return the absolute allocation prefix for one heap converter and also
     /// prove that it is looking at the section used to construct this plan.
     pub(crate) fn owner_prefix(
@@ -271,55 +282,23 @@ impl LegacyVmArenaPlan {
             .zip(&class.member_variables)
             .enumerate()
         {
-            let expected_kind = if runtime_member.ty.tag == TypeTag::NativeType {
-                match runtime_member.ty.native_type_name.as_str() {
-                    "Actor" => LegacyVmMemberKind::ActorRef,
-                    "Scroll" => LegacyVmMemberKind::ScrollRef,
-                    "Location" => LegacyVmMemberKind::Location,
-                    other => {
-                        return Err(LegacyVmArenaError::SchemaMismatch {
-                            owner,
-                            index,
-                            detail: format!(
-                                "initialized class uses unsupported native type {other:?}"
-                            ),
-                        });
-                    }
-                }
-            } else {
-                LegacyVmMemberKind::Raw32 {
-                    tag: runtime_member.ty.tag,
-                }
-            };
-            if saved_member.schema.name != runtime_member.name
-                || i32::try_from(saved_member.schema.address).ok() != Some(runtime_member.address)
-                || saved_member.schema.kind != expected_kind
-            {
-                return Err(LegacyVmArenaError::SchemaMismatch {
+            super::vm_schema::check_member_schema(&saved_member.schema, runtime_member).map_err(
+                |detail| LegacyVmArenaError::SchemaMismatch {
                     owner,
                     index,
-                    detail: format!(
-                        "saved ({:?}, {}, {:?}) != runtime ({:?}, {}, {:?})",
-                        saved_member.schema.name,
-                        saved_member.schema.address,
-                        saved_member.schema.kind,
-                        runtime_member.name,
-                        runtime_member.address,
-                        expected_kind
-                    ),
-                });
-            }
+                    detail,
+                },
+            )?;
             let address = saved_member.schema.address as usize;
-            let end = address.saturating_add(4);
-            if end > heap.len() {
-                return Err(LegacyVmArenaError::HeapRange {
+            let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
+                LegacyVmArenaError::HeapRange {
                     owner,
                     member: saved_member.schema.name.clone(),
                     heap_len: heap.len(),
                     address,
                     end,
-                });
-            }
+                }
+            })?;
             let bits = match (&saved_member.schema.kind, &saved_member.value) {
                 (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
                 (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {

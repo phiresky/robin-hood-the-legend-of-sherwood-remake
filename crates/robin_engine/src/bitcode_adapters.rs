@@ -108,8 +108,51 @@ macro_rules! impl_native_bitcode_index {
 
 pub(crate) use impl_native_bitcode_index;
 
+/// Define a nominal, sentinel-excluding index without changing its scalar wire
+/// representation or the niche used by `Option<Index>`.
+macro_rules! define_index_newtype {
+    ($(#[$meta:meta])* $vis:vis struct $name:ident($field_vis:vis $storage:ty), $wire:ty) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord,
+            serde::Serialize, serde::Deserialize, robin_state_hash_derive::StateHash)]
+        $vis struct $name($field_vis $storage);
+
+        impl $name {
+            #[inline]
+            pub fn new(value: $wire) -> Option<Self> {
+                <$storage>::new(value).map(Self)
+            }
+            #[inline]
+            pub fn get(self) -> $wire { self.0.get() }
+        }
+        impl From<$name> for $wire {
+            #[inline]
+            fn from(value: $name) -> Self { value.get() }
+        }
+        impl From<$name> for usize {
+            #[inline]
+            fn from(value: $name) -> Self { value.get() as usize }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.get().fmt(f)
+            }
+        }
+        crate::bitcode_adapters::impl_native_bitcode_index!($name, $wire);
+    };
+}
+
+pub(crate) use define_index_newtype;
+
 macro_rules! impl_native_bitcode_flags {
     ($type:ty, $wire:ty) => {
+        impl robin_util::state_hash::StateHash for $type {
+            #[inline]
+            fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                robin_util::state_hash::StateHash::state_hash(&self.bits(), state);
+            }
+        }
+
         impl crate::bitcode_adapters::NativeBitcode for $type {
             type Wire = $wire;
 
