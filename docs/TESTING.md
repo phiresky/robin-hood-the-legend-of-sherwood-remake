@@ -132,7 +132,12 @@ ROBINHOOD_DATA_DIR=/absolute/path/to/full-game bash scripts/check-quality.sh fix
 
 Each root must contain `Data/`. The demo suite checks the original profile,
 profile JSON round trip, font, sprite banks, and script decoding/manager fixtures. The
-full-game suite checks its profile and script collection. Run each distribution
+full-game suite checks its profile and script collection. Both suites explicitly
+run the converter's typed-edition tests; the demo also checks the English
+`1033/Data/Interface/Start.sxt` picture (using case-aware resolution). Its root
+must therefore include that locale alongside `Data/`. These converter fixtures
+are ignored in ordinary runs and fail setup if explicitly selected without data.
+Run each distribution
 separately: blindly selecting every ignored test would combine incompatible
 fixture requirements, GPU execution, and other opt-in integration scenarios.
 No licensed data is fetched or assumed present on public CI.

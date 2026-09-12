@@ -2571,11 +2571,6 @@ impl MissionScript {
     pub fn script_effects_mut(&mut self) -> &mut ScriptEffects {
         &mut self.script_effects
     }
-
-    /// Get an immutable reference to the ordered script effects.
-    pub fn script_effects(&self) -> &ScriptEffects {
-        &self.script_effects
-    }
 }
 
 #[derive(

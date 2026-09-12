@@ -1017,6 +1017,14 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 
 #[cfg(test)]
 mod tests {
+    #[allow(dead_code)]
+    mod original_data {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-support/original_data.rs"
+        ));
+    }
+
     use super::{
         AudioFormat, AudioKind, InterfaceImageFormat, add_character_action_rhs_profiles,
         animation_rhs_paths, animation_rhs_rel_existing, detect_locale_data_dirs,
@@ -1031,7 +1039,6 @@ mod tests {
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
     use robin_rs::multiplayer::content_identity::WebContentEdition;
     use std::fs;
-    use std::path::Path;
 
     #[test]
     fn walkers_preserve_distinct_collection_and_bundle_filters() {
@@ -1571,17 +1578,25 @@ mod tests {
     }
 
     #[test]
-    fn authentic_demo_start_sxt_is_a_sixteen_picture_when_available() {
-        // The licensed corpus is intentionally not checked into the repo.
-        // Exercise it when the operator has mounted the authentic Demo loose
-        // root, while keeping this regression runnable in public checkouts.
-        let path = Path::new("datadirs/demo_loose/1033/data/Interface/Start.sxt");
-        if !path.is_file() {
-            return;
-        }
+    #[ignore = "requires licensed Leicester demo via ROBINHOOD_DATA_DIR, including English 1033 locale"]
+    fn authentic_demo_start_sxt_is_a_sixteen_picture() {
+        let root = original_data::data_directory("");
+        let english =
+            super::discovery::resolve_locale_data_dir(&root, "1033").unwrap_or_else(|| {
+                panic!(
+                    "required English 1033/Data locale is missing from {}",
+                    root.display()
+                )
+            });
+        let path = super::resolve_data_file(&english, "Interface/Start.sxt").unwrap_or_else(|| {
+            panic!(
+                "required Interface/Start.sxt is missing from {}",
+                english.display()
+            )
+        });
 
-        assert!(!sxt_is_sres(path).unwrap());
-        let converted = transcode_sxt_drop_bzip(path).unwrap();
+        assert!(!sxt_is_sres(&path).unwrap());
+        let converted = transcode_sxt_drop_bzip(&path).unwrap();
         let decoded = Picture::load_sixteen_from_bytes(&converted).unwrap();
         assert_eq!((decoded.width, decoded.height), (1024, 768));
         assert_eq!(decoded.data.len(), 1024 * 768 * 2);
@@ -1642,35 +1657,35 @@ mod tests {
     }
 
     #[test]
-    fn authentic_demo_and_full_loose_roots_have_exact_typed_editions_when_available() {
-        // Licensed source bytes stay external to the repository. Exercise both
-        // mounted operator corpora when present without embedding fixtures.
-        let cases = [
-            ("datadirs/demo_loose", WebContentEdition::Demo),
-            ("datadirs/full_loose", WebContentEdition::Full),
-        ];
-        for (root, expected) in cases {
-            let root = Path::new(root);
-            if !root.is_dir() {
-                continue;
-            }
-            let data = find_data_dir(root).unwrap();
-            assert_eq!(
-                detect_official_web_content_edition(&data).unwrap(),
-                expected,
-                "wrong edition for {}",
-                root.display()
-            );
-            assert_eq!(
-                validate_web_content_edition(&data, expected).unwrap(),
-                expected
-            );
-            let opposite = match expected {
-                WebContentEdition::Demo => WebContentEdition::Full,
-                WebContentEdition::Full => WebContentEdition::Demo,
-            };
-            assert!(validate_web_content_edition(&data, opposite).is_err());
-        }
+    #[ignore = "requires licensed Leicester demo via ROBINHOOD_DATA_DIR"]
+    fn authentic_demo_root_has_exact_typed_edition() {
+        assert_original_edition(WebContentEdition::Demo);
+    }
+
+    #[test]
+    #[ignore = "requires licensed full game via ROBINHOOD_DATA_DIR"]
+    fn authentic_fullgame_root_has_exact_typed_edition() {
+        assert_original_edition(WebContentEdition::Full);
+    }
+
+    fn assert_original_edition(expected: WebContentEdition) {
+        let root = original_data::data_directory("");
+        let data = find_data_dir(&root).unwrap();
+        assert_eq!(
+            detect_official_web_content_edition(&data).unwrap(),
+            expected,
+            "wrong edition for {}",
+            root.display()
+        );
+        assert_eq!(
+            validate_web_content_edition(&data, expected).unwrap(),
+            expected
+        );
+        let opposite = match expected {
+            WebContentEdition::Demo => WebContentEdition::Full,
+            WebContentEdition::Full => WebContentEdition::Demo,
+        };
+        assert!(validate_web_content_edition(&data, opposite).is_err());
     }
 }
 

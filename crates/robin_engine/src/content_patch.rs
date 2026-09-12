@@ -94,17 +94,18 @@ const NAMED_FAMILIES: [(&str, &str, &str); 4] = [
 pub fn profile_document(profiles: &crate::profiles::ProfileManager) -> Result<Value, String> {
     let mut document = serde_json::to_value(profiles).map_err(|error| error.to_string())?;
     for (family, filename_field, order_field) in NAMED_FAMILIES {
-        let entries = document[family]
-            .as_array()
-            .expect("serialized profile family is an array");
+        let entries = std::mem::take(
+            document[family]
+                .as_array_mut()
+                .expect("serialized profile family is an array"),
+        );
         let mut names = std::collections::BTreeMap::<&str, usize>::new();
-        for entry in entries {
+        for entry in &entries {
             let filename = entry[filename_field]
                 .as_str()
                 .expect("serialized profile filename is a string");
             *names.entry(filename).or_default() += 1;
         }
-        let mut keyed = serde_json::Map::new();
         let mut order = Vec::new();
         for (index, entry) in entries.iter().enumerate() {
             let filename = entry[filename_field].as_str().unwrap();
@@ -113,12 +114,17 @@ pub fn profile_document(profiles: &crate::profiles::ProfileManager) -> Result<Va
             } else {
                 filename.to_owned()
             };
-            order.push(Value::String(key.clone()));
-            let mut entry = entry.clone();
+            order.push(Value::String(key));
+        }
+        // Finish borrowing filenames before moving their containing entries.
+        drop(names);
+        let mut keyed = serde_json::Map::new();
+        for (mut entry, key) in entries.into_iter().zip(&order) {
+            let key = key.as_str().expect("generated profile key is a string");
             if family == "characters" {
                 entry.as_object_mut().unwrap().remove("index");
             }
-            if keyed.insert(key.clone(), entry).is_some() {
+            if keyed.insert(key.to_owned(), entry).is_some() {
                 return Err(format!("ambiguous {family} patch key {key:?}"));
             }
         }
@@ -390,6 +396,31 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("Zulu", 0), ("Alpha", 1), ("Beta", 2)]
         );
+    }
+
+    #[test]
+    fn profile_export_rejects_generated_key_collisions_in_either_order() {
+        for (filenames, collision) in [
+            (["Guard", "Guard", "Guard#0"], "Guard#0"),
+            (["Guard#1", "Guard", "Guard"], "Guard#1"),
+        ] {
+            let profiles = ProfileManager {
+                soldiers: filenames
+                    .into_iter()
+                    .map(|filename| SoldierProfile {
+                        filename: filename.into(),
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let original = serde_json::to_value(&profiles).unwrap();
+            assert_eq!(
+                profile_document(&profiles).unwrap_err(),
+                format!("ambiguous soldiers patch key {collision:?}")
+            );
+            assert_eq!(serde_json::to_value(&profiles).unwrap(), original);
+        }
     }
 
     #[test]
