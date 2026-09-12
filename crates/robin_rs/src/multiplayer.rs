@@ -16,6 +16,8 @@ mod client_outgoing;
 #[cfg(feature = "multiplayer")]
 mod client_protocol;
 #[cfg(feature = "multiplayer")]
+mod content_transfer;
+#[cfg(feature = "multiplayer")]
 pub use client_protocol::ClientSessionMetadata;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
