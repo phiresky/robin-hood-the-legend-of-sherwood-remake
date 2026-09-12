@@ -37,26 +37,23 @@ pub(super) fn conversion_quarantine_path(trace_path: &Path) -> PathBuf {
 }
 
 pub(super) fn reject_conversion_symlink(path: &Path) -> TraceStorageResult<()> {
-    Ok(match std::fs::symlink_metadata(path) {
-        Ok(_) => storage_ensure!(
-            !conversion_path_is_symlink(path),
-            "conversion paths must not be symbolic links: {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "inspect conversion path {}: {error}",
-                path.display()
-            ));
-        }
-    })
+    storage_ensure!(
+        !conversion_path_is_symlink(path)?,
+        "conversion paths must not be symbolic links: {}",
+        path.display()
+    );
+    Ok(())
 }
 
-pub(super) fn conversion_path_is_symlink(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|metadata| metadata.file_type().is_symlink())
-        .unwrap_or(false)
+pub(super) fn conversion_path_is_symlink(path: &Path) -> TraceStorageResult<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "inspect conversion path {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 pub(super) fn move_verified_recording_to_quarantine(
@@ -1173,7 +1170,7 @@ pub(super) fn ensure_native_binary_trace_locked(
                 audit_sender
                     .send((line_number, line.clone()))
                     .storage_context("parity round-trip audit workers stopped early")?;
-                if let Some(frame) = parse_trace_frame(&line, line_number) {
+                if let Some(frame) = parse_trace_frame(&line, line_number)? {
                     validate_trace_frame_with_legacy_additive_omissions(
                         header.trace.schema,
                         &frame,

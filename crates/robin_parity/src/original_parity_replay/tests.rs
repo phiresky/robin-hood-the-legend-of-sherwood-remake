@@ -1184,7 +1184,7 @@ fn native_small_block_policy_round_trips_records_and_footer() {
     let native = write_test_native_records(&[complete_test_end(0, 10)], Some(footer));
     let mut reader = BinaryTraceReader::open(native.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     reader.validate_terminator(0, 10).unwrap();
@@ -1238,13 +1238,22 @@ fn current_reader_preserves_small_block_semantics_digest_and_terminator() {
     // represented in the header or footer and has never been fixed at 1,000.
     let mut reader = BinaryTraceReader::open(native.path()).unwrap();
     assert_eq!(reader.read_header().unwrap().version, TRACE_NATIVE_VERSION);
-    assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+    assert!(matches!(
+        reader.read_record().unwrap(),
+        BinaryTraceRecord::Frame(_)
+    ));
     assert_eq!(reader.pending.len(), 31);
     for _ in 1..32 {
-        assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+        assert!(matches!(
+            reader.read_record().unwrap(),
+            BinaryTraceRecord::Frame(_)
+        ));
     }
     assert!(reader.pending.is_empty());
-    assert!(matches!(reader.read_record(), BinaryTraceRecord::Frame(_)));
+    assert!(matches!(
+        reader.read_record().unwrap(),
+        BinaryTraceRecord::Frame(_)
+    ));
     assert_eq!(reader.pending.len(), 31);
 
     let (decoded_frames, actual_digest) = digest_and_validate_native_trace(native.path()).unwrap();
@@ -1547,7 +1556,7 @@ fn native_reader_accepts_current_version_with_level_nineteen_ldm() {
     );
     let mut reader = BinaryTraceReader::open(native.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     reader.validate_terminator(0, 10).unwrap();
@@ -1680,8 +1689,13 @@ fn conversion_rejects_symlinked_logical_inputs() {
     let link = directory.path().join("recording.jsonl.zst");
     std::fs::write(&target, b"recording").unwrap();
     symlink(&target, &link).unwrap();
-    assert!(conversion_path_is_symlink(&link));
-    assert!(!conversion_path_is_symlink(&target));
+    assert!(conversion_path_is_symlink(&link).unwrap());
+    assert!(!conversion_path_is_symlink(&target).unwrap());
+    assert!(
+        reject_conversion_symlink(&link)
+            .unwrap_err()
+            .contains("symbolic links")
+    );
     assert_eq!(std::fs::read(&target).unwrap(), b"recording");
 }
 
@@ -2233,7 +2247,7 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
     let early = write_test_native_records(&[complete_test_end(1, 11)], Some(footer));
     let mut reader = BinaryTraceReader::open(early.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2254,7 +2268,7 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
     );
     let mut reader = BinaryTraceReader::open(trailing.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2291,7 +2305,7 @@ fn fixed_native_footer_rejects_early_end_and_trailing_records() {
     }
     let mut reader = BinaryTraceReader::open(file.path()).unwrap();
     assert!(matches!(
-        reader.read_record(),
+        reader.read_record().unwrap(),
         BinaryTraceRecord::End { .. }
     ));
     assert!(
@@ -2320,6 +2334,152 @@ fn fixed_native_footer_rejects_missing_and_malformed_data() {
             .unwrap_err()
             .contains("footer magic")
     );
+}
+
+#[test]
+fn native_storage_missing_inputs_return_contextual_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("missing.parity.bitcode.zst");
+    for error in [
+        BinaryTraceReader::open(&missing)
+            .err()
+            .expect("missing native input"),
+        trace_content_sha256(&missing).unwrap_err(),
+        open_jsonl_trace(&missing)
+            .err()
+            .expect("missing JSONL input"),
+    ] {
+        assert!(error.contains("missing.parity.bitcode.zst"), "{error}");
+    }
+    assert!(reject_conversion_symlink(&missing).is_ok());
+}
+
+#[test]
+fn native_record_write_failures_return_the_record_context() {
+    let mut no_capacity = std::io::Cursor::new([0_u8; 0]);
+    let error = write_binary_record(&mut no_capacity, &42_u32, "test header").unwrap_err();
+    assert!(error.contains("write test header length"), "{error}");
+
+    let mut prefix_only = std::io::Cursor::new([0_u8; 8]);
+    let error = write_binary_record(&mut prefix_only, &42_u32, "test payload").unwrap_err();
+    assert!(error.contains("write test payload:"), "{error}");
+}
+
+#[test]
+fn native_empty_blocks_return_errors_instead_of_inventing_end_records() {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(file.as_file_mut(), 1).unwrap();
+        write_binary_record(
+            &mut encoder,
+            &[] as &[BinaryTraceRecord],
+            "empty test block",
+        )
+        .unwrap();
+        let writer = encoder.finish().unwrap();
+        write_binary_trace_footer(
+            writer,
+            BinaryTraceFooter {
+                version: TRACE_NATIVE_VERSION,
+                frame_count: 0,
+                final_frame: 0,
+            },
+        )
+        .unwrap();
+    }
+    let mut reader = BinaryTraceReader::open(file.path()).unwrap();
+    assert!(
+        reader
+            .read_record()
+            .unwrap_err()
+            .contains("empty record block")
+    );
+}
+
+#[test]
+fn conversion_conflicts_return_errors_and_preserve_both_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let quarantine = conversion_quarantine_path(&source);
+    std::fs::write(&source, b"new producer").unwrap();
+    std::fs::write(&quarantine, b"verified recovery source").unwrap();
+    let error = convert_recording_to_native(&source).unwrap_err();
+    assert!(error.contains("conflict"), "{error}");
+    assert_eq!(std::fs::read(&source).unwrap(), b"new producer");
+    assert_eq!(
+        std::fs::read(&quarantine).unwrap(),
+        b"verified recovery source"
+    );
+    assert!(!native_binary_trace_path(&source).exists());
+}
+
+#[test]
+fn failed_native_audits_preserve_recordings_without_publishing() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let header = minimal_test_native_header("test");
+    let suffix = TraceRngOnly {
+        record_type: "rng_suffix".to_owned(),
+        draws: header.rng_prefix.draws.clone(),
+        final_frame: 0,
+        frame_count: 0,
+    };
+    let mut lossy_suffix = serde_json::to_value(&suffix).unwrap();
+    lossy_suffix["unrepresented_authoritative_field"] = serde_json::json!(42);
+    let recording = format!(
+        "{}\n{}\n{}\n",
+        serde_json::to_string(&header.trace).unwrap(),
+        serde_json::to_string(&header.rng_prefix).unwrap(),
+        lossy_suffix
+    );
+    std::fs::write(&source, recording.as_bytes()).unwrap();
+    let error = convert_recording_to_native(&source).unwrap_err();
+    assert!(error.contains("round-trip audit"), "{error}");
+    assert!(error.contains("line 3"), "{error}");
+    assert_eq!(std::fs::read(&source).unwrap(), recording.as_bytes());
+    assert!(!native_binary_trace_path(&source).exists());
+    assert!(!conversion_quarantine_path(&source).exists());
+}
+
+#[test]
+fn audit_workers_join_malformed_input_errors_without_panicking() {
+    let error = std::thread::scope(|scope| {
+        let (sender, workers) = spawn_roundtrip_audit_workers(scope);
+        sender.send((7, "not JSON".to_owned())).unwrap();
+        drop(sender);
+        join_roundtrip_audit_workers(workers)
+    })
+    .unwrap_err();
+    assert!(error.contains("parse trace frame on line 7"), "{error}");
+}
+
+#[test]
+fn roundtrip_mismatches_return_the_field_and_line() {
+    let error = verify_trace_line_roundtrip(
+        &serde_json::json!({"authoritative": 2}),
+        r#"{"authoritative":1}"#,
+        11,
+    )
+    .unwrap_err();
+    assert!(error.contains("line 11"), "{error}");
+    assert!(error.contains("$.authoritative"), "{error}");
+}
+
+#[test]
+fn conversion_commit_io_errors_preserve_recovery_artifacts() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("recording.jsonl");
+    let quarantine = conversion_quarantine_path(&source);
+    // A directory cannot be unlinked as a source recording; this produces a
+    // deterministic I/O error even when the test runs with elevated access.
+    std::fs::create_dir(&quarantine).unwrap();
+    let error = commit_verified_conversion_files(&source, &quarantine, || {}).unwrap_err();
+    assert!(
+        error.contains("delete quarantined converted recording"),
+        "{error}"
+    );
+    assert!(quarantine.is_dir());
+    assert!(!source.exists());
 }
 
 #[test]

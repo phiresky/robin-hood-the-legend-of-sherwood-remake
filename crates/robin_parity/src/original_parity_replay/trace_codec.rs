@@ -273,7 +273,7 @@ pub(super) fn first_json_difference(
     }
 }
 
-/// Panic unless the typed record re-serializes to the JSON it was parsed
+/// Reject unless the typed record re-serializes to the JSON it was parsed
 /// from, modulo [`normalize_trace_json_for_roundtrip`]. Running this on every
 /// line during cache conversion is what lets the binary cache stand in for
 /// the recording: a field the typed schema silently drops or reshapes fails
@@ -309,7 +309,7 @@ pub(super) fn verify_trace_line_roundtrip<T: Serialize>(
 /// Re-parse and round-trip-audit one trace line (any line after the header
 /// and RNG prefix: frames and the rng_suffix terminator).
 pub(super) fn audit_trace_line(line: &str, line_number: usize) -> TraceStorageResult<()> {
-    Ok(if let Some(frame) = parse_trace_frame(line, line_number) {
+    Ok(if let Some(frame) = parse_trace_frame(line, line_number)? {
         verify_trace_line_roundtrip(&frame, line, line_number)?;
     } else {
         let suffix: TraceRngOnly = serde_json::from_str(line).map_err(|error| {
@@ -621,7 +621,7 @@ pub(super) fn verify_converted_native_trace(
                     .map_err(|error| {
                         format!("read recording frame on line {line_number}: {error}")
                     })?;
-                let source_frame = parse_trace_frame(&source_line, line_number as usize)
+                let source_frame = parse_trace_frame(&source_line, line_number as usize)?
                     .ok_or_else(|| {
                         format!(
                             "recording has its terminator before native frame on line {line_number}"
