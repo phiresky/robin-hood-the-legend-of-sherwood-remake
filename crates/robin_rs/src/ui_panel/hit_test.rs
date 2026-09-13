@@ -84,6 +84,42 @@ pub fn hit_test_portrait(
     None
 }
 
+/// A click probed against one horizontally-matching portrait slot.
+struct SlotProbe {
+    slot: u8,
+    /// Slot left edge in screen pixels.
+    x: f32,
+    sh: u16,
+    click_x: f32,
+    cy: f32,
+}
+
+impl SlotProbe {
+    fn hit(
+        &self,
+        item: &PortraitBarItem<'_>,
+        area: PortraitHitArea,
+        is_burned: bool,
+    ) -> PortraitHit {
+        PortraitHit {
+            slot: self.slot,
+            pc_id: item.members()[0],
+            target: item.target(),
+            area,
+            is_burned,
+        }
+    }
+}
+
+/// Outcome of probing one slot whose horizontal span contains the click.
+enum SlotHit {
+    /// Keep scanning later slots.
+    Miss,
+    Hit(PortraitHit),
+    /// The click lands on transparent art: nothing is hit at all.
+    Reject,
+}
+
 /// Detailed hit-test returning which sub-area of which portrait was clicked.
 ///
 /// Uses engine state to determine burned/selected per slot, and maps
@@ -110,30 +146,8 @@ pub fn hit_test_portrait_detailed(
         return None;
     }
 
-    if paged {
-        let representative = items
-            .first()
-            .and_then(|item| item.members().first())
-            .copied()
-            .expect("paged portrait bar has no representative entity");
-        if click_x <= 30.0 {
-            return Some(PortraitHit {
-                slot: 0,
-                pc_id: representative,
-                target: items[0].target(),
-                area: PortraitHitArea::PageLeft,
-                is_burned: false,
-            });
-        }
-        if click_x >= screen_width.saturating_sub(30) as f32 {
-            return Some(PortraitHit {
-                slot: 0,
-                pc_id: representative,
-                target: items[0].target(),
-                area: PortraitHitArea::PageRight,
-                is_burned: false,
-            });
-        }
+    if paged && let Some(hit) = page_scroll_hit(&items, screen_width, click_x) {
+        return Some(hit);
     }
 
     for (slot, item) in items.iter().enumerate().take(num_slots) {
@@ -149,191 +163,254 @@ pub fn hit_test_portrait_detailed(
             continue;
         }
 
-        let pc_id = item.members()[0];
-        if !matches!(item.target(), PortraitTarget::Pc(_)) {
-            let selected = engine.tactical_selection(local_seat) == item.members();
-            let top_scroll_top = if selected {
-                (sh - POSITION_TOP_SCROLL) as f32
-            } else {
-                (sh - CLOSE_POSITION_TOP_SCROLL) as f32
-            };
-            let visage_top = if selected {
-                (sh - POSITION_VISAGE) as f32
-            } else {
-                (sh - CLOSE_POSITION_VISAGE) as f32
-            };
-            let pin_left = x + f32::from(ALLIED_PIN_LEFT);
-            let pin_top = top_scroll_top - f32::from(ALLIED_PIN_RISE);
-            let pin_bottom = pin_top + f32::from(ALLIED_PIN_ICON_SIZE);
-            let action_top = (sh - POSITION_ACTION) as f32;
-            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
-            let area =
-                if click_x >= pin_left && click_x <= pin_right && cy >= pin_top && cy <= pin_bottom
-                {
-                    PortraitHitArea::Pin
-                } else if cy >= top_scroll_top && cy < visage_top {
-                    PortraitHitArea::TopScroll
-                } else if cy >= visage_top && (!selected || cy < action_top) {
-                    PortraitHitArea::Visage
-                } else if selected && cy >= action_top && cy < bottom_scroll_top {
-                    PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
-                } else {
-                    PortraitHitArea::BottomScroll
-                };
-            return Some(PortraitHit {
-                slot: slot as u8,
-                pc_id,
-                target: item.target(),
-                area,
-                is_burned: false,
-            });
-        }
-
-        let entity = engine.get_entity(pc_id);
-        if entity.is_none() {
-            tracing::warn!(?pc_id, "portrait hit test references a missing entity");
-            continue;
-        }
-        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
-
-        let is_coma = entity.map(|e| is_pc_in_coma(engine, e)).unwrap_or(false);
-        if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 && (!is_selected || is_coma) {
-            continue;
-        }
-        if is_selected && !is_coma {
-            let qa_strip_y = (sh - POSITION_TOP_SCROLL - QA_ICON_HEIGHT) as f32;
-            let qa_strip_bot = qa_strip_y + QA_ICON_HEIGHT as f32;
-            if cy >= qa_strip_y && cy < qa_strip_bot {
-                let rel_x = click_x - x;
-                if rel_x >= 0.0 {
-                    let slot_idx = (rel_x / QA_ICON_WIDTH as f32).floor() as u8;
-                    if usize::from(slot_idx) < robin_engine::macro_store::NUMBER_OF_QA_MEMORY {
-                        return Some(PortraitHit {
-                            slot: slot as u8,
-                            pc_id,
-                            target: item.target(),
-                            area: PortraitHitArea::QuickAction(slot_idx),
-                            is_burned: false,
-                        });
-                    }
-                }
-            }
-        }
-        if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 {
-            continue;
-        }
-
-        let is_dead = match entity {
-            Some(Entity::Pc(pc)) => pc.pc.life_points <= 0,
-            _ => false,
-        };
-        let is_burned = is_dead || is_coma;
-        let is_guarded = match entity {
-            Some(Entity::Pc(pc)) => pc.pc.guard.is_some(),
-            _ => false,
-        };
-        let has_trumpet = match entity {
-            Some(Entity::Pc(pc)) => pc.pc.trumpet_enabled,
-            _ => false,
-        };
-
-        if is_burned {
-            // Burned layout: upper scroll repositioned above lower scroll.
-            // Guard/amulet/trumpet indicator is between the two scrolls.
-            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
-            let upper_scroll_top = (sh - POSITION_BOTTOM_SCROLL - BOTTOM_SCROLL_HEIGHT) as f32;
-            let upper_scroll_bot = upper_scroll_top + TOP_SCROLL_HEIGHT as f32;
-
-            let area = if cy >= upper_scroll_top && cy < upper_scroll_bot {
-                PortraitHitArea::TopScroll
-            } else if cy >= upper_scroll_bot && cy < bottom_scroll_top {
-                // Between scrolls — trumpet (dead only) takes priority over
-                // guard/amulet (coma only).  The trumpet is only enabled on
-                // dead PCs, so the two indicator families never overlap in
-                // practice.
-                if has_trumpet && is_dead && !is_coma {
-                    PortraitHitArea::Trumpet
-                } else if is_guarded {
-                    PortraitHitArea::Guard
-                } else {
-                    PortraitHitArea::Amulet
-                }
-            } else {
-                PortraitHitArea::BottomScroll
-            };
-
-            return Some(PortraitHit {
-                slot: slot as u8,
-                pc_id,
-                target: item.target(),
-                area,
-                is_burned,
-            });
-        }
-
-        // Normal (non-burned) layout
-        let top_scroll_top = if is_selected {
-            (sh - POSITION_TOP_SCROLL) as f32
-        } else {
-            (sh - CLOSE_POSITION_TOP_SCROLL) as f32
-        };
-        let visage_top = if is_selected {
-            (sh - POSITION_VISAGE) as f32
-        } else {
-            (sh - CLOSE_POSITION_VISAGE) as f32
-        };
-        let action_top = (sh - POSITION_ACTION) as f32;
-        let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
-
-        let area = if cy >= top_scroll_top && cy < visage_top {
-            // Check pixel transparency on the curved scroll edges.
-            // If the pixel is transparent, reject the hit so the click falls through.
-            if let Some(ref mask) = portraits.top_scroll_hit_mask {
-                let rel_x = (click_x - x) as u16;
-                let rel_y = (cy - top_scroll_top) as u16;
-                if !mask.is_opaque(rel_x, rel_y) {
-                    return None;
-                }
-            }
-            PortraitHitArea::TopScroll
-        } else if cy >= visage_top && cy < action_top && is_selected {
-            PortraitHitArea::Visage
-        } else if cy >= visage_top && !is_selected {
-            // Closed state: visage extends down to bottom scroll
-            PortraitHitArea::Visage
-        } else if cy >= action_top && cy < bottom_scroll_top && is_selected {
-            // Determine which action button based on X.
-            // Check two-button mode
-            let action_icons = entity
-                .and_then(pc_character_kind)
-                .map(|k| k.action_resources());
-            let two_btn = action_icons
-                .as_ref()
-                .is_some_and(|icons| icons[2].is_none());
-            let rel_x = click_x - x;
-
-            let btn_idx = if two_btn {
-                if rel_x < ACTIONA_WIDTH as f32 { 0 } else { 1 }
-            } else if rel_x < ACTION1_WIDTH as f32 {
-                0
-            } else if rel_x < (ACTION1_WIDTH + ACTION2_WIDTH) as f32 {
-                1
-            } else {
-                2
-            };
-            PortraitHitArea::ActionButton(btn_idx)
-        } else {
-            PortraitHitArea::BottomScroll
-        };
-
-        return Some(PortraitHit {
+        let probe = SlotProbe {
             slot: slot as u8,
-            pc_id,
-            target: item.target(),
-            area,
-            is_burned,
-        });
+            x,
+            sh,
+            click_x,
+            cy,
+        };
+        if !matches!(item.target(), PortraitTarget::Pc(_)) {
+            return Some(allied_slot_hit(engine, local_seat, item, &probe));
+        }
+        match pc_slot_hit(engine, local_seat, portraits, item, &probe) {
+            SlotHit::Miss => continue,
+            SlotHit::Hit(hit) => return Some(hit),
+            SlotHit::Reject => return None,
+        }
     }
 
     None
+}
+
+/// Page-scroll arrows at the far left/right of a paged portrait bar.
+fn page_scroll_hit(
+    items: &[PortraitBarItem<'_>],
+    screen_width: u16,
+    click_x: f32,
+) -> Option<PortraitHit> {
+    let representative = items
+        .first()
+        .and_then(|item| item.members().first())
+        .copied()
+        .expect("paged portrait bar has no representative entity");
+    let area = if click_x <= 30.0 {
+        PortraitHitArea::PageLeft
+    } else if click_x >= screen_width.saturating_sub(30) as f32 {
+        PortraitHitArea::PageRight
+    } else {
+        return None;
+    };
+    Some(PortraitHit {
+        slot: 0,
+        pc_id: representative,
+        target: items[0].target(),
+        area,
+        is_burned: false,
+    })
+}
+
+fn allied_slot_hit(
+    engine: &PresentationView<'_>,
+    local_seat: PlayerId,
+    item: &PortraitBarItem<'_>,
+    probe: &SlotProbe,
+) -> PortraitHit {
+    let SlotProbe {
+        x, sh, click_x, cy, ..
+    } = *probe;
+    let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
+    let selected = engine.tactical_selection(local_seat) == item.members();
+    let top_scroll_top = if selected {
+        (sh - POSITION_TOP_SCROLL) as f32
+    } else {
+        (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+    };
+    let visage_top = if selected {
+        (sh - POSITION_VISAGE) as f32
+    } else {
+        (sh - CLOSE_POSITION_VISAGE) as f32
+    };
+    let pin_left = x + f32::from(ALLIED_PIN_LEFT);
+    let pin_top = top_scroll_top - f32::from(ALLIED_PIN_RISE);
+    let pin_bottom = pin_top + f32::from(ALLIED_PIN_ICON_SIZE);
+    let action_top = (sh - POSITION_ACTION) as f32;
+    let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+    let area = if click_x >= pin_left && click_x <= pin_right && cy >= pin_top && cy <= pin_bottom {
+        PortraitHitArea::Pin
+    } else if cy >= top_scroll_top && cy < visage_top {
+        PortraitHitArea::TopScroll
+    } else if cy >= visage_top && (!selected || cy < action_top) {
+        PortraitHitArea::Visage
+    } else if selected && cy >= action_top && cy < bottom_scroll_top {
+        PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
+    } else {
+        PortraitHitArea::BottomScroll
+    };
+    probe.hit(item, area, false)
+}
+
+fn pc_slot_hit(
+    engine: &PresentationView<'_>,
+    local_seat: PlayerId,
+    portraits: &PortraitCache,
+    item: &PortraitBarItem<'_>,
+    probe: &SlotProbe,
+) -> SlotHit {
+    let SlotProbe {
+        x, sh, click_x, cy, ..
+    } = *probe;
+    let pc_id = item.members()[0];
+    let entity = engine.get_entity(pc_id);
+    if entity.is_none() {
+        tracing::warn!(?pc_id, "portrait hit test references a missing entity");
+        return SlotHit::Miss;
+    }
+    let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
+
+    let is_coma = entity.map(|e| is_pc_in_coma(engine, e)).unwrap_or(false);
+    if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 && (!is_selected || is_coma) {
+        return SlotHit::Miss;
+    }
+    if is_selected && !is_coma {
+        let qa_strip_y = (sh - POSITION_TOP_SCROLL - QA_ICON_HEIGHT) as f32;
+        let qa_strip_bot = qa_strip_y + QA_ICON_HEIGHT as f32;
+        if cy >= qa_strip_y && cy < qa_strip_bot {
+            let rel_x = click_x - x;
+            if rel_x >= 0.0 {
+                let slot_idx = (rel_x / QA_ICON_WIDTH as f32).floor() as u8;
+                if usize::from(slot_idx) < robin_engine::macro_store::NUMBER_OF_QA_MEMORY {
+                    let area = PortraitHitArea::QuickAction(slot_idx);
+                    return SlotHit::Hit(probe.hit(item, area, false));
+                }
+            }
+        }
+    }
+    if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 {
+        return SlotHit::Miss;
+    }
+
+    let is_dead = match entity {
+        Some(Entity::Pc(pc)) => pc.pc.life_points <= 0,
+        _ => false,
+    };
+    let is_burned = is_dead || is_coma;
+
+    if is_burned {
+        let area = burned_hit_area(entity, probe, is_dead, is_coma);
+        return SlotHit::Hit(probe.hit(item, area, is_burned));
+    }
+
+    match normal_hit_area(portraits, entity, probe, is_selected) {
+        Some(area) => SlotHit::Hit(probe.hit(item, area, is_burned)),
+        None => SlotHit::Reject,
+    }
+}
+
+/// Burned layout: upper scroll repositioned above lower scroll.
+/// Guard/amulet/trumpet indicator is between the two scrolls.
+fn burned_hit_area(
+    entity: Option<&Entity>,
+    probe: &SlotProbe,
+    is_dead: bool,
+    is_coma: bool,
+) -> PortraitHitArea {
+    let SlotProbe { sh, cy, .. } = *probe;
+    let is_guarded = match entity {
+        Some(Entity::Pc(pc)) => pc.pc.guard.is_some(),
+        _ => false,
+    };
+    let has_trumpet = match entity {
+        Some(Entity::Pc(pc)) => pc.pc.trumpet_enabled,
+        _ => false,
+    };
+    let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+    let upper_scroll_top = (sh - POSITION_BOTTOM_SCROLL - BOTTOM_SCROLL_HEIGHT) as f32;
+    let upper_scroll_bot = upper_scroll_top + TOP_SCROLL_HEIGHT as f32;
+
+    if cy >= upper_scroll_top && cy < upper_scroll_bot {
+        PortraitHitArea::TopScroll
+    } else if cy >= upper_scroll_bot && cy < bottom_scroll_top {
+        // Between scrolls — trumpet (dead only) takes priority over
+        // guard/amulet (coma only).  The trumpet is only enabled on
+        // dead PCs, so the two indicator families never overlap in
+        // practice.
+        if has_trumpet && is_dead && !is_coma {
+            PortraitHitArea::Trumpet
+        } else if is_guarded {
+            PortraitHitArea::Guard
+        } else {
+            PortraitHitArea::Amulet
+        }
+    } else {
+        PortraitHitArea::BottomScroll
+    }
+}
+
+/// Normal (non-burned) layout. `None` rejects a click on transparent
+/// top-scroll pixels so it falls through the whole portrait bar.
+fn normal_hit_area(
+    portraits: &PortraitCache,
+    entity: Option<&Entity>,
+    probe: &SlotProbe,
+    is_selected: bool,
+) -> Option<PortraitHitArea> {
+    let SlotProbe {
+        x, sh, click_x, cy, ..
+    } = *probe;
+    let top_scroll_top = if is_selected {
+        (sh - POSITION_TOP_SCROLL) as f32
+    } else {
+        (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+    };
+    let visage_top = if is_selected {
+        (sh - POSITION_VISAGE) as f32
+    } else {
+        (sh - CLOSE_POSITION_VISAGE) as f32
+    };
+    let action_top = (sh - POSITION_ACTION) as f32;
+    let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+
+    let area = if cy >= top_scroll_top && cy < visage_top {
+        // Check pixel transparency on the curved scroll edges.
+        // If the pixel is transparent, reject the hit so the click falls through.
+        if let Some(ref mask) = portraits.top_scroll_hit_mask {
+            let rel_x = (click_x - x) as u16;
+            let rel_y = (cy - top_scroll_top) as u16;
+            if !mask.is_opaque(rel_x, rel_y) {
+                return None;
+            }
+        }
+        PortraitHitArea::TopScroll
+    } else if cy >= visage_top && cy < action_top && is_selected {
+        PortraitHitArea::Visage
+    } else if cy >= visage_top && !is_selected {
+        // Closed state: visage extends down to bottom scroll
+        PortraitHitArea::Visage
+    } else if cy >= action_top && cy < bottom_scroll_top && is_selected {
+        PortraitHitArea::ActionButton(action_button_at(entity, click_x - x))
+    } else {
+        PortraitHitArea::BottomScroll
+    };
+    Some(area)
+}
+
+/// Determine which action button based on X, honouring two-button mode.
+fn action_button_at(entity: Option<&Entity>, rel_x: f32) -> u8 {
+    let action_icons = entity
+        .and_then(pc_character_kind)
+        .map(|k| k.action_resources());
+    let two_btn = action_icons
+        .as_ref()
+        .is_some_and(|icons| icons[2].is_none());
+
+    if two_btn {
+        if rel_x < ACTIONA_WIDTH as f32 { 0 } else { 1 }
+    } else if rel_x < ACTION1_WIDTH as f32 {
+        0
+    } else if rel_x < (ACTION1_WIDTH + ACTION2_WIDTH) as f32 {
+        1
+    } else {
+        2
+    }
 }
