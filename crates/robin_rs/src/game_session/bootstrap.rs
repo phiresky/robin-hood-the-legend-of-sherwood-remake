@@ -4,7 +4,7 @@ use super::flow::MissionServices;
 use super::headless::{HeadlessMission, HeadlessMissionOutcome, HeadlessPolicy};
 use super::interactive::{
     InteractiveFrontendAssembly, InteractiveMission, InteractiveRendererAssembly,
-    MissionRendererConfig,
+    MissionRendererConfig, ProcessFrontendMission, ProcessInterfaceResources,
 };
 use super::replay_init::init_replay_and_rollback;
 use super::runtime::{
@@ -1089,18 +1089,22 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
             &bootstrap.game,
             &mut bootstrap.loaded.engine,
             &bootstrap.loaded.assets,
-            text,
-            cursor,
-            menu_res,
-            audio_backend,
-            LoadedInteractiveResources {
-                level_descriptors,
-                hud_fonts,
+            ProcessInterfaceResources {
+                text,
+                cursor,
+                menu_res,
+                audio_backend,
+                decoded: LoadedInteractiveResources {
+                    level_descriptors,
+                    hud_fonts,
+                },
+                short_briefing_strings: short_briefings,
             },
-            short_briefings,
-            args,
-            bootstrap.spec.mission_idx,
-            bootstrap.spec.location,
+            ProcessFrontendMission {
+                args,
+                mission_idx: bootstrap.spec.mission_idx,
+                location: bootstrap.spec.location,
+            },
         )
     }
 }

@@ -87,8 +87,9 @@ use modal_state::{
 #[cfg(test)]
 use mouse_input::allied_portrait_center;
 use mouse_input::{
-    dispatch_corner_button_left_click, dispatch_corner_button_right_click, handle_mouse_input,
-    handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
+    MouseCtx, SherwoodCtx, SherwoodModalResources, dispatch_corner_button_left_click,
+    dispatch_corner_button_right_click, handle_mouse_input, handle_pause_menu_events,
+    handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
     request_sherwood_trading_panel, sherwood_trading_access,
 };
 use multiplayer::{drain_mission_network, setup_multiplayer_session};

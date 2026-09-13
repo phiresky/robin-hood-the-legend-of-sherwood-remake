@@ -408,23 +408,7 @@ pub(super) async fn drive_live_gameplay_input(
         }
     }
 
-    match handle_pause_menu_events(
-        &mut context.ui.pause_menu,
-        &mut context.ui.active_ui_task,
-        pause_closed_this_frame,
-        context.host,
-        context.engine,
-        context.assets,
-        context.callbacks,
-        context.window,
-        &mut context.presentation.renderer,
-        &mut context.resources.menu,
-        &mut context.audio.backend,
-        &context.audio.sample_loader,
-        &mut context.input.threaded,
-        &mut context.input.translator,
-        events,
-    ) {
+    match handle_pause_menu_events(&mut context, pause_closed_this_frame, events) {
         HandlerAction::Continue => return HandlerAction::Continue,
         HandlerAction::Exit(code) => {
             execute_app_effects(
@@ -443,19 +427,19 @@ pub(super) async fn drive_live_gameplay_input(
     }
 
     handle_mouse_input(
-        context.engine,
-        context.host,
-        context.assets,
-        context.presentation.renderer.screen_width(),
-        context.presentation.renderer.screen_height(),
-        &context.presentation.sprites.portrait_cache,
-        context.commands,
+        MouseCtx {
+            engine: context.engine,
+            host: &mut *context.host,
+            assets: context.assets,
+            screen_width: context.presentation.renderer.screen_width(),
+            screen_height: context.presentation.renderer.screen_height(),
+            portrait_cache: &context.presentation.sprites.portrait_cache,
+            frame_cmds: &mut *context.commands,
+            modifiers,
+        },
         events,
         context.ui.pause_menu.as_ref(),
         *pause_closed_this_frame,
-        modifiers.shift,
-        modifiers.plan,
-        modifiers.ctrl,
     );
     HandlerAction::Proceed
 }

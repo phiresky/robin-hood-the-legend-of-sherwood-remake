@@ -331,21 +331,25 @@ pub(super) async fn collect_input_and_menus(
     let campaign_ui_presented = !client_waiting_for_campaign_host
         && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());
     match handle_sherwood_campaign_map_overlay(
-        game,
-        manager,
-        host,
-        callbacks,
+        SherwoodCtx {
+            game: &mut *game,
+            engine: &mut manager.engine,
+            host: &mut *host,
+            callbacks: &mut *callbacks,
+            assets,
+            window: &mut *window,
+            renderer: &mut presentation.renderer,
+            menu_resources: &mut resources.menu,
+            flow: &mut ui.sherwood_campaign_flow,
+            enable: &mut hud.sherwood_enable,
+        },
         &mut frame,
-        assets,
-        &mut *window,
-        &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
-        &mut resources.text,
-        &mut ui.campaign_map,
-        &mut ui.sherwood_campaign_flow,
-        &mut resources.menu,
-        &mut hud.sherwood_enable,
+        SherwoodModalResources {
+            cursor_res: &mut resources.cursor,
+            cursor_renderer: &mut presentation.sprites.cursor_renderer,
+            text_res: &mut resources.text,
+            campaign_map: &mut ui.campaign_map,
+        },
     )? {
         HandlerAction::Continue => {
             runtime

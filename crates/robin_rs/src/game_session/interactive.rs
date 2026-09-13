@@ -579,17 +579,23 @@ impl InteractiveRendererAssembly {
         game: &Game,
         engine: &mut robin_engine::engine::Engine,
         assets: &robin_engine::engine::LevelAssets,
-        mut text: ResourceManager,
-        mut cursor: ResourceManager,
-        menu_res: ResourceManager,
-        audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
-        decoded: LoadedInteractiveResources,
-        short_briefing_strings: HashMap<u32, String>,
-        args: &crate::main_entry::MissionRequest,
-        mission_idx: usize,
-        location: MissionLocation,
+        interface: ProcessInterfaceResources,
+        mission: ProcessFrontendMission<'_>,
     ) -> Result<InteractiveFrontendAssembly, super::MissionError> {
         use super::MissionError;
+        let ProcessInterfaceResources {
+            mut text,
+            mut cursor,
+            menu_res,
+            audio_backend,
+            decoded,
+            short_briefing_strings,
+        } = interface;
+        let ProcessFrontendMission {
+            args,
+            mission_idx,
+            location,
+        } = mission;
         window.gamepad_input.begin_mission();
         let sprites = load_mission_sprites(
             engine,
@@ -653,6 +659,25 @@ impl InteractiveRendererAssembly {
             ambience_minimaps: self.ambience_minimaps,
         })
     }
+}
+
+/// Process-owned interface resources joined from the pre-loop decode and
+/// consumed by [`InteractiveRendererAssembly::assemble_process_frontend`].
+pub(super) struct ProcessInterfaceResources {
+    pub(super) text: ResourceManager,
+    pub(super) cursor: ResourceManager,
+    pub(super) menu_res: ResourceManager,
+    pub(super) audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
+    pub(super) decoded: LoadedInteractiveResources,
+    pub(super) short_briefing_strings: HashMap<u32, String>,
+}
+
+/// Which mission the process frontend is assembled for.
+#[derive(Clone, Copy)]
+pub(super) struct ProcessFrontendMission<'a> {
+    pub(super) args: &'a crate::main_entry::MissionRequest,
+    pub(super) mission_idx: usize,
+    pub(super) location: MissionLocation,
 }
 
 /// Frontend state complete enough to drive the blocking pre-loop campaign

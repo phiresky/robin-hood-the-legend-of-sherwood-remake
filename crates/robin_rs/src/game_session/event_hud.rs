@@ -257,19 +257,21 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     }
 
     match handle_sherwood_hud_buttons(
-        game,
-        manager,
-        host,
+        SherwoodCtx {
+            game: &mut *game,
+            engine: &mut manager.engine,
+            host: &mut *host,
+            callbacks: &mut *callbacks,
+            assets,
+            window: &mut *window,
+            renderer: &mut presentation.renderer,
+            menu_resources: &mut resources.menu,
+            flow: &mut ui.sherwood_campaign_flow,
+            enable: &mut hud.sherwood_enable,
+        },
         &mut frame.stage_commands(),
-        assets,
-        callbacks,
-        window,
-        &mut presentation.renderer,
-        &resources.menu,
-        &mut ui.sherwood_campaign_flow,
         &events,
         &hud.sherwood_layout,
-        &mut hud.sherwood_enable,
     ) {
         HandlerAction::Proceed => {}
         control => return EventHudOutcome::Control(control),
