@@ -1,10 +1,13 @@
 //! Byte-exact opcode fixture encoders shared by script dispatch suites.
 use crate::vm::{Opcode, Quad};
 
+/// Mission-script class the runtime instantiates at mission start.
+pub(crate) const STARTUP_CLASS: &str = "StartUp";
+
 pub(crate) fn empty_startup_class(source_file: String) -> crate::scb::ClassEntry {
     crate::scb::ClassEntry {
         source_file,
-        class_name: "StartUp".into(),
+        class_name: STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: Vec::new(),

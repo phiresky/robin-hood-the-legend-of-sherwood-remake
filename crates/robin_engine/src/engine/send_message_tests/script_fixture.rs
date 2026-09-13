@@ -609,7 +609,7 @@ fn startup_class() -> ClassEntry {
     };
     ClassEntry {
         source_file: "send_message_test.scs".into(),
-        class_name: "StartUp".into(),
+        class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
         size_of_member_variables: 0,
         member_variables: Vec::new(),
         functions: vec![global_process_message, global_hourglass],

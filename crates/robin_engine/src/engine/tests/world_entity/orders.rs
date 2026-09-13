@@ -294,8 +294,7 @@ fn original_pc_registry_is_independent_from_portrait_priority_order() {
     engine.world.pc_ids = vec![first, second];
     assert_eq!(engine.world.original_pc_registry_ids, vec![second, first]);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     assert_eq!(
         engine.ai_pc_snapshot_ids_for_test(&assets),
         vec![second, first],
@@ -313,7 +312,6 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
 
     let owner = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let near = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
@@ -333,7 +331,7 @@ fn far_opponent_removal_retains_owner_strength_and_runs_reciprocal_delete() {
         .element_data_mut()
         .set_position_map(MapPoint::new(1_000.0, 0.0));
     let far_partner = engine.add_test_entity(far_partner_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     {
         let human = engine
@@ -398,8 +396,7 @@ fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let foreign_b =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let terminate = |engine: &mut EngineInner, card_owner| {
         let sequence = engine
@@ -477,19 +474,13 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "battle_observe_owner_boundary_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "battle_observe_owner_boundary_test.scs".into(),
+            )],
         })
         .expect("minimal mission exposes the installed test jump"),
     );
@@ -703,8 +694,7 @@ fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let sector = crate::position_interface::SectorHandle::new(1);
     let entity = engine

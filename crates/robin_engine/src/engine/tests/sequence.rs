@@ -317,8 +317,7 @@ pub(super) fn bind_test_action_point(
         offsets: vec![SpriteFrameOffset::ZERO],
         sound_ids: vec![0],
     };
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script]),
@@ -347,8 +346,7 @@ pub(super) fn bind_test_bow_release_action(engine: &mut EngineInner, id: EntityI
         offsets: vec![SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0, 0, 0],
     };
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[action as usize] = 0;
     let mut sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![script; 16]),
@@ -3425,8 +3423,7 @@ fn transition_resumed_pass_door_reach_event_obeys_real_action_followers() {
         let mut engine = EngineInner::new();
         let owner =
             engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         let mut route = Sequence::new();
         route.append_element(SequenceElement::new_movement(
@@ -3577,9 +3574,8 @@ fn soldier_enter_attentive_mode_queues_transition_anim() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let active = engine
@@ -3620,9 +3616,8 @@ fn set_soldier_attentive_mode_plays_transition_from_upright() {
     engine.set_soldier_attentive_mode(soldier_id, true, false);
     engine.ensure_wait_element(soldier_id);
 
-    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let active = engine
@@ -3769,9 +3764,8 @@ fn set_soldier_attentive_mode_plays_transition_while_movement_is_postponed() {
     );
 
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let movement = engine
@@ -4838,9 +4832,8 @@ fn soldier_enter_attentive_mode_from_crouched_stands_first() {
     engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let mut assets = LevelAssets::default();
     let mut dev = crate::engine::DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     // Posture transition generation translates the CROUCH_UP then the element's
@@ -5300,9 +5293,8 @@ fn launched_owned_element_reaches_in_progress_in_same_tick() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(soldier_id);
 
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let elem_state = engine
@@ -5332,9 +5324,8 @@ fn equip_bow_translate_plays_transition_orders() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(pc_id);
 
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let elem = engine
@@ -5443,7 +5434,6 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
 
     let mut dev = DevState::default();
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let rescuer = engine.add_test_entity(make_test_pc(Posture::Upright));
     let target = engine.add_test_entity(make_test_soldier(Posture::Lying));
@@ -5460,7 +5450,7 @@ fn wake_up_translate_books_turning_then_waking_up_with_antagonist() {
     let seq_id = engine.launch_element(elem);
     engine.ensure_wait_element(rescuer);
 
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let _ = engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let (order_seq, order_elem, order) = engine
@@ -5514,8 +5504,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         },
         ..Default::default()
     };
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .soldiers
         .resize_with(1, crate::profiles::SoldierProfile::default);
@@ -5606,8 +5595,7 @@ fn waking_up_done_publishes_transient_lying_corpse_intersection() {
         .expect("neighbour is human")
         .last_is_lying_for_corpse_intersection = Some(true);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .soldiers
         .resize_with(1, crate::profiles::SoldierProfile::default);
@@ -5716,9 +5704,8 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
     let score_before = engine.mission_domain.campaign.values[CampaignValue::Score];
 
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let entity = engine.get_entity(victim).expect("victim still present");
@@ -5767,9 +5754,8 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     engine.ensure_wait_element(victim);
 
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let mut profiles = (*assets.profile_manager).clone();
     profiles.characters[0].vip = true;
     assets.profile_manager = std::sync::Arc::new(profiles);

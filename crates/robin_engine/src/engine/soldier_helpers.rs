@@ -2016,7 +2016,6 @@ mod tests {
     fn collected_condolation_move_is_instructed_before_callback_returns() {
         let sim = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
-        let mut assets = LevelAssets::new();
         let owner = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element = crate::element::ElementData::from_initial_posture(
@@ -2039,7 +2038,7 @@ mod tests {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -6.0, -4.0, 6.0, 4.0,
             ));
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         let mut movement = crate::sequence::SequenceElement::new_movement(
             1,
             crate::element::Command::Move,
@@ -2083,19 +2082,14 @@ mod tests {
         use crate::engine::MissionScript;
         use crate::fast_find_grid::GridSector;
         use crate::gate::{Door, DoorIndex, DoorType};
-        use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+        use crate::scb::{SCB_VERSION, ScbFile};
         use crate::sector::{SectorNumber, SectorType};
 
         let mission = MissionScript::from_scb(ScbFile {
             version: SCB_VERSION,
-            classes: vec![ClassEntry {
-                source_file: "door_fight_route_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "door_fight_route_test.scs".into(),
+            )],
         })
         .expect("minimal mission script");
 

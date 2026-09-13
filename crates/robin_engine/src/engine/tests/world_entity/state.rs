@@ -375,7 +375,6 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     use crate::sequence::SequenceState;
 
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier_entity = make_test_soldier(Posture::Upright);
     let Entity::Soldier(soldier) = &mut soldier_entity else {
@@ -388,7 +387,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     enemy.base.current_state = AiState::Default;
     enemy.base.current_substate = Substate::DefaultGotoPostTurn;
     let owner = engine.add_test_entity(soldier_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let mut face_prefix = AiActorOutbox::default();
     face_prefix
@@ -526,7 +525,6 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     use crate::sequence::SequenceState;
 
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier_entity = make_test_soldier(Posture::Upright);
     let Entity::Soldier(soldier) = &mut soldier_entity else {
@@ -545,7 +543,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
         Substate::AttackingTooProudToAttackApproach,
     );
     let owner = engine.add_test_entity(soldier_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.drain_direct_ai_owner_boundary_mode(
         &sim,
@@ -587,7 +585,6 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     use crate::sequence::SequenceState;
 
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let mut soldier_entity = make_test_soldier(Posture::Upright);
     let Entity::Soldier(soldier) = &mut soldier_entity else {
@@ -611,7 +608,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     turn.after_attentive_mode = true;
     enemy.base.outbox.actor.orders.push(turn);
     let owner = engine.add_test_entity(soldier_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.drain_direct_ai_owner_boundary_mode(
         &sim,
@@ -902,8 +899,7 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
             .me = id.index();
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let Entity::Soldier(self_soldier) =
         engine.get_entity_mut(self_id).expect("self fighter exists")
@@ -959,8 +955,7 @@ fn full_fighter_registry_retains_dead_pc_for_held_ai_targets() {
     dead_pc.element.active = true;
     dead_pc.pc.life_points = 0;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let nearby = engine.build_nearby_fighters_for(self_id, &assets);
     assert!(
@@ -987,19 +982,13 @@ fn reconsider_approach_route_settles_before_roof_wait_resume() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "reconsider_approach_owner_boundary_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "reconsider_approach_owner_boundary_test.scs".into(),
+            )],
         })
         .expect("minimal mission exposes the installed test jump"),
     );
@@ -1174,8 +1163,7 @@ fn battle_observe_continuation_fails_loud_for_stale_target() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let ai = engine
         .get_entity_mut(owner)
@@ -1205,8 +1193,7 @@ fn battle_observe_roof_fallback_fails_loud_without_mission() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let ai = engine
@@ -1291,8 +1278,7 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
     owner.base.launch_timer(0, frame);
     owner.base.timer_is_running = false;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine.get_entity(owner_id).expect("owner exists"),
@@ -1573,19 +1559,13 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "adopted_return_to_duty_boundary_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "adopted_return_to_duty_boundary_test.scs".into(),
+            )],
         })
         .expect("minimal mission exposes the installed duplicate-public gate"),
     );
@@ -2098,10 +2078,9 @@ fn messenger_selection_followup_retargets_recording_before_frame_returns() {
         .messenger
         .send(Message::pc(PcMessage::SelectCharacter, Some(second)));
 
-    let mut assets = LevelAssets::new();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     assert_eq!(engine.players.seats[0].selection, vec![second]);

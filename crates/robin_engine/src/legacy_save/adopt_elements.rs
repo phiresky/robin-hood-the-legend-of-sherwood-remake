@@ -3054,12 +3054,12 @@ mod tests {
     #[test]
     fn sprite_adoption_preserves_original_profile_switch_before_position_restore() {
         use crate::position_interface::Direction;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut element = crate::element::ElementData::default();
-        let mut primary_conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut primary_conversion = crate::engine::test_support::unmapped_conversion();
         primary_conversion[OrderType::RunningUpright as usize] = 224;
-        let mut alternate_conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut alternate_conversion = crate::engine::test_support::unmapped_conversion();
         alternate_conversion[OrderType::RunningUpright as usize] = 1_696;
         let mut primary_scripts = vec![SpriteScript::default(); 240];
         primary_scripts[234].frame_ids = vec![0; 8];

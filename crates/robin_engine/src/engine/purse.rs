@@ -1163,10 +1163,10 @@ mod tests {
 
     fn purse_test_assets() -> crate::engine::LevelAssets {
         use crate::sprite::Sprite;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
         use std::sync::Arc;
 
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[Animation::ObjectFlying as usize] = 16;
         conversion[Animation::ObjectBursting as usize] = 32;
         let script = SpriteScript {

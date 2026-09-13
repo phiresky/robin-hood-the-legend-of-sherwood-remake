@@ -52,8 +52,7 @@ fn mixed_enemy_fifo_fixture(
     royalist.element.set_position_map(MapPoint::new(120.0, 0.0));
     royalist.npc.life_points = 100;
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)

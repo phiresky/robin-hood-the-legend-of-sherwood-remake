@@ -252,10 +252,9 @@ fn enter_swordfight_clears_pending_bow_shot_list() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let opponent = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let mut shot = crate::sequence::SequenceElement::new_interaction(
         1,
@@ -289,10 +288,9 @@ fn npc_enter_swordfight_preserves_postponed_bow_sequence() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let initiator = engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
     let opponent = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let mut shot = crate::sequence::SequenceElement::new_interaction(
         1,
@@ -561,8 +559,7 @@ fn fighter_snapshot_recovers_exact_duplicate_pc_sector_for_combat_routes() {
     let mut engine = EngineInner::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let square = |min: f32, max: f32| GridSector {
         points: vec![
@@ -742,8 +739,7 @@ fn fighter_snapshot_uses_committed_gate_side_for_door_passing_actor() {
         .sequence_manager
         .element_in_progress(sequence_id, 0);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let (optical_ai_position, optical_point) =
         engine.enemy_optical_geometry_for_test(&assets, target_id);
@@ -860,14 +856,9 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "reconsider_observation_pass_door_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "reconsider_observation_pass_door_test.scs".into(),
+            )],
         })
         .expect("minimal mission exposes the installed test doors"),
     );
@@ -893,8 +884,7 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
             .element_in_progress(sequence_id, 0);
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let scratch = engine.build_sim_scratch(&assets);
     let ctx = crate::engine::ai::build_ai_context_from_entity(
         engine

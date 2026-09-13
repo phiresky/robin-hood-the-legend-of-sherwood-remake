@@ -33,8 +33,7 @@ fn build_engine_with_pc(bow_ammo: u16) -> (EngineInner, EntityId, LevelAssets) {
         profile_name: "TEST".into(),
         ..Default::default()
     });
-    let mut ale_conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut ale_conversion = crate::engine::test_support::unmapped_conversion();
     ale_conversion[crate::order::OrderType::ObjectLying as usize] = 0;
     assets.accessory_sprite_prototypes.insert(
         crate::element::ObjectType::Ale,
@@ -67,8 +66,7 @@ fn build_engine_with_pc(bow_ammo: u16) -> (EngineInner, EntityId, LevelAssets) {
         initial_element.active = true;
         initial_element
     };
-    let mut pc_conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut pc_conversion = crate::engine::test_support::unmapped_conversion();
     pc_conversion[crate::order::OrderType::DroppingAle as usize] = 0;
     element.sprite = crate::sprite::Sprite::new(
         std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {

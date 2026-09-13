@@ -2,6 +2,7 @@ use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::ActiveFlight;
+use crate::engine::test_support::actors::TestActor;
 
 /// Ground-level (`z == 0`) test position.
 fn wp(x: f32, y: f32) -> WorldPoint3D {
@@ -24,42 +25,23 @@ fn make_soldier(
     pos: WorldPoint3D,
     sector: Option<crate::position_interface::SectorHandle>,
 ) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
-        crate::element::Camp::Lacklandists,
-    );
-    entity.position_iface_mut().clear_pathfinder_index();
-    entity.element_data_mut().active = true;
-    entity.element_data_mut().set_position(pos);
-    entity
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::from_world_xyz(
-            pos.x, pos.y, pos.z,
-        ));
-    entity
-        .position_iface_mut()
-        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
-    entity.npc_data_mut().expect("soldier fixture").life_points = 50;
-    entity
+    TestActor::soldier(Posture::Upright)
+        .camp(crate::element::Camp::Lacklandists)
+        .enemy_ai(Default::default())
+        .at(pos)
+        .sector_topology(sector)
+        .life_points(50)
+        .build()
 }
 
 fn make_pc(pos: WorldPoint3D, sector: Option<crate::position_interface::SectorHandle>) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_pc(Posture::Upright);
-    entity.position_iface_mut().clear_pathfinder_index();
-    entity.element_data_mut().active = true;
-    entity.element_data_mut().set_position(pos);
-    entity
-        .element_data_mut()
-        .set_position_map(crate::coordinates::MapPoint::from_world_xyz(
-            pos.x, pos.y, pos.z,
-        ));
-    entity
-        .position_iface_mut()
-        .set_sector_topology(sector, sector.and_then(|sector| sector.arena_index()));
-    let pc = entity.pc_data_mut().expect("PC fixture");
-    pc.life_points = 50;
-    pc.profile_index = crate::profiles::CharacterProfileIdx(0);
-    pc.campaign_description_index = Some(0);
-    entity
+    TestActor::pc(Posture::Upright)
+        .at(pos)
+        .sector_topology(sector)
+        .life_points(50)
+        .pc_profile(0)
+        .campaign_description(0)
+        .build()
 }
 
 fn action_test_assets(actions: [crate::profiles::Action; 3]) -> LevelAssets {
@@ -431,8 +413,7 @@ fn install_test_melee_order(
         sound_ids: vec![0, 0, 0],
         ..Default::default()
     };
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[order_type as usize] = 0;
     let entity = engine.get_entity_mut(attacker).unwrap();
     let position_iface = entity.element_data().sprite.position_iface.clone();

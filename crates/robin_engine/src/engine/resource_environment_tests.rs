@@ -26,7 +26,7 @@ fn program(value: i32) -> Arc<ScriptProgram> {
             version: 1.5,
             classes: vec![ClassEntry {
                 source_file: "same.scs".into(),
-                class_name: "StartUp".into(),
+                class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
                 size_of_member_variables: 0,
                 member_variables: vec![],
                 functions: vec![Function {

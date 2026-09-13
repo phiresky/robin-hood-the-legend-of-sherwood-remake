@@ -6,6 +6,26 @@ use super::commands::SelectionCommandBatchMode;
 use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
 use crate::player_command::{PlayerCommand, PlayerInput};
 
+/// Sprite action-conversion table with every action unmapped; tests then map
+/// the few rows their synthetic scripts provide.
+pub(crate) fn unmapped_conversion() -> Vec<u16> {
+    vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END]
+}
+
+impl EngineInner {
+    /// Default [`LevelAssets`] completed by
+    /// [`super::complete_test_runtime_fixture`] for the entities added so far.
+    ///
+    /// The fixture snapshots the current roster, so call this after the
+    /// scenario's actors are registered, exactly where the two-step
+    /// `LevelAssets::new()` + `complete_test_runtime_fixture` pair used to be.
+    pub(crate) fn test_runtime_assets(&mut self) -> LevelAssets {
+        let mut assets = LevelAssets::new();
+        super::complete_test_runtime_fixture(self, &mut assets);
+        assets
+    }
+}
+
 /// Test adapters over the authoritative command dispatcher
 /// (`commands::apply_commands_authoritative`). Production callers go
 /// through `Engine::advance_frame`; unit tests across the engine drive

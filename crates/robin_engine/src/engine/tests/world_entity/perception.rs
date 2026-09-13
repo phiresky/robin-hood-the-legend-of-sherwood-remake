@@ -972,20 +972,14 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "dead_body_alert_continuation_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "dead_body_alert_continuation_test.scs".into(),
+            )],
         })
         .expect("minimal mission supports owner-local movement settlement"),
     );
@@ -1057,7 +1051,6 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
-    let mut assets = LevelAssets::new();
     let owner = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let Entity::Soldier(soldier) = engine
         .get_entity_mut(owner)
@@ -1079,7 +1072,7 @@ fn dead_body_alert_tail_fails_loud_for_wrong_ai_owner() {
             center: Position::default(),
             radius: 300,
         });
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.drain_ai_owner_work_for(&sim, &assets, owner);
 }
@@ -1580,8 +1573,7 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let soldier_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
 
     for (id, rank, state, substate) in [
         (
@@ -1662,8 +1654,7 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let target_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     for id in [officer_id, target_id] {
         let enemy = engine
             .get_entity_mut(id)
@@ -1725,8 +1716,7 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let callback_officer_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     for (id, x, rank) in [
         (reporter_id, 0.0, ProfileRank::Soldier),

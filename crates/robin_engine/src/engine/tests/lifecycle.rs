@@ -99,9 +99,8 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
     }
 
     let mut display = HostDisplayState::default();
-    let mut assets = LevelAssets::new();
     let mut dev = DevState::default();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
 
     let Some(Entity::Pc(victim)) = engine.get_entity(victim_id) else {
@@ -118,7 +117,7 @@ fn corpse_exit_initialization_fixture(
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let mut engine = EngineInner::new();
     let body = engine.add_test_entity(make_test_soldier(Posture::Carried));
@@ -154,7 +153,7 @@ fn corpse_exit_initialization_fixture(
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
         sound_ids: vec![0, 0],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
     engine
         .get_entity_mut(carrier)

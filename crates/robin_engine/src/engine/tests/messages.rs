@@ -31,8 +31,7 @@ fn self_stimulus_chain_reenters_until_stable_in_originating_frame() {
         .unwrap()
         .fire_self_stimulus(StimulusType::EventDone);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.drain_pending_self_stimuli(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
@@ -93,8 +92,7 @@ fn post_reentrant_macro_cleanup_preserves_nested_wait_deadline() {
         ai.outbox.reentrant.finish_macro_after_self_stimuli = true;
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.drain_self_stimuli_for_npc(sim, civilian, &assets);
 
     let ai = engine
@@ -160,8 +158,7 @@ fn change_way_tail_runs_between_assignment_callback_and_existing_sibling() {
         );
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.drain_ai_owner_work_for(sim, &assets, civilian);
     assert_eq!(
         engine
@@ -236,8 +233,7 @@ fn change_way_suppressed_assignment_still_uses_friendly_virtual_tail() {
         );
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.drain_ai_owner_work_for(sim, &assets, civilian);
 
     let friendly = engine
@@ -429,8 +425,7 @@ fn condolation_reenters_think_before_dispatch_returns() {
         .sequence_manager
         .element_in_progress(seq_id, 0);
     engine.orders.sequence_manager.element_terminated(seq_id, 0);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.dispatch_condolations(sim, &assets);
 
     let ai = engine.get_entity(soldier).unwrap().ai_controller().unwrap();
@@ -947,8 +942,7 @@ fn condolation_followup_arbitrates_before_parent_sequence_successor() {
         .orders
         .sequence_manager
         .element_terminated(parent_id, 0);
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.dispatch_condolations(sim, &assets);
 
     let commands: Vec<_> = engine
