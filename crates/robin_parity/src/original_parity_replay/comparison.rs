@@ -2,8 +2,8 @@
 use super::{
     BTreeMap, Engine, Entity, EntityId, EntityLabel, EntityMap, LegacyBlockedBoxShadow,
     LevelAssets, MapPoint, TraceElement, TraceEntityId, TraceEntityKind, TraceFloat, TraceFrame,
-    TracePathEvent, TracePoint, TraceRunResult, TraceSequenceLifecycleEvent, TraceVisibilityQuery,
-    active_pass_door_keys_match, canonicalize_legacy_blocked_box,
+    TracePathEvent, TracePoint, TraceRunError, TraceRunResult, TraceSequenceLifecycleEvent,
+    TraceVisibilityQuery, active_pass_door_keys_match, canonicalize_legacy_blocked_box,
     canonicalize_original_runtime_representation, command_from_stable_name,
     original_motion_executor_order_id, original_reset_blocked_box_this_frame,
     original_stoppable_current_motion_order, project_missing_draw_view_sprite_cache,
@@ -64,8 +64,11 @@ pub(super) fn canonicalize_authoritative_snapshot(
                 None
             };
             if let Some((kind, index)) = entity_reference {
-                let index = u32::try_from(index)
-                    .unwrap_or_else(|_| panic!("Original entity index {index} exceeds u32"));
+                let index = u32::try_from(index).map_err(|_| {
+                    TraceRunError::TraceContent(format!(
+                        "Original entity index {index} exceeds u32"
+                    ))
+                })?;
                 let id = entity_map.translate(TraceEntityId { kind, index })?;
                 *value = serde_json::json!({
                     "kind": entity_kind_name(id.kind()),
@@ -82,9 +85,11 @@ pub(super) fn canonicalize_authoritative_snapshot(
                 ) && let Some(original) = child.as_i64()
                     && original >= 0
                 {
-                    let original = u16::try_from(original).unwrap_or_else(|_| {
-                        panic!("Original snapshot sector {original} exceeds u16")
-                    });
+                    let original = u16::try_from(original).map_err(|_| {
+                        TraceRunError::TraceContent(format!(
+                            "Original snapshot sector {original} exceeds u16"
+                        ))
+                    })?;
                     *child = entity_map.translate_sector(original).into();
                 }
             }
@@ -599,9 +604,11 @@ impl FrameComparison<'_> {
         let differences = &mut self.differences;
         let element = actual.element_data();
         if let Some(expected_actor) = &expected.actor {
-            let actual_actor = actual
-                .actor_data()
-                .unwrap_or_else(|| panic!("trace reports actor state for non-actor {id:?}"));
+            let actual_actor = actual.actor_data().ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
+                    "trace reports actor state for non-actor {id:?}"
+                ))
+            })?;
             let execution_telemetry_is_logical = original_actor_execution_telemetry_is_logical(
                 expected.creation_order,
                 &frame.sequence_lifecycle_events,
@@ -724,7 +731,11 @@ impl FrameComparison<'_> {
                 Entity::Pc(pc) => pc.pc.life_points,
                 Entity::Soldier(soldier) => soldier.npc.life_points,
                 Entity::Civilian(civilian) => civilian.npc.life_points,
-                _ => panic!("trace reports life_points for non-human {id:?}"),
+                _ => {
+                    return Err(TraceRunError::TraceContent(format!(
+                        "trace reports life_points for non-human {id:?}"
+                    )));
+                }
             };
             compare(
                 differences,
@@ -747,7 +758,11 @@ impl FrameComparison<'_> {
                 expected_human.unconscious,
                 actual
                     .human_data()
-                    .unwrap_or_else(|| panic!("trace reports human state for non-human {id:?}"))
+                    .ok_or_else(|| {
+                        TraceRunError::TraceContent(format!(
+                            "trace reports human state for non-human {id:?}"
+                        ))
+                    })?
                     .unconscious,
             );
             compare(
@@ -785,9 +800,11 @@ impl FrameComparison<'_> {
                     .copied()
                     .map(|opponent| entity_map.translate(opponent))
                     .collect::<TraceRunResult<_>>()?;
-                let actual_human = actual.human_data().unwrap_or_else(|| {
-                    panic!("trace reports human opponents for non-human {id:?}")
-                });
+                let actual_human = actual.human_data().ok_or_else(|| {
+                    TraceRunError::TraceContent(format!(
+                        "trace reports human opponents for non-human {id:?}"
+                    ))
+                })?;
                 compare(
                     differences,
                     id,
@@ -872,9 +889,9 @@ impl FrameComparison<'_> {
         let legacy_additive_omissions = self.legacy_additive_omissions;
         let differences = &mut self.differences;
         if let Some(expected_ai) = &expected.ai {
-            let actual_ai = actual
-                .ai_controller()
-                .unwrap_or_else(|| panic!("trace reports AI state for non-NPC {id:?}"));
+            let actual_ai = actual.ai_controller().ok_or_else(|| {
+                TraceRunError::TraceContent(format!("trace reports AI state for non-NPC {id:?}"))
+            })?;
             compare(
                 differences,
                 id,
@@ -1029,7 +1046,9 @@ impl FrameComparison<'_> {
                 let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
                 let actual_line_index = actual.enemy_ai().and_then(|enemy| enemy.my_line_jump);
                 if expected_line.is_some() && actual.enemy_ai().is_none() {
-                    panic!("trace reports a non-null my_line_jump for non-enemy entity {id:?}");
+                    return Err(TraceRunError::TraceContent(format!(
+                        "trace reports a non-null my_line_jump for non-enemy entity {id:?}"
+                    )));
                 }
                 let actual_line = actual_line_index.map(|line_index| {
                     let line = engine
@@ -1063,12 +1082,16 @@ impl FrameComparison<'_> {
         let entity_map = self.entity_map;
         let differences = &mut self.differences;
         if let Some(expected_detection) = &expected.detection {
-            let npc = actual
-                .npc_data()
-                .unwrap_or_else(|| panic!("trace reports detection state for non-NPC {id:?}"));
-            let controller = actual
-                .ai_controller()
-                .unwrap_or_else(|| panic!("trace reports detection state for AI-less NPC {id:?}"));
+            let npc = actual.npc_data().ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
+                    "trace reports detection state for non-NPC {id:?}"
+                ))
+            })?;
+            let controller = actual.ai_controller().ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
+                    "trace reports detection state for AI-less NPC {id:?}"
+                ))
+            })?;
             compare(
                 differences,
                 id,

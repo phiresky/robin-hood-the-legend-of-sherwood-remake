@@ -314,6 +314,8 @@ impl TraceCommand {
                             .and_then(|resolution| resolution.unmapped_goal_search_sector),
                     )? {
                     GroupMoveGoalTranslation::Runtime(goal, index) => {
+                        // Invariant: the retained topology's runtime sector
+                        // numbers were taken from this engine's own grid.
                         engine
                             .fast_grid()
                             .level
