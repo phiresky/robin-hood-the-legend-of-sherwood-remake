@@ -283,7 +283,15 @@ impl ModalScreen for DialogueModalState {
         let resources = menu_resources
             .as_mut()
             .expect("ModalBatch::tick verified menu resources before begin");
-        DialogueModalState::new(window, renderer, resources, item.sentences)
+        DialogueModalState::new(
+            &ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor: None,
+            },
+            item.sentences,
+        )
     }
 
     fn step(
@@ -315,16 +323,20 @@ impl ModalScreen for DialogueModalState {
         });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
         self.tick(
-            window,
-            renderer,
-            resources,
-            &mut host.audio.sound,
-            &sound_cfg,
-            audio_backend
-                .as_mut()
-                .map(|b| b as &mut dyn crate::sound::AudioBackend),
-            sound_enabled,
-            Some(&cursor),
+            &mut ingame_menu::DialogueIo {
+                window,
+                renderer,
+                resources,
+                cursor: Some(&cursor),
+            },
+            ingame_menu::DialogueAudio {
+                sound: &mut host.audio.sound,
+                config: &sound_cfg,
+                backend: audio_backend
+                    .as_mut()
+                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
+                enabled: sound_enabled,
+            },
             modal_net.as_ref(),
         )
     }
@@ -346,14 +358,15 @@ impl ModalScreen for DialogueModalState {
             sound_enabled,
         );
         let cursor = default_modal_cursor(ctx.cursor_renderer, ctx.cursor_res, ctx.renderer);
-        self.render_replay_wait(
-            ctx.window,
-            ctx.renderer,
-            ctx.menu_resources
+        self.render_replay_wait(&mut ingame_menu::DialogueIo {
+            window: ctx.window,
+            renderer: ctx.renderer,
+            resources: ctx
+                .menu_resources
                 .as_mut()
                 .expect("active dialogue resources"),
-            Some(&cursor),
-        );
+            cursor: Some(&cursor),
+        });
     }
 
     fn finish_replay(

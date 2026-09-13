@@ -27,22 +27,18 @@ use robin_engine::sprite::BBox;
 use std::time::Duration;
 use web_time::Instant;
 
-use crate::gfx_types::Keycode;
-
-use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
-use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
-    enter_modal_gpu_phase,
-};
+use super::layout::{MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, draw_background};
 use super::resources::{
     IngameMenuResources, MT_INFOBULLE_BUTTON_DIALOG_ABANDON, MT_INFOBULLE_BUTTON_DIALOG_CONTINUE,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{
+    self, ModalCursor, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey,
+};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 496;
@@ -234,19 +230,52 @@ fn dialogue_buttons(
 /// When `replay_result` is `Some`, the interactive loop is skipped and
 /// the pre-recorded result is returned immediately.  This is what lets
 /// replays dismiss modal briefings without a human at the keyboard.
+/// Screen IO for the dialogue: like [`ModalScreenIo`], but with mutable menu
+/// resources because speaker portraits load lazily into the resource cache.
+pub struct DialogueIo<'frame, 'cursor> {
+    pub window: &'frame mut crate::window::GameWindow,
+    pub renderer: &'frame mut Renderer,
+    pub resources: &'frame mut IngameMenuResources,
+    pub cursor: Option<&'frame ModalCursor<'cursor>>,
+}
+
+impl<'cursor> DialogueIo<'_, 'cursor> {
+    /// Lend the shared-resource view that [`ScreenFrame`] works with.
+    pub fn screen_io(&mut self) -> ModalScreenIo<'_, 'cursor> {
+        ModalScreenIo {
+            window: &mut *self.window,
+            renderer: &mut *self.renderer,
+            resources: &*self.resources,
+            cursor: self.cursor,
+        }
+    }
+}
+
+/// Voice-playback services for the dialogue: the ducking configuration and
+/// the session's sound-enabled flag travel with the manager and backend.
+pub struct DialogueAudio<'a> {
+    pub sound: &'a mut SoundManager,
+    pub config: &'a robin_engine::sound_config::SoundConfig,
+    pub backend: Option<&'a mut dyn AudioBackend>,
+    pub enabled: bool,
+}
+
 pub async fn show_dialogue(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &mut IngameMenuResources,
-    sound: &mut SoundManager,
-    sound_config: &robin_engine::sound_config::SoundConfig,
-    audio: Option<&mut dyn AudioBackend>,
-    sound_enabled: bool,
-    cursor: Option<ModalCursor<'_>>,
-    sentences: &[DialogueSentence],
-    replay_result: Option<DialogResult>,
-    mut modal_net: Option<super::ModalNet<'_>>,
+    io: &mut DialogueIo<'_, '_>,
+    audio: DialogueAudio<'_>,
+    dialogue: BatchDialogue<'_>,
 ) -> DialogResult {
+    let BatchDialogue {
+        sentences,
+        replay_result,
+        mut modal_net,
+    } = dialogue;
+    let DialogueAudio {
+        sound,
+        config: sound_config,
+        backend: audio,
+        enabled: sound_enabled,
+    } = audio;
     if sentences.is_empty() {
         return DialogResult::Completed;
     }
@@ -257,20 +286,17 @@ pub async fn show_dialogue(
     // Enter dialogue mode — ducks other audio while playing the voice stream.
     sound.enter_dialogue(sound_config);
 
-    let sw = renderer.screen_width() as i32;
-    let sh = renderer.screen_height() as i32;
-    let transform = MenuTransform::centered(sw, sh);
-
     let virt_x = (MENU_W - WIN_W) / 2;
     let virt_y = (MENU_H - WIN_H) / 2;
 
+    let resources = &*io.resources;
     let mut frame = dialogue_buttons(
         (virt_x, virt_y),
         resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
     );
-    widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
+    widget_bridge::attach_alpha_masks(&mut frame, resources, io.renderer);
 
     // ── Animation state ────────────────────────────────────────────
     let mut mouth_frame: u8 = 0;
@@ -293,7 +319,7 @@ pub async fn show_dialogue(
     // Start the first sentence's audio.
     start_sentence(sound, &mut audio_slot, sound_enabled, &sentences[0]);
 
-    let mut input_state = ModalInputState::from_window(event_pump, transform);
+    let mut input_state = ModalInputState::for_screen(io.window, io.renderer);
 
     let mut remote_result = None;
     'outer: loop {
@@ -311,40 +337,21 @@ pub async fn show_dialogue(
         // ── Input ───────────────────────────────────────────────
         let mut advance = false;
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            input_state.update_from_event(&event, transform);
-
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    aborted = true;
-                }
+        let screen = ScreenFrame::begin(&mut io.screen_io(), &mut input_state);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => aborted = true,
                 // Skip is bound to Return and Keypad-Enter only — no
                 // Space shortcut.
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
-                    advance = true;
-                }
-                _ => {}
+                ScreenKey::Confirm => advance = true,
+                ScreenKey::Next => {}
             }
         }
 
         // ── Widget input processing ─────────────────────────────
-        let widget_input = input_state.as_widget_input();
-        let events = frame.process_input(&widget_input);
-        input_state.end_frame();
+        let (_, activated) = ScreenFrame::dispatch(&mut input_state, &mut frame);
 
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        if let Some(id) = activated {
             match id {
                 ID_SKIP => advance = true,
                 ID_STOP => aborted = true,
@@ -399,15 +406,17 @@ pub async fn show_dialogue(
         portrait_fade.set(sentence.resolved_portrait_id());
 
         draw_dialogue_body(
-            renderer,
-            resources,
-            transform,
+            io,
+            &screen,
             (virt_x, virt_y),
             &sentence.text,
             &mut portrait_fade,
             mouth_frame,
         );
 
+        let renderer = &mut *io.renderer;
+        let resources = &*io.resources;
+        let transform = screen.transform;
         // Draw buttons via widget bridge.
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
 
@@ -420,11 +429,10 @@ pub async fn show_dialogue(
             tooltip.draw(renderer, font, transform, &frame, mouse_pt);
         }
 
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
-        }
-
-        renderer.present();
+        screen.finish(&mut io.screen_io(), &input_state);
+        // TODO: `widget_bridge::run_modal` needs a `ModalScreenIo`, which cannot
+        // lend the mutable resources the portrait cache needs, so this legacy
+        // wrapper keeps its own loop with the same pacing.
         crate::window::sleep_ui_frame().await;
     }
 
@@ -486,20 +494,14 @@ pub struct DialogueModalState {
 }
 
 impl DialogueModalState {
-    pub fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &mut IngameMenuResources,
-        sentences: Vec<DialogueSentence>,
-    ) -> Self {
+    pub fn new(io: &ModalScreenIo<'_, '_>, sentences: Vec<DialogueSentence>) -> Self {
         assert!(
             !sentences.is_empty(),
             "DialogueModalState requires at least one sentence"
         );
 
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let resources = io.resources;
+        let transform = MenuTransform::for_renderer(io.renderer);
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
 
@@ -509,9 +511,9 @@ impl DialogueModalState {
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
         );
-        widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
+        widget_bridge::attach_alpha_masks(&mut frame, resources, io.renderer);
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(io.window, transform);
         let portrait_fade = PortraitFade::new(sentences[0].resolved_portrait_id());
 
         Self {
@@ -536,59 +538,41 @@ impl DialogueModalState {
 
     pub fn tick(
         &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &mut IngameMenuResources,
-        sound: &mut SoundManager,
-        sound_config: &robin_engine::sound_config::SoundConfig,
-        mut audio: Option<&mut dyn AudioBackend>,
-        sound_enabled: bool,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut DialogueIo<'_, '_>,
+        audio: DialogueAudio<'_>,
         modal_net: Option<&super::ModalNet<'_>>,
     ) -> Option<DialogResult> {
+        let DialogueAudio {
+            sound,
+            config: sound_config,
+            backend: mut audio,
+            enabled: sound_enabled,
+        } = audio;
         self.ensure_audio_started(sound, sound_config, &mut audio, sound_enabled);
 
         if let Some(result) = self.dismissal.poll(modal_net) {
             return Some(self.finish(sound, sound_config, audio, result));
         }
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
+        let screen = ScreenFrame::begin(&mut io.screen_io(), &mut self.input_state);
+        self.transform = screen.transform;
         if self.dismissal.is_pending() {
-            for event in events {
-                self.input_state.update_from_event(&event, self.transform);
-            }
             self.input_state.end_frame();
-            self.render(renderer, resources, cursor);
-            renderer.present();
+            self.render(io, &screen);
             return None;
         }
 
         let mut advance = false;
-        for event in events {
-            self.input_state.update_from_event(&event, self.transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.aborted = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => advance = true,
-                _ => {}
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => self.aborted = true,
+                ScreenKey::Confirm => advance = true,
+                ScreenKey::Next => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(id) = activated {
             match id {
                 ID_SKIP => advance = true,
                 ID_STOP => self.aborted = true,
@@ -618,8 +602,7 @@ impl DialogueModalState {
             if let Some(result) = self.dismissal.request(result, modal_net) {
                 return Some(self.finish(sound, sound_config, audio, result));
             } else {
-                self.render(renderer, resources, cursor);
-                renderer.present();
+                self.render(io, &screen);
                 return None;
             }
         }
@@ -635,8 +618,7 @@ impl DialogueModalState {
                 if let Some(result) = self.dismissal.request(result, modal_net) {
                     return Some(self.finish(sound, sound_config, audio, result));
                 } else {
-                    self.render(renderer, resources, cursor);
-                    renderer.present();
+                    self.render(io, &screen);
                     return None;
                 }
             }
@@ -651,8 +633,7 @@ impl DialogueModalState {
             self.same_face_count = 0;
         }
 
-        self.render(renderer, resources, cursor);
-        renderer.present();
+        self.render(io, &screen);
         None
     }
 
@@ -726,17 +707,10 @@ impl DialogueModalState {
     }
 
     /// Render after replay speech progression, without accepting physical input.
-    pub(crate) fn render_replay_wait(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &mut IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        let (_, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        self.render(renderer, resources, cursor);
-        renderer.present();
+    pub(crate) fn render_replay_wait(&mut self, io: &mut DialogueIo<'_, '_>) {
+        let screen = ScreenFrame::poll(&mut io.screen_io());
+        self.transform = screen.transform;
+        self.render(io, &screen);
     }
 
     fn finish(
@@ -756,25 +730,22 @@ impl DialogueModalState {
         result
     }
 
-    fn render(
-        &mut self,
-        renderer: &mut Renderer,
-        resources: &mut IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
+    /// Draw the current sentence, then the cursor, and present.
+    fn render(&mut self, io: &mut DialogueIo<'_, '_>, screen: &ScreenFrame) {
         let sentence = &self.sentences[self.sentence_idx];
         self.portrait_fade.set(sentence.resolved_portrait_id());
 
         draw_dialogue_body(
-            renderer,
-            resources,
-            self.transform,
+            io,
+            screen,
             (self.virt_x, self.virt_y),
             &sentence.text,
             &mut self.portrait_fade,
             self.mouth_frame,
         );
 
+        let renderer = &mut *io.renderer;
+        let resources = &*io.resources;
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
 
         let mouse_pt =
@@ -785,9 +756,7 @@ impl DialogueModalState {
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
         }
 
-        if let Some(c) = cursor {
-            c.draw(renderer, self.transform, &self.input_state);
-        }
+        screen.finish(&mut io.screen_io(), &self.input_state);
     }
 }
 
@@ -831,8 +800,13 @@ pub(crate) async fn show_dialogue_batch(
         .expect("show_dialogue_batch requires ingame menu resources");
     let sound_config = robin_engine::sound_config::SoundConfig::default();
     let sound_enabled = audio_backend.is_some();
-    let mut cursor =
-        super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
+    let cursor = super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
+    let mut io = DialogueIo {
+        window,
+        renderer,
+        resources,
+        cursor: Some(&cursor),
+    };
     let mut results = Vec::with_capacity(entries.len());
     for entry in entries {
         if entry.sentences.is_empty() {
@@ -843,23 +817,18 @@ pub(crate) async fn show_dialogue_batch(
         // `Option<&mut dyn AudioBackend>` whose borrow ends the moment
         // `show_dialogue` returns, so the next iteration can borrow
         // the backend again.
-        let audio_ref: Option<&mut dyn AudioBackend> =
-            audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend);
-        let modal_net = entry.modal_net.as_ref().map(|net| net.reborrow());
-        let result = show_dialogue(
-            window,
-            renderer,
-            resources,
-            sound,
-            &sound_config,
-            audio_ref,
-            sound_enabled,
-            Some(cursor.reborrow()),
-            entry.sentences,
-            entry.replay_result,
-            modal_net,
-        )
-        .await;
+        let audio = DialogueAudio {
+            sound: &mut *sound,
+            config: &sound_config,
+            backend: audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend),
+            enabled: sound_enabled,
+        };
+        let dialogue = BatchDialogue {
+            sentences: entry.sentences,
+            replay_result: entry.replay_result,
+            modal_net: entry.modal_net.as_ref().map(|net| net.reborrow()),
+        };
+        let result = show_dialogue(&mut io, audio, dialogue).await;
         results.push(result);
     }
     results
@@ -869,24 +838,25 @@ pub(crate) async fn show_dialogue_batch(
 /// The caller retains its sentence-selection timing; the fade advances exactly once
 /// after the portrait blits and before the text, as in both original drivers.
 fn draw_dialogue_body(
-    renderer: &mut Renderer,
-    resources: &mut IngameMenuResources,
-    transform: MenuTransform,
+    io: &mut DialogueIo<'_, '_>,
+    screen: &ScreenFrame,
     (virt_x, virt_y): (i32, i32),
     text: &str,
     portrait_fade: &mut PortraitFade,
     mouth_frame: u8,
 ) {
+    let renderer = &mut *io.renderer;
+    let transform = screen.transform;
     // Resolve portraits before entering the modal render phase.
-    let current_portrait = resources.portrait(renderer, portrait_fade.current);
+    let current_portrait = io.resources.portrait(renderer, portrait_fade.current);
     let previous_portrait = if portrait_fade.is_fading() {
-        resources.portrait(renderer, portrait_fade.previous)
+        io.resources.portrait(renderer, portrait_fade.previous)
     } else {
         None
     };
 
-    enter_modal_gpu_phase(renderer);
-    dim_screen(renderer);
+    screen.begin_draw(renderer);
+    let resources = &*io.resources;
 
     if let Some(bg) = resources.parchment_huge {
         draw_background(renderer, transform, &bg, virt_x, virt_y, WIN_W, WIN_H);

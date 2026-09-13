@@ -56,7 +56,8 @@ pub use buy_blazons::BuyBlazonsOutcome;
 pub use debriefing::{DebriefingContent, DebriefingModalState, DebriefingOutcome, show_debriefing};
 pub(crate) use dialogue::show_dialogue_batch;
 pub use dialogue::{
-    BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueModalState, DialogueSentence, show_dialogue,
+    BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueAudio, DialogueIo, DialogueModalState,
+    DialogueSentence, show_dialogue,
 };
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use leaderboard::MissionEndLeaderboardScreen;
