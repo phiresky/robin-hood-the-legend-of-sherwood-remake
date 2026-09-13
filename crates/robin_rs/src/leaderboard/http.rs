@@ -5,6 +5,7 @@
 //! channel. Redirects are refused on both platforms, especially for the
 //! signed multipart body containing the canonical replay and campaign.
 
+use crate::leaderboard::task::PollTask;
 use robin_run_protocol::{RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -42,7 +43,7 @@ pub enum HttpTransportError {
 
 #[derive(Debug)]
 pub struct HttpTask {
-    receiver: async_channel::Receiver<Result<HttpResponse, HttpTransportError>>,
+    task: PollTask<Result<HttpResponse, HttpTransportError>>,
 }
 
 impl HttpTask {
@@ -57,10 +58,15 @@ impl HttpTask {
 
     /// Non-blocking completion check intended to run once per graphical frame.
     pub fn try_take(&self) -> Option<Result<HttpResponse, HttpTransportError>> {
-        match self.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => Some(Err(HttpTransportError::WorkerClosed)),
+        self.task.poll(|| HttpTransportError::WorkerClosed)
+    }
+
+    /// A task that already holds `result`, so polling consumers can be unit
+    /// tested without a transport worker.
+    #[cfg(test)]
+    pub(crate) fn ready(result: Result<HttpResponse, HttpTransportError>) -> Self {
+        Self {
+            task: PollTask::ready(result),
         }
     }
 
@@ -68,8 +74,8 @@ impl HttpTask {
     /// one-shot task, retains the same bounded transport, and never blocks a
     /// native executor thread or the browser event loop.
     pub async fn take(self) -> Result<HttpResponse, HttpTransportError> {
-        self.receiver
-            .recv()
+        self.task
+            .take()
             .await
             .map_err(|_| HttpTransportError::WorkerClosed)?
     }
@@ -200,9 +206,9 @@ impl LeaderboardHttpClient {
             return Err(request_error("invalid response-body limit"));
         }
         let permit = InFlightPermit::acquire(Arc::clone(&self.in_flight), self.max_in_flight)?;
-        let (sender, receiver) = async_channel::bounded(1);
+        let (sender, task) = PollTask::channel();
         spawn_platform(request, self.timeout_ms, sender, permit)?;
-        Ok(HttpTask { receiver })
+        Ok(HttpTask { task })
     }
 }
 

@@ -15,7 +15,10 @@ fn every_publication_stage_reports_visibility_and_allows_retry() {
         write_json(&path, &"old").unwrap();
         let error = publish(
             &path,
-            PublicationMode::Replace,
+            PublicationOptions {
+                mode: PublicationMode::Replace,
+                ..Default::default()
+            },
             |file| file.write_all(b"\"new\""),
             |current| {
                 if current == stage {
@@ -56,7 +59,10 @@ fn create_new_publication_failures_preserve_visibility_and_competing_files() {
         let path = dir.path().join("replay.rhrec");
         let error = publish(
             &path,
-            PublicationMode::CreateNew,
+            PublicationOptions {
+                mode: PublicationMode::CreateNew,
+                ..Default::default()
+            },
             |file| file.write_all(b"complete"),
             |current| {
                 if current == stage {
@@ -87,7 +93,10 @@ fn create_new_publication_failures_preserve_visibility_and_competing_files() {
     let path = dir.path().join("replay.rhrec");
     let error = publish(
         &path,
-        PublicationMode::CreateNew,
+        PublicationOptions {
+            mode: PublicationMode::CreateNew,
+            ..Default::default()
+        },
         |file| file.write_all(b"ours"),
         |stage| {
             if stage == PublicationStage::Replace {
@@ -108,7 +117,10 @@ fn partial_create_new_write_does_not_poison_the_final_filename() {
     let path = dir.path().join("replay.rhrec");
     let error = publish(
         &path,
-        PublicationMode::CreateNew,
+        PublicationOptions {
+            mode: PublicationMode::CreateNew,
+            ..Default::default()
+        },
         |file| {
             file.write_all(b"partial")?;
             Err(io::Error::new(
@@ -154,7 +166,10 @@ fn partial_write_preserves_live_archive() {
     write_json(&path, &"old").unwrap();
     let error = publish(
         &path,
-        PublicationMode::Replace,
+        PublicationOptions {
+            mode: PublicationMode::Replace,
+            ..Default::default()
+        },
         |file| {
             file.write_all(b"{partial")?;
             Err(io::Error::new(
@@ -188,6 +203,49 @@ fn serialization_failure_preserves_live_archive() {
             .published()
     );
     assert_eq!(fs::read(&path).unwrap(), b"\"old\"");
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn private_publication_keeps_owner_only_bits_and_the_requested_staging_name() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("private.json");
+    fs::write(&path, b"old").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    let mut staged_names = Vec::new();
+    publish_reader(
+        &path,
+        PublicationOptions {
+            mode: PublicationMode::Replace,
+            staging_prefix: ".private-",
+            staging_suffix: ".json.tmp",
+            private: true,
+        },
+        &b"new"[..],
+        |stage| {
+            if stage == PublicationStage::Replace {
+                staged_names = fs::read_dir(dir.path())
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                    .filter(|name| name != "private.json")
+                    .collect();
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(staged_names.len(), 1, "{staged_names:?}");
+    assert!(
+        staged_names[0].starts_with(".private-") && staged_names[0].ends_with(".json.tmp"),
+        "{staged_names:?}"
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
 

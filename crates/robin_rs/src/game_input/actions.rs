@@ -42,9 +42,13 @@ pub(super) fn resolve_action_left_click(
     map_pt: MapPoint,
     local_seat: PlayerId,
     action: Action,
-    is_double: bool,
-    is_planning: bool,
+    modifiers: ClickModifiers,
 ) -> Vec<PlayerCommand> {
+    let ClickModifiers {
+        double: is_double,
+        planning: is_planning,
+        ..
+    } = modifiers;
     let pc_id = match engine.hero_selection(local_seat).first().copied() {
         Some(id) => id,
         None => return vec![],

@@ -235,24 +235,19 @@ fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use robin_run_protocol::{CampaignChainStateV1, OpaqueId, PublicKey32, SCHEMA_VERSION_V1};
+    use crate::leaderboard::test_fixtures::{ChainReceiptSpec, chain_receipt};
+    use robin_run_protocol::{OpaqueId, PublicKey32};
 
     fn receipt(campaign: &[u8], predecessor: &str) -> CampaignChainReceiptV1 {
-        CampaignChainReceiptV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            chain_id: OpaqueId::new("chain-a").unwrap(),
+        chain_receipt(ChainReceiptSpec {
+            chain_id: "chain-a",
             predecessor_run_id: OpaqueId::new(predecessor).unwrap(),
-            predecessor_verification_sha256: Digest32::from_bytes([6; 32]),
             expected_starting_campaign: exact_campaign_artifact(campaign).unwrap(),
             rules_config_sha256: Digest32::from_bytes([5; 32]),
             ruleset_manifest_sha256: Digest32::from_bytes([2; 32]),
             campaign_content_manifest_sha256: Digest32::from_bytes([3; 32]),
-            competition_manifest_sha256: None,
-            expected_max_concurrent_players: 1,
-            participant_public_keys: vec![PublicKey32::from_bytes([4; 32])],
-            campaign_controller_public_key: PublicKey32::from_bytes([4; 32]),
-            state: CampaignChainStateV1::Active,
-        }
+            controller: PublicKey32::from_bytes([4; 32]),
+        })
     }
 
     fn lookup<'a>(

@@ -7,7 +7,8 @@ use robin_engine::{
         self as engine_element, ActorData, ActorPc, ElementData, ElementKind, EntityId, HumanData,
         PcData, Posture,
     },
-    engine::{Engine, LevelAssets},
+    engine::{Engine, LevelAssets, SimulationFrameInput},
+    player_command::PlayerCommand,
 };
 
 pub(crate) fn fixture() -> (Engine, LevelAssets, Host) {
@@ -47,4 +48,25 @@ pub(crate) fn add_pc_with_status(
             ..Default::default()
         },
     }))
+}
+
+/// Add an upright, active, full-health PC at (10, 10) and select it through
+/// the deterministic command path, so cursor/input tests start from a real
+/// selection rather than a poked engine field.
+pub(crate) fn add_selected_pc(engine: &mut Engine, assets: &LevelAssets) -> EntityId {
+    let pc = add_pc_with_status(engine, 10.0, 10.0, Posture::Upright, true, 100);
+    engine
+        .advance_frame(
+            assets,
+            SimulationFrameInput::new(vec![
+                PlayerCommand::SelectPc {
+                    pc_id: pc,
+                    append: false,
+                }
+                .into(),
+            ])
+            .with_hourglass(false),
+        )
+        .expect("selection command admission");
+    pc
 }

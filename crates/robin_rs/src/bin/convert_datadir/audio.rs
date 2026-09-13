@@ -117,8 +117,8 @@ pub(super) fn insert_shipping_audio(
     }
 
     let source = fs::read(path).with_context(|| format!("read audio {}", path.display()))?;
-    let duration_ms = robin_rs::audio_backend::wav_duration_ms(&source).ok_or_else(|| {
-        anyhow!(
+    let duration_ms = robin_rs::audio_backend::wav_duration_ms(&source).with_context(|| {
+        format!(
             "cannot derive authoritative audio duration for {}",
             path.display()
         )

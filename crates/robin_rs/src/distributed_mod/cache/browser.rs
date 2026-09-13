@@ -44,24 +44,14 @@ struct PartialIndexEntry {
     chunk_offsets: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CacheIndex {
-    schema_version: u32,
-    access_counter: u64,
-    entries: BTreeMap<String, CacheIndexEntry>,
+/// Browser index fields beyond the shared header: IndexedDB chunk staging is
+/// tracked in the index itself. Serialized flat after `entries`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct BrowserIndexExtension {
     partials: BTreeMap<String, PartialIndexEntry>,
 }
 
-impl Default for CacheIndex {
-    fn default() -> Self {
-        Self {
-            schema_version: DISTRIBUTED_MOD_CACHE_SCHEMA_VERSION,
-            access_counter: 0,
-            entries: BTreeMap::new(),
-            partials: BTreeMap::new(),
-        }
-    }
-}
+type CacheIndex = super::CacheIndex<BrowserIndexExtension>;
 
 impl CacheIndex {
     fn validate(&self) -> Result<(), String> {
@@ -72,20 +62,20 @@ impl CacheIndex {
             ));
         }
         if self.entries.len() > DISTRIBUTED_MOD_CACHE_ENTRY_LIMIT
-            || self.partials.len() > PARTIAL_ENTRY_LIMIT
+            || self.extension.partials.len() > PARTIAL_ENTRY_LIMIT
         {
             return Err("browser distributed-mod cache index exceeds its entry limits".to_owned());
         }
         let mut total = 0_u64;
         for (hash, entry) in &self.entries {
-            validate_hash(hash)?;
+            parse_hash(hash)?;
             validate_transfer_total(entry.encoded_bytes)?;
             total = total
                 .checked_add(entry.encoded_bytes)
                 .ok_or_else(|| "browser cache byte accounting overflow".to_owned())?;
         }
-        for (hash, partial) in &self.partials {
-            validate_hash(hash)?;
+        for (hash, partial) in &self.extension.partials {
+            parse_hash(hash)?;
             validate_transfer_total(partial.total_bytes)?;
             if partial.next_offset > partial.total_bytes
                 || partial.chunk_offsets.len() > PARTIAL_CHUNK_LIMIT
@@ -228,14 +218,8 @@ fn bytes_from_js(value: JsValue, label: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+use super::parse_hash;
 use robin_engine::spellforge::hex_hash;
-
-fn validate_hash(value: &str) -> Result<(), String> {
-    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(format!("invalid distributed-mod cache hash `{value}`"));
-    }
-    Ok(())
-}
 
 fn chunk_key(hash: &str, offset: u64) -> String {
     format!("{hash}:{offset:020}")
@@ -373,7 +357,7 @@ async fn inspect_resume_offset(full_mod_sha256: [u8; 32], total_bytes: u64) -> R
             .map_err(|error| browser_storage_error("finish cache resume read", error))?;
         return Ok(total_bytes);
     }
-    let Some(partial) = index.partials.get(&key) else {
+    let Some(partial) = index.extension.partials.get(&key) else {
         drop(packages);
         drop(chunks);
         drop(metadata);
@@ -448,6 +432,7 @@ async fn purge_cached_hash(key: &str) -> Result<(), String> {
         Ok(mut index) => {
             index.entries.remove(key);
             let offsets = index
+                .extension
                 .partials
                 .remove(key)
                 .map(|partial| partial.chunk_offsets)
@@ -516,22 +501,29 @@ pub async fn append_chunk(
             "cannot append partial bytes over complete browser cache entry {key}"
         ));
     }
-    let stale_partial =
-        if !index.partials.contains_key(&key) && index.partials.len() >= PARTIAL_ENTRY_LIMIT {
-            let stale = index
-                .partials
-                .iter()
-                .min_by_key(|(hash, entry)| (entry.last_used, *hash))
-                .map(|(hash, _)| hash.clone())
-                .expect("non-empty partial cache must have an LRU candidate");
-            let stale_entry = index.partials.remove(&stale).expect("stale partial exists");
-            Some((stale, stale_entry.chunk_offsets))
-        } else {
-            None
-        };
+    let stale_partial = if !index.extension.partials.contains_key(&key)
+        && index.extension.partials.len() >= PARTIAL_ENTRY_LIMIT
+    {
+        let stale = index
+            .extension
+            .partials
+            .iter()
+            .min_by_key(|(hash, entry)| (entry.last_used, *hash))
+            .map(|(hash, _)| hash.clone())
+            .expect("non-empty partial cache must have an LRU candidate");
+        let stale_entry = index
+            .extension
+            .partials
+            .remove(&stale)
+            .expect("stale partial exists");
+        Some((stale, stale_entry.chunk_offsets))
+    } else {
+        None
+    };
     index.access_counter = index.access_counter.saturating_add(1);
     let access_counter = index.access_counter;
     let partial = index
+        .extension
         .partials
         .entry(key.clone())
         .or_insert_with(|| PartialIndexEntry {
@@ -588,6 +580,7 @@ fn select_complete_evictions_to_limits(
     protected: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let staged_bytes = index
+        .extension
         .partials
         .values()
         .map(|entry| entry.next_offset)
@@ -648,6 +641,7 @@ async fn finish_partial_inner(
     let metadata = read.store(METADATA).map_err(|error| error.to_string())?;
     let index = read_index(&metadata).await?;
     let partial = index
+        .extension
         .partials
         .get(&key)
         .cloned()
@@ -700,6 +694,7 @@ async fn finish_partial_inner(
     let metadata = write.store(METADATA).map_err(|error| error.to_string())?;
     let mut current = read_index(&metadata).await?;
     let current_partial = current
+        .extension
         .partials
         .get(&key)
         .ok_or_else(|| "browser cache partial changed during validation".to_owned())?;
@@ -708,7 +703,7 @@ async fn finish_partial_inner(
     {
         return Err("browser cache partial changed during validation".to_owned());
     }
-    current.partials.remove(&key);
+    current.extension.partials.remove(&key);
     current.access_counter = current.access_counter.saturating_add(1);
     current.entries.insert(
         key.clone(),
@@ -792,6 +787,32 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn browser_index_json_layout_is_unchanged() {
+        let key = "cd".repeat(32);
+        let mut index = CacheIndex::default();
+        index.access_counter = 4;
+        index.entries.insert(key.clone(), entry(8, 2));
+        index.extension.partials.insert(
+            key.clone(),
+            PartialIndexEntry {
+                total_bytes: 8,
+                next_offset: 4,
+                last_used: 3,
+                chunk_offsets: vec![0],
+            },
+        );
+        let json = serde_json::to_string(&index).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"schema_version":{DISTRIBUTED_MOD_CACHE_SCHEMA_VERSION},"access_counter":4,"entries":{{"{key}":{{"encoded_bytes":8,"last_used":2}}}},"partials":{{"{key}":{{"total_bytes":8,"next_offset":4,"last_used":3,"chunk_offsets":[0]}}}}}}"#
+            )
+        );
+        let reparsed: CacheIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(serde_json::to_string(&reparsed).unwrap(), json);
+    }
+
+    #[wasm_bindgen_test]
     fn lru_selection_is_deterministic_and_protects_current_hash() {
         let mut index = CacheIndex::default();
         index
@@ -817,7 +838,7 @@ mod tests {
     fn cache_index_rejects_oversized_partial_accounting() {
         let mut index = CacheIndex::default();
         for value in 0..PARTIAL_ENTRY_LIMIT {
-            index.partials.insert(
+            index.extension.partials.insert(
                 format!("{value:064x}"),
                 PartialIndexEntry {
                     total_bytes: DISTRIBUTED_MOD_ENCODED_LIMIT as u64,
@@ -887,7 +908,7 @@ mod tests {
         let hash = [0x32; 32];
         let key = hex_hash(&hash);
         let mut index = CacheIndex::default();
-        index.partials.insert(
+        index.extension.partials.insert(
             key,
             PartialIndexEntry {
                 total_bytes: 8,
@@ -908,7 +929,7 @@ mod tests {
         let hash = [0x33; 32];
         let key = hex_hash(&hash);
         let mut index = CacheIndex::default();
-        index.partials.insert(
+        index.extension.partials.insert(
             key.clone(),
             PartialIndexEntry {
                 total_bytes: 4,

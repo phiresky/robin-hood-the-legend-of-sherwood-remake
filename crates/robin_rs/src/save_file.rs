@@ -199,49 +199,36 @@ pub(crate) fn atomic_copy_if_exists(source: &Path, destination: &Path) -> Result
     Ok(true)
 }
 
-fn atomic_write_with_policy(
-    path: &Path,
-    mut input: impl std::io::Read,
-    overwrite: bool,
-) -> Result<()> {
-    let parent = path
-        .parent()
+fn atomic_write_with_policy(path: &Path, input: impl std::io::Read, overwrite: bool) -> Result<()> {
+    use crate::desktop_persistence::{PublicationMode, PublicationOptions, publish_reader};
+    path.parent()
         .context("atomic write target has no parent directory")?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("creating atomic-write directory {}", parent.display()))?;
+    // The autosave directory sweeps its own interrupted staging files by this
+    // prefix on restart (see `savegame::autosave_store::native`).
     let autosave_write = path
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name == "autosaves.json" || name.starts_with("Autosave_"));
-    let prefix = if autosave_write {
+    let staging_prefix = if autosave_write {
         ".robin-autosave-staging-"
     } else {
         ".robin-atomic-staging-"
     };
-    let mut temporary = tempfile::Builder::new()
-        .prefix(prefix)
-        .tempfile_in(parent)
-        .with_context(|| format!("creating temporary file beside {}", path.display()))?;
-    std::io::copy(&mut input, &mut temporary)
-        .with_context(|| format!("writing temporary file for {}", path.display()))?;
-    #[cfg(not(target_arch = "wasm32"))]
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .with_context(|| format!("syncing temporary file for {}", path.display()))?;
-    let published = if overwrite {
-        temporary.persist(path)
-    } else {
-        temporary.persist_noclobber(path)
-    };
-    published
-        .map_err(|error| error.error)
-        .with_context(|| format!("atomically replacing {}", path.display()))?;
-    #[cfg(all(unix, not(target_arch = "wasm32")))]
-    fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .with_context(|| format!("syncing atomic-write directory {}", parent.display()))?;
-    Ok(())
+    publish_reader(
+        path,
+        PublicationOptions {
+            mode: if overwrite {
+                PublicationMode::Replace
+            } else {
+                PublicationMode::CreateNew
+            },
+            staging_prefix,
+            ..PublicationOptions::default()
+        },
+        input,
+        |_| Ok(()),
+    )
+    .with_context(|| format!("atomically publishing {}", path.display()))
 }
 
 // ─── Thumbnail ───────────────────────────────────────────────────────

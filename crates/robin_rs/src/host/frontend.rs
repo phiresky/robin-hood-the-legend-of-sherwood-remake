@@ -189,7 +189,7 @@ pub enum PrintScreenRequest {
 ///
 /// These are intentionally not inserted into `Engine::titbit_manager`:
 /// they are local UI feedback and must not affect rollback state.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum HostTitbitPreview {
     JumpHelperGhost {
         position: WorldPoint3D,
@@ -677,6 +677,55 @@ impl HostFrontend {
         application_context: &ApplicationContext,
         local_seat: engine_player_command::PlayerId,
     ) -> GameCode {
+        // Effect order is part of the host contract: presentation flags,
+        // input resets, profile persistence, audio, UI queues, then marks.
+        self.apply_view_flags(&fx);
+        self.apply_reset_input(&fx, effects);
+        if fx.cancel_multi_selection {
+            self.input.cancel_selection_gestures();
+        }
+        Self::persist_minimap_position(fx.pending_minimap_position, application_context);
+        self.apply_swordfight_drag_ignore(fx.pending_swordfight_drag_ignore);
+        self.presentation.skip_render = fx.skip_render;
+        Self::dispatch_sound_commands(audio, fx.sounds);
+        // Accumulate UI-request queues — the host drives the widgets
+        // asynchronously so signals outlive a single tick.
+        effects.extend_dialogues(fx.pending_dialogues);
+        effects.extend_popup_texts(fx.pending_popup_texts);
+        effects.extend_debriefings(fx.pending_debriefings);
+        if fx.pending_sherwood_report {
+            effects.request_sherwood_report();
+        }
+        Self::queue_trade_receipts(effects, fx.trade_receipts, local_seat);
+        if fx.pending_show_console {
+            effects.request_signal(HostSignal::ShowConsole);
+        }
+        if fx.pending_silent_win_widget_swap {
+            effects.request_signal(HostSignal::SilentWinWidgetSwap);
+        }
+        if fx.pending_mission_state_notice {
+            effects.request_signal(HostSignal::MissionStateNotice);
+            effects.request_signal(HostSignal::MissionStatePopup);
+        }
+        if fx.pending_reset_input {
+            effects.request_signal(HostSignal::ResetInput);
+        }
+        // Per-frame mark requests from sim-side Mark() calls (currently
+        // scripted mission-team insertion → `EngineCommand::MarkPc`).
+        // Accumulates with host-side mark sources (requirements-bar
+        // hover, portrait guard hover); the render loop drains the
+        // buffer right after the outline pass.
+        self.input
+            .feedback
+            .marked_pc_ids
+            .extend(fx.pending_mark_pc_ids);
+        // Patch-effect background decal changes are accumulated across
+        // frames until the next render pass drains them.
+        effects.background_blits.extend(fx.bg_blits);
+        fx.code
+    }
+
+    fn apply_view_flags(&mut self, fx: &SideEffects) {
         if let Some(fade) = fx.fade_to_black {
             self.presentation.fade_to_black = fade;
         }
@@ -693,6 +742,9 @@ impl HostFrontend {
             // immediate wipe before the next mouse-update frame.
             self.interaction.invalidate_action();
         }
+    }
+
+    fn apply_reset_input(&mut self, fx: &SideEffects, effects: &mut HostEffectBatches) {
         if fx.reset_input {
             // MSG_RESET_INPUT clears the rubber-band selection flags
             // and suppresses any pending drag / click so a modal popup
@@ -716,10 +768,13 @@ impl HostFrontend {
             // switch.
             self.interaction.trajectory_preview.interrupt_hover();
         }
-        if fx.cancel_multi_selection {
-            self.input.cancel_selection_gestures();
-        }
-        if let Some(top_left) = fx.pending_minimap_position {
+    }
+
+    fn persist_minimap_position(
+        pending_minimap_position: Option<ScreenPoint>,
+        application_context: &ApplicationContext,
+    ) {
+        if let Some(top_left) = pending_minimap_position {
             // Write the new minimap top-left back to the active player
             // profile on every accepted move. Persist through this host's
             // explicit application context and save to disk; failures are
@@ -736,21 +791,26 @@ impl HostFrontend {
                 .unwrap_or_else(|error| panic!("failed to persist minimap position: {error}"))
                 .log_persistence_error("failed to persist minimap position to profile");
         }
-        if fx.pending_swordfight_drag_ignore && self.input.is_dragging() {
+    }
+
+    fn apply_swordfight_drag_ignore(&mut self, pending_swordfight_drag_ignore: bool) {
+        if pending_swordfight_drag_ignore && self.input.is_dragging() {
             // Selected PC left Swordfighting this tick; if a drag was
             // in flight, raise `IgnoreMouseEvent(true, true, true)` so
             // the drag doesn't bleed into a click-release or a
             // subsequent double-click.
             self.input.ignore_mouse_event(true, true, true);
         }
-        self.presentation.skip_render = fx.skip_render;
-        // Dispatch sim-emitted sound commands onto the SoundManager.
-        // Most variants queue into `SoundManager::pending_sounds` and
-        // are played out by `SoundManager::hourglass`; the two that
-        // need access to `engine.sound_sim.sources` (ResumeAllSources,
-        // ActivateSource) are stashed on host and drained by
-        // game_session before the hourglass call.
-        for cmd in fx.sounds {
+    }
+
+    /// Dispatch sim-emitted sound commands onto the SoundManager.
+    /// Most variants queue into `SoundManager::pending_sounds` and
+    /// are played out by `SoundManager::hourglass`; the two that
+    /// need access to `engine.sound_sim.sources` (ResumeAllSources,
+    /// ActivateSource) are stashed on host and drained by
+    /// game_session before the hourglass call.
+    fn dispatch_sound_commands(audio: &mut HostAudio, sounds: Vec<SoundCommand>) {
+        for cmd in sounds {
             match cmd {
                 SoundCommand::StopExclamation { actor_id } => {
                     audio
@@ -766,20 +826,7 @@ impl HostFrontend {
                     actor_id,
                 } => {
                     if let Some(actor_id) = actor_id {
-                        let had_deferred_stop = audio.deferred.iter().any(|request| {
-                            *request == DeferredAudioRequest::StopExclamation(actor_id.index())
-                        });
-                        if had_deferred_stop {
-                            audio.deferred.retain(|request| {
-                                *request != DeferredAudioRequest::StopExclamation(actor_id.index())
-                            });
-                            audio.sound.drop_pending_exclamations(actor_id.index());
-                            audio
-                                .deferred
-                                .push(DeferredAudioRequest::StopExclamationChannel(
-                                    actor_id.index(),
-                                ));
-                        }
+                        Self::promote_deferred_exclamation_stop(audio, actor_id.index());
                     }
                     audio.sound.play_exclamation(
                         group,
@@ -856,48 +903,39 @@ impl HostFrontend {
                 }
             }
         }
-        // Accumulate UI-request queues — the host drives the widgets
-        // asynchronously so signals outlive a single tick.
-        effects.extend_dialogues(fx.pending_dialogues);
-        effects.extend_popup_texts(fx.pending_popup_texts);
-        effects.extend_debriefings(fx.pending_debriefings);
-        if fx.pending_sherwood_report {
-            effects.request_sherwood_report();
+    }
+
+    /// A new exclamation for an actor whose stop was deferred this frame
+    /// replaces the pending stop with an immediate channel stop.
+    fn promote_deferred_exclamation_stop(audio: &mut HostAudio, actor_index: u32) {
+        let had_deferred_stop = audio
+            .deferred
+            .iter()
+            .any(|request| *request == DeferredAudioRequest::StopExclamation(actor_index));
+        if had_deferred_stop {
+            audio
+                .deferred
+                .retain(|request| *request != DeferredAudioRequest::StopExclamation(actor_index));
+            audio.sound.drop_pending_exclamations(actor_index);
+            audio
+                .deferred
+                .push(DeferredAudioRequest::StopExclamationChannel(actor_index));
         }
+    }
+
+    fn queue_trade_receipts(
+        effects: &mut HostEffectBatches,
+        trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+        local_seat: engine_player_command::PlayerId,
+    ) {
         if local_seat == engine_player_command::PlayerId::HOST {
-            effects.extend_trade_receipts(fx.trade_receipts);
-        } else if !fx.trade_receipts.is_empty() {
+            effects.extend_trade_receipts(trade_receipts);
+        } else if !trade_receipts.is_empty() {
             tracing::trace!(
-                count = fx.trade_receipts.len(),
+                count = trade_receipts.len(),
                 "discarding host-only Sherwood trade receipts on a client"
             );
         }
-        if fx.pending_show_console {
-            effects.request_signal(HostSignal::ShowConsole);
-        }
-        if fx.pending_silent_win_widget_swap {
-            effects.request_signal(HostSignal::SilentWinWidgetSwap);
-        }
-        if fx.pending_mission_state_notice {
-            effects.request_signal(HostSignal::MissionStateNotice);
-            effects.request_signal(HostSignal::MissionStatePopup);
-        }
-        if fx.pending_reset_input {
-            effects.request_signal(HostSignal::ResetInput);
-        }
-        // Per-frame mark requests from sim-side Mark() calls (currently
-        // scripted mission-team insertion → `EngineCommand::MarkPc`).
-        // Accumulates with host-side mark sources (requirements-bar
-        // hover, portrait guard hover); the render loop drains the
-        // buffer right after the outline pass.
-        self.input
-            .feedback
-            .marked_pc_ids
-            .extend(fx.pending_mark_pc_ids);
-        // Patch-effect background decal changes are accumulated across
-        // frames until the next render pass drains them.
-        effects.background_blits.extend(fx.bg_blits);
-        fx.code
     }
 }
 

@@ -5,6 +5,7 @@
 //! recognizer.
 
 use crate::input::{MouseButton, ThreadedInput};
+use enum_map::{Enum, EnumMap};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;
 use robin_engine::element::{Command, Posture};
@@ -29,14 +30,16 @@ const QA_TIMER_LIMIT: u32 = 250;
 /// Neutral center value for axes (0x7FFF in DirectInput).
 const AXIS_CENTER: i32 = 0x7FFF;
 
-const MAX_BUTTONS: usize = 32;
 const MAX_POVS: usize = 4;
 const MAX_SLIDERS: usize = 2;
 
 // ── Button enum ─────────────────────────────────────────────────────
 
 /// Named gamepad buttons, mapped to DirectInput button indices.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// The discriminants are the original DirectInput indices (see
+/// [`GamePadButton::index`]); `EnumMap` storage keys by variant, not index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Enum)]
 #[repr(u8)]
 pub enum GamePadButton {
     ActionB = 0,
@@ -108,8 +111,9 @@ pub struct JoystickState {
     pub sliders: [i32; MAX_SLIDERS],
     /// POV hat values in hundredths of degrees (`0xFFFFFFFF` = centered).
     pub povs: [u32; MAX_POVS],
-    /// Button states (non-zero = pressed).
-    pub buttons: [u8; MAX_BUTTONS],
+    /// Pressed state per named button. DirectInput indices without a
+    /// [`GamePadButton`] are never bound by the game, so they are not stored.
+    pub buttons: EnumMap<GamePadButton, bool>,
 }
 
 impl Default for JoystickState {
@@ -120,7 +124,7 @@ impl Default for JoystickState {
             rz: AXIS_CENTER,
             sliders: [AXIS_CENTER; MAX_SLIDERS],
             povs: [0xFFFF_FFFF; MAX_POVS],
-            buttons: [0; MAX_BUTTONS],
+            buttons: EnumMap::default(),
         }
     }
 }
@@ -218,8 +222,8 @@ impl GamepadDeviceInput {
                     self.dpad[slot] = pressed;
                     let [up, right, down, left] = self.dpad;
                     self.state.apply_dpad_state(up, right, down, left);
-                } else if let Some(index) = standard_button_to_gamepad_index(button) {
-                    self.state.apply_button_event(index, pressed);
+                } else if let Some(gamepad_button) = standard_button_to_gamepad_button(button) {
+                    self.state.apply_button_event(gamepad_button, pressed);
                 }
             }
             _ => {}
@@ -381,17 +385,17 @@ impl GamePadState {
 
     /// True if the button is currently held down.
     pub fn is_down(&self, button: GamePadButton) -> bool {
-        self.current.buttons[button.index()] != 0
+        self.current.buttons[button]
     }
 
     /// True if the button just transitioned from up → down this frame.
     pub fn is_pushed(&self, button: GamePadButton) -> bool {
-        self.current.buttons[button.index()] != 0 && self.previous.buttons[button.index()] == 0
+        self.current.buttons[button] && !self.previous.buttons[button]
     }
 
     /// True if the button just transitioned from down → up this frame.
     pub fn is_released(&self, button: GamePadButton) -> bool {
-        self.current.buttons[button.index()] == 0 && self.previous.buttons[button.index()] != 0
+        !self.current.buttons[button] && self.previous.buttons[button]
     }
 
     // ── Axis queries ────────────────────────────────────────────
@@ -455,15 +459,10 @@ impl GamePadState {
 
     /// Apply a button press/release event to the in-flight state.
     ///
-    /// `which_button` is the index into `JoystickState.buttons`. The
-    /// caller is responsible for mapping standard button values to the
-    /// original DirectInput button indices that [`GamePadButton`]
-    /// expects.
-    pub fn apply_button_event(&mut self, which_button: u8, pressed: bool) {
-        let idx = which_button as usize;
-        if idx < MAX_BUTTONS {
-            self.pending.buttons[idx] = u8::from(pressed);
-        }
+    /// The caller maps standard button ordinals to a [`GamePadButton`] via
+    /// [`standard_button_to_gamepad_button`].
+    pub fn apply_button_event(&mut self, button: GamePadButton, pressed: bool) {
+        self.pending.buttons[button] = pressed;
     }
 
     /// Set the POV based on the current D-pad button pressed state
@@ -933,18 +932,18 @@ pub enum QaEvent {
 /// Returns `None` for buttons that are routed as POV-hat state
 /// (D-pad) or that the game doesn't bind. D-pad buttons must be
 /// tracked separately by the caller and fed into [`GamePadState::apply_dpad_state`].
-pub fn standard_button_to_gamepad_index(standard_button: u8) -> Option<u8> {
+pub fn standard_button_to_gamepad_button(standard_button: u8) -> Option<GamePadButton> {
     Some(match standard_button {
-        0 => GamePadButton::ActionB as u8,      // South → B (ActionB=0)
-        1 => GamePadButton::ActionA as u8,      // East  → A (ActionA=1)
-        2 => GamePadButton::ActionC as u8,      // West  → X (ActionC=2)
-        3 => GamePadButton::CancelParade as u8, // North → Y
-        9 => GamePadButton::SelectPrevCharacter as u8, // LeftShoulder (LB)
-        10 => GamePadButton::SelectNextCharacter as u8, // RightShoulder (RB)
-        4 => GamePadButton::AltChoice as u8,    // Back → modifier
-        6 => GamePadButton::QaManage as u8,     // Start → QA
-        7 => GamePadButton::CrouchChinese as u8, // LeftStick press
-        8 => GamePadButton::SimulatedLeftMouse as u8, // RightStick press
+        0 => GamePadButton::ActionB,              // South → B (ActionB=0)
+        1 => GamePadButton::ActionA,              // East  → A (ActionA=1)
+        2 => GamePadButton::ActionC,              // West  → X (ActionC=2)
+        3 => GamePadButton::CancelParade,         // North → Y
+        9 => GamePadButton::SelectPrevCharacter,  // LeftShoulder (LB)
+        10 => GamePadButton::SelectNextCharacter, // RightShoulder (RB)
+        4 => GamePadButton::AltChoice,            // Back → modifier
+        6 => GamePadButton::QaManage,             // Start → QA
+        7 => GamePadButton::CrouchChinese,        // LeftStick press
+        8 => GamePadButton::SimulatedLeftMouse,   // RightStick press
         _ => return None,
     })
 }

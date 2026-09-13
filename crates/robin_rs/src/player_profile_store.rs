@@ -3,6 +3,8 @@
 //! The store selects authority at application initialization. The legacy
 //! manager's serialized save_directory remains wire-compatible metadata and
 //! cannot redirect an already-created store.
+#[cfg(target_arch = "wasm32")]
+use crate::blob_store::{BlobStore as _, BrowserLocalStorage};
 use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
 use serde::{Deserialize, Serialize};
 
@@ -81,9 +83,9 @@ impl PlayerProfileStore {
                 }
             }
             #[cfg(target_arch = "wasm32")]
-            Self::Browser { directory } => browser_profile_storage()?
-                .get_item(BROWSER_PROFILE_STORE_KEY)
-                .map_err(|error| browser_profile_io("read browser player profiles", error))?
+            Self::Browser { directory } => BrowserLocalStorage::open()
+                .and_then(|storage| storage.read_text(BROWSER_PROFILE_STORE_KEY))
+                .map_err(|error| error.into_io("read browser player profiles"))?
                 .map(|serialized| decode_browser_profile_archive(&serialized, directory))
                 .transpose()?,
             Self::Unavailable { .. } => unreachable!("directory checked authority"),
@@ -122,9 +124,9 @@ impl PlayerProfileStore {
             #[cfg(target_arch = "wasm32")]
             Self::Browser { .. } => {
                 let serialized = encode_browser_profile_archive(manager)?;
-                browser_profile_storage()?
-                    .set_item(BROWSER_PROFILE_STORE_KEY, &serialized)
-                    .map_err(|error| browser_profile_io("persist browser player profiles", error))
+                BrowserLocalStorage::open()
+                    .and_then(|storage| storage.write_text(BROWSER_PROFILE_STORE_KEY, &serialized))
+                    .map_err(|error| error.into_io("persist browser player profiles"))
             }
             Self::Unavailable { .. } => unreachable!("directory checked authority"),
         }
@@ -634,8 +636,8 @@ mod browser_persistence_tests {
 
     #[wasm_bindgen_test]
     fn durable_profile_reload_and_corruption_are_distinguished() {
-        let storage = browser_profile_storage().unwrap();
-        storage.remove_item(BROWSER_PROFILE_STORE_KEY).unwrap();
+        let storage = BrowserLocalStorage::open().unwrap();
+        storage.remove(BROWSER_PROFILE_STORE_KEY).unwrap();
 
         let mut first = PlayerProfileStore::for_directory("browser-save")
             .load()
@@ -655,7 +657,7 @@ mod browser_persistence_tests {
         assert_eq!(reloaded.save_directory, "ignored-after-load");
 
         storage
-            .set_item(
+            .write_text(
                 BROWSER_PROFILE_STORE_KEY,
                 r#"{"schema_version":999,"manager":{}}"#,
             )
@@ -674,7 +676,7 @@ mod browser_persistence_tests {
             .to_string()
             .contains("limit")
         );
-        storage.remove_item(BROWSER_PROFILE_STORE_KEY).unwrap();
+        storage.remove(BROWSER_PROFILE_STORE_KEY).unwrap();
     }
 }
 
@@ -710,16 +712,6 @@ fn encode_browser_profile_archive(manager: &PlayerProfileManager) -> std::io::Re
         )));
     }
     Ok(serialized)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_profile_storage() -> std::io::Result<web_sys::Storage> {
-    crate::browser_storage::local_storage().map_err(std::io::Error::other)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_profile_io(operation: &str, error: impl std::fmt::Debug) -> std::io::Error {
-    std::io::Error::other(format!("{operation}: {error:?}"))
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]

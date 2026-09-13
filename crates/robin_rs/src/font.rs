@@ -653,7 +653,6 @@ mod tests {
         assert!(TrueTypeFont::load(Path::new("isolated/fonts/font.tfn"), &valid).has_loaded_face());
     }
 
-    #[allow(dead_code)]
     use robin_test_support::original_data;
 
     /// Helper: locate arial.ttf relative to the workspace root.

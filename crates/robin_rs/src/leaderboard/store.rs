@@ -45,11 +45,11 @@ pub(super) fn read(file: &str, browser_key: &str) -> Result<Option<String>, Stor
     }
     #[cfg(target_arch = "wasm32")]
     {
+        use crate::blob_store::BlobStore as _;
         let _ = file;
-        crate::browser_storage::local_storage()
-            .map_err(StoreError::Browser)?
-            .get_item(browser_key)
-            .map_err(|error| StoreError::Browser(format!("{error:?}")))
+        crate::blob_store::BrowserLocalStorage::open()
+            .and_then(|storage| storage.read_text(browser_key))
+            .map_err(|error| StoreError::Browser(error.to_string()))
     }
 }
 
@@ -67,12 +67,12 @@ pub(super) fn write(
     }
     #[cfg(target_arch = "wasm32")]
     {
+        use crate::blob_store::BlobStore as _;
         let _ = (file, prefix);
         let encoded = std::str::from_utf8(encoded)
             .map_err(|error| StoreError::Browser(format!("JSON text is not UTF-8: {error}")))?;
-        crate::browser_storage::local_storage()
-            .map_err(StoreError::Browser)?
-            .set_item(browser_key, encoded)
-            .map_err(|error| StoreError::Browser(format!("{error:?}")))
+        crate::blob_store::BrowserLocalStorage::open()
+            .and_then(|storage| storage.write_text(browser_key, encoded))
+            .map_err(|error| StoreError::Browser(error.to_string()))
     }
 }

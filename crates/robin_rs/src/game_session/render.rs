@@ -1091,7 +1091,6 @@ pub(super) fn update_mouse_and_cursor(
     let mut new_cursor = if portrait_hit.is_some() || over_minimap {
         engine_resource_ids::RHMOUSE_DEFAULT
     } else if let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) {
-        let alt_for_cursor = engine.is_alt_effective(&host.frontend.input);
         crate::host_mouse::update_mouse(
             engine,
             host,
@@ -1099,8 +1098,7 @@ pub(super) fn update_mouse_and_cursor(
             dev,
             external_actions,
             mouse_map,
-            alt_for_cursor,
-            shift_held,
+            crate::game_input::ClickModifiers::hover(shift_held),
         )
     } else {
         engine_resource_ids::RHMOUSE_DEFAULT

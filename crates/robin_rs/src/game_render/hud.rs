@@ -1,8 +1,8 @@
 //! Mission HUD and player-feedback rendering helpers.
 
-use super::{FramePresentationInputs, render_text_with_shadow};
+use super::FramePresentationInputs;
 use crate::host::HostDraw;
-use crate::hud_text::HudFonts;
+use crate::hud_text::{HudFonts, render_text_with_shadow_gpu};
 use crate::ingame_menu::resources::{
     IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM, substitute_integer,
 };
@@ -36,7 +36,14 @@ pub(crate) fn render_mission_countdown(
     let seconds = status.remaining_ticks.saturating_add(24) / 25;
     let label = format!("Time {:02}:{:02}", seconds / 60, seconds % 60);
     let x = (i32::from(renderer.screen_width()) - fonts.tooltip_font.text_width(&label)) / 2;
-    render_text_with_shadow(renderer, fonts, &label, x, 6);
+    render_text_with_shadow_gpu(
+        renderer,
+        &fonts.tooltip_font,
+        fonts.shadow_font.as_ref(),
+        &label,
+        x,
+        6,
+    );
 }
 
 // ─── Combat status bars (red life / blue stamina) ────────────────
@@ -337,7 +344,14 @@ pub(crate) fn render_item_effect_preview(
     let x = (screen_x - text_width / 2).clamp(2, max_x);
     let y = (screen_y - 24).clamp(2, renderer.screen_height() as i32 - 18);
     let _localization_key = preview.localization_key;
-    render_text_with_shadow(renderer, fonts, preview.fallback_text, x, y);
+    render_text_with_shadow_gpu(
+        renderer,
+        &fonts.tooltip_font,
+        fonts.shadow_font.as_ref(),
+        preview.fallback_text,
+        x,
+        y,
+    );
 }
 
 // ─── Listen / Whistle ability radar ping ─────────────────────────────
@@ -433,8 +447,22 @@ pub(crate) fn render_ransom_amulet_overlay(
     // renderer's left-anchored point overload insets the glyph anchor
     // by `kerning_margin = 2` on the X axis.
     const KERNING_MARGIN: i32 = 2;
-    render_text_with_shadow(renderer, fonts, &ransom_text, KERNING_MARGIN, 0);
-    render_text_with_shadow(renderer, fonts, &amulet_text, KERNING_MARGIN, 15);
+    render_text_with_shadow_gpu(
+        renderer,
+        &fonts.tooltip_font,
+        fonts.shadow_font.as_ref(),
+        &ransom_text,
+        KERNING_MARGIN,
+        0,
+    );
+    render_text_with_shadow_gpu(
+        renderer,
+        &fonts.tooltip_font,
+        fonts.shadow_font.as_ref(),
+        &amulet_text,
+        KERNING_MARGIN,
+        15,
+    );
 }
 
 // ─── Multi-selection rubber-band rectangle ────────────────────────

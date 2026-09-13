@@ -3,7 +3,7 @@
 //! `start_/tick_/drain_pending_*` helpers that drive them.
 
 use super::session_policy::ModalBatchState;
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -44,7 +44,7 @@ pub(crate) struct ModalContext<'a> {
     pub renderer: &'a mut Renderer,
     pub cursor_res: &'a mut ResourceManager,
     pub cursor_renderer: &'a mut CursorRenderer,
-    pub audio_backend: &'a mut Option<KiraAudioBackend>,
+    pub audio_backend: &'a mut Option<PlatformAudioBackend>,
     pub sample_loader: &'a SampleLoader,
     pub menu_resources: &'a mut Option<IngameMenuResources>,
     pub modal_dismissals: &'a mut Vec<engine_player_command::PlayerCommand>,

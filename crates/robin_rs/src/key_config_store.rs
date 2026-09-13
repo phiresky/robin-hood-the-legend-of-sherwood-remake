@@ -8,10 +8,9 @@
 //!
 //! Stored as `<save_directory>/keyconfigs.json` next to `profiles.json`.
 
+use crate::blob_store::{BlobStore as _, open_platform_store};
 use crate::key_config::KeyConfig;
 use std::collections::BTreeMap;
-#[cfg(not(target_arch = "wasm32"))]
-use std::fs;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
@@ -79,41 +78,17 @@ impl KeyConfigStore {
         }
     }
 
-    /// Load from `<directory>/keyconfigs.json`.  Returns an empty store
-    /// if the file does not yet exist (first-run case).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Load from `<directory>/keyconfigs.json` (browser: one localStorage
+    /// key). Returns an empty store only if the archive does not yet exist
+    /// (first-run case); unreadable or invalid archives are errors.
     pub fn load(directory: &str) -> std::io::Result<Self> {
-        let path = Self::store_path(directory);
-        match fs::File::open(&path) {
-            Ok(file) => {
-                let store: KeyConfigStore = serde_json::from_reader(std::io::BufReader::new(file))
-                    .map_err(|error| {
-                        std::io::Error::new(
-                            error
-                                .io_error_kind()
-                                .unwrap_or(std::io::ErrorKind::InvalidData),
-                            error,
-                        )
-                    })?;
-                store.finish_loading(directory)
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(Self::new(directory.to_owned()))
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn load(directory: &str) -> std::io::Result<Self> {
-        let storage = browser_key_config_storage()?;
-        let Some(serialized) = storage
-            .get_item(BROWSER_KEY_CONFIG_STORE_KEY)
-            .map_err(|error| browser_key_config_io("read browser key configs", error))?
+        let Some(serialized) = open_platform_store()
+            .and_then(|store| store.read_text(&Self::store_path(directory)))
+            .map_err(|error| error.into_io("read browser key configs"))?
         else {
             return Ok(Self::new(directory.to_owned()));
         };
-        decode_browser_key_config_archive(&serialized, directory)
+        decode_key_config_archive(&serialized, directory)
     }
 
     /// Atomically persist to `<save_directory>/keyconfigs.json`.
@@ -121,19 +96,13 @@ impl KeyConfigStore {
     /// On error retain this desired snapshot for retry. Native errors expose
     /// [`crate::desktop_persistence::PublicationFailure`] to distinguish a
     /// published archive whose directory synchronization failed.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self) -> std::io::Result<()> {
-        self.validate_archive()?;
-        let path = Self::store_path(&self.save_directory);
-        crate::desktop_persistence::write_json(&path, self)
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn save(&self) -> std::io::Result<()> {
-        let serialized = encode_browser_key_config_archive(self)?;
-        browser_key_config_storage()?
-            .set_item(BROWSER_KEY_CONFIG_STORE_KEY, &serialized)
-            .map_err(|error| browser_key_config_io("persist browser key configs", error))
+        let serialized = encode_key_config_archive(self)?;
+        open_platform_store()
+            .and_then(|store| {
+                store.write_text(&Self::store_path(&self.save_directory), &serialized)
+            })
+            .map_err(|error| error.into_io("persist browser key configs"))
     }
 
     /// Apply the same migrations and admission policy to every persisted format.
@@ -214,17 +183,32 @@ impl KeyConfigStore {
     fn store_path(directory: &str) -> PathBuf {
         Path::new(directory).join("keyconfigs.json")
     }
+
+    /// Browser key configs are global to the page's localStorage.
+    #[cfg(target_arch = "wasm32")]
+    fn store_path(_directory: &str) -> &'static str {
+        BROWSER_KEY_CONFIG_STORE_KEY
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_key_config_archive(store: &KeyConfigStore) -> std::io::Result<String> {
+    store.validate_archive()?;
+    serde_json::to_string_pretty(store).map_err(std::io::Error::other)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_key_config_archive(serialized: &str, directory: &str) -> std::io::Result<KeyConfigStore> {
+    let store: KeyConfigStore = serde_json::from_str(serialized)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    store.finish_loading(directory)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn browser_key_config_storage() -> std::io::Result<web_sys::Storage> {
-    crate::browser_storage::local_storage().map_err(std::io::Error::other)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_key_config_io(operation: &str, error: impl std::fmt::Debug) -> std::io::Error {
-    std::io::Error::other(format!("{operation}: {error:?}"))
-}
+use {
+    decode_browser_key_config_archive as decode_key_config_archive,
+    encode_browser_key_config_archive as encode_key_config_archive,
+};
 
 #[cfg(any(test, target_arch = "wasm32"))]
 fn encode_browser_key_config_archive(store: &KeyConfigStore) -> std::io::Result<String> {

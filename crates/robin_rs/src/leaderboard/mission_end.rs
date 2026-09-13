@@ -236,17 +236,10 @@ fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
     values.windows(2).all(|pair| pair[0] < pair[1])
 }
 
-pub trait MissionEndTask<T> {
-    /// Return `None` while work remains pending. Implementations must never
-    /// block the calling render frame.
-    fn try_take(&mut self) -> Option<Result<T, String>>;
-}
-
-impl<T, F: FnMut() -> Option<Result<T, String>>> MissionEndTask<T> for F {
-    fn try_take(&mut self) -> Option<Result<T, String>> {
-        self()
-    }
-}
+use crate::leaderboard::task::PollTask;
+/// Mission-end work reports failures as display strings.
+pub use crate::leaderboard::task::TryTake as MissionEndTask;
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 
 pub trait SubmissionAuthorizationTask: MissionEndTask<SignedSubmissionV1> {
     fn progress(&self) -> ParticipantSigningProgress;
@@ -1452,6 +1445,9 @@ impl ActiveMissionReplayExporter {
     }
 }
 
+// TODO: `replay_service::ExportResult` is still a raw capacity-one receiver;
+// returning `leaderboard::task::PollTask` from `ReplayExports::export_snapshot`
+// would remove this last hand-written `TryRecvError` poll.
 struct ReplayExportTask(crate::replay_service::ExportResult);
 
 impl Serialize for ReplayExportTask {
@@ -1494,158 +1490,88 @@ impl MissionEndReplayExporter for ActiveMissionReplayExporter {
 /// request type through an authenticated co-sign transport adapter.
 pub struct LocalMissionEndSubmissionAuthorizer;
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
-struct ImmediateAuthorizationTask {
-    result: Option<Result<SignedSubmissionV1, String>>,
+/// Local single-participant authorization. The signer future starts in
+/// `begin`; native signers complete before `begin` returns, so `progress`
+/// already reports the signature before the first poll, exactly as a browser
+/// task does once its signer origin answers.
+struct LocalAuthorizationTask {
+    task: PollTask<Result<SignedSubmissionV1, String>>,
+    completed: Option<Result<SignedSubmissionV1, String>>,
     progress: ParticipantSigningProgress,
 }
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
-impl MissionEndTask<SignedSubmissionV1> for ImmediateAuthorizationTask {
-    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        self.result.take()
-    }
-}
-
-#[cfg(any(test, not(target_arch = "wasm32")))]
-impl SubmissionAuthorizationTask for ImmediateAuthorizationTask {
-    fn progress(&self) -> ParticipantSigningProgress {
-        self.progress.clone()
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let expected = request.expected_participants();
-        if expected.len() != 1 {
-            return Err(
-                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
-            );
-        }
-        let result = authorize_local_native(&request).map_err(|error| error.to_string());
-        let signed = result
-            .as_ref()
-            .ok()
-            .map(|signed| {
-                signed
-                    .participant_signatures
-                    .iter()
-                    .map(|signature| signature.public_key)
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(Box::new(ImmediateAuthorizationTask {
-            result: Some(result),
-            progress: ParticipantSigningProgress { expected, signed },
-        }))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn authorize_local_native(
-    request: &SubmissionAuthorizationRequest,
-) -> Result<SignedSubmissionV1, MissionEndLeaderboardError> {
-    let continuation = request
-        .continuation_claim()?
-        .map(|claim| crate::leaderboard_signing::sign_campaign_continuation(&request.offer, claim))
-        .transpose()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let envelope = request.envelope(continuation);
-    envelope
-        .validate()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signature = crate::leaderboard_signing::sign_submission_claim(&envelope)
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signed = SignedSubmissionV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        submission: envelope,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        participant_signatures: vec![signature],
-    };
-    validate_authorized_submission(request, &signed)?;
-    Ok(signed)
-}
-
-#[cfg(target_arch = "wasm32")]
-struct BrowserAuthorizationTask {
-    receiver: async_channel::Receiver<Result<SignedSubmissionV1, String>>,
-    progress: ParticipantSigningProgress,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndTask<SignedSubmissionV1> for BrowserAuthorizationTask {
-    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                if let Ok(signed) = &result {
-                    self.progress.signed = signed
-                        .participant_signatures
-                        .iter()
-                        .map(|signature| signature.public_key)
-                        .collect();
-                }
-                Some(result)
-            }
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => Some(Err(
-                "browser submission signer stopped unexpectedly".to_owned(),
-            )),
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl SubmissionAuthorizationTask for BrowserAuthorizationTask {
-    fn progress(&self) -> ParticipantSigningProgress {
-        self.progress.clone()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let expected = request.expected_participants();
-        if expected.len() != 1 {
-            return Err(
-                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
-            );
-        }
-        let (sender, receiver) = async_channel::bounded(1);
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = authorize_local_browser(&request)
-                .await
-                .map_err(|error| error.to_string());
-            let _ = sender.send(result).await;
-        });
-        Ok(Box::new(BrowserAuthorizationTask {
-            receiver,
+impl LocalAuthorizationTask {
+    fn new(
+        task: PollTask<Result<SignedSubmissionV1, String>>,
+        expected: Vec<robin_run_protocol::PublicKey32>,
+    ) -> Self {
+        let mut this = Self {
+            task,
+            completed: None,
             progress: ParticipantSigningProgress {
                 expected,
                 signed: Vec::new(),
             },
-        }))
+        };
+        this.completed = this.poll_signer();
+        this
+    }
+
+    fn poll_signer(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
+        let result = self
+            .task
+            .poll(|| "browser submission signer stopped unexpectedly".to_owned())?;
+        if let Ok(signed) = &result {
+            self.progress.signed = signed
+                .participant_signatures
+                .iter()
+                .map(|signature| signature.public_key)
+                .collect();
+        }
+        Some(result)
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn authorize_local_browser(
+impl MissionEndTask<SignedSubmissionV1> for LocalAuthorizationTask {
+    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
+        self.completed.take().or_else(|| self.poll_signer())
+    }
+}
+
+impl SubmissionAuthorizationTask for LocalAuthorizationTask {
+    fn progress(&self) -> ParticipantSigningProgress {
+        self.progress.clone()
+    }
+}
+
+impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
+    fn begin(
+        &mut self,
+        request: SubmissionAuthorizationRequest,
+    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
+        let expected = request.expected_participants();
+        if expected.len() != 1 {
+            return Err(
+                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
+            );
+        }
+        let task = PollTask::start(async move {
+            authorize_local(&request)
+                .await
+                .map_err(|error| error.to_string())
+        });
+        Ok(Box::new(LocalAuthorizationTask::new(task, expected)))
+    }
+}
+
+async fn authorize_local(
     request: &SubmissionAuthorizationRequest,
 ) -> Result<SignedSubmissionV1, MissionEndLeaderboardError> {
     let continuation = match request.continuation_claim()? {
         Some(claim) => Some(
-            crate::leaderboard_signing::browser_game_sign_campaign_continuation(
-                &request.offer,
-                &claim,
-            )
-            .await
-            .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
+            PlatformSigner::sign_campaign_continuation(&request.offer, claim)
+                .await
+                .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
         ),
         None => None,
     };
@@ -1653,7 +1579,7 @@ async fn authorize_local_browser(
     envelope
         .validate()
         .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signature = crate::leaderboard_signing::browser_game_sign_submission_claim(&envelope)
+    let signature = PlatformSigner::sign_submission_claim(&envelope)
         .await
         .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
     let signed = SignedSubmissionV1 {
@@ -1669,17 +1595,18 @@ async fn authorize_local_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::test_fixtures::{
+        MISSION_ID, RankedConfigSpec, campaign_artifact, host_participant_claim,
+        ranked_session_config, single_frame_replay, unsigned_fresh_run_preflight_grant,
+        unsigned_session_genesis,
+    };
     use ed25519_dalek::Signer as _;
     use robin_run_protocol::{
         BoardCategoryV1, CanonicalCampaignStateKindV1, CanonicalCampaignStateRequirementV1,
-        ChallengeNonce32, LeaderboardQuerySubjectV1, OfficialContentEditionV1,
-        OfficialContentSubjectV1, OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1,
-        ParticipantSignatureV1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
-        ReplaySeatLifecycleKindV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
-        ResourceLocaleRootV1, ScopeRequestV1, Signature64, SimulationSeed64,
-        SpeechTimingAuthorityV1, SubmissionLifecycleV1,
+        ChallengeNonce32, LeaderboardQuerySubjectV1, OfficialContentEditionV1, OpaqueId,
+        ParticipantSignatureV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
+        ScopeRequestV1, Signature64, SpeechTimingAuthorityV1, SubmissionLifecycleV1,
     };
-    use std::collections::BTreeMap;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -1858,13 +1785,10 @@ mod tests {
                     signature: Signature64::from_bytes(signature.to_bytes()),
                 }],
             };
-            Ok(Box::new(ImmediateAuthorizationTask {
-                result: Some(Ok(signed)),
-                progress: ParticipantSigningProgress {
-                    expected: vec![public_key],
-                    signed: vec![public_key],
-                },
-            }))
+            Ok(Box::new(LocalAuthorizationTask::new(
+                PollTask::ready(Ok(signed)),
+                vec![public_key],
+            )))
         }
     }
 
@@ -1941,83 +1865,27 @@ mod tests {
         let public_key = PublicKey32::from_bytes(key.verifying_key().to_bytes());
         let campaign = robin_engine::campaign::Campaign::default();
         let campaign_bytes = bitcode::encode(&campaign);
-        let mission_id = "Dem_Lei_MP".to_owned();
-        let ranked = RankedSessionConfigV1 {
-            custom_rules_config: None,
-            custom_canonical_campaign: None,
-            schema_version: SCHEMA_VERSION_V1,
-            mission_id: mission_id.clone(),
-            content_edition: OfficialContentEditionV1::Demo,
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: mission_id.clone(),
-            },
-            simulation_seed: SimulationSeed64::new(42),
+        let mission_id = MISSION_ID.to_owned();
+        let ranked = ranked_session_config(RankedConfigSpec {
+            simulation_seed: 42,
             starting_campaign_sha256: Digest32::digest_bytes(&campaign_bytes),
             starting_campaign_byte_length: campaign_bytes.len() as u64,
             prepared_inputs_projection_sha256: Digest32::from_bytes([18; 32]),
             prepared_mission_inputs_seal_sha256: Digest32::from_bytes([19; 32]),
-            build_manifest_sha256: Digest32::from_bytes([4; 32]),
-            content_manifest_sha256: Digest32::from_bytes([5; 32]),
-            campaign_content_manifest_sha256: None,
-            rules_config_sha256: Digest32::from_bytes([6; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
-            competition_manifest_sha256: None,
-            spellforge_content_sha256: None,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SpeechTimingAuthorityV1::LanguagePack {
                 canonical_locale: "en-US".to_owned(),
             },
-        };
+        });
         // An individual-level offer request is only valid when the genesis
         // carries the fresh-run preflight grant that admitted it, bound to
         // the same host identity, ranked session, and starting campaign.
-        let fresh_run_preflight_grant = robin_run_protocol::FreshRunPreflightGrantV1 {
-            claim: robin_run_protocol::FreshRunPreflightGrantClaimV1 {
-                schema_version: SCHEMA_VERSION_V1,
-                grant_id: id("fresh-grant-1"),
-                grant_nonce: ChallengeNonce32::from_bytes([21; 32]),
-                grant_authority_public_key: PublicKey32::from_bytes([22; 32]),
-                host_public_key: public_key,
-                grant_request_sha256: Digest32::from_bytes([23; 32]),
-                ranked_session_sha256: ranked.canonical_digest().unwrap(),
-                replay_session_id: Digest32::from_bytes([11; 32]),
-                host_participant_instance_id: Digest32::from_bytes([12; 32]),
-                host_nonce: ChallengeNonce32::from_bytes([13; 32]),
-                scope: robin_run_protocol::FreshRunScopeV1::IndividualLevel,
-                starting_campaign: robin_run_protocol::ArtifactRefV1 {
-                    sha256: Digest32::digest_bytes(&campaign_bytes),
-                    byte_length: campaign_bytes.len() as u64,
-                    media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-                },
-                admitted_at_unix_ms: 1,
-                expires_at_unix_ms: 1_800_000_000_000,
-            },
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            authority_signature: Signature64::from_bytes([24; 64]),
-        };
-        let genesis = ReplaySessionGenesisV1 {
-            claim: ReplaySessionGenesisClaimV1 {
-                schema_version: SCHEMA_VERSION_V1,
-                network_protocol_version: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-                host_public_key: public_key,
-                replay_session_id: Digest32::from_bytes([11; 32]),
-                host_participant_instance_id: Digest32::from_bytes([12; 32]),
-                host_nonce: ChallengeNonce32::from_bytes([13; 32]),
-                ranked_session: ranked,
-                fresh_run_preflight_grant: Some(fresh_run_preflight_grant),
-                campaign_continuation_preflight_grant: None,
-                competition_run_grant: None,
-            },
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            host_signature: Signature64::from_bytes([14; 64]),
-        };
-        let host = ParticipantClaimV1 {
-            seat: 0,
-            participant_instance_id: genesis.claim.host_participant_instance_id,
+        let fresh_run_preflight_grant = unsigned_fresh_run_preflight_grant(
             public_key,
-            public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
-            join_attestation: None,
-        };
+            &ranked,
+            campaign_artifact(&campaign_bytes),
+        );
+        let genesis = unsigned_session_genesis(public_key, ranked, Some(fresh_run_preflight_grant));
+        let host = host_participant_claim(&genesis, public_key);
         let offer_request = SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,
             max_concurrent_players: 1,
@@ -2073,37 +1941,7 @@ mod tests {
             },
             allowed_metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
         };
-        let replay = robin_engine::replay::ReplayData::try_from(robin_engine::replay::ReplayFile {
-            header: robin_engine::replay::ReplayHeader {
-                mission_id: mission_id.clone(),
-                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                    &mission_id,
-                    &mission_id,
-                    &mission_id,
-                )
-                .expect("valid built-in mission-end test descriptor"),
-                rng_seed: 42,
-                sim_config: robin_engine::engine::SimConfig::default(),
-                spellforge_package: None,
-                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
-                total_frames: 1,
-                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
-                campaign: campaign_bytes.clone(),
-            },
-            frames: BTreeMap::from([(
-                0,
-                robin_engine::replay::ReplayFrame {
-                    timeline_before: 0,
-                    timeline_after: 0,
-                    input: robin_engine::engine::SimulationFrameInput::default(),
-                    host_controls: Vec::new(),
-                },
-            )]),
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        });
-        let replay = replay.expect("valid mission-end replay fixture");
+        let replay = single_frame_replay(campaign_bytes.clone());
         let compact: Arc<[u8]> =
             robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
                 .unwrap()

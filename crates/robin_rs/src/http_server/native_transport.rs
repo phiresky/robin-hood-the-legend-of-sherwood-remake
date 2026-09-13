@@ -251,6 +251,7 @@ fn response(status: u16, body: ReplyBody) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[tokio::test]

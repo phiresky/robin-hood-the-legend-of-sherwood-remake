@@ -6,22 +6,28 @@
 //! dense replay ordinals. If any observation cannot be matched exactly to the
 //! authoritative replay, callers get an error and the run remains browse-only.
 
+// In-process signing (`public_key`/`signature`) exists only where a local key
+// signs: native builds, the multiplayer transport, and tests.
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
+#[cfg(any(test, feature = "multiplayer"))]
+use robin_run_protocol::NamedSeatJoinClaimV1;
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+use robin_run_protocol::SignatureAlgorithmV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
     CampaignChainStateV1, CampaignContinuationAuthorizationClaimV1,
     CampaignContinuationPreflightGrantV1, CampaignContinuationPreflightRequestClaimV1,
     CampaignContinuationPreflightRequestV1, CampaignRosterContinuityV1, CanonicalDocument as _,
     Digest32, FreshRunPreflightGrantV1, FreshRunPreflightRequestClaimV1,
-    FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1,
-    OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32,
-    RANKED_CAMPAIGN_MEDIA_TYPE_V1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
-    ReplaySeatLifecycleKindV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
-    ReplaySessionTranscriptV1, SCHEMA_VERSION_V1, ScopeRequestV1, Signature64,
-    SignatureAlgorithmV1, SubmissionArtifactsV1, SubmissionEnvelopeV1, SubmissionOfferRequestV1,
-    SubmissionOfferV1, Validate as _,
+    FreshRunPreflightRequestV1, FreshRunScopeV1, NamedSeatJoinAttestationV1, OpaqueId,
+    ParticipantClaimV1, ParticipantPublicDisclosureV1, PublicKey32, RANKED_CAMPAIGN_MEDIA_TYPE_V1,
+    RankedSessionConfigV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
+    ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1, ReplaySessionTranscriptV1,
+    SCHEMA_VERSION_V1, ScopeRequestV1, Signature64, SubmissionArtifactsV1, SubmissionEnvelopeV1,
+    SubmissionOfferRequestV1, SubmissionOfferV1, Validate as _,
 };
 #[cfg(test)]
 use robin_run_protocol::{CompetitionRunGrantV1, InitialStateExpectationV1};
@@ -545,11 +551,15 @@ fn invalid_document(error: impl std::fmt::Display) -> RankedSessionError {
     RankedSessionError::InvalidDocument(error.to_string())
 }
 
-fn public_key(key: &SigningKey) -> PublicKey32 {
+// Browser builds hold no in-process key: they sign through the isolated signer
+// origin unless the multiplayer transport's own key signs a seat claim.
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+pub(crate) fn public_key(key: &SigningKey) -> PublicKey32 {
     PublicKey32::from_bytes(key.verifying_key().to_bytes())
 }
 
-fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
+#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+pub(crate) fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
 }
 
@@ -715,6 +725,7 @@ pub fn validate_official_session_genesis(
 /// Sign the closed named-seat claim with the same durable native identity used
 /// by leaderboard submission. The transport endpoint is separately bound in
 /// the claim and may only differ for the browser relay client.
+#[cfg(any(test, feature = "multiplayer"))]
 pub fn sign_named_seat_join(
     key: &SigningKey,
     claim: NamedSeatJoinClaimV1,
@@ -819,6 +830,9 @@ impl robin_run_protocol::Validate for RankedSessionClientAdmissionV1 {
     }
 }
 
+// Only the multiplayer transport client admits itself into a host's ranked
+// session; local-only builds never construct a client admission.
+#[cfg(any(test, feature = "multiplayer"))]
 impl RankedSessionClientAdmissionV1 {
     pub fn new_official(
         setup: OfficialRankedSessionSetupV1,
@@ -913,6 +927,12 @@ impl robin_run_protocol::Validate for RankedSessionClientV1 {
 /// Irreversible eligibility owner used by transport/bootstrap integration.
 /// Ranking failures never fabricate evidence or abort otherwise-compatible
 /// gameplay: the state moves once to `BrowseOnly` and stays there.
+///
+/// Without the `multiplayer` feature only `Ranked` is ever constructed (the
+/// local session installs it directly); the transport-driven states are still
+/// matched by the shared readers, so their construction is feature-gated
+/// rather than removed.
+#[cfg_attr(not(any(test, feature = "multiplayer")), allow(dead_code))]
 pub enum RankedSessionLifecycle {
     /// The transport exists, but the exact prepared mission inputs are not yet
     /// available. This state must be resolved before authoritative simulation.
@@ -928,6 +948,7 @@ pub enum RankedSessionLifecycle {
 pub type SharedRankedSessionLifecycle = Arc<Mutex<RankedSessionLifecycle>>;
 
 impl RankedSessionLifecycle {
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn awaiting_prepared_inputs() -> Self {
         Self::AwaitingPreparedInputs
     }
@@ -936,6 +957,7 @@ impl RankedSessionLifecycle {
         Self::Ranked(Box::new(session))
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn browse_only(reason: impl Into<String>) -> Self {
         let reason = reason.into();
         assert!(
@@ -945,6 +967,7 @@ impl RankedSessionLifecycle {
         Self::BrowseOnly { reason }
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn downgrade(&mut self, reason: impl Into<String>) {
         if matches!(self, Self::BrowseOnly { .. }) {
             return;
@@ -962,7 +985,9 @@ impl RankedSessionLifecycle {
         }
     }
 
-    #[cfg(any(test, feature = "multiplayer"))]
+    // Only the native multiplayer host server installs a ranked session into
+    // an awaiting transport lifecycle.
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     pub fn install_ranked(&mut self, session: RankedSessionHost) -> Result<(), RankedSessionError> {
         if !matches!(self, Self::AwaitingPreparedInputs) {
             return Err(RankedSessionError::InvalidDocument(
@@ -973,6 +998,7 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn install_client_admission(
         &mut self,
         admission: RankedSessionClientAdmissionV1,
@@ -987,6 +1013,7 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn accept_ranked_client(
         &mut self,
         local_seat: u16,
@@ -1010,9 +1037,10 @@ impl RankedSessionLifecycle {
     }
 }
 
-// Transport mutations remain available to the default unit suite, without
-// admitting unused transport authority into a local-only production client.
-#[cfg(any(test, feature = "multiplayer"))]
+// Transport-only mutations and host queries. Their only callers are the
+// `multiplayer` transports, so local-only production builds and the default
+// unit suite (which never exercises them) do not compile them.
+#[cfg(feature = "multiplayer")]
 impl RankedSessionLifecycle {
     pub fn update_ranked_client_roster(
         &mut self,
@@ -1045,10 +1073,12 @@ impl RankedSessionLifecycle {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn is_awaiting_prepared_inputs(&self) -> bool {
         matches!(self, Self::AwaitingPreparedInputs)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn ranked_mut(&mut self) -> Option<&mut RankedSessionHost> {
         match self {
             Self::Ranked(session) => Some(session),
@@ -1081,6 +1111,7 @@ impl RankedSessionLifecycle {
         }
     }
 
+    #[cfg(any(test, feature = "multiplayer"))]
     pub fn client_admission(&self) -> Option<&RankedSessionClientAdmissionV1> {
         match self {
             Self::ClientAdmissionPending(admission) => Some(admission),
@@ -1222,6 +1253,8 @@ impl RankedSessionHost {
     /// Bootstrap a host only from explicit official-content eligibility. Game
     /// setup should use this entry point; `new` remains the lower-level signed
     /// document constructor used after this gate and by focused protocol tests.
+    /// Browser hosts sign the genesis through the isolated signer origin.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     pub fn new_official(
         host_key: &SigningKey,
         network_protocol_version: u32,
@@ -2180,6 +2213,9 @@ impl RankedCoSignContextV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::test_fixtures::{
+        RankedConfigSpec, digest, official_setup, ranked_session_config, signing_key,
+    };
     use robin_engine::campaign::Campaign;
     use robin_engine::engine::{SimConfig, SimulationFrameInput};
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
@@ -2187,103 +2223,22 @@ mod tests {
     use robin_engine::replay_rankability::ReplayRankability;
     use robin_run_protocol::{
         ArtifactRefV1, CanonicalCampaignStateKindV1, CanonicalCampaignStateRequirementV1,
-        ChallengeNonce32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,
-        FreshRunPreflightRequestClaimV1, FreshRunPreflightRequestV1, FreshRunScopeV1,
+        FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1, FreshRunScopeV1,
         OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId,
         RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-        ResourceLocaleRootV1, SimulationSeed64, SpeechTimingAuthorityV1,
+        SpeechTimingAuthorityV1,
     };
     use std::collections::BTreeMap;
 
-    fn digest(byte: u8) -> Digest32 {
-        Digest32::from_bytes([byte; 32])
-    }
-
-    fn signing_key(byte: u8) -> SigningKey {
-        SigningKey::from_bytes(&[byte; 32])
-    }
-
     fn ranked() -> RankedSessionConfigV1 {
-        RankedSessionConfigV1 {
-            custom_rules_config: None,
-            custom_canonical_campaign: None,
-            schema_version: SCHEMA_VERSION_V1,
-            mission_id: "Dem_Lei_MP".to_string(),
-            content_edition: OfficialContentEditionV1::Demo,
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: "Dem_Lei_MP".to_string(),
-            },
-            simulation_seed: SimulationSeed64::new(7),
+        ranked_session_config(RankedConfigSpec {
+            simulation_seed: 7,
             starting_campaign_sha256: digest(1),
             starting_campaign_byte_length: 1,
             prepared_inputs_projection_sha256: digest(2),
             prepared_mission_inputs_seal_sha256: digest(3),
-            build_manifest_sha256: digest(4),
-            content_manifest_sha256: digest(5),
-            campaign_content_manifest_sha256: None,
-            rules_config_sha256: digest(6),
-            ruleset_manifest_sha256: digest(7),
-            competition_manifest_sha256: None,
-            spellforge_content_sha256: None,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SpeechTimingAuthorityV1::BaseInstallation,
-        }
-    }
-
-    fn official_setup(
-        host_key: &SigningKey,
-        ranked_session: RankedSessionConfigV1,
-        custom_package_present: bool,
-    ) -> OfficialRankedSessionSetupV1 {
-        let authority_key = signing_key(0x7a);
-        let request_claim = FreshRunPreflightRequestClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            request_nonce: ChallengeNonce32::from_bytes([0x31; 32]),
-            host_public_key: public_key(host_key),
-            replay_session_id: digest(0x32),
-            host_participant_instance_id: digest(0x33),
-            host_nonce: ChallengeNonce32::from_bytes([0x34; 32]),
-            scope: FreshRunScopeV1::IndividualLevel,
-            starting_campaign: ArtifactRefV1 {
-                sha256: ranked_session.starting_campaign_sha256,
-                byte_length: ranked_session.starting_campaign_byte_length,
-                media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_string(),
-            },
-            ranked_session: ranked_session.clone(),
-        };
-        let request = FreshRunPreflightRequestV1 {
-            host_signature: signature(host_key, &request_claim.signing_bytes().unwrap()),
-            claim: request_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        let grant_claim = FreshRunPreflightGrantClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            grant_id: OpaqueId::new("fresh-grant-test").unwrap(),
-            grant_nonce: ChallengeNonce32::from_bytes([0x35; 32]),
-            grant_authority_public_key: public_key(&authority_key),
-            host_public_key: public_key(host_key),
-            grant_request_sha256: request.canonical_digest().unwrap(),
-            ranked_session_sha256: ranked_session.canonical_digest().unwrap(),
-            replay_session_id: request.claim.replay_session_id,
-            host_participant_instance_id: request.claim.host_participant_instance_id,
-            host_nonce: request.claim.host_nonce,
-            scope: request.claim.scope,
-            starting_campaign: request.claim.starting_campaign.clone(),
-            admitted_at_unix_ms: 1_000,
-            expires_at_unix_ms: 2_000,
-        };
-        let grant = FreshRunPreflightGrantV1 {
-            authority_signature: signature(&authority_key, &grant_claim.signing_bytes().unwrap()),
-            claim: grant_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        OfficialRankedSessionSetupV1 {
-            ranked_session,
-            custom_package_present,
-            run_preflight: RankedRunPreflightAdmissionV1::Fresh { request, grant },
-            run_preflight_grant_public_key: public_key(&authority_key),
-            trusted_now_unix_ms: 1_500,
-        }
+        })
     }
 
     fn replay_with_lifecycle(commands: Vec<PlayerCommand>) -> ReplayData {

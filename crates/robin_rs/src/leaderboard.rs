@@ -11,3 +11,6 @@ pub mod signing;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod storage;
 pub mod store;
+pub mod task;
+#[cfg(test)]
+pub(crate) mod test_fixtures;

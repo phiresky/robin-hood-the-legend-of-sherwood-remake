@@ -1,6 +1,8 @@
 //! Post-mission host authorization and peer co-signing, independent of modal presentation.
 
 use super::*;
+use crate::leaderboard::task::PollTask;
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 
 /// Host-side coordinator for the only ranked multiplayer upload. Remote
 /// peers receive a typed, locally checkable context followed by the fixed
@@ -551,85 +553,33 @@ enum HostLocalSignature {
     Submission(ParticipantSignatureV1),
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct ImmediateHostSignatureTask(Option<Result<HostLocalSignature, String>>);
-
-#[cfg(not(target_arch = "wasm32"))]
-impl MissionEndTask<HostLocalSignature> for ImmediateHostSignatureTask {
-    fn try_take(&mut self) -> Option<Result<HostLocalSignature, String>> {
-        self.0.take()
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn start_host_continuation_signature_task(
     offer: robin_run_protocol::SubmissionOfferV1,
     claim: robin_run_protocol::CampaignContinuationAuthorizationClaimV1,
 ) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
-    Ok(Box::new(ImmediateHostSignatureTask(Some(
-        crate::leaderboard_signing::sign_campaign_continuation(&offer, claim)
+    let task = PollTask::start(async move {
+        PlatformSigner::sign_campaign_continuation(&offer, claim)
+            .await
             .map(HostLocalSignature::Continuation)
-            .map_err(|error| error.to_string()),
-    ))))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn start_host_submission_signature_task(
-    envelope: robin_run_protocol::SubmissionEnvelopeV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
-    Ok(Box::new(ImmediateHostSignatureTask(Some(
-        crate::leaderboard_signing::sign_submission_claim(&envelope)
-            .map(HostLocalSignature::Submission)
-            .map_err(|error| error.to_string()),
-    ))))
-}
-
-#[cfg(target_arch = "wasm32")]
-struct BrowserHostSignatureTask(async_channel::Receiver<Result<HostLocalSignature, String>>);
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndTask<HostLocalSignature> for BrowserHostSignatureTask {
-    fn try_take(&mut self) -> Option<Result<HostLocalSignature, String>> {
-        match self.0.try_recv() {
-            Ok(result) => Some(result),
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => {
-                Some(Err("browser host signer stopped unexpectedly".to_owned()))
-            }
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start_host_continuation_signature_task(
-    offer: robin_run_protocol::SubmissionOfferV1,
-    claim: robin_run_protocol::CampaignContinuationAuthorizationClaimV1,
-) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
-    let (sender, receiver) = async_channel::bounded(1);
-    wasm_bindgen_futures::spawn_local(async move {
-        let result =
-            crate::leaderboard_signing::browser_game_sign_campaign_continuation(&offer, &claim)
-                .await
-                .map(HostLocalSignature::Continuation)
-                .map_err(|error| error.to_string());
-        let _ = sender.send(result).await;
+            .map_err(|error| error.to_string())
     });
-    Ok(Box::new(BrowserHostSignatureTask(receiver)))
+    Ok(Box::new(task.into_try_take(host_signer_closed)))
 }
 
-#[cfg(target_arch = "wasm32")]
 fn start_host_submission_signature_task(
     envelope: robin_run_protocol::SubmissionEnvelopeV1,
 ) -> Result<Box<dyn MissionEndTask<HostLocalSignature>>, String> {
-    let (sender, receiver) = async_channel::bounded(1);
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = crate::leaderboard_signing::browser_game_sign_submission_claim(&envelope)
+    let task = PollTask::start(async move {
+        PlatformSigner::sign_submission_claim(&envelope)
             .await
             .map(HostLocalSignature::Submission)
-            .map_err(|error| error.to_string());
-        let _ = sender.send(result).await;
+            .map_err(|error| error.to_string())
     });
-    Ok(Box::new(BrowserHostSignatureTask(receiver)))
+    Ok(Box::new(task.into_try_take(host_signer_closed)))
+}
+
+fn host_signer_closed() -> String {
+    "browser host signer stopped unexpectedly".to_owned()
 }
 
 pub(super) struct MultiplayerPeerCoSigner {
@@ -1016,55 +966,17 @@ impl MissionEndPeerCoSigner for MultiplayerPeerCoSigner {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct ImmediatePeerSignatureTask(Option<Result<ParticipantSignatureV1, String>>);
-
-#[cfg(not(target_arch = "wasm32"))]
-impl MissionEndTask<ParticipantSignatureV1> for ImmediatePeerSignatureTask {
-    fn try_take(&mut self) -> Option<Result<ParticipantSignatureV1, String>> {
-        self.0.take()
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn start_peer_signature_task(
     request: robin_run_protocol::LeaderboardCoSignRequestV1,
 ) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, String> {
-    Ok(Box::new(ImmediatePeerSignatureTask(Some(
-        crate::leaderboard_signing::sign_multiplayer_leaderboard_request(&request)
-            .map_err(|error| error.to_string()),
-    ))))
-}
-
-#[cfg(target_arch = "wasm32")]
-struct BrowserPeerSignatureTask(async_channel::Receiver<Result<ParticipantSignatureV1, String>>);
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndTask<ParticipantSignatureV1> for BrowserPeerSignatureTask {
-    fn try_take(&mut self) -> Option<Result<ParticipantSignatureV1, String>> {
-        match self.0.try_recv() {
-            Ok(result) => Some(result),
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => {
-                Some(Err("browser peer signer stopped unexpectedly".to_owned()))
-            }
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start_peer_signature_task(
-    request: robin_run_protocol::LeaderboardCoSignRequestV1,
-) -> Result<Box<dyn MissionEndTask<ParticipantSignatureV1>>, String> {
-    let (sender, receiver) = async_channel::bounded(1);
-    wasm_bindgen_futures::spawn_local(async move {
-        let result =
-            crate::leaderboard_signing::browser_game_sign_multiplayer_leaderboard_request(&request)
-                .await
-                .map_err(|error| error.to_string());
-        let _ = sender.send(result).await;
+    let task = PollTask::start(async move {
+        PlatformSigner::sign_multiplayer_leaderboard_request(&request)
+            .await
+            .map_err(|error| error.to_string())
     });
-    Ok(Box::new(BrowserPeerSignatureTask(receiver)))
+    Ok(Box::new(task.into_try_take(|| {
+        "browser peer signer stopped unexpectedly".to_owned()
+    })))
 }
 
 /// Check before invoking the durable signer: duplicate requests must not replace

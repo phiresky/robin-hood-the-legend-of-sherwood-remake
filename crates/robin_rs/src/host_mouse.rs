@@ -6,6 +6,7 @@
 //! the Host carve-out. Engine observations are read-only; requested external
 //! actions are collected for the frame owner to apply at its boundary.
 
+use crate::game_input::ClickModifiers;
 use crate::host::{Host, ItemEffectPreview};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
@@ -49,8 +50,9 @@ fn prepare_ground_trajectory(
     pc_id: Option<engine_element::EntityId>,
     mouse: MapPoint,
     action: Action,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) {
+    let shift_held = modifiers.planning;
     const DISPLAY_DELAY: u32 = 1;
     if host.frontend.trajectory_preview().hover_ticks() <= DISPLAY_DELAY
         || host.frontend.trajectory_preview().is_valid()
@@ -158,7 +160,7 @@ pub fn choose_mouse_pointer_for_no_action(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
 
@@ -213,7 +215,7 @@ pub fn choose_mouse_pointer_for_no_action(
     if let Some(decision) = cursor_for_hovered_entity(engine, host, assets, mouse_map) {
         return decision.apply(host);
     }
-    cursor_for_environment(engine, host, assets, mouse_map, shift_held)
+    cursor_for_environment(engine, host, assets, mouse_map, modifiers).apply(engine, host)
 }
 
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -407,14 +409,131 @@ fn cursor_for_hovered_entity(
     None
 }
 
-fn cursor_for_environment(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &LevelAssets,
+/// Host feedback that accompanies an environment cursor. Decided against
+/// read-only host state and applied afterwards by [`HoverFeedback::apply`].
+#[derive(Clone, Copy, Debug, Default, serde::Serialize, serde::Deserialize)]
+struct HoverEffects {
+    /// Door and patch cursors freeze the cursor animation.
+    freeze_cursor_animation: bool,
+    door_cursor_layer: Option<u16>,
+    reject_trajectory: bool,
+    /// Underlying motion sector retried after a rejected jump polygon; the
+    /// last retry wins, as with the original in-place overwrite.
+    jump_fallback_sector: Option<Option<engine_fast_find_grid::SectorIndex>>,
+    titbit: Option<crate::host::HostTitbitPreview>,
+    /// Jump line whose arc preview is computed once the hover is stable.
+    jump_preview_line: Option<u32>,
+}
+
+impl HoverEffects {
+    fn with_cursor(self, cursor: i32) -> HoverFeedback {
+        HoverFeedback {
+            cursor,
+            effects: self,
+        }
+    }
+}
+
+/// Environment hover outcome: cursor plus its host feedback.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct HoverFeedback {
+    cursor: i32,
+    effects: HoverEffects,
+}
+
+impl HoverFeedback {
+    fn door(cursor: i32, layer: u16, reject_trajectory: bool) -> Self {
+        HoverEffects {
+            freeze_cursor_animation: true,
+            door_cursor_layer: Some(layer),
+            reject_trajectory,
+            ..HoverEffects::default()
+        }
+        .with_cursor(cursor)
+    }
+
+    /// Apply the feedback. Each effect targets an independent field except
+    /// the trajectory pair: a pending reject is applied before the jump
+    /// preview gate reads validity, matching the original inline order.
+    fn apply(self, engine: &Engine, host: &mut Host) -> i32 {
+        let effects = self.effects;
+        if effects.freeze_cursor_animation {
+            host.frontend.input.feedback.increment_cursor_animation = false;
+        }
+        if let Some(layer) = effects.door_cursor_layer {
+            host.frontend.input.select_door_cursor_layer(layer);
+        }
+        if effects.reject_trajectory {
+            host.frontend.reject_trajectory_hit();
+        }
+        if let Some(sector) = effects.jump_fallback_sector {
+            host.frontend.input.select_jump_fallback_sector(sector);
+        }
+        if let Some(titbit) = effects.titbit {
+            host.frontend.set_host_titbit_preview(Some(titbit));
+        }
+        if let Some(line_idx) = effects.jump_preview_line {
+            // Compute the jump-arc ghost once the mouse has stabilised so
+            // the player sees the path Robin will take over the jump sector.
+            const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+            if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+                && !host.frontend.trajectory_preview().is_valid()
+            {
+                let preview = engine.compute_jump_preview(line_idx);
+                host.frontend.apply_trajectory_preview(preview);
+            }
+        }
+        self.cursor
+    }
+}
+
+/// Plain movement cursor: Shift outlines, swordfighting shows combat.
+fn walk_cursor(shift_held: bool, is_swordfighting: bool) -> i32 {
+    use robin_engine::resource_ids::*;
+    if shift_held {
+        RHMOUSE_DEFAULT_OUTLINE
+    } else if is_swordfighting {
+        RHMOUSE_SWORDFIGHT_YES
+    } else {
+        RHMOUSE_DEFAULT
+    }
+}
+
+fn cant_go_cursor(shift_held: bool) -> i32 {
+    use robin_engine::resource_ids::*;
+    if shift_held {
+        RHMOUSE_CANTGOTHERE_OUTLINE
+    } else {
+        RHMOUSE_CANTGOTHERE
+    }
+}
+
+/// Inputs shared by the environment hover phases.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct EnvHoverCtx {
     mouse_map: MapPoint,
     shift_held: bool,
-) -> i32 {
-    use robin_engine::resource_ids::*;
+    is_swordfighting: bool,
+    mouse_layer: u16,
+    pc_sector_idx: Option<engine_fast_find_grid::SectorIndex>,
+}
+
+/// Outcome of classifying one sector in the cross-sector fallback chain.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+enum SectorHoverStep {
+    Cursor(i32),
+    RetryUnderlying(Option<engine_fast_find_grid::SectorIndex>),
+    NoMatch,
+}
+
+fn cursor_for_environment(
+    engine: &Engine,
+    host: &Host,
+    assets: &LevelAssets,
+    mouse_map: MapPoint,
+    modifiers: ClickModifiers,
+) -> HoverFeedback {
+    let shift_held = modifiers.planning;
     let local_seat = host.transport.local_seat();
     let selected = engine.hero_selection(local_seat);
     let is_swordfighting =
@@ -437,43 +556,19 @@ fn cursor_for_environment(
     let pc_sector_hit = engine.fast_grid().get_sector(pc_pos, pc_pos, pc_layer);
 
     if let Some(door_idx) = host.frontend.input.spatial_hit().hovered_door_idx {
-        host.frontend.input.feedback.increment_cursor_animation = false;
-        host.frontend
-            .input
-            .select_door_cursor_layer(mouse_sector_result.layer);
-        host.frontend.reject_trajectory_hit();
-        return engine.choose_door_cursor(Some(door_idx), None);
+        return HoverFeedback::door(
+            engine.choose_door_cursor(Some(door_idx), None),
+            mouse_sector_result.layer,
+            true,
+        );
     }
 
-    // If the mouse is over a patch overlay sector, resolve the owning
-    // patch and route to `choose_door_cursor`. The patch's first door
-    // (if any) picks between door/lockpick variants; a door-less patch
-    // falls through to the patch-lock fallback inside
-    // `choose_door_cursor`.
-    if let Some(patch_sector_idx) = mouse_sector_result.sector_idx {
-        let is_patch = engine
-            .fast_grid()
-            .level
-            .sectors
-            .get(usize::from(patch_sector_idx))
-            .expect("same-frame mouse sector must identify an admitted grid sector")
-            .sector_type
-            .is_patch();
-        // `find_patch_for_grid_sector` returns `None` only when no
-        // mission script is loaded; in that state we can't evaluate
-        // patch doors and fall through to the default cursor logic.
-        if is_patch && let Some(patch_idx) = engine.find_patch_for_grid_sector(patch_sector_idx) {
-            let first_door = engine
-                .mission_script()
-                .and_then(|_| engine.patches().get(patch_idx as usize))
-                .and_then(|p| p.door_indices.first().copied());
-            // Door-cursor pointer freezes the cursor animation.
-            host.frontend.input.feedback.increment_cursor_animation = false;
-            host.frontend
-                .input
-                .select_door_cursor_layer(mouse_sector_result.layer);
-            return engine.choose_door_cursor(first_door, Some(patch_idx));
-        }
+    if let Some(feedback) = patch_hover_feedback(
+        engine,
+        mouse_sector_result.sector_idx,
+        mouse_sector_result.layer,
+    ) {
+        return feedback;
     }
 
     // If mouse sector != PC's sector.
@@ -482,280 +577,301 @@ fn cursor_for_environment(
         engine_fast_find_grid::SectorHit::Found { sector_idx, .. } => Some(sector_idx),
         _ => None,
     };
+    let ctx = EnvHoverCtx {
+        mouse_map,
+        shift_held,
+        is_swordfighting,
+        mouse_layer: mouse_sector_result.layer,
+        pc_sector_idx,
+    };
 
     if mouse_sector_idx != pc_sector_idx {
-        // Allow the jump-sector branch below to swap `idx` to its
-        // underlying motion-area sector; cap at a couple of hops so a
-        // misconfigured proto can't spin forever.
-        let mut idx_opt = mouse_sector_idx;
-        let mut loops = 0;
-        while let Some(idx) = idx_opt {
-            loops += 1;
-            if loops > 4 {
-                break;
-            }
-            if let Some(sector) = engine.fast_grid().level.sectors.get(usize::from(idx)) {
-                let st = sector.sector_type;
-
-                // Motion area sector.
-                if st.is_motion() && st.is_area() {
-                    // Reset trajectory for motion area navigation.
-                    host.frontend.reject_trajectory_hit();
-                    if st.is_lift()
-                        && let Some(lt) = sector.lift_type
-                    {
-                        match lt {
-                            // Wall → climbing cursor (if PC can climb).
-                            engine_sector::LiftType::Wall => {
-                                // Gated on every selected PC
-                                // having the contextual Climb
-                                // action.  Without it the cursor
-                                // falls through to CANTGOTHERE
-                                // (or shift-variant).
-                                if engine.all_selected_pcs_can_climb(assets) {
-                                    return RHMOUSE_CLIMBING;
-                                } else {
-                                    return if shift_held {
-                                        RHMOUSE_CANTGOTHERE_OUTLINE
-                                    } else {
-                                        RHMOUSE_CANTGOTHERE
-                                    };
-                                }
-                            }
-                            // Stairs → default (intentional bug,
-                            // see "STAIRS CURSOR BUG" in the
-                            // original game).
-                            engine_sector::LiftType::Stairs => {
-                                return if is_swordfighting {
-                                    if shift_held {
-                                        RHMOUSE_DEFAULT_OUTLINE
-                                    } else {
-                                        RHMOUSE_SWORDFIGHT_YES
-                                    }
-                                } else if shift_held {
-                                    RHMOUSE_DEFAULT_OUTLINE
-                                } else {
-                                    RHMOUSE_DEFAULT
-                                };
-                            }
-                            // Other lifts → climbing.
-                            _ => {
-                                return RHMOUSE_CLIMBING;
-                            }
-                        }
-                    }
-                    // If either source or target motion area has 0
-                    // gates, the two areas can't possibly be connected
-                    // by a door → show can't-go-there cursor. Lift
-                    // sectors are handled above because wall/ladder
-                    // traversal is authorized by lift type, not by
-                    // door-gate adjacency.
-                    let target_gates = sector.gate_indices.len();
-                    let source_gates = pc_sector_idx
-                        .and_then(|i| engine.fast_grid().level.sectors.get(usize::from(i)))
-                        .map(|s| s.gate_indices.len())
-                        .unwrap_or(0);
-                    if target_gates == 0 || source_gates == 0 {
-                        return if shift_held {
-                            RHMOUSE_CANTGOTHERE_OUTLINE
-                        } else {
-                            RHMOUSE_CANTGOTHERE
-                        };
-                    }
-                    // Non-lift motion area: normal traversal
-                    return if is_swordfighting {
-                        if shift_held {
-                            RHMOUSE_DEFAULT_OUTLINE
-                        } else {
-                            RHMOUSE_SWORDFIGHT_YES
-                        }
-                    } else if shift_held {
-                        RHMOUSE_DEFAULT_OUTLINE
-                    } else {
-                        RHMOUSE_DEFAULT
-                    };
-                }
-
-                // Door sector.
-                if st.is_door() {
-                    // Update selected layer for door.
-                    host.frontend
-                        .input
-                        .select_door_cursor_layer(mouse_sector_result.layer);
-                    // Door-cursor pointer freezes the cursor animation.
-                    host.frontend.input.feedback.increment_cursor_animation = false;
-                    host.frontend.reject_trajectory_hit();
-                    // Snapshot door index before further borrows.
-                    let door_idx = sector.door_index;
-                    return engine.choose_door_cursor(door_idx, None);
-                }
-
-                // Jump sector.
-                if st.contains(engine_sector::SectorType::JUMP) {
-                    host.frontend.reject_trajectory_hit();
-                    // Walk selected PCs, find the first with the
-                    // Jump action, then return the nearest
-                    // *reachable* jump line for that PC (or null,
-                    // falling through to swordfight/recurse).
-                    //
-                    // A non-negative height delta selects JUMP_HIGH,
-                    // else JUMP_LOW.  The height is derived from the
-                    // paired jump-line elevation delta (see
-                    // engine/jump.rs).  Return the first selected
-                    // PC's result unconditionally — including null —
-                    // rather than searching later PCs for a
-                    // reachable line.  Use a plain early-return loop
-                    // instead of `find_map`.
-                    let mut jump_line_idx: Option<u32> = None;
-                    let mut jumper_on_shoulders = false;
-                    for &pc_id in engine.hero_selection(host.transport.local_seat()) {
-                        if !engine.selected_pc_has_contextual_action(
-                            assets,
-                            Some(pc_id),
-                            engine_profiles::Action::Jump,
-                        ) {
-                            continue;
-                        }
-                        let Some(entity) = engine.get_entity(pc_id) else {
-                            tracing::warn!(?pc_id, "jump hover: selected PC is missing");
-                            continue;
-                        };
-                        jumper_on_shoulders =
-                            entity.element_data().posture() == engine_element::Posture::OnShoulders;
-                        let pc_pos_map = entity.element_data().position_map();
-                        jump_line_idx = engine.get_nearest_jumpable_jump_line(
-                            pc_id,
-                            u32::from(idx),
-                            pc_pos_map,
-                            mouse_map,
-                            /* test_posture */ false,
-                            None,
-                        );
-                        break;
-                    }
-
-                    let mut height: Option<f32> = None;
-                    if let Some(line_idx) = jump_line_idx
-                        && let Some(line) =
-                            engine.fast_grid().level.jump_lines.get(line_idx as usize)
-                        && let Some(assoc_idx) = line.associated_line_index
-                        && let Some(dst) =
-                            engine.fast_grid().level.jump_lines.get(assoc_idx as usize)
-                    {
-                        height = Some(dst.z_a - line.z_a);
-                        // Jump-line midpoint ghost titbit when the
-                        // associated line needs a helper (and PC isn't
-                        // already on someone's shoulders).
-                        if dst.helper_needed && !jumper_on_shoulders && dst.z_a - line.z_a >= 0.0 {
-                            let mid_x = 0.5 * (line.point_a.x + line.point_b.x);
-                            let mid_y =
-                                0.5 * (line.point_a.y + line.point_b.y + line.z_a + line.z_b);
-                            let mid_z = 0.5 * (line.z_a + line.z_b);
-                            let dx = line.point_b.x - line.point_a.x;
-                            let dy = line.point_b.y - line.point_a.y;
-                            // Normal direction as sector0..15 via atan2
-                            // of the perpendicular.
-                            let angle = dy.atan2(dx) + std::f32::consts::FRAC_PI_2;
-                            let sector_dir = (angle / (2.0 * std::f32::consts::PI) * 16.0)
-                                .rem_euclid(16.0)
-                                as u16;
-                            let position = engine_coordinates::WorldPoint3D {
-                                x: mid_x,
-                                y: mid_y,
-                                z: mid_z,
-                            };
-                            host.frontend.set_host_titbit_preview(Some(
-                                crate::host::HostTitbitPreview::JumpHelperGhost {
-                                    position,
-                                    layer: line.layer,
-                                    sector_dir,
-                                    display_order: position.y + 0.01,
-                                },
-                            ));
-                        }
-                    }
-                    match height {
-                        Some(h) => {
-                            // Compute the jump-arc ghost once the
-                            // mouse has stabilised so the player sees
-                            // the path Robin will take over the jump
-                            // sector.
-                            const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                            if host.frontend.trajectory_preview().hover_ticks()
-                                > TIME_TRAJECTORY_DISPLAY
-                                && !host.frontend.trajectory_preview().is_valid()
-                                && let Some(line_idx) = jump_line_idx
-                            {
-                                let preview = engine.compute_jump_preview(line_idx);
-                                host.frontend.apply_trajectory_preview(preview);
-                            }
-                            return if h >= 0.0 {
-                                RHMOUSE_JUMP_HIGH
-                            } else {
-                                RHMOUSE_JUMP_LOW
-                            };
-                        }
-                        None => {
-                            // No valid jump line.  Swordfighting PCs
-                            // get the combat-allowed cursor;
-                            // otherwise recurse with the underlying
-                            // motion sector the jump polygon overlays.
-                            if is_swordfighting {
-                                return if shift_held {
-                                    RHMOUSE_DEFAULT_OUTLINE
-                                } else {
-                                    RHMOUSE_SWORDFIGHT_YES
-                                };
-                            }
-                            // The selected sector is mutated in place
-                            // before recursing, so any later host
-                            // state that reads the selected sector
-                            // sees the underlying motion area, not
-                            // the overlaying jump polygon.  Overwrite
-                            // `host.frontend.input.spatial_hit().selected_sector_idx` before
-                            // the next iteration picks up.
-                            idx_opt = sector.underlying_sector;
-                            host.frontend.input.select_jump_fallback_sector(idx_opt);
-                            continue;
-                        }
-                    }
-                }
-
-                // Fell through all sector-type branches with no
-                // specific cursor — break out of the fallback loop
-                // and drop into the same-sector / can't-go logic.
-                break;
-            } else {
-                // No sector data → can't go there.
-                return if shift_held {
-                    RHMOUSE_CANTGOTHERE_OUTLINE
-                } else {
-                    RHMOUSE_CANTGOTHERE
-                };
-            }
-        }
-        // Loop exited via `break` (no type branch matched) or by
-        // exhausting the fallback chain — fall through to the
-        // can't-go-there default.
-        if mouse_sector_idx.is_none() {
-            // Null sector → can't go there.
-            return if shift_held {
-                RHMOUSE_CANTGOTHERE_OUTLINE
-            } else {
-                RHMOUSE_CANTGOTHERE
-            };
-        }
+        return cross_sector_hover(engine, host, assets, &ctx, mouse_sector_idx);
     }
 
     // Same sector as PC.
-    if shift_held {
-        return RHMOUSE_DEFAULT_OUTLINE;
+    HoverEffects::default().with_cursor(walk_cursor(shift_held, is_swordfighting))
+}
+
+/// If the mouse is over a patch overlay sector, resolve the owning
+/// patch and route to `choose_door_cursor`. The patch's first door
+/// (if any) picks between door/lockpick variants; a door-less patch
+/// falls through to the patch-lock fallback inside
+/// `choose_door_cursor`.
+fn patch_hover_feedback(
+    engine: &Engine,
+    mouse_sector_idx: Option<engine_fast_find_grid::SectorIndex>,
+    mouse_layer: u16,
+) -> Option<HoverFeedback> {
+    let patch_sector_idx = mouse_sector_idx?;
+    let is_patch = engine
+        .fast_grid()
+        .level
+        .sectors
+        .get(usize::from(patch_sector_idx))
+        .expect("same-frame mouse sector must identify an admitted grid sector")
+        .sector_type
+        .is_patch();
+    // `find_patch_for_grid_sector` returns `None` only when no
+    // mission script is loaded; in that state we can't evaluate
+    // patch doors and fall through to the default cursor logic.
+    if is_patch && let Some(patch_idx) = engine.find_patch_for_grid_sector(patch_sector_idx) {
+        let first_door = engine
+            .mission_script()
+            .and_then(|_| engine.patches().get(patch_idx as usize))
+            .and_then(|p| p.door_indices.first().copied());
+        // Door-cursor pointer freezes the cursor animation (no trajectory reject).
+        return Some(HoverFeedback::door(
+            engine.choose_door_cursor(first_door, Some(patch_idx)),
+            mouse_layer,
+            false,
+        ));
+    }
+    None
+}
+
+/// Mouse over a different sector than the PC: classify the sector (and any
+/// jump-polygon fallbacks), else fall through to the same-sector cursor.
+fn cross_sector_hover(
+    engine: &Engine,
+    host: &Host,
+    assets: &LevelAssets,
+    ctx: &EnvHoverCtx,
+    mouse_sector_idx: Option<engine_fast_find_grid::SectorIndex>,
+) -> HoverFeedback {
+    let mut effects = HoverEffects::default();
+    // Allow the jump-sector branch to swap `idx` to its underlying
+    // motion-area sector; cap at a couple of hops so a misconfigured
+    // proto can't spin forever.
+    let mut idx_opt = mouse_sector_idx;
+    let mut loops = 0;
+    while let Some(idx) = idx_opt {
+        loops += 1;
+        if loops > 4 {
+            break;
+        }
+        let Some(sector) = engine.fast_grid().level.sectors.get(usize::from(idx)) else {
+            // No sector data → can't go there.
+            return effects.with_cursor(cant_go_cursor(ctx.shift_held));
+        };
+        match sector_hover_step(engine, host, assets, ctx, idx, sector, &mut effects) {
+            SectorHoverStep::Cursor(cursor) => return effects.with_cursor(cursor),
+            SectorHoverStep::RetryUnderlying(underlying) => {
+                // The selected sector is mutated in place before
+                // recursing, so any later host state that reads the
+                // selected sector sees the underlying motion area, not
+                // the overlaying jump polygon.
+                idx_opt = underlying;
+                effects.jump_fallback_sector = Some(underlying);
+            }
+            // Fell through all sector-type branches with no specific
+            // cursor — drop into the same-sector / can't-go logic.
+            SectorHoverStep::NoMatch => break,
+        }
+    }
+    // Loop exited via `break` (no type branch matched) or by exhausting
+    // the fallback chain — fall through to the can't-go-there default.
+    if mouse_sector_idx.is_none() {
+        // Null sector → can't go there.
+        return effects.with_cursor(cant_go_cursor(ctx.shift_held));
+    }
+    // Same sector as PC.
+    effects.with_cursor(walk_cursor(ctx.shift_held, ctx.is_swordfighting))
+}
+
+/// Classify one sector of the cross-sector chain by its type.
+fn sector_hover_step(
+    engine: &Engine,
+    host: &Host,
+    assets: &LevelAssets,
+    ctx: &EnvHoverCtx,
+    idx: engine_fast_find_grid::SectorIndex,
+    sector: &engine_fast_find_grid::GridSector,
+    effects: &mut HoverEffects,
+) -> SectorHoverStep {
+    let st = sector.sector_type;
+
+    // Motion area sector.
+    if st.is_motion() && st.is_area() {
+        // Reset trajectory for motion area navigation.
+        effects.reject_trajectory = true;
+        return SectorHoverStep::Cursor(motion_area_cursor(engine, assets, ctx, sector));
     }
 
-    if is_swordfighting {
-        RHMOUSE_SWORDFIGHT_YES
-    } else {
-        RHMOUSE_DEFAULT
+    // Door sector.
+    if st.is_door() {
+        // Update selected layer for door; door-cursor pointer freezes the
+        // cursor animation.
+        effects.door_cursor_layer = Some(ctx.mouse_layer);
+        effects.freeze_cursor_animation = true;
+        effects.reject_trajectory = true;
+        return SectorHoverStep::Cursor(engine.choose_door_cursor(sector.door_index, None));
+    }
+
+    // Jump sector.
+    if st.contains(engine_sector::SectorType::JUMP) {
+        effects.reject_trajectory = true;
+        return jump_sector_step(engine, host, assets, ctx, idx, sector, effects);
+    }
+
+    SectorHoverStep::NoMatch
+}
+
+fn motion_area_cursor(
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &EnvHoverCtx,
+    sector: &engine_fast_find_grid::GridSector,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    if sector.sector_type.is_lift()
+        && let Some(lt) = sector.lift_type
+    {
+        return match lt {
+            // Wall → climbing cursor (if PC can climb). Gated on every
+            // selected PC having the contextual Climb action. Without it
+            // the cursor falls through to CANTGOTHERE (or shift-variant).
+            engine_sector::LiftType::Wall => {
+                if engine.all_selected_pcs_can_climb(assets) {
+                    RHMOUSE_CLIMBING
+                } else {
+                    cant_go_cursor(ctx.shift_held)
+                }
+            }
+            // Stairs → default (intentional bug, see "STAIRS CURSOR BUG"
+            // in the original game).
+            engine_sector::LiftType::Stairs => walk_cursor(ctx.shift_held, ctx.is_swordfighting),
+            // Other lifts → climbing.
+            _ => RHMOUSE_CLIMBING,
+        };
+    }
+    // If either source or target motion area has 0 gates, the two areas
+    // can't possibly be connected by a door → show can't-go-there cursor.
+    // Lift sectors are handled above because wall/ladder traversal is
+    // authorized by lift type, not by door-gate adjacency.
+    let target_gates = sector.gate_indices.len();
+    let source_gates = ctx
+        .pc_sector_idx
+        .and_then(|i| engine.fast_grid().level.sectors.get(usize::from(i)))
+        .map(|s| s.gate_indices.len())
+        .unwrap_or(0);
+    if target_gates == 0 || source_gates == 0 {
+        return cant_go_cursor(ctx.shift_held);
+    }
+    // Non-lift motion area: normal traversal
+    walk_cursor(ctx.shift_held, ctx.is_swordfighting)
+}
+
+fn jump_sector_step(
+    engine: &Engine,
+    host: &Host,
+    assets: &LevelAssets,
+    ctx: &EnvHoverCtx,
+    idx: engine_fast_find_grid::SectorIndex,
+    sector: &engine_fast_find_grid::GridSector,
+    effects: &mut HoverEffects,
+) -> SectorHoverStep {
+    use robin_engine::resource_ids::*;
+    let mouse_map = ctx.mouse_map;
+    {
+        {
+            // Walk selected PCs, find the first with the
+            // Jump action, then return the nearest
+            // *reachable* jump line for that PC (or null,
+            // falling through to swordfight/recurse).
+            //
+            // A non-negative height delta selects JUMP_HIGH,
+            // else JUMP_LOW.  The height is derived from the
+            // paired jump-line elevation delta (see
+            // engine/jump.rs).  Return the first selected
+            // PC's result unconditionally — including null —
+            // rather than searching later PCs for a
+            // reachable line.  Use a plain early-return loop
+            // instead of `find_map`.
+            let mut jump_line_idx: Option<u32> = None;
+            let mut jumper_on_shoulders = false;
+            for &pc_id in engine.hero_selection(host.transport.local_seat()) {
+                if !engine.selected_pc_has_contextual_action(
+                    assets,
+                    Some(pc_id),
+                    engine_profiles::Action::Jump,
+                ) {
+                    continue;
+                }
+                let Some(entity) = engine.get_entity(pc_id) else {
+                    tracing::warn!(?pc_id, "jump hover: selected PC is missing");
+                    continue;
+                };
+                jumper_on_shoulders =
+                    entity.element_data().posture() == engine_element::Posture::OnShoulders;
+                let pc_pos_map = entity.element_data().position_map();
+                jump_line_idx = engine.get_nearest_jumpable_jump_line(
+                    pc_id,
+                    u32::from(idx),
+                    pc_pos_map,
+                    mouse_map,
+                    /* test_posture */ false,
+                    None,
+                );
+                break;
+            }
+
+            let mut height: Option<f32> = None;
+            if let Some(line_idx) = jump_line_idx
+                && let Some(line) = engine.fast_grid().level.jump_lines.get(line_idx as usize)
+                && let Some(assoc_idx) = line.associated_line_index
+                && let Some(dst) = engine.fast_grid().level.jump_lines.get(assoc_idx as usize)
+            {
+                height = Some(dst.z_a - line.z_a);
+                // Jump-line midpoint ghost titbit when the
+                // associated line needs a helper (and PC isn't
+                // already on someone's shoulders).
+                if dst.helper_needed && !jumper_on_shoulders && dst.z_a - line.z_a >= 0.0 {
+                    let mid_x = 0.5 * (line.point_a.x + line.point_b.x);
+                    let mid_y = 0.5 * (line.point_a.y + line.point_b.y + line.z_a + line.z_b);
+                    let mid_z = 0.5 * (line.z_a + line.z_b);
+                    let dx = line.point_b.x - line.point_a.x;
+                    let dy = line.point_b.y - line.point_a.y;
+                    // Normal direction as sector0..15 via atan2
+                    // of the perpendicular.
+                    let angle = dy.atan2(dx) + std::f32::consts::FRAC_PI_2;
+                    let sector_dir =
+                        (angle / (2.0 * std::f32::consts::PI) * 16.0).rem_euclid(16.0) as u16;
+                    let position = engine_coordinates::WorldPoint3D {
+                        x: mid_x,
+                        y: mid_y,
+                        z: mid_z,
+                    };
+                    effects.titbit = Some(crate::host::HostTitbitPreview::JumpHelperGhost {
+                        position,
+                        layer: line.layer,
+                        sector_dir,
+                        display_order: position.y + 0.01,
+                    });
+                }
+            }
+            match height {
+                Some(h) => {
+                    // The arc preview is gated on hover stability in
+                    // `HoverFeedback::apply`, after the reject above.
+                    effects.jump_preview_line = jump_line_idx;
+                    SectorHoverStep::Cursor(if h >= 0.0 {
+                        RHMOUSE_JUMP_HIGH
+                    } else {
+                        RHMOUSE_JUMP_LOW
+                    })
+                }
+                None => {
+                    // No valid jump line.  Swordfighting PCs get the
+                    // combat-allowed cursor; otherwise recurse with the
+                    // underlying motion sector the jump polygon overlays.
+                    if ctx.is_swordfighting {
+                        return SectorHoverStep::Cursor(walk_cursor(ctx.shift_held, true));
+                    }
+                    SectorHoverStep::RetryUnderlying(sector.underlying_sector)
+                }
+            }
+        }
     }
 }
 
@@ -772,10 +888,12 @@ pub fn update_mouse(
     dev: &DevState,
     external_actions: &mut Vec<robin_engine::engine::ExternalAction>,
     mouse_map: MapPoint,
-    alt_held: bool,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
-    use robin_engine::resource_ids::*;
+    // Effective Alt (physical or locked) is sampled before any hover
+    // feedback is reset, exactly where the frame caller used to read it.
+    let alt_held = engine.is_alt_effective(&host.frontend.input);
+    let shift_held = modifiers.planning;
 
     let cursor_action = if shift_held {
         engine.planned_action_for_seat(host.transport.local_seat())
@@ -796,7 +914,31 @@ pub fn update_mouse(
         .input
         .begin_cursor_feedback(MOUSE_OPACITY_DEFAULT);
 
-    let mouse_map_pt = mouse_map;
+    publish_mouse_spatial_hit(engine, host, mouse_map, modifiers);
+
+    if let Some(cursor) = view_cursor(
+        engine,
+        host,
+        assets,
+        dev,
+        external_actions,
+        mouse_map,
+        alt_held,
+    ) {
+        return cursor;
+    }
+    action_cursor(engine, host, assets, cursor_action, mouse_map, modifiers)
+}
+
+/// Resolve and publish this frame's spatial hit (sector, layer, patch,
+/// hovered door, move eligibility) for cursor and click consumers.
+fn publish_mouse_spatial_hit(
+    engine: &Engine,
+    host: &mut Host,
+    mouse_map_pt: MapPoint,
+    modifiers: ClickModifiers,
+) {
+    let shift_held = modifiers.planning;
 
     // Sector lookup for the selected sector / layer.  Used for door/
     // jump alpha overlays and cursor context.  With shift held, use
@@ -886,7 +1028,20 @@ pub fn update_mouse(
             hovered_door_idx,
             valid_position_for_move,
         });
+}
 
+/// Alt (sight) and locker (follow-cam) view cursors; `None` when neither
+/// mode is active.
+fn view_cursor(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    dev: &DevState,
+    external_actions: &mut Vec<robin_engine::engine::ExternalAction>,
+    mouse_map_pt: MapPoint,
+    alt_held: bool,
+) -> Option<i32> {
+    use robin_engine::resource_ids::*;
     // Alt → view cursor.
     if alt_held {
         let focus_id = engine
@@ -912,7 +1067,7 @@ pub fn update_mouse(
                 host.frontend.set_selected_view_element(Some(id));
             }
         }
-        return RHMOUSE_VIEW;
+        return Some(RHMOUSE_VIEW);
     }
 
     // Locker (follow-cam) mode.  When the messenger's locker flag is
@@ -922,43 +1077,53 @@ pub fn update_mouse(
         if let Some(id) = engine.find_focusable_npc(assets, mouse_map_pt, Focus::View) {
             host.frontend.input.feedback.focused_entity_id = Some(id);
         }
-        return RHMOUSE_VIEW;
+        return Some(RHMOUSE_VIEW);
     }
+    None
+}
 
-    let selected_action = cursor_action;
-
+/// Per-action cursor dispatch.
+fn action_cursor(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    selected_action: Action,
+    mouse_map_pt: MapPoint,
+    modifiers: ClickModifiers,
+) -> i32 {
+    use robin_engine::resource_ids::*;
     match selected_action {
         // ── NoAction ───────────────
         Action::NoAction => {
             let cursor =
-                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held);
+                choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers);
             // Dispatches MSG_SHOW_PC_INFORMATION /
             // MSG_HIDE_PC_INFORMATION based on whether the mouse is
             // over a selectable PC.
             update_pc_popup_information(engine, host, assets, mouse_map_pt);
             cursor
         }
-        Action::Bow => cursor_for_bow(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Bow => cursor_for_bow(engine, host, assets, mouse_map_pt, modifiers),
         Action::Hit | Action::HitHard => cursor_for_hit(engine, host, assets, mouse_map_pt),
-        Action::Apple => cursor_for_apple(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Stone => cursor_for_stone(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Purse => cursor_for_purse(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Apple => cursor_for_apple(engine, host, assets, mouse_map_pt, modifiers),
+        Action::Stone => cursor_for_stone(engine, host, assets, mouse_map_pt, modifiers),
+        Action::Purse => cursor_for_purse(engine, host, assets, mouse_map_pt, modifiers),
         Action::Heal => cursor_for_heal(engine, host, assets, mouse_map_pt),
-        Action::WaspNest => cursor_for_wasp_nest(engine, host, assets, mouse_map_pt, shift_held),
+        Action::WaspNest => cursor_for_wasp_nest(engine, host, assets, mouse_map_pt, modifiers),
         Action::HelpToClimb => {
-            cursor_for_help_to_climb(engine, host, assets, mouse_map_pt, shift_held)
+            cursor_for_help_to_climb(engine, host, assets, mouse_map_pt, modifiers)
         }
         // Self-targeted consumables / whistle always show the OK cursor.
         Action::Eat | Action::Guzzle | Action::Whistle => RHMOUSE_OK,
         Action::Shield | Action::BigShield => {
-            cursor_for_shield(engine, host, assets, mouse_map_pt, shift_held)
+            cursor_for_shield(engine, host, assets, mouse_map_pt, modifiers)
         }
-        Action::Net => cursor_for_net(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Net => cursor_for_net(engine, host, assets, mouse_map_pt, modifiers),
         Action::Lever => cursor_for_lever(engine, host, assets, mouse_map_pt),
         Action::Ale => cursor_for_ale(engine, host, mouse_map_pt),
         Action::Strangle => cursor_for_strangle(engine, host, assets, mouse_map_pt),
-        Action::Beggar => cursor_for_beggar(engine, host, assets, mouse_map_pt, shift_held),
-        Action::Listen => cursor_for_listen(engine, host, assets, mouse_map_pt, shift_held),
+        Action::Beggar => cursor_for_beggar(engine, host, assets, mouse_map_pt, modifiers),
+        Action::Listen => cursor_for_listen(engine, host, assets, mouse_map_pt, modifiers),
         // Remaining actions.
         _ => RHMOUSE_DEFAULT,
     }
@@ -976,81 +1141,121 @@ fn cursor_for_bow(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    if engine
+        .hero_selection(host.transport.local_seat())
+        .is_empty()
     {
-        if engine
-            .hero_selection(host.transport.local_seat())
-            .is_empty()
+        return RHMOUSE_BOW_NO;
+    }
+    let pc_id = engine.hero_selection(host.transport.local_seat())[0];
+
+    // Shift planning previews the shot from the end of the actor's live
+    // movement / queued movement chain. It must not require the live bow
+    // equip/aim state, because selecting the planned action deliberately
+    // leaves the real PC untouched.
+    if modifiers.planning {
+        return bow_planning_cursor(engine, host, assets, pc_id, mouse_map_pt);
+    }
+
+    // When recording a macro, take the shorter path — no
+    // range/trajectory checks, just BOW_YES over any
+    // focusable element, BOW_NO otherwise.  Opacity/shadow
+    // are cleared.
+    if engine.is_recording_macro() {
+        return bow_recording_cursor(engine, host, assets, mouse_map_pt);
+    }
+
+    // Check if PC is in building or wall/ladder lift.
+    let in_restricted = engine.is_selected_pc_in_restricted_sector();
+
+    let (cursor, opacity, shadow_color) = if !in_restricted {
+        bow_aim_cursor(engine, host, assets, pc_id, mouse_map_pt)
+    } else {
+        // In building/wall-ladder: no valid bow shot
+        host.frontend.reject_trajectory_hit();
+        (RHMOUSE_BOW_NO, 50, MOUSE_BOW_NO_COLOR)
+    };
+
+    host.frontend.input.feedback.mouse_opacity = opacity;
+    host.frontend.input.feedback.mouse_shadow_color = shadow_color;
+    cursor
+}
+
+fn bow_planning_cursor(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    pc_id: engine_element::EntityId,
+    mouse_map_pt: MapPoint,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    host.frontend.input.feedback.mouse_opacity = 0;
+    host.frontend.input.feedback.mouse_shadow_color = 0;
+    if let Some(target_id) = engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        mouse_map_pt,
+        Focus::Bow,
+    ) {
+        host.frontend.input.feedback.focused_entity_id = Some(target_id);
+        const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+        if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
+            && !host.frontend.trajectory_preview().is_valid()
         {
-            return RHMOUSE_BOW_NO;
+            host.frontend.apply_trajectory_preview(
+                engine.compute_planned_bow_trajectory_preview(assets, pc_id, target_id),
+            );
         }
-        let mut cursor = RHMOUSE_BOW_NO;
-        let pc_id = engine.hero_selection(host.transport.local_seat())[0];
+        return RHMOUSE_BOW_YES_LONG;
+    }
+    host.frontend.reject_trajectory_hit();
+    RHMOUSE_BOW_NO
+}
 
-        // Shift planning previews the shot from the end of the actor's live
-        // movement / queued movement chain. It must not require the live bow
-        // equip/aim state, because selecting the planned action deliberately
-        // leaves the real PC untouched.
-        if shift_held {
-            host.frontend.input.feedback.mouse_opacity = 0;
-            host.frontend.input.feedback.mouse_shadow_color = 0;
-            if let Some(target_id) = engine.find_focusable_entity(
-                assets,
-                &host.frontend.presentation.draw_order.ids,
-                mouse_map_pt,
-                Focus::Bow,
-            ) {
-                host.frontend.input.feedback.focused_entity_id = Some(target_id);
-                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview().is_valid()
-                {
-                    host.frontend.apply_trajectory_preview(
-                        engine.compute_planned_bow_trajectory_preview(assets, pc_id, target_id),
-                    );
-                }
-                return RHMOUSE_BOW_YES_LONG;
-            }
-            host.frontend.reject_trajectory_hit();
-            return RHMOUSE_BOW_NO;
-        }
+fn bow_recording_cursor(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    mouse_map_pt: MapPoint,
+) -> i32 {
+    use robin_engine::resource_ids::*;
+    let mut cursor = RHMOUSE_BOW_NO;
+    host.frontend.reject_trajectory_hit();
+    host.frontend.input.feedback.mouse_opacity = 0;
+    host.frontend.input.feedback.mouse_shadow_color = 0;
+    if let Some(target_id) = engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        mouse_map_pt,
+        Focus::Bow,
+    ) {
+        host.frontend.input.feedback.focused_entity_id = Some(target_id);
+        cursor = RHMOUSE_BOW_YES;
+    }
+    cursor
+}
 
-        // When recording a macro, take the shorter path — no
-        // range/trajectory checks, just BOW_YES over any
-        // focusable element, BOW_NO otherwise.  Opacity/shadow
-        // are cleared.
-        if engine.is_recording_macro() {
-            host.frontend.reject_trajectory_hit();
-            host.frontend.input.feedback.mouse_opacity = 0;
-            host.frontend.input.feedback.mouse_shadow_color = 0;
-            if let Some(target_id) = engine.find_focusable_entity(
-                assets,
-                &host.frontend.presentation.draw_order.ids,
-                mouse_map_pt,
-                Focus::Bow,
-            ) {
-                host.frontend.input.feedback.focused_entity_id = Some(target_id);
-                cursor = RHMOUSE_BOW_YES;
-            }
-            return cursor;
-        }
-
-        // Check if PC is in building or wall/ladder lift.
-        let in_restricted = engine.is_selected_pc_in_restricted_sector();
-
-        // Opacity/shadow are set per-branch; declare without initializer
-        // so clippy doesn't warn about overwritten values.
-        let mut opacity: u16;
-        let mut shadow_color: u16;
-
-        if !in_restricted {
+/// Live bow aim outside restricted sectors: returns `(cursor, opacity,
+/// shadow_color)` and writes focus/double-status/trajectory feedback.
+fn bow_aim_cursor(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    pc_id: engine_element::EntityId,
+    mouse_map_pt: MapPoint,
+) -> (i32, u16, u16) {
+    use robin_engine::resource_ids::*;
+    let mut cursor = RHMOUSE_BOW_NO;
+    {
+        {
             // Compute mouse opacity from shooting level.
-            opacity = engine
+            let mut opacity: u16 = engine
                 .calculate_shooting_level(assets, pc_id, mouse_map_pt)
                 .max(MOUSE_OPACITY_DEFAULT);
-            shadow_color = 0;
+            let mut shadow_color: u16 = 0;
 
             if let Some(target_id) = engine.find_focusable_entity(
                 assets,
@@ -1153,16 +1358,8 @@ fn cursor_for_bow(
             } else {
                 host.frontend.reject_trajectory_hit();
             }
-        } else {
-            // In building/wall-ladder: no valid bow shot
-            opacity = 50;
-            shadow_color = MOUSE_BOW_NO_COLOR;
-            host.frontend.reject_trajectory_hit();
+            (cursor, opacity, shadow_color)
         }
-
-        host.frontend.input.feedback.mouse_opacity = opacity;
-        host.frontend.input.feedback.mouse_shadow_color = shadow_color;
-        cursor
     }
 }
 
@@ -1196,9 +1393,10 @@ fn cursor_for_apple(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let mut cursor = RHMOUSE_APPLE_NO;
         let pc_id = engine
@@ -1304,9 +1502,10 @@ fn cursor_for_stone(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let mut cursor = RHMOUSE_STONE_NO;
         let pc_id = engine
@@ -1420,7 +1619,7 @@ fn cursor_for_stone(
                         pc_id,
                         mouse_map_pt,
                         Action::Stone,
-                        shift_held,
+                        modifiers,
                     );
                     if host.frontend.trajectory_preview().is_valid() {
                         set_stone_distraction_preview(
@@ -1446,9 +1645,10 @@ fn cursor_for_purse(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let mut cursor = RHMOUSE_PURSE_NO;
         let mouse_elem = mouse_map_pt;
@@ -1475,7 +1675,7 @@ fn cursor_for_purse(
                     pc_id,
                     mouse_elem,
                     Action::Purse,
-                    shift_held,
+                    modifiers,
                 );
                 if item_preview_enabled(
                     engine,
@@ -1535,9 +1735,10 @@ fn cursor_for_wasp_nest(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let mut cursor = RHMOUSE_WASP_NEST_NO;
         let mouse_elem = mouse_map_pt;
@@ -1567,7 +1768,7 @@ fn cursor_for_wasp_nest(
                     pc_id,
                     mouse_elem,
                     Action::WaspNest,
-                    shift_held,
+                    modifiers,
                 );
                 if item_preview_enabled(
                     engine,
@@ -1613,7 +1814,7 @@ fn cursor_for_help_to_climb(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::element::Posture;
     use robin_engine::resource_ids::*;
@@ -1628,10 +1829,10 @@ fn cursor_for_help_to_climb(
         // If not in building/lift AND carrying on shoulders.
         if !engine.is_selected_pc_in_restricted_sector() && posture == Posture::CarryingOnShoulders
         {
-            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers)
         } else if posture == Posture::HelpingToClimb {
             // Already helping → NoAction cursor.
-            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers)
         } else {
             RHMOUSE_OK
         }
@@ -1644,9 +1845,10 @@ fn cursor_for_shield(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let action = if shift_held {
             engine.planned_action_for_seat(host.transport.local_seat())
@@ -1697,9 +1899,10 @@ fn cursor_for_net(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
+    let shift_held = modifiers.planning;
     {
         let mut cursor = RHMOUSE_NET_NO;
         let mouse_elem = mouse_map_pt;
@@ -1725,7 +1928,7 @@ fn cursor_for_net(
                     pc_id,
                     mouse_elem,
                     Action::Net,
-                    shift_held,
+                    modifiers,
                 );
                 let preview_capture = item_preview_enabled(
                     engine,
@@ -1914,7 +2117,7 @@ fn cursor_for_beggar(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::element::Posture;
     use robin_engine::resource_ids::*;
@@ -1926,7 +2129,7 @@ fn cursor_for_beggar(
             .map(|e| e.element_data().posture())
             .unwrap_or(Posture::Undefined);
         if posture == Posture::SimulatingBeggar {
-            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers)
         } else {
             RHMOUSE_OK
         }
@@ -1939,7 +2142,7 @@ fn cursor_for_listen(
     host: &mut Host,
     assets: &LevelAssets,
     mouse_map_pt: MapPoint,
-    shift_held: bool,
+    modifiers: ClickModifiers,
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
@@ -1951,7 +2154,7 @@ fn cursor_for_listen(
             .map(|a| a.action_state)
             .unwrap_or(engine_element::ActionState::Waiting);
         if action_state == engine_element::ActionState::Listening {
-            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
+            choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, modifiers)
         } else {
             RHMOUSE_OK
         }
@@ -1964,32 +2167,10 @@ fn cursor_for_listen(
 mod tests {
     use super::*;
     use robin_engine::campaign::Campaign;
-    use robin_engine::element::Posture;
     use robin_engine::player_command::PlayerCommand;
     use robin_engine::resource_ids::*;
 
-    use crate::host::test_support::{add_pc_with_status, fixture};
-
-    fn add_selected_pc(
-        engine: &mut Engine,
-        assets: &LevelAssets,
-    ) -> robin_engine::element::EntityId {
-        let pc = add_pc_with_status(engine, 10.0, 10.0, Posture::Upright, true, 100);
-        engine
-            .advance_frame(
-                assets,
-                robin_engine::engine::SimulationFrameInput::new(vec![
-                    PlayerCommand::SelectPc {
-                        pc_id: pc,
-                        append: false,
-                    }
-                    .into(),
-                ])
-                .with_hourglass(false),
-            )
-            .expect("selection command admission");
-        pc
-    }
+    use crate::host::test_support::{add_selected_pc, fixture};
 
     #[test]
     fn stone_ground_cursor_publishes_only_eligible_landing_preview() {
@@ -2076,7 +2257,13 @@ mod tests {
                 engine.is_mouse_sector_valid_for_ground_target(mouse),
                 valid_ground
             );
-            let cursor = cursor_for_stone(&engine, &mut host, &assets, mouse, true);
+            let cursor = cursor_for_stone(
+                &engine,
+                &mut host,
+                &assets,
+                mouse,
+                crate::game_input::ClickModifiers::hover(true),
+            );
             let ground_allowed =
                 engine.sim_config().item_gameplay.stone_ground_distraction && valid_ground;
             assert_eq!(
@@ -2149,7 +2336,7 @@ mod tests {
                         selection,
                         MapPoint::ZERO,
                         action,
-                        shift,
+                        crate::game_input::ClickModifiers::hover(shift),
                     );
                     if ticks > 1 && !valid && selection.is_some() {
                         let mut expected: crate::frontend_preview::FrontendTrajectoryPreview =
@@ -2253,7 +2440,7 @@ mod tests {
                 &mut host,
                 &assets,
                 MapPoint::new(300.0, 300.0),
-                false,
+                crate::game_input::ClickModifiers::hover(false),
             );
             let expected = if engine.shield().is_protected {
                 // Awaiting the protected-PC pick with nothing focusable

@@ -1,8 +1,7 @@
 //! Shared admission workflow. Platform adapters own storage, mounting and waiting policy.
 use crate::distributed_mod::{make_distributed_mod_offer, offer_trust_identity};
 use crate::distributed_mod_admission::{
-    AdmittedDistributedMod, OFFER_WAIT, TRANSFER_WAIT, append_chunk, finish_transfer,
-    mount_validated_distributed_mod, resume_offset,
+    AdmittedDistributedMod, DistributedModStore, PlatformDistributedModStore as Store,
 };
 use crate::distributed_mod_policy::AdmissionState;
 use crate::host::ApplicationContext;
@@ -73,13 +72,13 @@ pub async fn admit_trusted_distributed_mod(
     )
     .inspect_err(|message| channels.reject_content(offer.full_mod_sha256, message.clone()))?;
 
-    let resume_offset = resume_offset(application_context, offer)
+    let resume_offset = Store::resume_offset(application_context, offer)
         .await
         .inspect_err(|message| channels.reject_content(offer.full_mod_sha256, message.clone()))?;
     let mut admission =
         AdmissionState::new(offer.full_mod_sha256, offer.encoded_bytes, resume_offset)?;
     let mut deferred = Vec::new();
-    await_authenticated_offer(channels, offer, &mut deferred, OFFER_WAIT).await?;
+    await_authenticated_offer(channels, offer, &mut deferred, Store::OFFER_WAIT).await?;
     channels.request_content(offer.full_mod_sha256, resume_offset)?;
 
     let mut durable_offset = resume_offset;
@@ -88,7 +87,7 @@ pub async fn admit_trusted_distributed_mod(
         enforce_deadline(
             channels,
             offer,
-            TRANSFER_WAIT,
+            Store::TRANSFER_WAIT,
             transfer_started.elapsed(),
             "host-content transfer",
         )?;
@@ -119,7 +118,7 @@ pub async fn admit_trusted_distributed_mod(
                     channels.reject_content(offer.full_mod_sha256, message.clone());
                     return Err(message);
                 }
-                durable_offset = append_chunk(application_context, offer, offset, &bytes)
+                durable_offset = Store::append_chunk(application_context, offer, offset, &bytes)
                     .await
                     .inspect_err(|message| {
                         channels.reject_content(offer.full_mod_sha256, message.clone())
@@ -141,12 +140,12 @@ pub async fn admit_trusted_distributed_mod(
     enforce_deadline(
         channels,
         offer,
-        TRANSFER_WAIT,
+        Store::TRANSFER_WAIT,
         transfer_started.elapsed(),
         "host-content transfer",
     )?;
 
-    let lease = finish_transfer(
+    let lease = Store::finish_transfer(
         application_context,
         offer,
         resume_offset == offer.encoded_bytes,
@@ -174,7 +173,7 @@ pub async fn admit_trusted_distributed_mod(
     }
 
     admission.validated()?;
-    let mount = match mount_validated_distributed_mod(
+    let mount = match Store::mount(
         &lease.validated,
         application_context.preparation_files()?.clone(),
     ) {

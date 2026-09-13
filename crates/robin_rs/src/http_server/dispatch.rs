@@ -338,3 +338,56 @@ pub(super) fn start_replay_export(
 ) {
     response_tx.send(Ok(ReplyBody::ReplayExport(exports.export())));
 }
+
+/// Drain process requests while no mission is active.
+pub(super) fn drain_pre_engine(server: &HttpServer) {
+    let pending = {
+        let mut q = server.queue.lock().expect("queue mutex poisoned");
+        q.take_idle()
+    };
+    for req in pending {
+        if !req.response_tx.admit() {
+            continue;
+        }
+        match req.payload {
+            HttpPayload::GetReplay => start_replay_export(&server.replay_exports, req.response_tx),
+            HttpPayload::LoadReplay { data, paused } => {
+                let reply = decode_load_replay(&server.replay_launches, &data, paused);
+                req.response_tx.send(reply);
+            }
+            _ => req.response_tx.send(Err(RpcError::unavailable_capability(
+                "engine not ready — only `load-replay`, `get-replay`, and `info` work during --wait-for-command"
+            ))),
+        }
+    }
+}
+
+/// Parse a production replay payload and admit it to the pending slot. Both
+/// browser and native RPC accept exactly the canonical compact envelope.
+pub(super) fn decode_load_replay(
+    launches: &crate::replay_service::ReplayLaunches,
+    data: &str,
+    paused: bool,
+) -> Reply {
+    // Compact admission is byte-canonical: whitespace is not discarded.
+    // Local JSONL tooling likewise emits its header at byte zero.
+    let trimmed = data;
+    let replay = crate::replay_format::decode_compact_for_public_playback(trimmed)
+        .map(|(_, replay)| replay)
+        .map_err(|error| RpcError::replay_load("decode compact replay", error))?;
+    let frame_count = replay.frame_count();
+    let seed = replay.header().rng_seed;
+    launches
+        .admit_pending(crate::replay_service::PendingReplay {
+            data: replay,
+            paused,
+        })
+        .map_err(RpcError::capacity)?;
+    Ok(ReplyBody::Json(serde_json::json!({
+        "ok": true,
+        "frames": frame_count,
+        "rng_seed": seed,
+        "paused": paused,
+        "note": "pending — takes effect on next mission init (restart mission to apply)",
+    })))
+}

@@ -1,6 +1,7 @@
 //! Pre-frame authority discovery and signing. Never reconstruct authority from a debrief.
 
 use super::*;
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 
 /// Server-published immutable authorities selected before the prepared engine
 /// capability is consumed. The setup layer still has to compare the exact
@@ -1211,75 +1212,34 @@ fn preflight_api() -> Result<LeaderboardApi, String> {
         .map_err(|error| format!("leaderboard endpoint unavailable: {error}"))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn sign_fresh_run_preflight_request(
     claim: robin_run_protocol::FreshRunPreflightRequestClaimV1,
 ) -> Result<robin_run_protocol::FreshRunPreflightRequestV1, String> {
-    crate::leaderboard_signing::sign_fresh_run_preflight_request(claim)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn sign_fresh_run_preflight_request(
-    claim: robin_run_protocol::FreshRunPreflightRequestClaimV1,
-) -> Result<robin_run_protocol::FreshRunPreflightRequestV1, String> {
-    crate::leaderboard_signing::browser_game_sign_fresh_run_preflight_request(&claim)
+    PlatformSigner::sign_fresh_run_preflight_request(claim)
         .await
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn sign_campaign_continuation_preflight_as_host(
     claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
 ) -> Result<ParticipantSignatureV1, String> {
-    crate::leaderboard_signing::sign_campaign_continuation_preflight_as_host(claim)
-        .map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn sign_campaign_continuation_preflight_as_host(
-    claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
-) -> Result<ParticipantSignatureV1, String> {
-    crate::leaderboard_signing::browser_game_sign_campaign_continuation_preflight_as_host(claim)
+    PlatformSigner::sign_campaign_continuation_preflight_as_host(claim)
         .await
         .map_err(|error| error.to_string())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn sign_campaign_continuation_preflight_as_controller(
     claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
 ) -> Result<ParticipantSignatureV1, String> {
-    crate::leaderboard_signing::sign_campaign_continuation_preflight_as_controller(claim)
+    PlatformSigner::sign_campaign_continuation_preflight_as_controller(claim)
+        .await
         .map_err(|error| error.to_string())
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn sign_campaign_continuation_preflight_as_controller(
-    claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
-) -> Result<ParticipantSignatureV1, String> {
-    crate::leaderboard_signing::browser_game_sign_campaign_continuation_preflight_as_controller(
-        claim,
-    )
-    .await
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 async fn create_official_ranked_session(
     setup: OfficialRankedSessionSetupV1,
 ) -> Result<crate::leaderboard_ranked_session::RankedSessionHost, String> {
-    crate::leaderboard_signing::create_native_official_ranked_session(
-        robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-        setup,
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn create_official_ranked_session(
-    setup: OfficialRankedSessionSetupV1,
-) -> Result<crate::leaderboard_ranked_session::RankedSessionHost, String> {
-    crate::leaderboard_signing::create_browser_official_ranked_session(
+    PlatformSigner::create_official_ranked_session(
         robin_engine::multiplayer::NET_PROTOCOL_VERSION,
         setup,
     )
@@ -1802,14 +1762,8 @@ fn validate_campaign_content_for_mission(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn local_ranked_public_key() -> Result<robin_run_protocol::PublicKey32, String> {
-    crate::leaderboard_signing::local_public_key().map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn local_ranked_public_key() -> Result<robin_run_protocol::PublicKey32, String> {
-    crate::leaderboard_signing::browser_game_public_key()
+    PlatformSigner::public_key()
         .await
         .map_err(|error| error.to_string())
 }
