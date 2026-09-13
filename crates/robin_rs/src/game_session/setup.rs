@@ -1009,11 +1009,10 @@ macro_rules! diagnostic_stage_serde {
                 serializer.serialize_str(stringify!($stage))
             }
         }
-        impl<'de> serde::Deserialize<'de> for $stage {
-            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-                Err(serde::de::Error::custom(concat!(stringify!($stage), " is a runtime-only mission capability")))
-            }
-        }
+        robin_util::deny_deserialize!(
+            $stage,
+            concat!(stringify!($stage), " is a runtime-only mission capability")
+        );
     )+};
 }
 diagnostic_stage_serde!(

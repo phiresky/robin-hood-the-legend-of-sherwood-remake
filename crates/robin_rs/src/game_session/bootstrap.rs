@@ -136,13 +136,10 @@ impl Serialize for AudioPreparedBootstrap {
     }
 }
 
-impl<'de> Deserialize<'de> for AudioPreparedBootstrap {
-    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "mission bootstrap requires live resource preparation",
-        ))
-    }
-}
+robin_util::deny_deserialize!(
+    AudioPreparedBootstrap,
+    "mission bootstrap requires live resource preparation"
+);
 
 fn built_in_mission_assets_for_loaded_level(
     mission_id: &str,
