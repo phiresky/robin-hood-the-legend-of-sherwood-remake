@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
 
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
 #[derive(Debug, thiserror::Error)]
@@ -155,7 +154,6 @@ impl CampaignStore {
             let mut file =
                 crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))?;
             file.write_all(&bytes)?;
-            #[cfg(unix)]
             file.set_permissions(std::fs::Permissions::from_mode(
                 crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
             ))?;
@@ -248,7 +246,6 @@ impl CampaignStore {
             if actual_digest != expected_digest {
                 return Err(CampaignStoreError::DigestMismatch);
             }
-            #[cfg(unix)]
             file.set_permissions(std::fs::Permissions::from_mode(
                 crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
             ))
@@ -516,7 +513,6 @@ async fn open_path_verified(
 ) -> Result<tokio::fs::File, CampaignStoreError> {
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
     options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path).await?.into_std().await;
     verify_open_campaign_file(file, digest, max_bytes, require_read_only).await
@@ -535,7 +531,6 @@ async fn verify_open_campaign_file(
             "campaign state is non-regular, empty, or oversized",
         )));
     }
-    #[cfg(unix)]
     if require_read_only && metadata.permissions().mode() & 0o222 != 0 {
         return Err(CampaignStoreError::Io(std::io::Error::other(
             "stored campaign state must be read-only",
@@ -557,18 +552,8 @@ async fn verify_open_campaign_file(
     Ok(file)
 }
 
-#[cfg(target_os = "linux")]
 async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
-    use rustix::fs::{Mode, OFlags};
-    use std::os::unix::fs::PermissionsExt as _;
-    let fd = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(std::io::Error::from)?;
+    let fd = crate::secure_fs::open_dir_no_symlinks(path).map_err(std::io::Error::from)?;
     let directory = std::fs::File::from(fd);
     if !directory.metadata()?.is_dir() {
         return Err(std::io::Error::other(
@@ -578,20 +563,6 @@ async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
     if directory.metadata()?.permissions().mode() & 0o7777 != mode {
         directory.set_permissions(std::fs::Permissions::from_mode(mode))?;
     }
-    Ok(())
-}
-
-#[cfg(all(unix, not(target_os = "linux")))]
-async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
-    use std::os::unix::fs::PermissionsExt as _;
-    if std::fs::metadata(path)?.permissions().mode() & 0o7777 != mode {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-async fn set_mode(_path: &Path, _mode: u32) -> Result<(), std::io::Error> {
     Ok(())
 }
 
@@ -645,25 +616,22 @@ mod tests {
                 .unwrap(),
             b"private campaign bytes"
         );
-        #[cfg(unix)]
-        {
-            assert_eq!(
-                std::fs::metadata(directory.path().join("campaigns"))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o7777,
-                crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
-            );
-            assert_eq!(
-                std::fs::metadata(store.path_for_digest(&digest))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE
-            );
-        }
+        assert_eq!(
+            std::fs::metadata(directory.path().join("campaigns"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
+        );
+        assert_eq!(
+            std::fs::metadata(store.path_for_digest(&digest))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE
+        );
         let mut shard = tokio::fs::read_dir(store.path_for_digest(&digest).parent().unwrap())
             .await
             .unwrap();
@@ -684,12 +652,10 @@ mod tests {
         let bytes = b"campaign";
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         let path = store.import_bytes(&digest, bytes).await.unwrap();
-        #[cfg(unix)]
         tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
             .await
             .unwrap();
         tokio::fs::write(&path, b"campaiGn").await.unwrap();
-        #[cfg(unix)]
         tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400))
             .await
             .unwrap();
@@ -706,15 +672,11 @@ mod tests {
             );
         }
 
-        #[cfg(unix)]
-        {
-            tokio::fs::remove_file(&path).await.unwrap();
-            std::os::unix::fs::symlink("/dev/null", &path).unwrap();
-            assert!(store.open_verified(&digest).await.is_err());
-        }
+        tokio::fs::remove_file(&path).await.unwrap();
+        std::os::unix::fs::symlink("/dev/null", &path).unwrap();
+        assert!(store.open_verified(&digest).await.is_err());
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn campaign_root_rejects_a_symlinked_ancestor() {
         let temp = tempfile::tempdir().unwrap();
@@ -729,7 +691,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_campaign_root_survives_ancestor_swap_without_touching_replacement() {
         let directory = tempfile::tempdir().unwrap();

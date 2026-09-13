@@ -346,7 +346,6 @@ pub(super) async fn estimate_backup_space(
         canonical_status_parent == status_parent,
         "backup-space status parent must be canonical"
     );
-    #[cfg(unix)]
     let destination_device_id = {
         use std::os::unix::fs::MetadataExt as _;
         let backup_metadata = std::fs::metadata(&canonical_backup_root)?;
@@ -356,9 +355,6 @@ pub(super) async fn estimate_backup_space(
         );
         backup_metadata.dev()
     };
-    #[cfg(not(unix))]
-    let destination_device_id = 0;
-    #[cfg(unix)]
     let (
         allocation_granularity,
         observed_available_bytes,
@@ -374,21 +370,6 @@ pub(super) async fn estimate_backup_space(
                 .ok_or_else(|| anyhow::anyhow!("backup available-space snapshot overflows"))?,
             filesystem.f_favail,
             filesystem.f_fsid,
-        )
-    };
-    #[cfg(not(unix))]
-    let (
-        allocation_granularity,
-        observed_available_bytes,
-        observed_available_inode_count,
-        destination_filesystem_id,
-    ) = {
-        let filesystem = fs2::statvfs(&canonical_backup_root)?;
-        (
-            filesystem.allocation_granularity(),
-            filesystem.available_space(),
-            0,
-            0,
         )
     };
     anyhow::ensure!(

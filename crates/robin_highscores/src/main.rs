@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("robin-highscores-server is Linux-only");
+
 use clap::Parser;
 use robin_highscores::{
     CampaignStore, Database, ReplayStore, ServerConfig, garbage_collect_campaigns,
@@ -439,7 +442,6 @@ mod tests {
         assert!(!served.load(Ordering::SeqCst));
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_process_validation_failure_exits_without_ready() {
         let (output, messages) = run_systemd_notifier_child("failure");
@@ -458,7 +460,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_process_success_sends_ready_before_serving() {
         let (output, messages) = run_systemd_notifier_child("success");
@@ -471,7 +472,6 @@ mod tests {
         assert_ready_precedes_serving(&messages);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_process_delayed_startup_does_not_send_ready_early() {
         let NotifierChild {
@@ -504,7 +504,6 @@ mod tests {
         assert_ready_precedes_serving(&messages);
     }
 
-    #[cfg(target_os = "linux")]
     fn assert_ready_precedes_serving(messages: &[String]) {
         let ready = messages
             .iter()
@@ -517,14 +516,12 @@ mod tests {
         assert!(ready < serving, "READY=1 must precede serving");
     }
 
-    #[cfg(target_os = "linux")]
     struct NotifierChild {
         child: std::process::Child,
         socket: std::os::unix::net::UnixDatagram,
         _temporary: tempfile::TempDir,
     }
 
-    #[cfg(target_os = "linux")]
     fn spawn_systemd_notifier_child(mode: &str) -> NotifierChild {
         use std::os::unix::net::UnixDatagram;
         use std::process::Stdio;
@@ -550,7 +547,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     fn run_systemd_notifier_child(mode: &str) -> (std::process::Output, Vec<String>) {
         let NotifierChild {
             child,
@@ -561,7 +557,6 @@ mod tests {
         (output, drain_notifications(&socket))
     }
 
-    #[cfg(target_os = "linux")]
     fn drain_notifications(socket: &std::os::unix::net::UnixDatagram) -> Vec<String> {
         socket
             .set_read_timeout(Some(Duration::from_millis(250)))
@@ -573,7 +568,6 @@ mod tests {
         messages
     }
 
-    #[cfg(target_os = "linux")]
     fn receive_notification(socket: &std::os::unix::net::UnixDatagram) -> Option<String> {
         let mut bytes = [0_u8; 4096];
         match socket.recv(&mut bytes) {
@@ -590,7 +584,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[ignore = "process helper invoked by the systemd notification integration tests"]
     #[tokio::test]
     async fn systemd_notifier_process_child() {

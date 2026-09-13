@@ -579,7 +579,6 @@ async fn verified_backup_install_is_noreplace_and_reports_parent_sync_failure() 
     );
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn durability_sync_rejects_a_symlink_in_the_verified_tree() {
     use std::os::unix::fs::symlink;
@@ -601,7 +600,6 @@ async fn durability_sync_rejects_a_symlink_in_the_verified_tree() {
     assert!(!complete.exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -689,7 +687,6 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     assert_eq!(std::fs::read(&status).unwrap(), b"canonical-envelope");
 }
 
-#[cfg(unix)]
 #[test]
 fn status_publication_detects_parent_replacement_after_install() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -752,7 +749,6 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
     let published = fixture
         .publish_and_assert_manifest(admission_partial, stale_partial)
         .await;
-    #[cfg(target_os = "linux")]
     fixture.assert_pinned_authority(&published).await;
     fixture
         .assert_publication_failure_and_retention(&published)
@@ -770,13 +766,10 @@ impl PublicationFixture {
         let status_root = data.join("status");
         let status_path = status_root.join("backup-status.json");
         tokio::fs::create_dir_all(&data).await.unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
         tokio::fs::create_dir(&status_root).await.unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o700)).unwrap();
         tokio::fs::create_dir(&api_secrets).await.unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&api_secrets, std::fs::Permissions::from_mode(0o700)).unwrap();
         tokio::fs::create_dir(&configuration).await.unwrap();
         write_private_file(&configuration.join("server.toml"), b"bind = 'loopback'\n")
@@ -809,7 +802,6 @@ impl PublicationFixture {
         write_private_file(&config.backup_authority_hmac_secret_path, &[0x31; 32])
             .await
             .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             &config.backup_authority_hmac_secret_path,
             std::fs::Permissions::from_mode(0o400),
@@ -866,7 +858,6 @@ impl PublicationFixture {
             "backup authority must not provision a missing production backup root"
         );
         tokio::fs::create_dir(&backup_root).await.unwrap();
-        #[cfg(unix)]
         {
             std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o750)).unwrap();
             assert!(
@@ -898,13 +889,11 @@ impl PublicationFixture {
         let admission_partial =
             backup_root.join(format!(".backup-v4-3-{}.partial", "c".repeat(32)));
         tokio::fs::create_dir(&admission_partial).await.unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&admission_partial, std::fs::Permissions::from_mode(0o700))
             .unwrap();
         write_private_file(&admission_partial.join("must-remain"), b"pre-admission")
             .await
             .unwrap();
-        #[cfg(unix)]
         {
             std::fs::set_permissions(&status_root, std::fs::Permissions::from_mode(0o750)).unwrap();
             assert!(
@@ -1055,7 +1044,6 @@ impl PublicationFixture {
             contemporaneous_without_immutable_release.required_scratch_bytes,
             "release/static/datadir and manifest roots must not consume mutable backup capacity"
         );
-        #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
             let unit_root = directory.path().join("installed-user-units");
@@ -1111,7 +1099,6 @@ impl PublicationFixture {
         write_private_file(&stale_partial.join("restore/state/interrupted"), b"sigkill")
             .await
             .unwrap();
-        #[cfg(unix)]
         {
             std::fs::set_permissions(&stale_partial, std::fs::Permissions::from_mode(0o500))
                 .unwrap();
@@ -1288,7 +1275,6 @@ impl PublicationFixture {
             first_manifest,
         }
     }
-    #[cfg(target_os = "linux")]
     async fn assert_pinned_authority(&self, published: &PublishedBackup) {
         // Keep the exact same pinned descriptors alive through all race probes.
         let backup_directory_file = std::fs::File::open(&published.first).unwrap();
@@ -1300,7 +1286,6 @@ impl PublicationFixture {
         self.assert_pinned_descriptor_rejections(published, &backup_directory_file, &status_file)
             .await;
     }
-    #[cfg(target_os = "linux")]
     async fn assert_receipts_and_release_authority(
         &self,
         published: &PublishedBackup,
@@ -1465,7 +1450,6 @@ impl PublicationFixture {
             "an embedded backup path outside canonical root/ID must never be opened"
         );
     }
-    #[cfg(target_os = "linux")]
     async fn assert_pinned_path_replacement_races(
         &self,
         published: &PublishedBackup,
@@ -1689,7 +1673,6 @@ impl PublicationFixture {
         std::fs::remove_file(&release_manifest).unwrap();
         std::fs::rename(displaced_release, &release_manifest).unwrap();
     }
-    #[cfg(target_os = "linux")]
     async fn assert_pinned_descriptor_rejections(
         &self,
         published: &PublishedBackup,
@@ -2264,7 +2247,6 @@ impl PublicationFixture {
                 })
         );
 
-        #[cfg(unix)]
         {
             use std::os::unix::fs::symlink;
             let outside = directory.path().join("outside-partial-target");

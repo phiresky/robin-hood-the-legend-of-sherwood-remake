@@ -67,7 +67,6 @@ impl StorageVolume {
     /// Inspect the filesystem through the already-pinned capability rather
     /// than resolving the mutable configured path again. This preserves the
     /// stores' ancestor-swap guarantees during every admission check.
-    #[cfg(unix)]
     pub(crate) fn from_pinned_dir(
         kind: &'static str,
         directory: &cap_std::fs::Dir,
@@ -83,17 +82,6 @@ impl StorageVolume {
             identity: FilesystemIdentity(metadata.st_dev),
             available,
         })
-    }
-
-    #[cfg(not(unix))]
-    pub(crate) fn from_pinned_dir(
-        _kind: &'static str,
-        _directory: &cap_std::fs::Dir,
-    ) -> Result<Self, std::io::Error> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "continuous storage admission requires descriptor-based filesystem capacity",
-        ))
     }
 }
 

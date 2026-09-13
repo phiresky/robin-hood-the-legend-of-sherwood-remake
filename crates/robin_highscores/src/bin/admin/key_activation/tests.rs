@@ -3,7 +3,6 @@ use robin_run_protocol::canonical_json_bytes;
 use std::path::Path;
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
 struct BackupAuthorityKeyHarness {
     _directory: tempfile::TempDir,
     opt_root: PathBuf,
@@ -11,7 +10,6 @@ struct BackupAuthorityKeyHarness {
     activation_lock: std::fs::File,
 }
 
-#[cfg(target_os = "linux")]
 impl BackupAuthorityKeyHarness {
     fn new() -> Self {
         use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
@@ -138,10 +136,8 @@ impl BackupAuthorityKeyHarness {
     }
 }
 
-#[cfg(target_os = "linux")]
 const TEST_SOURCE_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
-#[cfg(target_os = "linux")]
 fn test_anonymous_backup_authority_key(parent: &PinnedSecretParent) -> std::fs::File {
     use rustix::fs::{Mode, OFlags, fchmod, openat};
     use std::io::Write as _;
@@ -161,7 +157,6 @@ fn test_anonymous_backup_authority_key(parent: &PinnedSecretParent) -> std::fs::
     anonymous
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_publication_falls_back_from_empty_path_enoent() {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -187,7 +182,6 @@ fn backup_authority_key_publication_falls_back_from_empty_path_enoent() {
     assert_eq!(published.len(), 32);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_proc_fallback_rejects_missing_and_substituted_descriptors() {
     use std::os::fd::AsRawFd as _;
@@ -240,7 +234,6 @@ fn backup_authority_key_proc_fallback_rejects_missing_and_substituted_descriptor
     assert_eq!(std::fs::metadata(&other).unwrap().nlink(), before.nlink());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_proc_fallback_never_replaces_an_existing_destination() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -266,7 +259,6 @@ fn backup_authority_key_proc_fallback_never_replaces_an_existing_destination() {
     );
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_proc_fallback_does_not_mask_policy_errors() {
     use std::os::fd::AsRawFd as _;
@@ -297,7 +289,6 @@ fn backup_authority_key_proc_fallback_does_not_mask_policy_errors() {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_resumes_every_initialization_publication_boundary() {
     for boundary in [
@@ -327,7 +318,6 @@ fn backup_authority_key_v2_resumes_every_initialization_publication_boundary() {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_resumes_both_recovery_mutation_boundaries() {
     let temporary = BackupAuthorityKeyHarness::new();
@@ -369,7 +359,6 @@ fn backup_authority_key_v2_resumes_both_recovery_mutation_boundaries() {
     intent.initialize(TEST_SOURCE_COMMIT).unwrap();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_completion_requires_outer_authority_and_is_resumable() {
     use std::cell::Cell;
@@ -413,7 +402,6 @@ fn backup_authority_key_v2_completion_requires_outer_authority_and_is_resumable(
     assert!(rejected.intent_path().is_file());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_requires_the_exact_held_lock_open_file_description() {
     use std::os::fd::AsRawFd as _;
@@ -461,7 +449,6 @@ fn backup_authority_key_v2_requires_the_exact_held_lock_open_file_description() 
     harness.initialize(TEST_SOURCE_COMMIT).unwrap();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_rejects_stale_and_unjournaled_authority() {
     let stale = BackupAuthorityKeyHarness::new();
@@ -498,7 +485,6 @@ fn backup_authority_key_v2_rejects_stale_and_unjournaled_authority() {
     unjournaled.complete(TEST_SOURCE_COMMIT, || Ok(())).unwrap();
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_rejects_key_symlink_hardlink_mode_and_content_substitution() {
     use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -536,7 +522,6 @@ fn backup_authority_key_v2_rejects_key_symlink_hardlink_mode_and_content_substit
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn backup_authority_key_v2_rejects_intent_and_owner_substitution() {
     use std::os::unix::fs::{PermissionsExt as _, symlink};

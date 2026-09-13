@@ -20,7 +20,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-#[cfg(unix)]
 use std::os::unix::fs::{FileExt as _, MetadataExt as _, PermissionsExt as _};
 
 const PRODUCTION_DATABASE_PATH: &str =
@@ -192,7 +191,6 @@ struct DatabaseParentIdentity {
     changed_nanoseconds: i64,
 }
 
-#[cfg(unix)]
 fn unix_metadata(metadata: &std::fs::Metadata) -> UnixMetadata {
     UnixMetadata {
         device: metadata.dev(),
@@ -267,117 +265,111 @@ impl LiveDatabaseSnapshot {
     where
         F: FnOnce() -> anyhow::Result<()>,
     {
-        #[cfg(not(target_os = "linux"))]
-        anyhow::bail!("live database schema verification requires Linux openat2 and flock");
+        anyhow::ensure!(
+            database_path.is_absolute(),
+            "database path must be absolute"
+        );
+        anyhow::ensure!(
+            database_path.file_name() == Some(std::ffi::OsStr::new(DATABASE_LEAF)),
+            "live database has a noncanonical filename"
+        );
+        let parent_path = database_path
+            .parent()
+            .context("live database path has no parent")?
+            .to_owned();
+        anyhow::ensure!(
+            std::fs::canonicalize(&parent_path)? == parent_path,
+            "live database parent is not its canonical real path"
+        );
+        let parent_file = open_directory_nofollow(&parent_path)?;
+        validate_database_parent(&parent_file.metadata()?)?;
+        let parent_metadata = unix_metadata(&parent_file.metadata()?);
+        let parent_identity = database_parent_identity(parent_metadata);
+        let parent = Dir::from_std_file(parent_file);
 
-        #[cfg(target_os = "linux")]
-        {
-            anyhow::ensure!(
-                database_path.is_absolute(),
-                "database path must be absolute"
-            );
-            anyhow::ensure!(
-                database_path.file_name() == Some(std::ffi::OsStr::new(DATABASE_LEAF)),
-                "live database has a noncanonical filename"
-            );
-            let parent_path = database_path
-                .parent()
-                .context("live database path has no parent")?
-                .to_owned();
-            anyhow::ensure!(
-                std::fs::canonicalize(&parent_path)? == parent_path,
-                "live database parent is not its canonical real path"
-            );
-            let parent_file = open_directory_nofollow(&parent_path)?;
-            validate_database_parent(&parent_file.metadata()?)?;
-            let parent_metadata = unix_metadata(&parent_file.metadata()?);
-            let parent_identity = database_parent_identity(parent_metadata);
-            let parent = Dir::from_std_file(parent_file);
+        let database = pin_required_file(
+            &parent,
+            DATABASE_LEAF,
+            parent_metadata.device,
+            parent_metadata.group,
+        )?;
+        let wal = pin_optional_file(
+            &parent,
+            WAL_LEAF,
+            parent_metadata.device,
+            parent_metadata.group,
+        )?;
+        let shm = pin_optional_file(
+            &parent,
+            SHM_LEAF,
+            parent_metadata.device,
+            parent_metadata.group,
+        )?;
+        anyhow::ensure!(
+            shm.is_none() || wal.is_some(),
+            "live database has an orphan SHM sidecar without its WAL"
+        );
 
-            let database = pin_required_file(
-                &parent,
-                DATABASE_LEAF,
-                parent_metadata.device,
-                parent_metadata.group,
-            )?;
-            let wal = pin_optional_file(
-                &parent,
-                WAL_LEAF,
-                parent_metadata.device,
-                parent_metadata.group,
-            )?;
-            let shm = pin_optional_file(
-                &parent,
-                SHM_LEAF,
-                parent_metadata.device,
-                parent_metadata.group,
-            )?;
-            anyhow::ensure!(
-                shm.is_none() || wal.is_some(),
-                "live database has an orphan SHM sidecar without its WAL"
-            );
+        revalidate_database_inventory(&parent, wal.is_some(), shm.is_some())?;
+        revalidate_parent_path(&parent_path, parent_identity)?;
+        revalidate_live_file(&parent, &database)?;
+        revalidate_optional_file(&parent, WAL_LEAF, wal.as_ref())?;
+        revalidate_optional_file(&parent, SHM_LEAF, shm.as_ref())?;
 
-            revalidate_database_inventory(&parent, wal.is_some(), shm.is_some())?;
-            revalidate_parent_path(&parent_path, parent_identity)?;
-            revalidate_live_file(&parent, &database)?;
-            revalidate_optional_file(&parent, WAL_LEAF, wal.as_ref())?;
-            revalidate_optional_file(&parent, SHM_LEAF, shm.as_ref())?;
-
-            let temporary_directory = tempfile::Builder::new()
-                .prefix("robin-live-schema-v2-")
-                .tempdir()?;
-            std::fs::set_permissions(
-                temporary_directory.path(),
-                std::fs::Permissions::from_mode(SNAPSHOT_DIRECTORY_MODE),
-            )?;
-            let temporary_parent_file = open_directory_nofollow(temporary_directory.path())?;
-            validate_snapshot_parent(&temporary_parent_file.metadata()?)?;
-            let temporary_parent = Dir::from_std_file(temporary_parent_file);
-            let copied_database = copy_pinned_file(
-                &database,
-                &temporary_parent,
-                DATABASE_LEAF,
-                SNAPSHOT_FILE_MODE,
-            )?;
-            let copied_wal = match &wal {
-                Some(wal) => Some(copy_pinned_file(
-                    wal,
-                    &temporary_parent,
-                    WAL_LEAF,
-                    SNAPSHOT_FILE_MODE,
-                )?),
-                None => None,
-            };
-            after_copy()?;
-
-            // A second complete same-descriptor capture closes both in-place
-            // mutation and short-read races at the copy boundary.
-            prove_file_state(&database)?;
-            if let Some(wal) = &wal {
-                prove_file_state(wal)?;
-            }
-            if let Some(shm) = &shm {
-                prove_file_state(shm)?;
-            }
-            revalidate_live_file(&parent, &database)?;
-            revalidate_optional_file(&parent, WAL_LEAF, wal.as_ref())?;
-            revalidate_optional_file(&parent, SHM_LEAF, shm.as_ref())?;
-            revalidate_database_inventory(&parent, wal.is_some(), shm.is_some())?;
-            revalidate_parent_path(&parent_path, parent_identity)?;
-
-            Ok(Self {
-                parent_path,
-                parent,
-                parent_identity,
-                database,
+        let temporary_directory = tempfile::Builder::new()
+            .prefix("robin-live-schema-v2-")
+            .tempdir()?;
+        std::fs::set_permissions(
+            temporary_directory.path(),
+            std::fs::Permissions::from_mode(SNAPSHOT_DIRECTORY_MODE),
+        )?;
+        let temporary_parent_file = open_directory_nofollow(temporary_directory.path())?;
+        validate_snapshot_parent(&temporary_parent_file.metadata()?)?;
+        let temporary_parent = Dir::from_std_file(temporary_parent_file);
+        let copied_database = copy_pinned_file(
+            &database,
+            &temporary_parent,
+            DATABASE_LEAF,
+            SNAPSHOT_FILE_MODE,
+        )?;
+        let copied_wal = match &wal {
+            Some(wal) => Some(copy_pinned_file(
                 wal,
-                shm,
-                temporary_directory,
-                _temporary_parent: temporary_parent,
-                _copied_database: copied_database,
-                _copied_wal: copied_wal,
-            })
+                &temporary_parent,
+                WAL_LEAF,
+                SNAPSHOT_FILE_MODE,
+            )?),
+            None => None,
+        };
+        after_copy()?;
+
+        // A second complete same-descriptor capture closes both in-place
+        // mutation and short-read races at the copy boundary.
+        prove_file_state(&database)?;
+        if let Some(wal) = &wal {
+            prove_file_state(wal)?;
         }
+        if let Some(shm) = &shm {
+            prove_file_state(shm)?;
+        }
+        revalidate_live_file(&parent, &database)?;
+        revalidate_optional_file(&parent, WAL_LEAF, wal.as_ref())?;
+        revalidate_optional_file(&parent, SHM_LEAF, shm.as_ref())?;
+        revalidate_database_inventory(&parent, wal.is_some(), shm.is_some())?;
+        revalidate_parent_path(&parent_path, parent_identity)?;
+
+        Ok(Self {
+            parent_path,
+            parent,
+            parent_identity,
+            database,
+            wal,
+            shm,
+            temporary_directory,
+            _temporary_parent: temporary_parent,
+            _copied_database: copied_database,
+            _copied_wal: copied_wal,
+        })
     }
 
     fn database_path(&self) -> anyhow::Result<PathBuf> {
@@ -419,15 +411,11 @@ impl LiveDatabaseSnapshot {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
+    use rustix::fs::OFlags;
+    let descriptor = crate::secure_fs::open_ambient_no_symlinks(
         path,
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY | OFlags::NOATIME,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
     )
     .map_err(std::io::Error::from)?;
     Ok(std::fs::File::from(descriptor))
@@ -471,16 +459,12 @@ fn validate_live_file(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn open_live_leaf(parent: &Dir, leaf: &str) -> anyhow::Result<std::fs::File> {
-    use rustix::fs::{Mode, OFlags};
-    use std::os::fd::AsFd as _;
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        parent.as_fd(),
+    use rustix::fs::OFlags;
+    let descriptor = crate::secure_fs::open_beneath_same_mount_no_symlinks(
+        parent,
         Path::new(leaf),
         OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOATIME | OFlags::NONBLOCK,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )
     .map_err(std::io::Error::from)?;
     Ok(std::fs::File::from(descriptor))

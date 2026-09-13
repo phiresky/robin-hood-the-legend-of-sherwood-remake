@@ -3,7 +3,7 @@ mod readiness;
 #[cfg(test)]
 use readiness::backup_age_ms_with_active_release;
 use readiness::{backup_age_ms, ensure_backup_ready};
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 use readiness::{
     pin_readiness_status_parent, read_bounded_from_pinned_status_parent, read_bounded_nofollow,
 };
@@ -6661,7 +6661,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn backup_status_reader_rejects_parent_symlinks_and_wrong_pinned_parent() {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -6704,7 +6703,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn backup_status_reader_rejects_parent_replacement_and_substitution() {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -6760,7 +6758,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn backup_status_requires_authentication_and_rejects_symlinks_and_future_timestamps() {
         use std::os::unix::fs::{PermissionsExt as _, symlink};

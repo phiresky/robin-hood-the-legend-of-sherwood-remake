@@ -7,18 +7,15 @@ use sha2::Sha256;
 #[tokio::test]
 async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     let directory = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
 
     let secret = directory.path().join("cursor-hmac.key");
     write_private_file(&secret, &[0x11; 32]).await.unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o400)).unwrap();
     let pinned = pin_restore_source(&secret, 0o400, Some(32), None, "test restore secret").unwrap();
     let displaced = directory.path().join("cursor-hmac.displaced");
     std::fs::rename(&secret, &displaced).unwrap();
     std::fs::write(&secret, [0x22; 32]).unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o400)).unwrap();
     let swapped_target = directory.path().join("archive/swapped.key");
     assert!(
@@ -31,14 +28,12 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     std::fs::remove_file(&secret).unwrap();
     std::fs::rename(&displaced, &secret).unwrap();
 
-    #[cfg(unix)]
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mutation = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(&secret)
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o400)).unwrap();
     let pinned = pin_restore_source(
         &secret,
@@ -51,7 +46,6 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     let mutated_target = directory.path().join("archive/mutated.key");
     assert!(
         copy_pinned_restore_source_with_hook(&pinned, &mutated_target, || {
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::FileExt as _;
                 mutation.write_all_at(&[0x33; 32], 0)?;
@@ -73,7 +67,6 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     let unit = directory.path().join("robin-highscores-api.service");
     let unit_bytes = b"[Service]\nType=notify\n";
     write_private_file(&unit, unit_bytes).await.unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&unit, std::fs::Permissions::from_mode(0o440)).unwrap();
     let pinned_unit = pin_restore_source(
         &unit,
@@ -86,7 +79,6 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     let old_unit = directory.path().join("old-api.service");
     std::fs::rename(&unit, &old_unit).unwrap();
     std::fs::write(&unit, unit_bytes).unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&unit, std::fs::Permissions::from_mode(0o440)).unwrap();
     assert!(
         copy_pinned_restore_source(
@@ -102,11 +94,9 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
 #[tokio::test]
 async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
     let directory = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let backup_root = directory.path().join("backups");
     tokio::fs::create_dir(&backup_root).await.unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&backup_root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let release_manifest = directory.path().join("vps-release-manifest-v2.json");
     let identity = write_test_release_manifest(&release_manifest).await;
@@ -121,7 +111,6 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
         .unwrap();
     assert_eq!(tokio::fs::read(&final_path).await.unwrap(), release_bytes);
     assert!(!partial_path.exists());
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         assert_eq!(
@@ -140,7 +129,6 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
     write_private_file(&partial_path, b"truncated crash residue")
         .await
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&partial_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     preserve_release_authority(&backup_root, &release_manifest, &identity)
         .await
@@ -151,7 +139,6 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
     write_private_file(&partial_path, &release_bytes)
         .await
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&partial_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     preserve_release_authority(&backup_root, &release_manifest, &identity)
         .await
@@ -161,12 +148,10 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
         "a leftover exact partial must be reconciled"
     );
 
-    #[cfg(unix)]
     std::fs::set_permissions(&final_path, std::fs::Permissions::from_mode(0o600)).unwrap();
     tokio::fs::write(&final_path, b"forged authority")
         .await
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&final_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     assert!(
         preserve_release_authority(&backup_root, &release_manifest, &identity)
@@ -177,12 +162,10 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
 
     let wrong_mode_root = directory.path().join("wrong-mode-root");
     tokio::fs::create_dir(&wrong_mode_root).await.unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&wrong_mode_root, std::fs::Permissions::from_mode(0o700)).unwrap();
     tokio::fs::create_dir(wrong_mode_root.join(RELEASE_AUTHORITY_STORE))
         .await
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(
         wrong_mode_root.join(RELEASE_AUTHORITY_STORE),
         std::fs::Permissions::from_mode(0o750),
@@ -195,7 +178,6 @@ async fn preserved_release_authority_is_atomic_idempotent_and_fail_closed() {
         "a non-private authority store must be rejected"
     );
 
-    #[cfg(unix)]
     {
         use std::os::unix::fs::symlink;
         let symlink_root = directory.path().join("symlink-root");

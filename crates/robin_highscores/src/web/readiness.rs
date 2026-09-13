@@ -3,7 +3,6 @@
 use super::AppState;
 use crate::backup::{BackupReleaseIdentityV2, BackupStatusV4, load_backup_release_identity};
 use crate::error::ApiError;
-#[cfg(target_os = "linux")]
 use tokio::io::AsyncReadExt as _;
 
 pub(super) async fn ensure_backup_ready(state: &AppState) -> Result<(), ApiError> {
@@ -121,35 +120,22 @@ pub(super) async fn read_bounded_nofollow(
     path: &std::path::Path,
     maximum: u64,
 ) -> anyhow::Result<Vec<u8>> {
-    #[cfg(target_os = "linux")]
-    {
-        let parent = pin_readiness_status_parent(path)?;
-        return read_bounded_from_pinned_status_parent(path, &parent, maximum, || Ok(())).await;
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (path, maximum);
-        anyhow::bail!(
-            "private readiness authority requires Linux openat2 path-resolution guarantees"
-        )
-    }
+    let parent = pin_readiness_status_parent(path)?;
+    read_bounded_from_pinned_status_parent(path, &parent, maximum, || Ok(())).await
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ReadinessObjectIdentity {
     device: u64,
     inode: u64,
 }
 
-#[cfg(target_os = "linux")]
 pub(super) struct PinnedReadinessStatusParent {
     directory: std::fs::File,
     configured_path: std::path::PathBuf,
     identity: ReadinessObjectIdentity,
 }
 
-#[cfg(target_os = "linux")]
 fn readiness_object_identity(metadata: &std::fs::Metadata) -> ReadinessObjectIdentity {
     use std::os::unix::fs::MetadataExt as _;
 
@@ -159,7 +145,6 @@ fn readiness_object_identity(metadata: &std::fs::Metadata) -> ReadinessObjectIde
     }
 }
 
-#[cfg(target_os = "linux")]
 fn validate_readiness_status_parent_metadata(metadata: &std::fs::Metadata) -> anyhow::Result<()> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -172,7 +157,6 @@ fn validate_readiness_status_parent_metadata(metadata: &std::fs::Metadata) -> an
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn pin_readiness_status_parent(
     configured_path: &std::path::Path,
 ) -> anyhow::Result<PinnedReadinessStatusParent> {
@@ -194,21 +178,12 @@ pub(super) fn pin_readiness_status_parent(
     // The configured state root may itself be a dedicated mount. Pin it with
     // symlink/magic-link rejection, then prohibit any mount crossing beneath
     // that authority while resolving its exact status-directory child.
-    let anchor_descriptor = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        configured_anchor,
-        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::DIRECTORY,
-        rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )?;
+    let anchor_descriptor = crate::secure_fs::open_dir_no_symlinks(configured_anchor)?;
     let anchor = std::fs::File::from(anchor_descriptor);
-    use std::os::fd::AsFd as _;
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        anchor.as_fd(),
+    let descriptor = crate::secure_fs::open_beneath_same_mount_no_symlinks(
+        &anchor,
         std::path::Path::new(parent_name),
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::DIRECTORY,
-        rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let directory = std::fs::File::from(descriptor);
     let metadata = directory.metadata()?;
@@ -223,7 +198,6 @@ pub(super) fn pin_readiness_status_parent(
     Ok(pinned)
 }
 
-#[cfg(target_os = "linux")]
 fn revalidate_readiness_status_parent(
     configured_path: &std::path::Path,
     pinned: &PinnedReadinessStatusParent,
@@ -254,7 +228,6 @@ fn revalidate_readiness_status_parent(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn validate_readiness_status_leaf_metadata(
     metadata: &std::fs::Metadata,
     parent_device: u64,
@@ -274,19 +247,14 @@ fn validate_readiness_status_leaf_metadata(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn open_readiness_status_leaf(
     parent: &PinnedReadinessStatusParent,
     maximum: u64,
 ) -> anyhow::Result<(std::fs::File, ReadinessObjectIdentity)> {
-    use std::os::fd::AsFd as _;
-
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        parent.directory.as_fd(),
+    let descriptor = crate::secure_fs::open_beneath_same_mount_no_symlinks(
+        &parent.directory,
         std::path::Path::new("backup-status.json"),
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
-        rustix::fs::Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let file = std::fs::File::from(descriptor);
     let metadata = file.metadata()?;
@@ -294,7 +262,6 @@ fn open_readiness_status_leaf(
     Ok((file, readiness_object_identity(&metadata)))
 }
 
-#[cfg(target_os = "linux")]
 async fn read_bounded_readiness_file(file: std::fs::File, maximum: u64) -> anyhow::Result<Vec<u8>> {
     let read_limit = maximum
         .checked_add(1)
@@ -311,7 +278,6 @@ async fn read_bounded_readiness_file(file: std::fs::File, maximum: u64) -> anyho
     Ok(bytes)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) async fn read_bounded_from_pinned_status_parent<F>(
     configured_path: &std::path::Path,
     parent: &PinnedReadinessStatusParent,

@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(unix)]
 #[test]
 fn operation_lock_rejects_symlink_hardlink_and_wrong_mode() {
     use std::os::unix::fs::{PermissionsExt as _, symlink};

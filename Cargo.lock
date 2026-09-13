@@ -6014,7 +6014,6 @@ dependencies = [
  "clap",
  "command-fds",
  "ed25519-dalek",
- "fs2",
  "futures-util",
  "hex",
  "hmac",

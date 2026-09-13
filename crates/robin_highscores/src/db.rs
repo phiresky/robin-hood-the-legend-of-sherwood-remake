@@ -861,13 +861,10 @@ impl Database {
             .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
             .map_err(sqlx::Error::Io)?,
         );
-        #[cfg(target_os = "linux")]
         let database_open_path = {
             use std::os::fd::AsRawFd as _;
             PathBuf::from(format!("/proc/self/fd/{}", database_file.as_raw_fd()))
         };
-        #[cfg(not(target_os = "linux"))]
-        let database_open_path = config.database_path.clone();
         let options = SqliteConnectOptions::new()
             .filename(database_open_path)
             .create_if_missing(false)
@@ -2694,44 +2691,25 @@ async fn verify_pinned_database_leaf(
     let opened_parent = Arc::clone(parent);
     let opened_leaf = leaf.to_owned();
     let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
-        #[cfg(target_os = "linux")]
-        {
-            use rustix::fs::{Mode, OFlags};
-            use std::os::fd::AsFd as _;
-
-            // Closing any ordinary descriptor for this inode would discard
-            // SQLite's process-wide POSIX locks, even on another thread. An
-            // O_PATH descriptor can authenticate the leaf without that close
-            // side effect. Keep the same beneath/no-symlink path confinement.
-            let fd = crate::secure_fs::open_no_symlinks_at(
-                opened_parent.as_fd(),
-                std::path::Path::new(&opened_leaf),
-                OFlags::PATH | OFlags::CLOEXEC,
-                Mode::empty(),
-                rustix::fs::ResolveFlags::BENEATH,
-            )
-            .map_err(std::io::Error::from)?;
-            let file = std::fs::File::from(fd);
-            if !file.metadata()?.is_file() {
-                return Err(std::io::Error::other("database is not a regular file"));
-            }
-            Ok(file)
+        // Closing any ordinary descriptor for this inode would discard
+        // SQLite's process-wide POSIX locks, even on another thread. An
+        // O_PATH descriptor can authenticate the leaf without that close
+        // side effect. Keep the same beneath/no-symlink path confinement.
+        let fd = crate::secure_fs::open_beneath_no_symlinks(
+            &*opened_parent,
+            std::path::Path::new(&opened_leaf),
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::CLOEXEC,
+        )
+        .map_err(std::io::Error::from)?;
+        let file = std::fs::File::from(fd);
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::other("database is not a regular file"));
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // TODO: provide a lock-preserving identity check before supporting
-            // production database operation on other platforms.
-            let _ = (opened_parent, opened_leaf);
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "lock-preserving database identity verification requires Linux O_PATH",
-            ))
-        }
+        Ok(file)
     })
     .await
     .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
     .map_err(sqlx::Error::Io)?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         let expected = pinned.metadata().map_err(sqlx::Error::Io)?;
@@ -2788,23 +2766,16 @@ async fn ensure_schema_current(pool: &SqlitePool) -> Result<(), DbError> {
 }
 
 async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Result<(), DbError> {
-    #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags};
+        use rustix::fs::OFlags;
         use std::os::unix::fs::PermissionsExt as _;
         let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;
         if directory {
             flags |= OFlags::DIRECTORY;
         }
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            flags,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )
-        .map_err(std::io::Error::from)
-        .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
+        let fd = crate::secure_fs::open_ambient_no_symlinks(path, flags)
+            .map_err(std::io::Error::from)
+            .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
         let file = std::fs::File::from(fd);
         let metadata = file
             .metadata()
@@ -2822,27 +2793,6 @@ async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Res
         };
         if metadata.permissions().mode() & 0o7777 != mode {
             file.set_permissions(std::fs::Permissions::from_mode(mode))
-                .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
-        }
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = if directory {
-            crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
-        } else {
-            crate::secure_fs::SHARED_MUTABLE_FILE_MODE
-        };
-        if tokio::fs::metadata(path)
-            .await
-            .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?
-            .permissions()
-            .mode()
-            & 0o7777
-            != mode
-        {
-            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-                .await
                 .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
         }
     }
@@ -3269,7 +3219,6 @@ async fn pin_database_sidecars(
         .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
         {
             Ok(file) => {
-                #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt as _;
                     if file
@@ -3379,7 +3328,6 @@ mod tests {
         (directory, database)
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "subprocess helper for the POSIX database lock regression"]
     fn database_posix_lock_probe_child() {
@@ -3398,7 +3346,6 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn database_leaf_identity_check_preserves_posix_locks() {
         use rustix::fs::{FlockOperation, fcntl_lock};
@@ -4762,7 +4709,6 @@ mod tests {
             .unwrap(),
             2
         );
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             assert_eq!(
@@ -4784,7 +4730,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn symlinked_database_path_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
@@ -4800,7 +4745,6 @@ mod tests {
         assert!(matches!(error, DbError::Corrupt(_) | DbError::Sql(_)));
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn symlinked_database_ancestor_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
@@ -4815,7 +4759,6 @@ mod tests {
         assert!(Database::connect(&config).await.is_err());
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_database_and_wal_survive_ancestor_swap_and_reopen() {
         let directory = tempfile::tempdir().unwrap();
@@ -4877,7 +4820,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_database_and_wal_survive_leaf_replacement_and_reopen() {
         let directory = tempfile::tempdir().unwrap();

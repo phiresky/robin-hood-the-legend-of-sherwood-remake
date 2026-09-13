@@ -12,13 +12,11 @@ use std::path::Path;
 #[test]
 fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
     let directory = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let parent = pin_directory_capability(directory.path()).unwrap();
     let source_path = directory.path().join("discard");
     let displaced_path = directory.path().join("displaced");
     std::fs::write(&source_path, b"authority").unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&source_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     let pinned = open_cap_regular_nofollow(&parent, Path::new("discard")).unwrap();
     let identity = metadata_identity_std(&pinned.metadata().unwrap());
@@ -33,7 +31,6 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
             || {
                 std::fs::rename(&source_path, &displaced_path)?;
                 std::fs::write(&source_path, b"replacement")?;
-                #[cfg(unix)]
                 std::fs::set_permissions(&source_path, std::fs::Permissions::from_mode(0o400))?;
                 Ok(())
             },
@@ -46,7 +43,6 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
 
     let terminal_path = directory.path().join("terminal");
     std::fs::write(&terminal_path, b"terminal").unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&terminal_path, std::fs::Permissions::from_mode(0o400)).unwrap();
     let terminal = open_cap_regular_nofollow(&parent, Path::new("terminal")).unwrap();
     let terminal_identity = metadata_identity_std(&terminal.metadata().unwrap());
@@ -60,7 +56,6 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
     )
     .unwrap();
     assert!(!terminal_path.exists());
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         assert_eq!(terminal.metadata().unwrap().nlink(), 0);
@@ -70,7 +65,6 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
 #[test]
 fn exact_complete_cleanup_preserves_unverified_insertions_and_substitutions() {
     let directory = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let backup = directory
         .path()
@@ -83,7 +77,6 @@ fn exact_complete_cleanup_preserves_unverified_insertions_and_substitutions() {
         b"envelope",
     )
     .unwrap();
-    #[cfg(unix)]
     {
         std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::set_permissions(backup.join("empty"), std::fs::Permissions::from_mode(0o700))
@@ -107,7 +100,6 @@ fn exact_complete_cleanup_preserves_unverified_insertions_and_substitutions() {
     .unwrap();
     let verified = backup_tree_paths_cap(&child).unwrap();
     std::fs::write(backup.join("unverified"), b"do not delete").unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(
         backup.join("unverified"),
         std::fs::Permissions::from_mode(0o600),
@@ -128,7 +120,6 @@ fn exact_complete_cleanup_preserves_unverified_insertions_and_substitutions() {
     let displaced = backup.join("displaced-manifest");
     std::fs::rename(backup.join("backup-manifest.json"), &displaced).unwrap();
     std::fs::write(backup.join("backup-manifest.json"), b"manifest").unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(
         backup.join("backup-manifest.json"),
         std::fs::Permissions::from_mode(0o600),
@@ -147,7 +138,6 @@ fn exact_complete_cleanup_preserves_unverified_insertions_and_substitutions() {
     assert!(backup.exists());
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn stale_partial_cleanup_rejects_hardlinks_and_malformed_managed_names() {
     use std::os::unix::fs::PermissionsExt as _;

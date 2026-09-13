@@ -1604,24 +1604,9 @@ where
     Ok(documents)
 }
 
-#[cfg(target_os = "linux")]
-use crate::secure_fs::open_regular_no_symlinks;
-
-#[cfg(not(target_os = "linux"))]
-fn open_regular_no_symlinks(path: &Path) -> anyhow::Result<std::fs::File> {
-    let metadata = std::fs::symlink_metadata(path)?;
-    anyhow::ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "path is not a regular non-symlink file"
-    );
-    let file = std::fs::File::open(path)?;
-    anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
-    Ok(file)
-}
-
-fn read_regular_file_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<Vec<u8>> {
-    crate::secure_fs::read_bounded_regular_file(open_regular_no_symlinks(path)?, limit)
-}
+use crate::secure_fs::{
+    open_regular_no_symlinks, read_bounded_no_symlinks as read_regular_file_no_symlinks,
+};
 
 fn hash_authenticated_candidate_campaign_state(
     authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
@@ -1696,9 +1681,8 @@ fn digest32(value: &str, field: &str) -> anyhow::Result<Digest32> {
     })?))
 }
 
-#[cfg(target_os = "linux")]
 fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
-    use rustix::fs::{Mode, OFlags};
+    use rustix::fs::OFlags;
     use std::io::Read as _;
     use std::os::unix::fs::PermissionsExt as _;
 
@@ -1712,26 +1696,17 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("moderation bearer token must name a file"))?;
-    let parent_fd = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        parent,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(|error| {
+    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent).map_err(|error| {
         anyhow::anyhow!(
             "moderation bearer token parent must pre-exist without symlinks ({}): {error}",
             parent.display()
         )
     })?;
     let parent_file = std::fs::File::from(parent_fd);
-    let token_fd = crate::secure_fs::open_no_symlinks_at(
+    let token_fd = crate::secure_fs::open_beneath_no_symlinks(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let file = std::fs::File::from(token_fd);
     let metadata = file.metadata()?;
@@ -1756,12 +1731,6 @@ fn load_private_bearer_token(path: &Path) -> anyhow::Result<Vec<u8>> {
     Ok(token)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn load_private_bearer_token(_path: &Path) -> anyhow::Result<Vec<u8>> {
-    anyhow::bail!("pinned moderation bearer token loading requires Linux openat2 confinement")
-}
-
-#[cfg(target_os = "linux")]
 fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Result<[u8; 32]> {
     use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
@@ -1773,14 +1742,7 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        parent,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(|error| {
+    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent).map_err(|error| {
         anyhow::anyhow!(
             "{label} parent must pre-exist without symlinks ({}): {error}",
             parent.display()
@@ -1794,23 +1756,20 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     );
 
     let open_existing = || -> anyhow::Result<std::fs::File> {
-        let fd = crate::secure_fs::open_no_symlinks_at(
+        let fd = crate::secure_fs::open_beneath_no_symlinks(
             &parent_file,
             filename,
             OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
         )?;
         Ok(std::fs::File::from(fd))
     };
 
     let mut file = if create_if_missing {
-        match crate::secure_fs::open_no_symlinks_at(
+        match crate::secure_fs::create_beneath_no_symlinks(
             &parent_file,
             filename,
             OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o400),
-            rustix::fs::ResolveFlags::BENEATH,
         ) {
             Ok(fd) => {
                 let mut file = std::fs::File::from(fd);
@@ -1844,7 +1803,6 @@ fn private_key(path: &Path, create_if_missing: bool, label: &str) -> anyhow::Res
     Ok(key)
 }
 
-#[cfg(target_os = "linux")]
 fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::Result<[u8; 32]> {
     use rustix::fs::{Mode, OFlags};
     use std::io::{Read as _, Write as _};
@@ -1856,14 +1814,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     let filename = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} must name a file"))?;
-    let parent_fd = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        parent,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(|error| {
+    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent).map_err(|error| {
         anyhow::anyhow!(
             "{label} parent must pre-exist without symlinks ({}): {error}",
             parent.display()
@@ -1883,7 +1834,7 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     } else {
         OFlags::RDONLY | OFlags::CLOEXEC
     };
-    let fd = crate::secure_fs::open_no_symlinks_at(
+    let fd = crate::secure_fs::create_beneath_no_symlinks(
         &parent_file,
         filename,
         flags,
@@ -1892,7 +1843,6 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
         } else {
             Mode::empty()
         },
-        rustix::fs::ResolveFlags::BENEATH ,
     )
     .map_err(|error| {
         if create_new {
@@ -1965,7 +1915,6 @@ fn backup_authority_key(path: &Path, create_new: bool, label: &str) -> anyhow::R
     Ok(key)
 }
 
-#[cfg(target_os = "linux")]
 fn revalidate_backup_authority_path(
     parent: &Path,
     filename: &std::ffi::OsStr,
@@ -1974,17 +1923,11 @@ fn revalidate_backup_authority_path(
     expected_key: &[u8; 32],
     label: &str,
 ) -> anyhow::Result<()> {
-    use rustix::fs::{Mode, OFlags};
+    use rustix::fs::OFlags;
     use std::io::Read as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    let parent_fd = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        parent,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )?;
+    let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent)?;
     let parent_file = std::fs::File::from(parent_fd);
     let parent_metadata = parent_file.metadata()?;
     anyhow::ensure!(
@@ -1995,12 +1938,10 @@ fn revalidate_backup_authority_path(
             && parent_metadata.uid() == rustix::process::geteuid().as_raw(),
         "{label} parent path changed during access"
     );
-    let file_fd = crate::secure_fs::open_no_symlinks_at(
+    let file_fd = crate::secure_fs::open_beneath_no_symlinks(
         &parent_file,
         filename,
         OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let mut file = std::fs::File::from(file_fd);
     let metadata = file.metadata()?;
@@ -2022,16 +1963,6 @@ fn revalidate_backup_authority_path(
         "{label} contents changed during access"
     );
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn private_key(_path: &Path, _create_if_missing: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    anyhow::bail!("{label} access requires Linux openat2 confinement")
-}
-
-#[cfg(not(target_os = "linux"))]
-fn backup_authority_key(_path: &Path, _create_new: bool, label: &str) -> anyhow::Result<[u8; 32]> {
-    anyhow::bail!("{label} access requires Linux openat2 confinement")
 }
 
 #[cfg(test)]
@@ -2176,7 +2107,6 @@ mod tests {
     #[test]
     fn cursor_secret_is_durable_and_exact_length() {
         let directory = tempfile::tempdir().unwrap();
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -2194,7 +2124,6 @@ mod tests {
         let second = config.load_or_create_cursor_key().unwrap();
         assert_eq!(first, second);
         assert_eq!(std::fs::read(&config.cursor_secret_path).unwrap().len(), 32);
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             assert_eq!(
@@ -2215,7 +2144,6 @@ mod tests {
         assert_ne!(preflight, grant);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn cursor_secret_rejects_a_symlink_without_following_it() {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -2236,7 +2164,6 @@ mod tests {
         assert_eq!(std::fs::read(target).unwrap(), [7_u8; 32]);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn backup_authority_is_create_new_and_rejects_aliases() {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
@@ -2298,7 +2225,6 @@ mod tests {
         assert!(duplicate.validate().is_err());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn operator_files_are_hashed_from_pinned_non_symlink_inodes() {
         use std::os::unix::fs::symlink;
@@ -2332,7 +2258,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn candidate_campaign_identity_never_reopens_the_ambient_absolute_path() {
         let authenticated_candidate_files = BTreeMap::from([(
@@ -2388,7 +2313,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn moderation_token_rejects_symlinked_file_and_parent() {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -2417,7 +2341,6 @@ mod tests {
     #[test]
     fn backup_config_load_uses_ephemeral_moderation_credential_only_for_reading() {
         let directory = tempfile::tempdir().unwrap();
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -2426,7 +2349,6 @@ mod tests {
         let configured_token = directory.path().join("api-owned-token");
         let credential = directory.path().join("credential-token");
         std::fs::write(&credential, b"0123456789abcdef0123456789abcdef").unwrap();
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o400)).unwrap();

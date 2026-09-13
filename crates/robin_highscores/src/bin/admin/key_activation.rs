@@ -52,18 +52,15 @@ enum BackupAuthorityKeyBoundary {
     CompletionDirectorySynced,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug)]
 struct OwnedRawFd(i32);
 
-#[cfg(target_os = "linux")]
 impl Drop for OwnedRawFd {
     fn drop(&mut self) {
         let _ = nix_legacy::unistd::close(self.0);
     }
 }
 
-#[cfg(target_os = "linux")]
 struct PinnedActivationLock {
     inherited: OwnedRawFd,
     opt_root: PathBuf,
@@ -73,10 +70,9 @@ struct PinnedActivationLock {
     lock_inode: u64,
 }
 
-#[cfg(target_os = "linux")]
 impl PinnedActivationLock {
     fn ensure_canonical(&self) -> anyhow::Result<()> {
-        use rustix::fs::{FlockOperation, Mode, OFlags, flock};
+        use rustix::fs::{FlockOperation, OFlags, flock};
         use rustix::io::Errno;
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -91,19 +87,11 @@ impl PinnedActivationLock {
                 && root_metadata.ino() == self.opt_inode,
             "activation opt root changed while the fifth-key transaction was active"
         );
-        let root = robin_highscores::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            &self.opt_root,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        let canonical = robin_highscores::secure_fs::open_no_symlinks_at(
+        let root = robin_highscores::secure_fs::open_dir_no_symlinks(&self.opt_root)?;
+        let canonical = robin_highscores::secure_fs::open_beneath_no_symlinks(
             &root,
             "activation.lock",
             OFlags::RDWR | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let canonical_metadata = rustix::fs::fstat(&canonical)?;
         let inherited_metadata = nix_legacy::sys::stat::fstat(self.inherited.0)?;
@@ -142,12 +130,11 @@ impl PinnedActivationLock {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn pin_activation_lock_at(
     opt_root: &Path,
     activation_lock_fd: u32,
 ) -> anyhow::Result<PinnedActivationLock> {
-    use rustix::fs::{Mode, OFlags};
+    use rustix::fs::OFlags;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     anyhow::ensure!(
@@ -169,24 +156,16 @@ fn pin_activation_lock_at(
             && root_metadata.permissions().mode() & 0o777 == 0o750,
         "activation opt root must be canonical, EUID-owned, and mode 0750"
     );
-    let root = robin_highscores::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        opt_root,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )?;
+    let root = robin_highscores::secure_fs::open_dir_no_symlinks(opt_root)?;
     let pinned_root = rustix::fs::fstat(&root)?;
     anyhow::ensure!(
         pinned_root.st_dev == root_metadata.dev() && pinned_root.st_ino == root_metadata.ino(),
         "activation opt root changed while it was pinned"
     );
-    let canonical = robin_highscores::secure_fs::open_no_symlinks_at(
+    let canonical = robin_highscores::secure_fs::open_beneath_no_symlinks(
         &root,
         "activation.lock",
         OFlags::RDWR | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH,
     )?;
     let canonical_metadata = rustix::fs::fstat(&canonical)?;
     let inherited_metadata = nix_legacy::sys::stat::fstat(inherited.0)?;
@@ -213,7 +192,6 @@ fn pin_activation_lock_at(
     Ok(pinned)
 }
 
-#[cfg(target_os = "linux")]
 struct PinnedSecretParent {
     fd: std::os::fd::OwnedFd,
     path: PathBuf,
@@ -222,10 +200,8 @@ struct PinnedSecretParent {
     uid: u32,
 }
 
-#[cfg(target_os = "linux")]
 impl PinnedSecretParent {
     fn ensure_canonical(&self) -> anyhow::Result<()> {
-        use rustix::fs::{Mode, OFlags};
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
         let metadata = std::fs::symlink_metadata(&self.path)?;
@@ -239,13 +215,7 @@ impl PinnedSecretParent {
                 && metadata.ino() == self.inode,
             "backup-authority secret parent changed during initialization"
         );
-        let reopened = robin_highscores::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            &self.path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
+        let reopened = robin_highscores::secure_fs::open_dir_no_symlinks(&self.path)?;
         let reopened = rustix::fs::fstat(&reopened)?;
         anyhow::ensure!(
             reopened.st_dev == self.device && reopened.st_ino == self.inode,
@@ -255,9 +225,7 @@ impl PinnedSecretParent {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn pin_secret_parent(key_path: &Path, expected_uid: u32) -> anyhow::Result<PinnedSecretParent> {
-    use rustix::fs::{Mode, OFlags};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     anyhow::ensure!(
@@ -280,13 +248,7 @@ fn pin_secret_parent(key_path: &Path, expected_uid: u32) -> anyhow::Result<Pinne
             && metadata.permissions().mode() & 0o777 == 0o700,
         "backup-authority secret parent must be canonical, expected-user-owned, and mode 0700"
     );
-    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        parent_path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )?;
+    let fd = robin_highscores::secure_fs::open_dir_no_symlinks(parent_path)?;
     let pinned = rustix::fs::fstat(&fd)?;
     anyhow::ensure!(
         pinned.st_dev == metadata.dev() && pinned.st_ino == metadata.ino(),
@@ -301,7 +263,6 @@ fn pin_secret_parent(key_path: &Path, expected_uid: u32) -> anyhow::Result<Pinne
     })
 }
 
-#[cfg(target_os = "linux")]
 fn named_entry_exists(parent: &PinnedSecretParent, name: &str) -> anyhow::Result<bool> {
     use rustix::fs::{AtFlags, statat};
     match statat(&parent.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
@@ -311,7 +272,6 @@ fn named_entry_exists(parent: &PinnedSecretParent, name: &str) -> anyhow::Result
     }
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PinnedKeyIdentity {
     device: u64,
@@ -319,11 +279,10 @@ struct PinnedKeyIdentity {
     sha256: String,
 }
 
-#[cfg(target_os = "linux")]
 fn load_published_backup_authority_key(
     parent: &PinnedSecretParent,
 ) -> anyhow::Result<PinnedKeyIdentity> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, statat};
+    use rustix::fs::{AtFlags, FileType, OFlags, statat};
     use std::os::fd::AsFd as _;
 
     let name = "backup-authority-hmac.key";
@@ -337,12 +296,10 @@ fn load_published_backup_authority_key(
             && named.st_mode & 0o777 == 0o400,
         "backup-authority key has unsafe type, owner, device, links, size, or mode"
     );
-    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
+    let fd = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
         parent.fd.as_fd(),
         name,
         OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let mut file = std::fs::File::from(fd);
     let opened = file.metadata()?;
@@ -381,7 +338,6 @@ fn load_published_backup_authority_key(
     })
 }
 
-#[cfg(target_os = "linux")]
 struct PinnedIntent {
     document: BackupAuthorityKeyIntentV1,
     bytes: Vec<u8>,
@@ -389,12 +345,11 @@ struct PinnedIntent {
     inode: u64,
 }
 
-#[cfg(target_os = "linux")]
 fn load_backup_authority_intent(
     parent: &PinnedSecretParent,
     name: &str,
 ) -> anyhow::Result<PinnedIntent> {
-    use rustix::fs::{AtFlags, FileType, Mode, OFlags, statat};
+    use rustix::fs::{AtFlags, FileType, OFlags, statat};
     use std::os::fd::AsFd as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -408,12 +363,10 @@ fn load_backup_authority_intent(
             && named.st_mode & 0o777 == 0o400,
         "backup-authority intent has unsafe type, owner, device, links, size, or mode"
     );
-    let fd = robin_highscores::secure_fs::open_no_symlinks_at(
+    let fd = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
         parent.fd.as_fd(),
         name,
         OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let file = std::fs::File::from(fd);
     let opened = file.metadata()?;
@@ -456,7 +409,6 @@ fn load_backup_authority_intent(
     })
 }
 
-#[cfg(target_os = "linux")]
 fn validate_backup_authority_intent(
     intent: &BackupAuthorityKeyIntentV1,
     source_commit: &str,
@@ -483,7 +435,6 @@ fn validate_backup_authority_intent(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn validate_key_against_intent(
     key: &PinnedKeyIdentity,
     intent: &BackupAuthorityKeyIntentV1,
@@ -497,22 +448,19 @@ fn validate_key_against_intent(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn remove_exact_named_entry(
     parent: &PinnedSecretParent,
     name: &str,
     expected_device: u64,
     expected_inode: u64,
 ) -> anyhow::Result<()> {
-    use rustix::fs::{AtFlags, Mode, OFlags, statat, unlinkat};
+    use rustix::fs::{AtFlags, OFlags, statat, unlinkat};
     use std::os::fd::AsFd as _;
 
-    let pinned = robin_highscores::secure_fs::open_no_symlinks_at(
+    let pinned = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
         parent.fd.as_fd(),
         name,
         OFlags::PATH | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
     )?;
     let pinned_metadata = rustix::fs::fstat(&pinned)?;
     let named = statat(parent.fd.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
@@ -531,7 +479,6 @@ fn remove_exact_named_entry(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn reconcile_intent_temporary<H>(
     parent: &PinnedSecretParent,
     intent_exists: bool,
@@ -577,7 +524,6 @@ where
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn valid_backup_authority_source_commit(value: &str) -> bool {
     value.len() == 40
         && value
@@ -585,7 +531,6 @@ fn valid_backup_authority_source_commit(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-#[cfg(target_os = "linux")]
 fn publish_anonymous_backup_authority_key_with<F>(
     anonymous: &std::fs::File,
     parent: &PinnedSecretParent,
@@ -596,7 +541,7 @@ fn publish_anonymous_backup_authority_key_with<F>(
 where
     F: FnOnce() -> rustix::io::Result<()>,
 {
-    use rustix::fs::{AtFlags, Mode, OFlags, linkat};
+    use rustix::fs::{AtFlags, OFlags, linkat};
     use std::os::fd::{AsFd as _, AsRawFd as _};
 
     let retained = rustix::fs::fstat(anonymous)?;
@@ -621,12 +566,10 @@ where
         Err(error) => return Err(error).context("publish anonymous backup-authority key"),
     }
 
-    let published = robin_highscores::secure_fs::open_no_symlinks_at(
+    let published = robin_highscores::secure_fs::open_beneath_no_symlinks(
         parent.fd.as_fd(),
         target,
         OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::BENEATH,
     )
     .context("pin published backup-authority key")?;
     let observed = rustix::fs::fstat(&published)?;
@@ -645,7 +588,6 @@ where
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn initialize_backup_authority_key_v2_at<H>(
     opt_root: &Path,
     key_path: &Path,
@@ -763,12 +705,11 @@ where
         u64::try_from(intent_bytes.len())? <= MAX_BACKUP_AUTHORITY_INTENT_BYTES,
         "backup-authority intent exceeds its byte limit"
     );
-    let temporary = robin_highscores::secure_fs::open_no_symlinks_at(
+    let temporary = robin_highscores::secure_fs::create_beneath_no_symlinks(
         parent.fd.as_fd(),
         BACKUP_AUTHORITY_INTENT_TEMP_NAME,
         OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
         Mode::from_raw_mode(0o400),
-        rustix::fs::ResolveFlags::BENEATH,
     )
     .context("create backup-authority intent temporary")?;
     fchmod(&temporary, Mode::from_raw_mode(0o400))
@@ -832,7 +773,6 @@ where
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn complete_backup_authority_key_v2_at<V, H>(
     opt_root: &Path,
     key_path: &Path,
@@ -916,7 +856,6 @@ where
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn initialize_backup_authority_key_v2(
     source_commit: &str,
     activation_lock_fd: u32,
@@ -931,15 +870,6 @@ pub(super) fn initialize_backup_authority_key_v2(
     )
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(super) fn initialize_backup_authority_key_v2(
-    _source_commit: &str,
-    _activation_lock_fd: u32,
-) -> anyhow::Result<()> {
-    anyhow::bail!("transactional backup-authority initialization requires Linux")
-}
-
-#[cfg(target_os = "linux")]
 pub(super) fn complete_backup_authority_key_v2<V>(
     source_commit: &str,
     activation_lock_fd: u32,
@@ -957,18 +887,6 @@ where
         validate_outer_authority,
         |_| Ok(()),
     )
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(super) fn complete_backup_authority_key_v2<V>(
-    _source_commit: &str,
-    _activation_lock_fd: u32,
-    _validate_outer_authority: V,
-) -> anyhow::Result<()>
-where
-    V: FnOnce() -> anyhow::Result<()>,
-{
-    anyhow::bail!("transactional backup-authority completion requires Linux")
 }
 
 #[cfg(test)]

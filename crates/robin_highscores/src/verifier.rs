@@ -176,56 +176,48 @@ pub fn build_verification_request(
 
 impl VerifierProcessConfig {
     pub async fn validate(&self) -> Result<(), ProcessError> {
-        #[cfg(not(target_os = "linux"))]
-        return Err(ProcessError::Configuration(
-            "production verifier containment requires Linux".to_owned(),
-        ));
-
-        #[cfg(target_os = "linux")]
+        if self.bwrap_program != Path::new(BWRAP_PROGRAM)
+            || self.prlimit_program != Path::new(PRLIMIT_PROGRAM)
         {
-            if self.bwrap_program != Path::new(BWRAP_PROGRAM)
-                || self.prlimit_program != Path::new(PRLIMIT_PROGRAM)
-            {
-                return Err(ProcessError::Configuration(
-                    "direct verifier launch requires exact /usr/bin/bwrap and /usr/bin/prlimit paths"
-                        .to_owned(),
-                ));
-            }
-            validate_absolute_normalized_path(&self.verifier_program, "verifier_program")?;
-            drop(sealed_executable(
-                &self.bwrap_program,
-                self.bwrap_sha256,
-                "bwrap_program",
-            )?);
-            drop(sealed_executable(
-                &self.prlimit_program,
-                self.prlimit_sha256,
-                "prlimit_program",
-            )?);
-            drop(sealed_executable(
-                &self.verifier_program,
-                self.verifier_sha256,
-                "verifier_program",
-            )?);
-            if self.wall_timeout < Duration::from_secs(1)
-                || self.wall_timeout > Duration::from_secs(60 * 60)
-                || self.cpu_limit_seconds == 0
-                || self.cpu_limit_seconds > self.wall_timeout.as_secs()
-                || !(64 * 1024 * 1024..=MAX_ADDRESS_SPACE_BYTES)
-                    .contains(&self.address_space_limit_bytes)
-                || !(1..=128).contains(&self.process_limit)
-                || !(16..=4096).contains(&self.open_files_limit)
-                || self.file_size_limit_bytes < MAX_RESULT_BYTES.max(self.max_campaign_bytes)
-                || self.file_size_limit_bytes > MAX_FILE_SIZE_BYTES
-                || !(1..=MAX_REQUEST_BYTES_HARD).contains(&self.max_request_bytes)
-                || self.max_campaign_bytes == 0
-            {
-                return Err(ProcessError::Configuration(
-                    "invalid direct verifier timeout, artifact, or rlimit policy".to_owned(),
-                ));
-            }
-            Ok(())
+            return Err(ProcessError::Configuration(
+                "direct verifier launch requires exact /usr/bin/bwrap and /usr/bin/prlimit paths"
+                    .to_owned(),
+            ));
         }
+        validate_absolute_normalized_path(&self.verifier_program, "verifier_program")?;
+        drop(sealed_executable(
+            &self.bwrap_program,
+            self.bwrap_sha256,
+            "bwrap_program",
+        )?);
+        drop(sealed_executable(
+            &self.prlimit_program,
+            self.prlimit_sha256,
+            "prlimit_program",
+        )?);
+        drop(sealed_executable(
+            &self.verifier_program,
+            self.verifier_sha256,
+            "verifier_program",
+        )?);
+        if self.wall_timeout < Duration::from_secs(1)
+            || self.wall_timeout > Duration::from_secs(60 * 60)
+            || self.cpu_limit_seconds == 0
+            || self.cpu_limit_seconds > self.wall_timeout.as_secs()
+            || !(64 * 1024 * 1024..=MAX_ADDRESS_SPACE_BYTES)
+                .contains(&self.address_space_limit_bytes)
+            || !(1..=128).contains(&self.process_limit)
+            || !(16..=4096).contains(&self.open_files_limit)
+            || self.file_size_limit_bytes < MAX_RESULT_BYTES.max(self.max_campaign_bytes)
+            || self.file_size_limit_bytes > MAX_FILE_SIZE_BYTES
+            || !(1..=MAX_REQUEST_BYTES_HARD).contains(&self.max_request_bytes)
+            || self.max_campaign_bytes == 0
+        {
+            return Err(ProcessError::Configuration(
+                "invalid direct verifier timeout, artifact, or rlimit policy".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub async fn run(
@@ -433,14 +425,12 @@ struct SharedOutputs {
     final_campaign: File,
 }
 
-#[cfg(target_os = "linux")]
 #[derive(Clone, Copy)]
 struct OutputIdentity {
     device: u64,
     inode: u64,
 }
 
-#[cfg(target_os = "linux")]
 fn launch_direct_verifier(
     config: &VerifierProcessConfig,
     artifacts: SandboxArtifacts<'_>,
@@ -537,16 +527,6 @@ fn launch_direct_verifier(
         "final campaign output",
         config.max_campaign_bytes,
     )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn launch_direct_verifier(
-    _config: &VerifierProcessConfig,
-    _artifacts: SandboxArtifacts<'_>,
-) -> Result<(), ProcessError> {
-    Err(ProcessError::Configuration(
-        "direct verifier launch requires Linux".to_owned(),
-    ))
 }
 
 fn fixed_prlimit_arguments(config: &VerifierProcessConfig, bwrap: &Path) -> Vec<OsString> {
@@ -788,14 +768,12 @@ fn validate_absolute_normalized_path(path: &Path, name: &str) -> Result<(), Proc
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn inheritable_copy(file: &File) -> Result<std::os::fd::OwnedFd, ProcessError> {
     rustix::io::dup(file)
         .map_err(std::io::Error::from)
         .map_err(ProcessError::Io)
 }
 
-#[cfg(target_os = "linux")]
 fn proc_parent_fd_path(file: &File) -> PathBuf {
     use std::os::fd::AsRawFd as _;
     PathBuf::from(format!(
@@ -805,7 +783,6 @@ fn proc_parent_fd_path(file: &File) -> PathBuf {
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn wait_for_process_group(
     child: &mut Child,
     timeout: Duration,
@@ -861,7 +838,6 @@ fn validate_admission_request_binding(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn sealed_data_file(
     bytes: &[u8],
     expected_sha256: Option<[u8; 32]>,
@@ -887,17 +863,6 @@ fn sealed_data_file(
     )
     .map_err(std::io::Error::from)?;
     Ok(file)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn sealed_data_file(
-    _bytes: &[u8],
-    _expected_sha256: Option<[u8; 32]>,
-    _name: &str,
-) -> Result<std::fs::File, ProcessError> {
-    Err(ProcessError::Configuration(
-        "sealed verifier inputs require Linux memfd sealing".to_owned(),
-    ))
 }
 
 async fn stage_sealed_file(
@@ -970,18 +935,9 @@ fn read_std_bounded(source: &mut File, limit: u64, name: &str) -> Result<Vec<u8>
     Ok(bytes)
 }
 
-#[cfg(target_os = "linux")]
 fn open_pinned_file(path: &Path, name: &str) -> Result<File, ProcessError> {
-    use rustix::fs::{Mode, OFlags};
     validate_absolute_normalized_path(path, name)?;
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(std::io::Error::from)?;
+    let descriptor = crate::secure_fs::open_file_no_symlinks(path).map_err(std::io::Error::from)?;
     let file = File::from(descriptor);
     if !file.metadata()?.is_file() {
         return Err(ProcessError::Configuration(format!(
@@ -991,19 +947,10 @@ fn open_pinned_file(path: &Path, name: &str) -> Result<File, ProcessError> {
     Ok(file)
 }
 
-#[cfg(target_os = "linux")]
 fn open_pinned_directory(path: &Path, name: &str) -> Result<File, ProcessError> {
-    use rustix::fs::{Mode, OFlags};
     validate_absolute_normalized_path(path, name)?;
     mount_parent_directories(path)?;
-    let descriptor = crate::secure_fs::open_no_symlinks_at(
-        rustix::fs::CWD,
-        path,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        rustix::fs::ResolveFlags::empty(),
-    )
-    .map_err(std::io::Error::from)?;
+    let descriptor = crate::secure_fs::open_dir_no_symlinks(path).map_err(std::io::Error::from)?;
     let file = File::from(descriptor);
     if !file.metadata()?.is_dir() {
         return Err(ProcessError::Configuration(format!(
@@ -1011,13 +958,6 @@ fn open_pinned_directory(path: &Path, name: &str) -> Result<File, ProcessError> 
         )));
     }
     Ok(file)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn open_pinned_directory(_path: &Path, _name: &str) -> Result<File, ProcessError> {
-    Err(ProcessError::Configuration(
-        "pinned verifier directories require Linux openat2".to_owned(),
-    ))
 }
 
 fn sealed_executable(
@@ -1042,7 +982,6 @@ fn sealed_executable(
     Ok(file)
 }
 
-#[cfg(target_os = "linux")]
 fn validate_output_file(
     file: &File,
     name: &str,
@@ -1068,7 +1007,6 @@ fn validate_output_file(
     })
 }
 
-#[cfg(target_os = "linux")]
 fn validate_output_identity(
     file: &File,
     expected: OutputIdentity,
@@ -1092,7 +1030,6 @@ fn validate_output_identity(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn create_shared_outputs() -> Result<SharedOutputs, ProcessError> {
     use std::fs::OpenOptions;
     use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
@@ -1125,13 +1062,6 @@ fn create_shared_outputs() -> Result<SharedOutputs, ProcessError> {
         result,
         final_campaign,
     })
-}
-
-#[cfg(not(target_os = "linux"))]
-fn create_shared_outputs() -> Result<SharedOutputs, ProcessError> {
-    Err(ProcessError::Configuration(
-        "private verifier outputs require Linux".to_owned(),
-    ))
 }
 
 async fn read_bounded_open_file(
@@ -1170,10 +1100,9 @@ async fn read_bounded_open_file(
     Ok(bytes)
 }
 
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use command_fds::{CommandFdExt as _, FdMapping};

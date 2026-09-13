@@ -9,14 +9,11 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Read as _;
 use std::io::Write as _;
-#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
 pub(super) fn duplicate_inherited_fd(fd: u32, directory: bool) -> anyhow::Result<std::fs::File> {
     anyhow::ensure!(fd >= 3, "inherited verifier descriptor must be at least 3");
     let path = PathBuf::from(format!("/proc/self/fd/{fd}"));
@@ -33,12 +30,6 @@ pub(super) fn duplicate_inherited_fd(fd: u32, directory: bool) -> anyhow::Result
     Ok(file)
 }
 
-#[cfg(not(target_os = "linux"))]
-pub(super) fn duplicate_inherited_fd(_fd: u32, _directory: bool) -> anyhow::Result<std::fs::File> {
-    anyhow::bail!("inherited-FD backup verification requires Linux procfs")
-}
-
-#[cfg(target_os = "linux")]
 fn inherited_fd_target(fd: u32) -> anyhow::Result<PathBuf> {
     let target = std::fs::read_link(format!("/proc/self/fd/{fd}"))?;
     anyhow::ensure!(
@@ -48,20 +39,10 @@ fn inherited_fd_target(fd: u32) -> anyhow::Result<PathBuf> {
     Ok(target)
 }
 
-#[cfg(not(target_os = "linux"))]
-fn inherited_fd_target(_fd: u32) -> anyhow::Result<PathBuf> {
-    anyhow::bail!("inherited-FD backup verification requires Linux procfs")
-}
-
 pub(super) fn pinned_file_target(file: &std::fs::File) -> anyhow::Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd as _;
-        let fd = u32::try_from(file.as_raw_fd())?;
-        inherited_fd_target(fd)
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("inherited-FD backup verification requires Linux procfs")
+    use std::os::fd::AsRawFd as _;
+    let fd = u32::try_from(file.as_raw_fd())?;
+    inherited_fd_target(fd)
 }
 
 pub(super) fn require_pinned_file_name(
@@ -80,13 +61,8 @@ pub(super) fn duplicate_pinned_file(
     file: &std::fs::File,
     directory: bool,
 ) -> anyhow::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsRawFd as _;
-        duplicate_inherited_fd(u32::try_from(file.as_raw_fd())?, directory)
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("inherited-FD backup verification requires Linux procfs")
+    use std::os::fd::AsRawFd as _;
+    duplicate_inherited_fd(u32::try_from(file.as_raw_fd())?, directory)
 }
 
 pub(super) fn revalidate_pinned_root_directory(
@@ -99,7 +75,6 @@ pub(super) fn revalidate_pinned_root_directory(
         "{label} is no longer linked at its canonical path"
     );
     let pinned_metadata = pinned.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -128,7 +103,6 @@ pub(super) fn revalidate_operation_lock_path(
     );
     validate_private_pinned_file(held_lock, 0o600, "backup operation lock")?;
     let root = pin_directory_capability(trusted_backup_root)?;
-    #[cfg(unix)]
     {
         use cap_std::fs::PermissionsExt as _;
         let metadata = root.dir_metadata()?;
@@ -167,7 +141,6 @@ pub(super) fn revalidate_pinned_regular_path(
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("{label} path has no filename"))?;
     let parent = pin_directory_capability(parent_path)?;
-    #[cfg(unix)]
     {
         use cap_std::fs::PermissionsExt as _;
         let metadata = parent.dir_metadata()?;
@@ -205,7 +178,6 @@ pub(super) fn revalidate_pinned_directory_path(
         "{label} is no longer linked at its exact admitted path"
     );
     let pinned_metadata = pinned.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -217,7 +189,6 @@ pub(super) fn revalidate_pinned_directory_path(
     }
     let parent = pin_directory_capability(trusted_parent_path)?;
     let parent_metadata = parent.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::PermissionsExt as _;
         anyhow::ensure!(
@@ -258,7 +229,6 @@ pub(super) fn validate_private_pinned_file(
 ) -> anyhow::Result<()> {
     let metadata = file.metadata()?;
     anyhow::ensure!(metadata.is_file(), "{label} is not a regular file");
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -292,11 +262,10 @@ pub(super) fn read_bounded_pinned_file(
 pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Result<std::fs::File> {
     let root = pin_directory_capability(backup_root)?;
     let name = Path::new(".backup-operation.lock");
-    #[cfg(target_os = "linux")]
     let (file, created) = {
-        use std::os::fd::AsFd as _;
+        // The only create-with-mode open that also forbids mount crossing.
         let create = robin_highscores::secure_fs::open_no_symlinks_at(
-            root.as_fd(),
+            &root,
             name,
             rustix::fs::OFlags::RDWR
                 | rustix::fs::OFlags::CLOEXEC
@@ -308,25 +277,16 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
         match create {
             Ok(descriptor) => (std::fs::File::from(descriptor), true),
             Err(rustix::io::Errno::EXIST) => {
-                let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
-                    root.as_fd(),
+                let descriptor = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
+                    &root,
                     name,
                     rustix::fs::OFlags::RDWR | rustix::fs::OFlags::CLOEXEC,
-                    rustix::fs::Mode::empty(),
-                    rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
                 )?;
                 (std::fs::File::from(descriptor), false)
             }
             Err(error) => return Err(error.into()),
         }
     };
-    #[cfg(not(target_os = "linux"))]
-    let (file, created) = {
-        let mut options = cap_std::fs::OpenOptions::new();
-        options.read(true).write(true).create(true);
-        (root.open_with(name, &options)?.into_std(), false)
-    };
-    #[cfg(unix)]
     if created {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         file.sync_all()?;
@@ -337,7 +297,6 @@ pub(super) fn acquire_backup_operation_lock(backup_root: &Path) -> anyhow::Resul
         metadata.is_file(),
         "backup operation lock is not a regular file"
     );
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         let path_metadata = root.symlink_metadata(name)?;
@@ -377,7 +336,6 @@ pub(super) fn remove_pinned_regular_via_tombstone(
         !cap_entry_exists(parent, Path::new(tombstone_name))?,
         "{label} deletion tombstone already exists"
     );
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use std::os::fd::AsFd as _;
         rustix::fs::renameat_with(
@@ -388,8 +346,6 @@ pub(super) fn remove_pinned_regular_via_tombstone(
             rustix::fs::RenameFlags::NOREPLACE,
         )?;
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    anyhow::bail!("pinned cleanup deletion requires Linux renameat2");
     sync_cap_directory(parent)?;
     let moved = open_cap_regular_nofollow(parent, Path::new(tombstone_name))?;
     validate_private_pinned_file(pinned, expected_mode, label)?;
@@ -409,7 +365,6 @@ pub(super) fn remove_pinned_regular_via_tombstone(
         expected_mode,
         label,
     )?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -467,7 +422,6 @@ where
     );
     parent.remove_file(name)?;
     sync_cap_directory(parent)?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -575,7 +529,6 @@ pub(super) fn validate_managed_directory_tree(
             }
         }
     }
-    #[cfg(unix)]
     for directory in validated_directories {
         directory
             .into_std_file()
@@ -610,38 +563,20 @@ impl FileIdentity {
 }
 
 pub(super) fn metadata_identity(metadata: &cap_std::fs::Metadata) -> FileIdentity {
-    #[cfg(unix)]
-    {
-        use cap_std::fs::MetadataExt as _;
-        FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            owner: metadata.uid(),
-        }
-    }
-    #[cfg(not(unix))]
+    use cap_std::fs::MetadataExt as _;
     FileIdentity {
-        device: 0,
-        inode: 0,
-        owner: 0,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        owner: metadata.uid(),
     }
 }
 
 pub(super) fn metadata_identity_std(metadata: &std::fs::Metadata) -> FileIdentity {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        FileIdentity {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            owner: metadata.uid(),
-        }
-    }
-    #[cfg(not(unix))]
+    use std::os::unix::fs::MetadataExt as _;
     FileIdentity {
-        device: 0,
-        inode: 0,
-        owner: 0,
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        owner: metadata.uid(),
     }
 }
 
@@ -654,7 +589,6 @@ pub(super) fn validate_managed_metadata(
         metadata_identity(metadata).owner == metadata_identity(backup_root_metadata).owner,
         "managed backup node has a foreign owner"
     );
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -677,66 +611,31 @@ pub(super) fn open_cap_directory_nofollow(
     parent: &cap_std::fs::Dir,
     name: &Path,
 ) -> anyhow::Result<cap_std::fs::Dir> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsFd as _;
-        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
-            parent.as_fd(),
-            name,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::CLOEXEC
-                | rustix::fs::OFlags::DIRECTORY,
-            rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
-        )?;
-        Ok(cap_std::fs::Dir::from_std_file(std::fs::File::from(
-            descriptor,
-        )))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        anyhow::ensure!(
-            !parent.symlink_metadata(name)?.file_type().is_symlink(),
-            "managed directory is a symlink"
-        );
-        Ok(parent.open_dir(name)?)
-    }
+    let descriptor = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
+        parent,
+        name,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::DIRECTORY,
+    )?;
+    Ok(cap_std::fs::Dir::from_std_file(std::fs::File::from(
+        descriptor,
+    )))
 }
 
 pub(super) fn open_cap_regular_nofollow(
     parent: &cap_std::fs::Dir,
     name: &Path,
 ) -> anyhow::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::fd::AsFd as _;
-        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
-            parent.as_fd(),
-            name,
-            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
-        )?;
-        let file = std::fs::File::from(descriptor);
-        anyhow::ensure!(
-            file.metadata()?.is_file(),
-            "managed node is not a regular file"
-        );
-        Ok(file)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        anyhow::ensure!(
-            !parent.symlink_metadata(name)?.file_type().is_symlink(),
-            "managed file is a symlink"
-        );
-        let file = parent.open(name)?.into_std();
-        anyhow::ensure!(
-            file.metadata()?.is_file(),
-            "managed node is not a regular file"
-        );
-        Ok(file)
-    }
+    let descriptor = robin_highscores::secure_fs::open_beneath_same_mount_no_symlinks(
+        parent,
+        name,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
+    )?;
+    let file = std::fs::File::from(descriptor);
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "managed node is not a regular file"
+    );
+    Ok(file)
 }
 
 pub(super) fn sync_cap_directory(directory: &cap_std::fs::Dir) -> anyhow::Result<()> {
@@ -895,7 +794,6 @@ pub(super) fn backup_tree_paths_cap(root: &cap_std::fs::Dir) -> anyhow::Result<B
             );
             validate_managed_metadata(&metadata, &root_metadata, metadata.is_dir())?;
             if metadata.is_dir() {
-                #[cfg(unix)]
                 {
                     use cap_std::fs::PermissionsExt as _;
                     anyhow::ensure!(
@@ -924,7 +822,6 @@ pub(super) fn backup_tree_paths_cap(root: &cap_std::fs::Dir) -> anyhow::Result<B
                     .to_str()
                     .ok_or_else(|| anyhow::anyhow!("pinned backup path is not UTF-8"))?
                     .replace('\\', "/");
-                #[cfg(unix)]
                 {
                     use cap_std::fs::PermissionsExt as _;
                     let expected_mode = expected_backup_cleanup_file_mode(&relative)?;
@@ -955,12 +852,10 @@ pub(super) async fn record_file(root: &Path, path: &Path) -> anyhow::Result<Back
 
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
     options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let mut file = options.open(path).await?;
     let metadata = file.metadata().await?;
     anyhow::ensure!(metadata.is_file(), "backup source is not a regular file");
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(metadata.nlink() == 1, "backup source is multiply linked");
@@ -1000,7 +895,6 @@ pub(super) async fn read_bounded_regular_nofollow(
 
     let mut options = tokio::fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
     options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path).await?;
     let metadata = file.metadata().await?;
@@ -1008,7 +902,6 @@ pub(super) async fn read_bounded_regular_nofollow(
         metadata.is_file() && metadata.len() <= maximum,
         "bounded backup document is not a bounded regular file"
     );
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -1053,15 +946,11 @@ pub(super) fn copy_open_file_sync(
         }
         std::fs::create_dir_all(parent)?;
         for directory in missing.into_iter().rev() {
-            #[cfg(unix)]
             std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
-            #[cfg(not(unix))]
-            let _ = directory;
         }
     }
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
-    #[cfg(unix)]
     options.mode(0o600);
     let mut target = options.open(destination)?;
     std::io::copy(&mut source, &mut target)?;
@@ -1075,7 +964,6 @@ pub(super) async fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Res
     robin_highscores::physical_work::spawn_blocking(move || {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
         options.mode(0o600);
         let mut file = options.open(path)?;
         file.write_all(&bytes)?;
@@ -1094,7 +982,6 @@ pub(super) async fn create_backup_directory(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 pub(super) async fn set_backup_permissions(
     path: &Path,
     permissions: std::fs::Permissions,
@@ -1109,7 +996,6 @@ pub(super) async fn set_backup_permissions(
 }
 
 pub(super) async fn set_private_directory(path: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         set_backup_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
@@ -1126,69 +1012,17 @@ pub(super) async fn sync_directory(path: &Path) -> anyhow::Result<()> {
 }
 
 pub(super) fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::OFlags::RDONLY
-                | rustix::fs::OFlags::CLOEXEC
-                | rustix::fs::OFlags::DIRECTORY,
-            rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        let file = std::fs::File::from(descriptor);
-        anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
-        Ok(file)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        options.custom_flags(
-            rustix::fs::OFlags::DIRECTORY.bits() as i32
-                | rustix::fs::OFlags::NOFOLLOW.bits() as i32,
-        );
-        let file = options.open(path)?;
-        anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
-        Ok(file)
-    }
+    let descriptor = robin_highscores::secure_fs::open_dir_no_symlinks(path)?;
+    let file = std::fs::File::from(descriptor);
+    anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
+    Ok(file)
 }
 
 pub(super) fn open_regular_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        let descriptor = robin_highscores::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        let file = std::fs::File::from(descriptor);
-        anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
-        Ok(file)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-        let file = options.open(path)?;
-        let metadata = file.metadata()?;
-        anyhow::ensure!(metadata.is_file(), "path is not a regular file");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            anyhow::ensure!(
-                metadata.nlink() == 1,
-                "verified backup file is multiply linked"
-            );
-        }
-        Ok(file)
-    }
+    let descriptor = robin_highscores::secure_fs::open_file_no_symlinks(path)?;
+    let file = std::fs::File::from(descriptor);
+    anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
+    Ok(file)
 }
 
 #[cfg(test)]

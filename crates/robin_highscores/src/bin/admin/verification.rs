@@ -50,7 +50,6 @@ use sqlx::Connection as _;
 use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -310,7 +309,6 @@ pub(super) fn pin_transaction_backup_from_status(
 
     let root = cap_std::fs::Dir::from_std_file(duplicate_pinned_file(&root_guard, true)?);
     let child = open_cap_directory_nofollow(&root, Path::new(&status.backup_id))?.into_std_file();
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         let metadata = child.metadata()?;
@@ -351,7 +349,6 @@ fn pin_offline_backup_from_root(
     let current = open_cap_directory_nofollow(&root, Path::new(&backup_id))?.into_std_file();
     let root_metadata = root_guard.metadata()?;
     let child_metadata = directory_guard.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -664,13 +661,10 @@ pub(super) async fn verify_transaction_backup_from_root_pinned(
         trusted_backup_root,
         trusted_status_path,
     )?;
-    #[cfg(target_os = "linux")]
     let backup_directory_fd = {
         use std::os::fd::AsRawFd as _;
         u32::try_from(backup_directory.as_raw_fd())?
     };
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("transaction backup verification requires Linux procfs");
     let backup = verify_transaction_backup_pinned(
         backup_directory_fd,
         status_envelope_fd,
@@ -763,7 +757,6 @@ where
     let directory_guard = duplicate_inherited_fd(backup_directory_fd, true)?;
     let directory_target = pinned_file_target(&directory_guard)?;
     let root_metadata = directory_guard.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -958,7 +951,6 @@ pub(super) async fn verify_backup_with_schema_policy(
     let parent_guard = parent.try_clone()?.into_std_file();
     revalidate_pinned_root_directory(&parent_guard, parent_path, "backup parent")?;
     let parent_metadata = parent.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -972,7 +964,6 @@ pub(super) async fn verify_backup_with_schema_policy(
         .ok_or_else(|| anyhow::anyhow!("backup directory has no filename"))?;
     let pinned = open_cap_directory_nofollow(&parent, Path::new(name))?;
     let pinned_metadata = pinned.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -1027,7 +1018,6 @@ async fn verify_backup_capability_with_compiled_schema(
         "compiled backup schema policy predates canonical V2 release authority"
     );
     let root_metadata = root.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -1129,7 +1119,6 @@ async fn verify_backup_capability_with_compiled_schema(
             == Some(&metadata_identity_std(&database_file.metadata()?)),
         "pinned backup database inode differs from the hashed manifest object"
     );
-    #[cfg(unix)]
     let database_url = {
         use std::os::fd::AsRawFd as _;
         format!(
@@ -1137,9 +1126,6 @@ async fn verify_backup_capability_with_compiled_schema(
             database_file.as_raw_fd()
         )
     };
-    #[cfg(not(unix))]
-    anyhow::bail!("pinned backup database verification requires a procfd-capable Unix host");
-    #[cfg(unix)]
     let mut connection = sqlx::SqliteConnection::connect(&database_url).await?;
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut connection)
@@ -1252,7 +1238,6 @@ async fn verify_historical_backup_chain_with_compiled_schema(
         .and_then(|name| name.to_str())
         .ok_or_else(|| anyhow::anyhow!("historical backup has no canonical ID"))?;
     let child = open_cap_directory_nofollow(&root, Path::new(backup_id))?;
-    #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt as _;
         anyhow::ensure!(

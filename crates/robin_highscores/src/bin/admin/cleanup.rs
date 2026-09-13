@@ -39,7 +39,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -247,7 +247,6 @@ pub(super) fn recover_interrupted_complete_cleanups(
             let complete = open_cap_directory_nofollow(&root, Path::new(backup_id))?;
             let complete_metadata = complete.dir_metadata()?;
             validate_managed_metadata(&complete_metadata, &root.dir_metadata()?, true)?;
-            #[cfg(unix)]
             {
                 use cap_std::fs::PermissionsExt as _;
                 anyhow::ensure!(
@@ -453,7 +452,6 @@ where
     );
     let cleanup_metadata = directory.dir_metadata()?;
     validate_managed_metadata(&cleanup_metadata, &backup_root.dir_metadata()?, true)?;
-    #[cfg(unix)]
     {
         use cap_std::fs::PermissionsExt as _;
         anyhow::ensure!(
@@ -718,7 +716,6 @@ where
         "cleanup journal was substituted before terminal removal"
     );
     if active_cleanup_name == journal.cleanup_directory_name {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -729,8 +726,6 @@ where
                 rustix::fs::RenameFlags::NOREPLACE,
             )?;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        anyhow::bail!("terminal cleanup-root quarantine requires Linux renameat2");
         sync_cap_directory(backup_root)?;
     }
     after_terminal_rename()?;
@@ -777,7 +772,6 @@ fn remove_verified_cleanup_entry(
     let actual_identity = if is_directory {
         let child = open_cap_directory_nofollow(&parent, &child_name)?;
         let metadata = child.dir_metadata()?;
-        #[cfg(unix)]
         {
             use cap_std::fs::PermissionsExt as _;
             anyhow::ensure!(
@@ -930,7 +924,6 @@ where
         "cleanup tombstone must remain in the source parent"
     );
     before_rename()?;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use std::os::fd::AsFd as _;
         rustix::fs::renameat_with(
@@ -941,14 +934,11 @@ where
             rustix::fs::RenameFlags::NOREPLACE,
         )?;
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    anyhow::bail!("verified cleanup unlink requires Linux renameat2");
     sync_cap_directory(&source_parent)?;
     after_rename()?;
     if is_directory {
         let moved = open_cap_directory_nofollow(&tombstone_parent, &tombstone_name)?;
         let metadata = moved.dir_metadata()?;
-        #[cfg(unix)]
         {
             use cap_std::fs::PermissionsExt as _;
             anyhow::ensure!(
@@ -1024,7 +1014,6 @@ pub(super) fn publish_cleanup_journal(
     {
         let mut options = cap_std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
         {
             use cap_std::fs::OpenOptionsExt as _;
             options.mode(0o400);
@@ -1036,7 +1025,6 @@ pub(super) fn publish_cleanup_journal(
         sync_cap_directory(backup_root)?;
     }
     if !cap_entry_exists(backup_root, Path::new(journal_name))? {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -1047,8 +1035,6 @@ pub(super) fn publish_cleanup_journal(
                 rustix::fs::RenameFlags::NOREPLACE,
             )?;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        anyhow::bail!("cleanup-journal NOREPLACE publication requires Linux renameat2");
         sync_cap_directory(backup_root)?;
     }
     let journal = open_cap_regular_nofollow(backup_root, Path::new(journal_name))?;
@@ -1110,7 +1096,6 @@ fn remove_exact_verified_tree(
         &partial_journal_name,
         &journal_bytes,
     )?;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use std::os::fd::AsFd as _;
         if let Err(error) = rustix::fs::renameat_with(
@@ -1127,8 +1112,6 @@ fn remove_exact_verified_tree(
             return Err(error.into());
         }
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    anyhow::bail!("complete-backup quarantine requires Linux renameat2");
     sync_cap_directory(backup_root)?;
     let directory = open_cap_directory_nofollow(backup_root, Path::new(&cleanup_name))?;
     anyhow::ensure!(
@@ -1294,7 +1277,6 @@ pub(super) async fn retain_complete_backups(
         );
         let directory = open_cap_directory_nofollow(&root, Path::new(&name))?;
         let directory_metadata = directory.dir_metadata()?;
-        #[cfg(unix)]
         {
             use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
             anyhow::ensure!(

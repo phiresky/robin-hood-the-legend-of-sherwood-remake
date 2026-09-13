@@ -801,7 +801,6 @@ async fn load_backup_release_identity_oob_file_with_policy(
         metadata.is_file() && metadata.len() <= MAX_RELEASE_MANIFEST_BYTES,
         "pinned release manifest is not a bounded regular file"
     );
-    #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -832,31 +831,13 @@ async fn load_backup_release_identity_inner(
     if require_installed_path {
         installed_release_commit(path)?;
     }
-    #[cfg(target_os = "linux")]
-    let file = {
-        let descriptor = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
-            rustix::fs::Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        tokio::fs::File::from_std(std::fs::File::from(descriptor))
-    };
-    #[cfg(not(target_os = "linux"))]
-    let file = {
-        let mut options = tokio::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
-        options.open(path).await?
-    };
+    let descriptor = crate::secure_fs::open_file_no_symlinks(path)?;
+    let file = tokio::fs::File::from_std(std::fs::File::from(descriptor));
     let metadata = file.metadata().await?;
     anyhow::ensure!(
         metadata.is_file() && metadata.len() <= MAX_RELEASE_MANIFEST_BYTES,
         "release manifest is not a bounded regular file"
     );
-    #[cfg(unix)]
     if require_installed_path {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(

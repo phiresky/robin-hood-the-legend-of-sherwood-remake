@@ -22,7 +22,6 @@ use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::record_file;
 use super::filesystem::revalidate_pinned_regular_path;
 use super::filesystem::revalidate_pinned_root_directory;
-#[cfg(unix)]
 use super::filesystem::set_backup_permissions;
 use super::filesystem::set_private_directory;
 use super::filesystem::sync_cap_directory;
@@ -60,7 +59,6 @@ use sqlx::sqlite::SqliteJournalMode;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::io::Write as _;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -256,7 +254,6 @@ where
         backup_root_metadata.is_dir() && !backup_root_metadata.file_type().is_symlink(),
         "backup root must be a real directory"
     );
-    #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -494,8 +491,7 @@ where
             )?;
             let envelope_path = partial.join("backup-verification-envelope.json");
             write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
-            #[cfg(unix)]
-            set_backup_permissions(
+                        set_backup_permissions(
                 &envelope_path,
                 std::fs::Permissions::from_mode(0o400),
             )
@@ -1055,7 +1051,6 @@ where
         .ok_or_else(|| anyhow::anyhow!("private publication path has no filename"))?;
     let directory = pin_directory_capability(parent)?;
     let parent_metadata = directory.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -1074,13 +1069,11 @@ where
     options.write(true).create_new(true);
     let mut file = directory.open_with(&temporary, &options)?.into_std();
     let pre_rename = (|| -> anyhow::Result<()> {
-        #[cfg(unix)]
         file.set_permissions(std::fs::Permissions::from_mode(0o400))?;
         file.write_all(bytes)?;
         file.sync_all()?;
         let metadata = file.metadata()?;
         anyhow::ensure!(metadata.is_file(), "backup status temporary is not regular");
-        #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt as _;
             anyhow::ensure!(
@@ -1090,7 +1083,6 @@ where
         }
         drop(file);
         before_rename()?;
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -1101,8 +1093,6 @@ where
                 rustix::fs::RenameFlags::empty(),
             )?;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        directory.rename(&temporary, &directory, Path::new(name))?;
         Ok(())
     })();
     if let Err(error) = pre_rename {
@@ -1136,7 +1126,6 @@ where
             metadata_identity(&reopened_metadata) == parent_identity,
             "backup status parent was replaced during publication"
         );
-        #[cfg(unix)]
         {
             use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
             anyhow::ensure!(
@@ -1147,7 +1136,6 @@ where
         }
         let mut published = open_cap_regular_nofollow(&reopened, Path::new(name))?;
         let metadata = published.metadata()?;
-        #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt as _;
             anyhow::ensure!(
@@ -1281,7 +1269,6 @@ async fn backup_test_owned(
         )?;
         let envelope_path = destination.join("backup-verification-envelope.json");
         write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
-        #[cfg(unix)]
         set_backup_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).await?;
         sync_directory(destination).await
     })
@@ -1326,7 +1313,6 @@ async fn backup_locked(
     let database_path = destination.join("highscores.sqlite3");
     database.online_backup_to(&database_path).await?;
     scrub_transient_backup_state(&database_path, created_at_unix_ms).await?;
-    #[cfg(unix)]
     set_backup_permissions(&database_path, std::fs::Permissions::from_mode(0o600)).await?;
     let mut files = vec![record_file(destination, &database_path).await?];
     let mut restore_sources = vec![RestoreSource {
@@ -1679,7 +1665,6 @@ where
     F: FnOnce() -> anyhow::Result<()>,
 {
     sync_private_tree_bottom_up(partial)?;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         partial,
@@ -1690,14 +1675,6 @@ where
     .map_err(|error| {
         anyhow::anyhow!("atomically install verified backup without replacement: {error}")
     })?;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        anyhow::ensure!(
-            !complete.exists(),
-            "completed backup destination already exists"
-        );
-        std::fs::rename(partial, complete)?;
-    }
     Ok(match sync_parent() {
         Ok(()) => BackupInstallOutcome::Installed,
         Err(error) => BackupInstallOutcome::InstalledButParentSyncFailed(error),

@@ -31,7 +31,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -45,7 +45,6 @@ pub(super) fn pin_preserved_release_authority_from_root(
     let root_metadata = root.dir_metadata()?;
     let store = open_cap_directory_nofollow(&root, Path::new(RELEASE_AUTHORITY_STORE))?;
     let store_metadata = store.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -129,7 +128,6 @@ pub(super) async fn preserve_release_authority(
     let root_guard = root.try_clone()?.into_std_file();
     revalidate_pinned_root_directory(&root_guard, backup_root, "backup root")?;
     let mut directory_builder = cap_std::fs::DirBuilder::new();
-    #[cfg(unix)]
     {
         use cap_std::fs::DirBuilderExt as _;
         directory_builder.mode(0o700);
@@ -149,7 +147,6 @@ pub(super) async fn preserve_release_authority(
     revalidate_pinned_root_directory(&authority_guard, &authority_path, "release-authority store")?;
     let root_metadata = root.dir_metadata()?;
     let authority_metadata = authority.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -186,7 +183,6 @@ pub(super) async fn preserve_release_authority(
     match authority.symlink_metadata(&partial_name) {
         Ok(metadata) => {
             validate_managed_metadata(&metadata, &root_metadata, false)?;
-            #[cfg(unix)]
             {
                 use cap_std::fs::PermissionsExt as _;
                 anyhow::ensure!(
@@ -223,7 +219,6 @@ pub(super) async fn preserve_release_authority(
     {
         let mut options = cap_std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
         {
             use cap_std::fs::OpenOptionsExt as _;
             options.mode(0o400);
@@ -235,7 +230,6 @@ pub(super) async fn preserve_release_authority(
         sync_cap_directory(&authority)?;
     }
     if !cap_entry_exists(&authority, Path::new(&name))? {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -246,8 +240,6 @@ pub(super) async fn preserve_release_authority(
                 rustix::fs::RenameFlags::NOREPLACE,
             )?;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        anyhow::bail!("release-authority NOREPLACE publication requires Linux renameat2");
         sync_cap_directory(&authority)?;
     } else if cap_entry_exists(&authority, Path::new(&partial_name))? {
         let partial = open_cap_regular_nofollow(&authority, Path::new(&partial_name))?;
@@ -275,7 +267,6 @@ pub(super) async fn preserve_release_authority(
     }
     let file = open_cap_regular_nofollow(&authority, Path::new(&name))?;
     validate_private_pinned_file(&file, 0o400, "preserved release authority")?;
-    #[cfg(unix)]
     {
         anyhow::ensure!(
             metadata_identity_std(&file.metadata()?).device()

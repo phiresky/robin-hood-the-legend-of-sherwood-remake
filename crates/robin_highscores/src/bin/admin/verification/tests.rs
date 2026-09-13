@@ -57,7 +57,6 @@ impl VerificationFixture {
         use futures_util::stream;
 
         let directory = tempfile::tempdir().unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let release_manifest_path = directory.path().join("vps-release-manifest-v2.json");
         let release_identity = write_test_release_manifest(&release_manifest_path).await;
@@ -90,7 +89,6 @@ impl VerificationFixture {
         )
         .await
         .unwrap();
-        #[cfg(unix)]
         for secret in [
             &config.cursor_secret_path,
             &config.competition_run_grant_secret_path,
@@ -199,7 +197,6 @@ impl VerificationFixture {
         assert!(!directory.path().join(&journal_name).exists());
 
         std::fs::write(directory.path().join(&partial_name), []).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&partial_name),
             std::fs::Permissions::from_mode(0o400),
@@ -219,7 +216,6 @@ impl VerificationFixture {
         )
         .unwrap();
         std::fs::write(directory.path().join(&partial_name), &cleanup_journal_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&partial_name),
             std::fs::Permissions::from_mode(0o400),
@@ -338,7 +334,6 @@ impl VerificationFixture {
                 || {
                     std::fs::rename(&original_payload, &displaced_payload)?;
                     std::fs::write(&original_payload, &replacement_bytes)?;
-                    #[cfg(unix)]
                     std::fs::set_permissions(
                         &original_payload,
                         std::fs::Permissions::from_mode(0o600),
@@ -375,7 +370,6 @@ impl VerificationFixture {
                 || {
                     std::fs::rename(&final_tombstone, &displaced_final_tombstone)?;
                     std::fs::write(&final_tombstone, b"replacement-at-final-unlink")?;
-                    #[cfg(unix)]
                     std::fs::set_permissions(
                         &final_tombstone,
                         std::fs::Permissions::from_mode(0o600),
@@ -418,7 +412,6 @@ impl VerificationFixture {
             b"preserve",
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&cleanup_name).join("unexpected"),
             std::fs::Permissions::from_mode(0o600),
@@ -579,7 +572,6 @@ impl VerificationFixture {
         let displaced_authority = authority_store.join("displaced-authority");
         std::fs::rename(&authority_file, &displaced_authority).unwrap();
         std::fs::write(&authority_file, b"{}").unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&authority_file, std::fs::Permissions::from_mode(0o400)).unwrap();
         assert!(
             verify_historical_backup_chain_with_compiled_schema(
@@ -615,14 +607,12 @@ impl VerificationFixture {
             &[0x31; 32],
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::write(
             &envelope_path,
             canonical_json_bytes(&mismatched_envelope).unwrap(),
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).unwrap();
         assert!(
             verify_historical_backup_chain_with_compiled_schema(
@@ -636,10 +626,8 @@ impl VerificationFixture {
             "a re-signed backup identity without its exact independently preserved authority must fail"
         );
         std::fs::write(&manifest_path, &original_manifest_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::write(&envelope_path, &original_envelope_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).unwrap();
         let backup_root = pin_directory_capability(&destination).unwrap();
         assert!(
