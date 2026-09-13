@@ -9,6 +9,7 @@
 //! standard menu buttons with localised text labels instead. Tracked as
 //! a deliberate deviation from the original game's menu behavior.
 
+use crate::application::require;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
@@ -17,8 +18,9 @@ use crate::ingame_menu::layout::{
     render_text_virt_font,
 };
 use crate::ingame_menu::resources::{MT_BTN_BACK, MT_BTN_SHOW_MOVIES};
-use crate::ingame_menu::widget_bridge::{self, ModalInputState, ModalScreenIo};
-use crate::renderer::Renderer;
+use crate::ingame_menu::widget_bridge::{
+    self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey,
+};
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 
@@ -27,21 +29,16 @@ const ID_OUTRO: u32 = 1;
 const ID_OK: u32 = 2;
 
 /// Display the movies menu. Returns once the player picks Back / Escape.
+///
+/// The frame loop stays here instead of `run_modal` because a tick awaits
+/// video playback.
 pub(crate) async fn show_movies(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
+    io: &mut ModalScreenIo<'_, '_>,
 ) {
-    let mut state = MoviesModalState::new(application_context, resources);
-    let mut io = ModalScreenIo {
-        window: event_pump,
-        renderer,
-        resources,
-        cursor: None,
-    };
+    let mut state = MoviesModalState::new(application_context, io.resources);
     loop {
-        if state.tick(application_context, &mut io).await {
+        if state.tick(application_context, io).await {
             return;
         }
         crate::window::sleep_ui_frame().await;
@@ -70,9 +67,10 @@ impl MoviesModalState {
 
         // Outro stays out of the focus group until the player has finished
         // the campaign (progression < 100).
-        let outro_enabled = application_context
-            .with_active_profile(|profile| profile.progression >= 100)
-            .unwrap_or_else(|error| panic!("Show Movies requires an active profile: {error}"));
+        let outro_enabled = require(
+            application_context.with_active_profile(|profile| profile.progression >= 100),
+            "Show Movies screen",
+        );
 
         // Localised labels for the Intro / Outro buttons. The original game
         // leaves the label empty and relies on the sprite to convey meaning;
@@ -114,9 +112,6 @@ impl MoviesModalState {
         application_context: &ApplicationContext,
         io: &mut ModalScreenIo<'_, '_>,
     ) -> bool {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
         const INTRO_X: i32 = 110;
         const INTRO_Y: i32 = 80;
         // Build the frame fresh each frame so state changes are picked up
@@ -152,50 +147,35 @@ impl MoviesModalState {
 
         // ── Events ──────────────────────────────────────────────
         let mut activated: Option<u32> = None;
-        let (events, transform) =
-            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    activated = Some(ID_OK);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => super::move_keyboard_selection(&frame, &mut self.keyboard_selection, -1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => super::move_keyboard_selection(&frame, &mut self.keyboard_selection, 1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
-                    activated = Some(self.keyboard_selection);
-                }
-                _ => {}
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        // One ordered pass: Up/Down before Return changes what Return activates.
+        for event in &screen.events {
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => activated = Some(ID_OK),
+                Some(ScreenKey::Confirm) => activated = Some(self.keyboard_selection),
+                Some(ScreenKey::Next) => {}
+                None => match event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Up,
+                        ..
+                    } => super::move_keyboard_selection(&frame, &mut self.keyboard_selection, -1),
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Down,
+                        ..
+                    } => super::move_keyboard_selection(&frame, &mut self.keyboard_selection, 1),
+                    _ => {}
+                },
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let widget_events = frame.process_input(&widget_input);
-        self.input_state.end_frame();
+        let (_, widget_activated) = ScreenFrame::dispatch(&mut self.input_state, &mut frame);
 
         for w in frame.widgets() {
             if w.base().state != UiState::Default && w.base().enabled {
                 self.keyboard_selection = w.id();
             }
         }
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
+        if let Some(id) = widget_activated {
             activated = Some(id);
         }
 
@@ -204,7 +184,7 @@ impl MoviesModalState {
                 ID_INTRO => {
                     if let Err(e) = crate::video_player::play_video(
                         application_context,
-                        event_pump,
+                        io.window,
                         "Data/Cinematics/Intro.ogg",
                     )
                     .await
@@ -215,7 +195,7 @@ impl MoviesModalState {
                 ID_OUTRO if self.outro_enabled => {
                     if let Err(e) = crate::video_player::play_video(
                         application_context,
-                        event_pump,
+                        io.window,
                         "Data/Cinematics/Outro.ogg",
                     )
                     .await
@@ -229,6 +209,11 @@ impl MoviesModalState {
         }
 
         // ── Render ──────────────────────────────────────────────
+        // No dim: the movies menu paints its own opaque background, so it
+        // enters the modal phase directly instead of `ScreenFrame::begin_draw`.
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
         enter_modal_gpu_phase(renderer);
 
         if let Some(bg) = resources.menu_bg[2] {
@@ -253,7 +238,7 @@ impl MoviesModalState {
             widget_bridge::draw_widget_button(renderer, resources, transform, widget, kb_highlight);
         }
 
-        renderer.present();
+        screen.finish(io, &self.input_state);
 
         false
     }

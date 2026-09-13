@@ -7,15 +7,16 @@
 //! authoritative replay, callers get an error and the run remains browse-only.
 
 // In-process signing (`public_key`/`signature`) exists only where a local key
-// signs: native builds, the multiplayer transport, and tests.
-#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+// signs: native builds (including the native multiplayer transport) and tests.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use robin_run_protocol::DomainSignedClaim as _;
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 use robin_run_protocol::NamedSeatJoinClaimV1;
-#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 use robin_run_protocol::SignatureAlgorithmV1;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CampaignChainReceiptV1,
@@ -553,13 +554,13 @@ fn invalid_document(error: impl std::fmt::Display) -> RankedSessionError {
 }
 
 // Browser builds hold no in-process key: they sign through the isolated signer
-// origin unless the multiplayer transport's own key signs a seat claim.
-#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+// origin. Only the native multiplayer host signs seat claims in-process.
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) fn public_key(key: &SigningKey) -> PublicKey32 {
     PublicKey32::from_bytes(key.verifying_key().to_bytes())
 }
 
-#[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]
+#[cfg(any(test, not(target_arch = "wasm32")))]
 pub(crate) fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
 }
@@ -726,7 +727,7 @@ pub fn validate_official_session_genesis(
 /// Sign the closed named-seat claim with the same durable native identity used
 /// by leaderboard submission. The transport endpoint is separately bound in
 /// the claim and may only differ for the browser relay client.
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 pub fn sign_named_seat_join(
     key: &SigningKey,
     claim: NamedSeatJoinClaimV1,
@@ -762,7 +763,7 @@ pub fn verify_named_seat_join(
     )
 }
 
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingAdmissionKind {
     Fresh,
@@ -779,9 +780,9 @@ struct LifecycleObservation {
 #[derive(Clone, Debug)]
 struct ParticipantState {
     claim: ParticipantClaimV1,
-    #[cfg(any(test, feature = "multiplayer"))]
+    #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
     last_connection_epoch: u32,
-    #[cfg(any(test, feature = "multiplayer"))]
+    #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
     connected: bool,
 }
 
@@ -790,10 +791,10 @@ struct ParticipantState {
 pub struct RankedSessionHost {
     genesis: ReplaySessionGenesisV1,
     participants: BTreeMap<u16, ParticipantState>,
-    #[cfg(any(test, feature = "multiplayer"))]
+    #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
     owner_seats: BTreeMap<PublicKey32, u16>,
     observations: Vec<LifecycleObservation>,
-    #[cfg(any(test, feature = "multiplayer"))]
+    #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
     pending_admission: Option<(PendingAdmissionKind, NamedSeatJoinClaimV1)>,
 }
 
@@ -1363,16 +1364,16 @@ impl RankedSessionHost {
             0,
             ParticipantState {
                 claim: host_claim,
-                #[cfg(any(test, feature = "multiplayer"))]
+                #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
                 last_connection_epoch: 0,
-                #[cfg(any(test, feature = "multiplayer"))]
+                #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
                 connected: true,
             },
         );
         Ok(Self {
             genesis,
             participants,
-            #[cfg(any(test, feature = "multiplayer"))]
+            #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
             owner_seats: BTreeMap::from([(host_public_key, 0)]),
             observations: vec![LifecycleObservation {
                 seat: 0,
@@ -1381,7 +1382,7 @@ impl RankedSessionHost {
                     connection_epoch: 0,
                 },
             }],
-            #[cfg(any(test, feature = "multiplayer"))]
+            #[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
             pending_admission: None,
         })
     }
@@ -1398,7 +1399,7 @@ impl RankedSessionHost {
     }
 }
 
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 impl RankedSessionHost {
     /// Prepare the only claim a newly assigned seat may sign. The caller must
     /// not publish the deterministic ConnectSeat command until `admit_join`
@@ -2884,7 +2885,7 @@ mod tests {
     }
 }
 
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SeatClaimIdentity {
     public_key: PublicKey32,
@@ -2896,7 +2897,7 @@ struct SeatClaimIdentity {
 }
 
 /// Compare immutable session bindings; fresh/reconnect lifecycle checks stay at their callers.
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 fn claim_binds_genesis(
     claim: &NamedSeatJoinClaimV1,
     genesis: &ReplaySessionGenesisV1,

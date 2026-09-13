@@ -439,14 +439,16 @@ impl TerminalDebriefingState {
     fn begin_debriefing(&self, resources: &IngameMenuResources) -> TerminalDebriefingPhase {
         TerminalDebriefingPhase::Debriefing(crate::ingame_menu::DebriefingModalState::new(
             resources,
-            self.page.body.clone(),
-            Some(&self.page.mission_stat),
-            self.page.mission_length,
-            self.page.won,
-            self.page.restart_allowed,
-            self.page.quick_load_key,
-            self.page.restart_snapshot_exists,
-            false,
+            crate::ingame_menu::DebriefingContent {
+                body: self.page.body.clone(),
+                stat: Some(&self.page.mission_stat),
+                mission_length_seconds: self.page.mission_length,
+                won: self.page.won,
+                restart_allowed: self.page.restart_allowed,
+                quick_load_key: self.page.quick_load_key,
+                restart_snapshot_exists: self.page.restart_snapshot_exists,
+                start_at_stat: false,
+            },
         ))
     }
 
@@ -824,13 +826,15 @@ impl TerminalDebriefingState {
                 cursor: Some(&cursor),
             },
             &mut context.callbacks.save_manager,
-            Some(&mut context.host.audio.sound),
-            context
-                .audio
-                .backend
-                .as_mut()
-                .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
-            Some(&context.audio.sample_loader),
+            crate::ingame_menu::widget_bridge::ScreenAudio {
+                sound: Some(&mut context.host.audio.sound),
+                backend: context
+                    .audio
+                    .backend
+                    .as_mut()
+                    .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+                sample_loader: Some(&context.audio.sample_loader),
+            },
         );
         let Some(outcome) = outcome else {
             return TerminalDebriefingProgress::Pending;
@@ -841,14 +845,16 @@ impl TerminalDebriefingState {
                 self.phase = TerminalDebriefingPhase::Debriefing(
                     crate::ingame_menu::DebriefingModalState::new(
                         resources,
-                        body.clone(),
-                        Some(&self.page.mission_stat),
-                        self.page.mission_length,
-                        self.page.won,
-                        self.page.restart_allowed,
-                        self.page.quick_load_key,
-                        self.page.restart_snapshot_exists,
-                        *was_on_stat,
+                        crate::ingame_menu::DebriefingContent {
+                            body: body.clone(),
+                            stat: Some(&self.page.mission_stat),
+                            mission_length_seconds: self.page.mission_length,
+                            won: self.page.won,
+                            restart_allowed: self.page.restart_allowed,
+                            quick_load_key: self.page.quick_load_key,
+                            restart_snapshot_exists: self.page.restart_snapshot_exists,
+                            start_at_stat: *was_on_stat,
+                        },
                     ),
                 );
                 TerminalDebriefingProgress::Pending

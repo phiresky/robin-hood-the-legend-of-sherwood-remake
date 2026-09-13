@@ -33,7 +33,7 @@ use robin_engine::sprite::BBox;
 
 use super::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, BTN_STATE_SELECTED,
-    MenuTransform,
+    FALLBACK_PANEL_FILL, MenuTransform,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
 
@@ -46,6 +46,170 @@ pub struct ModalScreenIo<'frame, 'cursor> {
     pub renderer: &'frame mut Renderer,
     pub resources: &'frame IngameMenuResources,
     pub cursor: Option<&'frame ModalCursor<'cursor>>,
+}
+
+/// [`ModalScreenIo`] with the cursor lent mutably, for screens that advance
+/// the cursor animation every frame (Select Player and its dialogs).
+///
+/// [`ModalCursor::draw`] only needs `&self`, so ordinary screens keep the
+/// shared cursor form; this bundle exists solely for the animation step.
+pub struct AnimatedScreenIo<'frame, 'cursor> {
+    pub window: &'frame mut crate::window::GameWindow,
+    pub renderer: &'frame mut Renderer,
+    pub resources: &'frame IngameMenuResources,
+    pub cursor: Option<&'frame mut ModalCursor<'cursor>>,
+}
+
+impl<'cursor> AnimatedScreenIo<'_, 'cursor> {
+    /// Lend the shared-cursor view that [`ScreenFrame`] and nested screens use.
+    pub fn screen_io(&mut self) -> ModalScreenIo<'_, 'cursor> {
+        ModalScreenIo {
+            window: &mut *self.window,
+            renderer: &mut *self.renderer,
+            resources: self.resources,
+            cursor: self.cursor.as_deref(),
+        }
+    }
+
+    /// The lent cursor renderer, when a cursor is present.
+    pub fn cursor_renderer(&mut self) -> Option<&mut CursorRenderer> {
+        self.cursor.as_mut().map(|cursor| &mut *cursor.cursor)
+    }
+}
+
+/// Borrowed menu-sound services for screens that play widget noises.
+///
+/// Every field is optional because headless/test hosts run menus without
+/// audio; the noise helpers skip playback when any piece is missing.
+pub struct ScreenAudio<'a> {
+    pub sound: Option<&'a mut SoundManager>,
+    pub backend: Option<&'a mut dyn AudioBackend>,
+    pub sample_loader: Option<&'a SampleLoader>,
+}
+
+impl ScreenAudio<'_> {
+    /// Lend the same audio services to a nested screen for a shorter borrow.
+    ///
+    /// `Option<&mut dyn Trait>::as_deref_mut` ties the result to the outer
+    /// trait-object lifetime, so the backend is re-coerced explicitly here.
+    pub fn reborrow(&mut self) -> ScreenAudio<'_> {
+        ScreenAudio {
+            sound: self.sound.as_deref_mut(),
+            backend: self
+                .backend
+                .as_mut()
+                .map(|backend| &mut **backend as &mut dyn AudioBackend),
+            sample_loader: self.sample_loader,
+        }
+    }
+}
+
+/// Standard modal keys shared by every menu screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenKey {
+    /// Window close request.
+    Quit,
+    /// `Escape`.
+    Cancel,
+    /// `Return` or numpad `Enter`.
+    Confirm,
+    /// `Tab`.
+    Next,
+}
+
+impl ScreenKey {
+    /// Classify one window event; non-standard events yield `None`.
+    pub fn from_event(event: &GameEvent) -> Option<Self> {
+        use crate::gfx_types::Keycode;
+        match event {
+            GameEvent::Quit => Some(Self::Quit),
+            GameEvent::KeyDown { keycode, .. } => match keycode {
+                Keycode::Escape => Some(Self::Cancel),
+                Keycode::Return | Keycode::KpEnter => Some(Self::Confirm),
+                Keycode::Tab => Some(Self::Next),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// The shared per-frame skeleton of a modal menu screen.
+///
+/// A screen `tick` runs `begin` (poll, resize sync, centred transform and
+/// input update), handles `events`/`keys`, calls `dispatch` for widget
+/// activation, then `begin_draw` (modal GPU phase + dim), draws its own
+/// content, and finally `finish` (cursor + present). Frame pacing stays in
+/// the async wrapper ([`run_modal`]).
+pub struct ScreenFrame {
+    pub events: Vec<GameEvent>,
+    pub transform: MenuTransform,
+}
+
+impl ScreenFrame {
+    /// Poll window events and feed every event into `input` in poll order.
+    ///
+    /// Equivalent to calling `poll_events_with_transform` and then
+    /// `input.update_from_event` per event before any screen-specific
+    /// handling; screens whose event handling reads the input state
+    /// mid-stream must keep the interleaved loop.
+    pub fn begin(io: &mut ModalScreenIo<'_, '_>, input: &mut ModalInputState) -> Self {
+        let frame = Self::poll(io);
+        for event in &frame.events {
+            input.update_from_event(event, frame.transform);
+        }
+        frame
+    }
+
+    /// Poll window events without an input state (transitions, busy screens).
+    pub fn poll(io: &mut ModalScreenIo<'_, '_>) -> Self {
+        let (events, transform) = super::layout::poll_events_with_transform(io.window, io.renderer);
+        Self { events, transform }
+    }
+
+    /// Standard keys in event order.
+    pub fn keys(&self) -> impl Iterator<Item = ScreenKey> + '_ {
+        self.events.iter().filter_map(ScreenKey::from_event)
+    }
+
+    /// Deliver this frame's input to `frame`; returns the widget events and
+    /// the first activated widget.
+    pub fn dispatch(
+        input: &mut ModalInputState,
+        frame: &mut FrameWnd,
+    ) -> (Vec<UiEvent>, Option<WidgetId>) {
+        let events = input.process_frame(frame);
+        let activated = find_activated(&events);
+        (events, activated)
+    }
+
+    /// Enter the modal GPU phase and dim the frozen scene behind the screen.
+    pub fn begin_draw(&self, renderer: &mut Renderer) {
+        super::layout::enter_modal_gpu_phase(renderer);
+        super::layout::dim_screen(renderer);
+    }
+
+    /// Draw the modal cursor (when present) and present the frame.
+    pub fn finish(&self, io: &mut ModalScreenIo<'_, '_>, input: &ModalInputState) {
+        if let Some(cursor) = io.cursor {
+            cursor.draw(io.renderer, self.transform, input);
+        }
+        io.renderer.present();
+    }
+}
+
+/// Drive a one-frame `tick` until it yields a result, pacing with
+/// [`crate::window::sleep_ui_frame`] between frames.
+pub async fn run_modal<T>(
+    io: &mut ModalScreenIo<'_, '_>,
+    mut tick: impl FnMut(&mut ModalScreenIo<'_, '_>) -> Option<T>,
+) -> T {
+    loop {
+        if let Some(result) = tick(io) {
+            return result;
+        }
+        crate::window::sleep_ui_frame().await;
+    }
 }
 
 /// Shared thumb geometry for the artwork renderer and scroll-view hit testing.
@@ -446,6 +610,11 @@ impl ModalInputState {
         let mut input = Self::new();
         input.seed_mouse_from_window(event_pump, transform);
         input
+    }
+
+    /// [`from_window`](Self::from_window) with the renderer's centred menu transform.
+    pub fn for_screen(event_pump: &crate::window::GameWindow, renderer: &Renderer) -> Self {
+        Self::from_window(event_pump, MenuTransform::for_renderer(renderer))
     }
 
     /// Deliver one frame and consume its one-shot mouse/text input.
@@ -973,7 +1142,7 @@ pub fn draw_frame_labels(
         let Some((vx, vy, w, h)) = virtual_rect(widget.base().bbox) else {
             continue;
         };
-        super::layout::render_text_in_box_font(
+        super::layout::render_clipped_text_in_box_font(
             renderer,
             font,
             transform,
@@ -983,6 +1152,7 @@ pub fn draw_frame_labels(
             w,
             h,
             align,
+            super::layout::VAlign::Top,
         );
     }
 }
@@ -1084,7 +1254,7 @@ pub fn draw_widget_radio(
         } else if hovered {
             Renderer::create_color_16(60, 50, 30)
         } else {
-            Renderer::create_color_16(30, 25, 15)
+            FALLBACK_PANEL_FILL
         };
         renderer.fill_screen(
             Some(&engine_sprite::BBox::from_coords(
@@ -1164,9 +1334,12 @@ pub fn play_widget_noise(
     play_widget_noise_tracked(
         events,
         noisy_id,
-        sound,
-        backend,
-        loader,
+        ScreenAudio {
+            sound: Some(sound),
+            // Re-coerce the trait object to the bundle's shorter lifetime.
+            backend: backend.map(|backend| &mut *backend as &mut dyn AudioBackend),
+            sample_loader: Some(loader),
+        },
         None,
         UiState::Default,
         false,
@@ -1217,17 +1390,21 @@ impl NoisyTracker {
 /// `tracker` / `current_state` are `Option`/ignored when you don't
 /// need gating (see the thin [`play_widget_noise`] wrapper).
 /// `force_play` fires a sound even if nothing about the state changed.
+/// Silent unless `audio` carries all three services.
 pub fn play_widget_noise_tracked(
     events: &[UiEvent],
     noisy_id: u32,
-    sound: &mut SoundManager,
-    backend: Option<&mut dyn AudioBackend>,
-    loader: &SampleLoader,
+    audio: ScreenAudio<'_>,
     tracker: Option<&mut NoisyTracker>,
     current_state: UiState,
     force_play: bool,
 ) {
-    let Some(backend) = backend else {
+    let ScreenAudio {
+        sound: Some(sound),
+        backend: Some(backend),
+        sample_loader: Some(loader),
+    } = audio
+    else {
         return;
     };
     for event in events {
@@ -1269,15 +1446,24 @@ pub fn play_widget_noise_tracked(
 /// This mirrors the original game's noisy-widget behavior: state changes
 /// reset the per-widget "already played" flag, and at most one matching
 /// sound is emitted per call.
+///
+/// Without a sound manager or sample loader in `audio` nothing happens, not
+/// even tracker observation; without a backend only the tracker is updated.
 pub fn play_frame_widget_noise(
     events: &[UiEvent],
     frame: &FrameWnd,
     noisy_id: u32,
-    sound: &mut SoundManager,
-    backend: Option<&mut dyn AudioBackend>,
-    loader: &SampleLoader,
+    audio: ScreenAudio<'_>,
     tracker: &mut NoisyTracker,
 ) {
+    let ScreenAudio {
+        sound: Some(sound),
+        backend,
+        sample_loader: Some(loader),
+    } = audio
+    else {
+        return;
+    };
     // Leaving a menu button (and pressing it) changes state silently.
     // Observe every widget each frame, including frames without sound events,
     // so returning to Focused can play again. Drop removed widgets as well.
@@ -1378,9 +1564,11 @@ mod noisy_tracker_tests {
                 &events,
                 &frame,
                 WIDGET_NOISY_BUTTON,
-                &mut sound,
-                None,
-                &|_| panic!("no audio backend should load samples"),
+                ScreenAudio {
+                    sound: Some(&mut sound),
+                    backend: None,
+                    sample_loader: Some(&|_| panic!("no audio backend should load samples")),
+                },
                 &mut tracker,
             );
             assert_eq!(tracker.entries.get(&key), Some(&(UiState::Focused, true)));
@@ -1400,9 +1588,11 @@ mod noisy_tracker_tests {
                 &events,
                 &frame,
                 WIDGET_NOISY_BUTTON,
-                &mut sound,
-                None,
-                &|_| panic!("no audio backend should load samples"),
+                ScreenAudio {
+                    sound: Some(&mut sound),
+                    backend: None,
+                    sample_loader: Some(&|_| panic!("no audio backend should load samples")),
+                },
                 &mut tracker,
             );
             assert!(!tracker.entries.contains_key(&key));

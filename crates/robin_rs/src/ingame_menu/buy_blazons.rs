@@ -21,19 +21,18 @@ use crate::ingame_menu::resources::SealButton;
 use robin_engine::sprite::BBox;
 
 use crate::gfx_types::GameEvent;
-use crate::renderer::Renderer;
 use crate::ui_screens::BuyBlazonsScreen;
 use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_aligned_font,
+    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, FOCUS_OUTLINE, MENU_H, MENU_W, TextAlign, VAlign,
+    draw_background, render_clipped_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
 };
-use super::widget_bridge::{self, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 400;
@@ -80,24 +79,16 @@ pub struct BuyBlazonsModalState {
 
 impl BuyBlazonsModalState {
     pub fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
         mission_index: usize,
         blazon_price: u32,
         ransom: u32,
     ) -> Self {
+        let resources = io.resources;
         let screen = BuyBlazonsScreen::new(mission_index, blazon_price, ransom);
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
         let win_x = (MENU_W - WIN_W) / 2;
         let win_y = (MENU_H - WIN_H) / 2;
-        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
-        let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
-        let btn_w = ok_w.max(cancel_w);
-        let btn_h = ok_h.max(cancel_h);
+        let (btn_w, btn_h) = resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel);
         let total_w = 2 * btn_w + BUTTON_GAP;
         let buy_x = win_x + (WIN_W - total_w) / 2;
         let quit_x = buy_x + btn_w + BUTTON_GAP;
@@ -138,9 +129,9 @@ impl BuyBlazonsModalState {
                     .get(super::resources::MT_INFOBULLE_BUTTON_CANCEL),
             );
         }
-        widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
+        widget_bridge::attach_alpha_masks(&mut frame, resources, io.renderer);
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
         Self {
             screen,
             frame,
@@ -155,55 +146,43 @@ impl BuyBlazonsModalState {
         }
     }
 
-    pub fn tick(
-        &mut self,
-        io: &mut widget_bridge::ModalScreenIo<'_, '_>,
-    ) -> Option<BuyBlazonsOutcome> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<BuyBlazonsOutcome> {
         if !self.screen.can_buy() {
             return Some(BuyBlazonsOutcome::Cancelled);
         }
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
         let win_x = (MENU_W - WIN_W) / 2;
         let win_y = (MENU_H - WIN_H) / 2;
         let mut keyboard_activation = None;
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => self.screen.on_quit(),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Tab | Keycode::Right | Keycode::Left,
-                    ..
-                } => self.focused_index = (self.focused_index + 1) % 2,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
+        // One ordered pass: a Tab/arrow before Return changes which button
+        // Return activates.
+        for event in &screen.events {
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => self.screen.on_quit(),
+                Some(ScreenKey::Next) => self.focused_index = (self.focused_index + 1) % 2,
+                Some(ScreenKey::Confirm) => {
                     keyboard_activation = Some(if self.focused_index == 0 {
                         ID_BUY
                     } else {
                         ID_QUIT
                     });
                 }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.screen.on_quit(),
-                _ => {}
+                None => {
+                    if matches!(
+                        event,
+                        GameEvent::KeyDown {
+                            keycode: Keycode::Right | Keycode::Left,
+                            ..
+                        }
+                    ) {
+                        self.focused_index = (self.focused_index + 1) % 2;
+                    }
+                }
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&events).or(keyboard_activation) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(id) = activated.or(keyboard_activation) {
             match id {
                 ID_BUY => self.screen.on_buy(),
                 ID_QUIT => self.screen.on_quit(),
@@ -211,8 +190,10 @@ impl BuyBlazonsModalState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
         if let Some(bg) = resources.menu_bg_small {
             draw_background(renderer, transform, &bg, win_x, win_y, WIN_W, WIN_H);
         } else {
@@ -224,19 +205,13 @@ impl BuyBlazonsModalState {
                     (sx + WIN_W) as f32,
                     (sy + WIN_H) as f32,
                 )),
-                Renderer::create_color_16(30, 25, 15),
+                FALLBACK_PANEL_FILL,
             );
-            renderer.draw_rect_outline_screen(
-                sx,
-                sy,
-                sx + WIN_W,
-                sy + WIN_H,
-                Renderer::create_color_16(180, 160, 100),
-            );
+            renderer.draw_rect_outline_screen(sx, sy, sx + WIN_W, sy + WIN_H, FALLBACK_PANEL_EDGE);
         }
         let font = resources.debrief_font_any();
         if let Some(font) = font {
-            let _ = render_text_in_box_aligned_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 transform,
@@ -257,17 +232,8 @@ impl BuyBlazonsModalState {
         };
         let (sx, sy) = transform.to_screen(focused_x, focused_y);
         let (ex, ey) = transform.to_screen(focused_x + self.btn_w, focused_y + self.btn_h);
-        renderer.draw_rect_outline_screen(
-            sx - 1,
-            sy - 1,
-            ex + 1,
-            ey + 1,
-            Renderer::create_color_16(255, 220, 80),
-        );
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input_state);
-        }
-        renderer.present();
+        renderer.draw_rect_outline_screen(sx - 1, sy - 1, ex + 1, ey + 1, FOCUS_OUTLINE);
+        screen.finish(io, &self.input_state);
 
         self.screen.closed.then_some(if self.screen.purchased {
             BuyBlazonsOutcome::Bought

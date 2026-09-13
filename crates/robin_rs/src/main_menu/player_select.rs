@@ -7,6 +7,7 @@
 //! keyboards).
 
 use super::difficulty_to_string;
+use crate::application::require;
 use crate::gfx_types::Keycode;
 use crate::ingame_menu::resources::SealButton;
 use robin_engine::sprite::BBox;
@@ -14,8 +15,8 @@ use robin_engine::sprite::BBox;
 use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
-    MENU_H, MENU_W, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
-    draw_fallback_panel, draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
+    MENU_H, MENU_W, MenuRect, align_bottom_right, draw_background, draw_fallback_panel,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_NEW, MT_BTN_OK, MT_BTN_RENAME,
@@ -31,9 +32,10 @@ use crate::ingame_menu::resources::{
     MT_STR_DIFFICULTY_HARD, MT_STR_DIFFICULTY_LEVEL, MT_STR_DIFFICULTY_MEDIUM, MT_STR_NAME,
     MT_TTL_NEW_PLAYER,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
+use crate::ingame_menu::widget_bridge::{
+    self, AnimatedScreenIo, ModalInputState, ScreenFrame, ScreenKey,
+};
 use crate::ingame_menu::yesno::show_yesno;
-use crate::renderer::Renderer;
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::ui_screens::MAX_PLAYER_NAME_LENGTH;
 use crate::widget::{FrameWnd, Widget, WidgetInput, WidgetInputField};
@@ -42,6 +44,8 @@ use robin_engine::player_profile::{
 };
 use robin_engine::resource_ids;
 use serde::{Deserialize, Serialize};
+
+const SCREEN: &str = "Select Player screen";
 
 /// Maximum number of player profiles that can coexist on disk.
 const MAX_PROFILES: usize = 10;
@@ -67,23 +71,13 @@ const ID_DIFFICULTY: u32 = 5;
 /// the caller; the active profile lives on `application_context`.
 pub(crate) async fn show_select_player(
     application_context: &ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
+    io: &mut AnimatedScreenIo<'_, '_>,
 ) {
-    let mut state = SelectPlayerState::new(application_context, event_pump, renderer, resources);
+    let mut state = SelectPlayerState::new(application_context, io);
+    // The frame loop stays here instead of `run_modal`: a tick awaits nested
+    // dialogs and `Retry` re-ticks without frame pacing.
     loop {
-        match state
-            .tick(
-                application_context,
-                event_pump,
-                renderer,
-                resources,
-                &mut cursor,
-            )
-            .await
-        {
+        match state.tick(application_context, io).await {
             SelectPlayerTick::Closed => return,
             SelectPlayerTick::Retry => continue,
             SelectPlayerTick::Presented => crate::window::sleep_ui_frame().await,
@@ -98,6 +92,13 @@ enum SelectPlayerTick {
     Closed,
 }
 
+/// Which roster buttons the current profile count arms this frame.
+#[derive(Clone, Copy)]
+struct RosterGates {
+    can_select: bool,
+    can_new: bool,
+}
+
 /// Transient roster selection and retained input widgets, separate from profile authority.
 struct SelectPlayerState {
     selected: Option<usize>,
@@ -108,16 +109,8 @@ struct SelectPlayerState {
     profile_field_h: i32,
 }
 impl SelectPlayerState {
-    fn new(
-        application_context: &ApplicationContext,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-    ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
-
+    fn new(application_context: &ApplicationContext, io: &AnimatedScreenIo<'_, '_>) -> Self {
+        let resources = io.resources;
         let (btn_w, btn_h) = resources.button_dimensions();
 
         let select_label = resources.menu_text.get(MT_BTN_SELECT);
@@ -162,7 +155,7 @@ impl SelectPlayerState {
         let selected: Option<usize> = profiles_snapshot(application_context).1;
         let status = String::new();
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
 
         let mut frame = FrameWnd::interactive();
         for (id, label, x, y) in &btn_positions {
@@ -194,10 +187,7 @@ impl SelectPlayerState {
     async fn tick(
         &mut self,
         application_context: &ApplicationContext,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: &mut Option<ModalCursor<'_>>,
+        io: &mut AnimatedScreenIo<'_, '_>,
     ) -> SelectPlayerTick {
         // Refresh the profile snapshot each frame: profile count and
         // the active-index can change when the player creates / deletes
@@ -205,6 +195,32 @@ impl SelectPlayerState {
         // mouse-down state is still present when the matching mouse-up
         // arrives.
         let (profiles, _active) = profiles_snapshot(application_context);
+        let gates = self.refresh_gates(&profiles);
+
+        // ── Events ──────────────────────────────────────────────
+        let screen = ScreenFrame::begin(&mut io.screen_io(), &mut self.input_state);
+        let mut activated = self.handle_events(&screen, &profiles, gates);
+
+        let (_, widget_activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(id) = widget_activated {
+            activated = Some(id);
+        }
+
+        if let Some(id) = activated
+            && let Some(outcome) = self
+                .activate(application_context, io, id, &profiles, gates)
+                .await
+        {
+            return outcome;
+        }
+
+        // ── Render ──────────────────────────────────────────────
+        self.draw(io, &screen, &profiles);
+
+        SelectPlayerTick::Presented
+    }
+
+    fn refresh_gates(&mut self, profiles: &[PlayerProfileRow]) -> RosterGates {
         // Button enablement is purely a function of the profile count.
         // Selection state is enforced inside the handlers (see
         // `selected.is_some()` guards below) rather than at the
@@ -222,222 +238,212 @@ impl SelectPlayerState {
         self.frame.update_widget(ID_RENAME, None, can_rename);
         self.frame.update_widget(ID_DELETE, None, can_delete);
         self.frame.update_widget(ID_DIFFICULTY, None, has_profile);
+        RosterGates {
+            can_select,
+            can_new,
+        }
+    }
 
-        // ── Events ──────────────────────────────────────────────
+    /// Keyboard and roster-row pointer handling; input state was already
+    /// updated by [`ScreenFrame::begin`] and is not read here.
+    fn handle_events(
+        &mut self,
+        screen: &ScreenFrame,
+        profiles: &[PlayerProfileRow],
+        gates: RosterGates,
+    ) -> Option<u32> {
         let mut activated: Option<u32> = None;
-        let (events, transform) =
-            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    activated = Some(ID_CLOSE);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } if can_select && self.selected.is_some() => {
-                    activated = Some(ID_SELECT);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => {
-                    self.selected = match self.selected {
-                        Some(i) if i > 0 => Some(i - 1),
-                        Some(_) => Some(0),
-                        None if !profiles.is_empty() => Some(0),
-                        None => None,
-                    };
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => {
-                    self.selected = match self.selected {
-                        Some(i) if i + 1 < profiles.len() => Some(i + 1),
-                        Some(i) => Some(i),
-                        None if !profiles.is_empty() => Some(0),
-                        None => None,
-                    };
-                }
-                GameEvent::MouseUp(x, y, 1) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(row) =
-                        profile_row_at(vx, vy, self.profile_field_w, self.profile_field_h)
-                        && row < profiles.len()
-                    {
-                        self.selected = Some(row);
-                    }
-                }
-                // A double-click on a profile row commits that profile
-                // as active and closes the menu. The window layer reports the click
-                // counter via the 4th tuple element of `MouseDown`.
-                GameEvent::MouseDown(x, y, 1, clicks) if clicks >= 2 => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if let Some(row) =
-                        profile_row_at(vx, vy, self.profile_field_w, self.profile_field_h)
-                        && row < profiles.len()
-                    {
-                        self.selected = Some(row);
+        let transform = screen.transform;
+        for event in &screen.events {
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => activated = Some(ID_CLOSE),
+                Some(ScreenKey::Confirm) => {
+                    if gates.can_select && self.selected.is_some() {
                         activated = Some(ID_SELECT);
                     }
                 }
-                _ => {}
-            }
-        }
-
-        let widget_input = self.input_state.as_widget_input();
-        let widget_events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
-            activated = Some(id);
-        }
-
-        if let Some(id) = activated {
-            match id {
-                ID_CLOSE => return SelectPlayerTick::Closed,
-                ID_SELECT => {
-                    if let Some(idx) = self.selected {
-                        commit_active(application_context, idx);
-                    }
-                    return SelectPlayerTick::Closed;
-                }
-                ID_NEW if can_new => {
-                    // New-player flow: name prompt + difficulty radios.
-                    if let Some((name, mut difficulty)) = show_new_player_prompt(
-                        event_pump,
-                        renderer,
-                        resources,
-                        default_new_player_name(application_context),
-                        cursor.as_mut().map(|c| c.reborrow()),
-                    )
-                    .await
-                    {
-                        if matches!(difficulty, DifficultyLevel::Custom(_)) {
-                            let Some(advanced) = show_difficulty_prompt(
-                                event_pump,
-                                renderer,
-                                resources,
-                                difficulty,
-                                cursor.as_mut().map(|c| c.reborrow()),
-                            )
-                            .await
-                            else {
-                                return SelectPlayerTick::Retry;
-                            };
-                            difficulty = advanced;
-                        }
-                        // Substitute the localised "Anonymous" string
-                        // when the raw input is literally empty —
-                        // whitespace names (e.g. "   ") pass through
-                        // unchanged.
-                        let final_name = if name.is_empty() {
-                            resources.menu_text.get(MT_STR_ANONYMOUS)
-                        } else {
-                            name
+                Some(ScreenKey::Next) => {}
+                None => match *event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Up,
+                        ..
+                    } => {
+                        self.selected = match self.selected {
+                            Some(i) if i > 0 => Some(i - 1),
+                            Some(_) => Some(0),
+                            None if !profiles.is_empty() => Some(0),
+                            None => None,
                         };
-                        // Persist the selected 4:3 scale reference, not the
-                        // transient aspect-adapted canvas dimensions.
-                        let screen_dims = application_context
-                            .with_active_profile(|profile| {
-                                (
-                                    profile.graphic_config.resolution_x.round() as u32,
-                                    profile.graphic_config.resolution_y.round() as u32,
-                                )
-                            })
-                            .unwrap_or_else(|error| {
-                                panic!("new-player flow lost the active profile: {error}")
-                            });
-                        let idx = create_new_profile(
-                            application_context,
-                            final_name,
-                            difficulty,
-                            Some(screen_dims),
-                        );
-                        self.selected = idx;
                     }
-                }
-                ID_RENAME => {
-                    // The original switches the selected input-field
-                    // widget into inline edit mode; we render the list
-                    // as flat rows, so we surface a small modal backed
-                    // by the same text-input pipeline instead.
-                    if let Some(idx) = self.selected
-                        && let Some(profile) = profiles.get(idx)
-                        && let Some(new_name) = show_rename_prompt(
-                            event_pump,
-                            renderer,
-                            resources,
-                            profile.name.clone(),
-                            cursor.as_mut().map(|c| c.reborrow()),
-                        )
-                        .await
-                    {
-                        rename_profile(application_context, idx, new_name);
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Down,
+                        ..
+                    } => {
+                        self.selected = match self.selected {
+                            Some(i) if i + 1 < profiles.len() => Some(i + 1),
+                            Some(i) => Some(i),
+                            None if !profiles.is_empty() => Some(0),
+                            None => None,
+                        };
                     }
-                }
-                ID_DIFFICULTY => {
-                    if let Some(idx) = self.selected
-                        && let Some(profile) = profiles.get(idx)
-                        && let Some(difficulty) = show_difficulty_prompt(
-                            event_pump,
-                            renderer,
-                            resources,
-                            profile.difficulty,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                        )
-                        .await
-                    {
-                        set_profile_difficulty(application_context, idx, difficulty);
-                    }
-                }
-                ID_DELETE => {
-                    if let Some(idx) = self.selected {
-                        let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_PLAYER);
-                        if show_yesno(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &msg,
-                        )
-                        .await
+                    GameEvent::MouseUp(x, y, 1) => {
+                        let (vx, vy) = transform.from_screen(x, y);
+                        if let Some(row) =
+                            profile_row_at(vx, vy, self.profile_field_w, self.profile_field_h)
+                            && row < profiles.len()
                         {
-                            match delete_profile(application_context, idx) {
-                                Ok(true) => {
-                                    self.status.clear();
-                                    // Clamp selection against the shrunken list.
-                                    let new_len = profile_count(application_context);
-                                    self.selected = if new_len == 0 {
-                                        None
-                                    } else {
-                                        Some(idx.min(new_len - 1))
-                                    };
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    self.status = format!("Player deletion failed: {error}");
-                                }
-                            }
+                            self.selected = Some(row);
                         }
                     }
-                }
-                _ => {}
+                    // A double-click on a profile row commits that profile
+                    // as active and closes the menu. The window layer reports the click
+                    // counter via the 4th tuple element of `MouseDown`.
+                    GameEvent::MouseDown(x, y, 1, clicks) if clicks >= 2 => {
+                        let (vx, vy) = transform.from_screen(x, y);
+                        if let Some(row) =
+                            profile_row_at(vx, vy, self.profile_field_w, self.profile_field_h)
+                            && row < profiles.len()
+                        {
+                            self.selected = Some(row);
+                            activated = Some(ID_SELECT);
+                        }
+                    }
+                    _ => {}
+                },
             }
         }
+        activated
+    }
 
-        // ── Render ──────────────────────────────────────────────
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+    /// Apply one activated control. `Some` ends the tick before presenting.
+    async fn activate(
+        &mut self,
+        application_context: &ApplicationContext,
+        io: &mut AnimatedScreenIo<'_, '_>,
+        id: u32,
+        profiles: &[PlayerProfileRow],
+        gates: RosterGates,
+    ) -> Option<SelectPlayerTick> {
+        match id {
+            ID_CLOSE => return Some(SelectPlayerTick::Closed),
+            ID_SELECT => {
+                if let Some(idx) = self.selected {
+                    commit_active(application_context, idx);
+                }
+                return Some(SelectPlayerTick::Closed);
+            }
+            ID_NEW if gates.can_new => return self.create_player(application_context, io).await,
+            ID_RENAME => {
+                // The original switches the selected input-field
+                // widget into inline edit mode; we render the list
+                // as flat rows, so we surface a small modal backed
+                // by the same text-input pipeline instead.
+                if let Some(idx) = self.selected
+                    && let Some(profile) = profiles.get(idx)
+                    && let Some(new_name) = show_rename_prompt(io, profile.name.clone()).await
+                {
+                    rename_profile(application_context, idx, new_name);
+                }
+            }
+            ID_DIFFICULTY => {
+                if let Some(idx) = self.selected
+                    && let Some(profile) = profiles.get(idx)
+                    && let Some(difficulty) = show_difficulty_prompt(io, profile.difficulty).await
+                {
+                    set_profile_difficulty(application_context, idx, difficulty);
+                }
+            }
+            ID_DELETE => self.delete_selected(application_context, io).await,
+            _ => {}
+        }
+        None
+    }
+
+    /// New-player flow: name prompt + difficulty radios. Cancelling the
+    /// advanced editor for a Custom difficulty retries the tick.
+    async fn create_player(
+        &mut self,
+        application_context: &ApplicationContext,
+        io: &mut AnimatedScreenIo<'_, '_>,
+    ) -> Option<SelectPlayerTick> {
+        if let Some((name, mut difficulty)) =
+            show_new_player_prompt(io, default_new_player_name(application_context)).await
+        {
+            if matches!(difficulty, DifficultyLevel::Custom(_)) {
+                let Some(advanced) = show_difficulty_prompt(io, difficulty).await else {
+                    return Some(SelectPlayerTick::Retry);
+                };
+                difficulty = advanced;
+            }
+            // Substitute the localised "Anonymous" string
+            // when the raw input is literally empty —
+            // whitespace names (e.g. "   ") pass through
+            // unchanged.
+            let final_name = if name.is_empty() {
+                io.resources.menu_text.get(MT_STR_ANONYMOUS)
+            } else {
+                name
+            };
+            // Persist the selected 4:3 scale reference, not the
+            // transient aspect-adapted canvas dimensions.
+            let screen_dims = crate::application::require(
+                application_context.with_active_profile(|profile| {
+                    (
+                        profile.graphic_config.resolution_x.round() as u32,
+                        profile.graphic_config.resolution_y.round() as u32,
+                    )
+                }),
+                "New-player flow",
+            );
+            let idx = create_new_profile(
+                application_context,
+                final_name,
+                difficulty,
+                Some(screen_dims),
+            );
+            self.selected = idx;
+        }
+        None
+    }
+
+    async fn delete_selected(
+        &mut self,
+        application_context: &ApplicationContext,
+        io: &mut AnimatedScreenIo<'_, '_>,
+    ) {
+        if let Some(idx) = self.selected {
+            let msg = io.resources.menu_text.get(MT_MSG_REALLY_DELETE_PLAYER);
+            if show_yesno(&mut io.screen_io(), &msg).await {
+                match delete_profile(application_context, idx) {
+                    Ok(true) => {
+                        self.status.clear();
+                        // Clamp selection against the shrunken list.
+                        let new_len = profile_count(application_context);
+                        self.selected = if new_len == 0 {
+                            None
+                        } else {
+                            Some(idx.min(new_len - 1))
+                        };
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.status = format!("Player deletion failed: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    fn draw(
+        &self,
+        io: &mut AnimatedScreenIo<'_, '_>,
+        screen: &ScreenFrame,
+        profiles: &[PlayerProfileRow],
+    ) {
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
@@ -499,14 +505,10 @@ impl SelectPlayerState {
         }
 
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
-        if let Some(cursor) = cursor.as_mut() {
-            cursor.cursor.advance_ui_animation();
-            cursor.draw(renderer, transform, &self.input_state);
+        if let Some(cursor) = io.cursor_renderer() {
+            cursor.advance_ui_animation();
         }
-
-        renderer.present();
-
-        SelectPlayerTick::Presented
+        screen.finish(&mut io.screen_io(), &self.input_state);
     }
 }
 
@@ -536,14 +538,15 @@ impl From<&PlayerProfile> for PlayerProfileRow {
 fn profiles_snapshot(
     application_context: &ApplicationContext,
 ) -> (Vec<PlayerProfileRow>, Option<usize>) {
-    application_context
-        .with_player_profiles(|mgr| {
+    require(
+        application_context.with_player_profiles(|mgr| {
             (
                 mgr.profiles.iter().map(PlayerProfileRow::from).collect(),
                 mgr.active_index,
             )
-        })
-        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
+        }),
+        SCREEN,
+    )
 }
 
 fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize> {
@@ -563,9 +566,10 @@ fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize>
 }
 
 fn profile_count(application_context: &ApplicationContext) -> usize {
-    application_context
-        .with_player_profiles(|mgr| mgr.profile_count())
-        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
+    require(
+        application_context.with_player_profiles(|mgr| mgr.profile_count()),
+        SCREEN,
+    )
 }
 
 fn can_delete_profile(profile_count: usize) -> bool {
@@ -573,22 +577,24 @@ fn can_delete_profile(profile_count: usize) -> bool {
 }
 
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
-    let profile_id = application_context
-        .update_and_retain_player_profiles(|mgr| {
+    let profile_id = require(
+        application_context.update_and_retain_player_profiles(|mgr| {
             if idx < mgr.profile_count() {
                 mgr.set_active(idx);
                 return Some(mgr.profiles[idx].id);
             }
             None
-        })
-        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist active profile change");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist active profile change");
     if let Some(profile_id) = profile_id {
-        application_context
-            .with_key_configs_mut(|store| {
+        require(
+            application_context.with_key_configs_mut(|store| {
                 store.entry_or_default(profile_id);
-            })
-            .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
+            }),
+            SCREEN,
+        );
     }
 }
 
@@ -598,8 +604,8 @@ fn commit_active(application_context: &ApplicationContext, idx: usize) {
 /// immediately usable rather than relying on the empty→Anonymous
 /// fallback.
 fn default_new_player_name(application_context: &ApplicationContext) -> String {
-    application_context
-        .with_player_profiles(|mgr| {
+    require(
+        application_context.with_player_profiles(|mgr| {
             if !mgr.has_profile("Player") {
                 return "Player".to_string();
             }
@@ -611,8 +617,9 @@ fn default_new_player_name(application_context: &ApplicationContext) -> String {
                 }
                 n += 1;
             }
-        })
-        .unwrap_or_else(|error| panic!("Select Player name generation failed: {error}"))
+        }),
+        SCREEN,
+    )
 }
 
 fn create_new_profile(
@@ -626,20 +633,22 @@ fn create_new_profile(
     // double-click) to commit and persist.  Pass the live window
     // dimensions so the new profile inherits them when no other profile
     // is active (the "screen open" arm of profile creation).
-    let (idx, profile_id) = application_context
-        .with_player_profiles_mut(|mgr| {
+    let (idx, profile_id) = require(
+        application_context.with_player_profiles_mut(|mgr| {
             let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
             (idx, mgr.profiles[idx].id)
-        })
-        .unwrap_or_else(|error| panic!("Select Player create failed: {error}"));
-    application_context
-        .with_key_configs_mut(|store| {
+        }),
+        SCREEN,
+    );
+    require(
+        application_context.with_key_configs_mut(|store| {
             store.configs.insert(
                 profile_id,
                 crate::key_config_store::ProfileKeyConfig::fresh(),
             );
-        })
-        .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
+        }),
+        SCREEN,
+    );
     Some(idx)
 }
 
@@ -651,16 +660,17 @@ fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name
     // the active slot.
     let trimmed = new_name.trim();
     let final_name = if trimmed.is_empty() { "Robin" } else { trimmed };
-    application_context
-        .update_and_retain_player_profiles(|mgr| {
+    require(
+        application_context.update_and_retain_player_profiles(|mgr| {
             if idx >= mgr.profile_count() {
                 return;
             }
             mgr.profiles[idx].name = final_name.to_string();
             mgr.set_active(idx);
-        })
-        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist rename");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist rename");
 }
 
 fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Result<bool, String> {
@@ -676,10 +686,6 @@ fn format_profile_row(profile: &PlayerProfileRow, resources: &IngameMenuResource
         difficulty = difficulty_to_string(&resources.menu_text, profile.difficulty),
         progression = profile.progression,
     )
-}
-
-fn point_in_rect(px: i32, py: i32, x: i32, y: i32, w: i32, h: i32) -> bool {
-    px >= x && px < x + w && py >= y && py < y + h
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -703,44 +709,23 @@ const RENAME_PROMPT_INPUT_H: i32 = 28;
 /// Returns `Some(name)` on OK / Enter (trimmed; the caller decides what
 /// to do with an empty string), `None` on Cancel / Escape.
 pub(crate) async fn show_rename_prompt(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
+    io: &mut AnimatedScreenIo<'_, '_>,
     initial: String,
-    cursor: Option<ModalCursor<'_>>,
 ) -> Option<String> {
-    run_name_prompt(
-        event_pump,
-        renderer,
-        resources,
-        &resources.menu_text.get(MT_BTN_RENAME),
-        initial,
-        None,
-        cursor,
-    )
-    .await
-    .map(|(name, _diff)| name)
+    let title = io.resources.menu_text.get(MT_BTN_RENAME);
+    run_name_prompt(io, &title, initial, None)
+        .await
+        .map(|(name, _diff)| name)
 }
 
 /// Display the new-player modal with a name input and a difficulty
 /// radio row, pre-filled with `initial_name` and Medium.
 pub(crate) async fn show_new_player_prompt(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
+    io: &mut AnimatedScreenIo<'_, '_>,
     initial_name: String,
-    cursor: Option<ModalCursor<'_>>,
 ) -> Option<(String, DifficultyLevel)> {
-    run_name_prompt(
-        event_pump,
-        renderer,
-        resources,
-        &resources.menu_text.get(MT_TTL_NEW_PLAYER),
-        initial_name,
-        Some(DifficultyLevel::Medium),
-        cursor,
-    )
-    .await
+    let title = io.resources.menu_text.get(MT_TTL_NEW_PLAYER);
+    run_name_prompt(io, &title, initial_name, Some(DifficultyLevel::Medium)).await
 }
 
 const PROMPT_ID_OK: u32 = 0;
@@ -773,25 +758,15 @@ fn new_player_difficulty_positions(win_x: i32, win_y: i32, button_w: i32) -> [(i
 }
 
 async fn run_name_prompt(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
+    io: &mut AnimatedScreenIo<'_, '_>,
     title: &str,
     initial: String,
     initial_difficulty: Option<DifficultyLevel>,
-    mut cursor: Option<ModalCursor<'_>>,
 ) -> Option<(String, DifficultyLevel)> {
-    let mut state = NamePromptState::new(
-        event_pump,
-        renderer,
-        resources,
-        title,
-        initial,
-        initial_difficulty,
-    );
+    let mut state = NamePromptState::new(io, title, initial, initial_difficulty);
     crate::window::start_text_input();
     let outcome = loop {
-        match state.tick(event_pump, renderer, resources, &mut cursor) {
+        match state.tick(io) {
             NamePromptTick::Closed(outcome) => break outcome,
             NamePromptTick::Presented => crate::window::sleep_ui_frame().await,
         }
@@ -857,17 +832,12 @@ impl NamePromptState {
     }
 
     fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &AnimatedScreenIo<'_, '_>,
         title: &str,
         initial: String,
         initial_difficulty: Option<DifficultyLevel>,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
-
+        let resources = io.resources;
         let is_new_player = initial_difficulty.is_some();
         let (win_w, win_h) = if is_new_player {
             (NEW_PLAYER_PROMPT_W, NEW_PLAYER_PROMPT_H)
@@ -944,7 +914,7 @@ impl NamePromptState {
         input_widget.enter_edit_mode();
         let caret_started_at_ms = crate::window::process_uptime_ms();
         let difficulty = initial_difficulty.unwrap_or(DifficultyLevel::Medium);
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
         let empty_keyboard = UiKeyboard::default();
 
         Self {
@@ -978,13 +948,40 @@ impl NamePromptState {
             empty_keyboard,
         }
     }
-    fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: &mut Option<ModalCursor<'_>>,
-    ) -> NamePromptTick {
+    fn tick(&mut self, io: &mut AnimatedScreenIo<'_, '_>) -> NamePromptTick {
+        let mut frame = self.build_frame();
+
+        // ── Events ──────────────────────────────────────────────
+        let screen = ScreenFrame::begin(&mut io.screen_io(), &mut self.input_state);
+        let (mut confirmed, mut cancelled) = self.handle_events(&screen);
+        let activated = self.process_widgets(&mut frame);
+
+        if let Some(id) = activated {
+            match id {
+                PROMPT_ID_OK => confirmed = true,
+                PROMPT_ID_CANCEL => cancelled = true,
+                PROMPT_ID_DIFF_EASY => self.difficulty = DifficultyLevel::Easy,
+                PROMPT_ID_DIFF_MEDIUM => self.difficulty = DifficultyLevel::Medium,
+                PROMPT_ID_DIFF_HARD => self.difficulty = DifficultyLevel::Hard,
+                PROMPT_ID_DIFF_LEGENDARY => self.difficulty = DifficultyLevel::Legendary,
+                PROMPT_ID_DIFF_CUSTOM => {
+                    self.difficulty = DifficultyLevel::Custom(DifficultyRules::MEDIUM)
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(outcome) = self.finish(confirmed, cancelled) {
+            return outcome;
+        }
+
+        // ── Render ──────────────────────────────────────────────
+        self.draw(io, &screen, &frame);
+
+        NamePromptTick::Presented
+    }
+
+    fn build_frame(&self) -> FrameWnd {
         // Build the widget frame each iteration — difficulty selection
         // is reflected on the radio buttons via their enabled-but-pressed
         // style (the "selected" sub-picture).  The OK and Cancel buttons
@@ -1046,122 +1043,117 @@ impl NamePromptState {
             }
         }
 
-        // ── Events ──────────────────────────────────────────────
-        let mut activated: Option<u32> = None;
+        frame
+    }
+
+    /// Caret keys, confirm/cancel and seal/radio pointer hits. Input state was
+    /// already updated by [`ScreenFrame::begin`] and is not read here.
+    fn handle_events(&mut self, screen: &ScreenFrame) -> (bool, bool) {
         let mut confirmed = false;
         let mut cancelled = false;
-        let (events, transform) =
-            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    cancelled = true;
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
-                    confirmed = true;
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Backspace,
-                    ..
-                } => {
-                    self.input_widget.backspace();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Delete,
-                    ..
-                } => {
-                    self.input_widget.delete_char();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Left,
-                    ..
-                } => {
-                    self.input_widget.move_caret_left();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Right,
-                    ..
-                } => {
-                    self.input_widget.move_caret_right();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Home,
-                    ..
-                } => {
-                    self.input_widget.move_caret_home();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::End,
-                    ..
-                } => {
-                    self.input_widget.move_caret_end();
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::TextInput { .. } => {
-                    // Text input flows through the widget below via
-                    // `ModalInputState::as_widget_input().text_input`;
-                    // reset the caret blink so the insertion is visible.
-                    self.caret_started_at_ms = crate::window::process_uptime_ms();
-                }
-                GameEvent::MouseUp(x, y, 1) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if point_in_rect(
-                        vx,
-                        vy,
-                        self.confirm_row_x,
-                        self.confirm_row_y,
-                        self.ok_w,
-                        self.ok_h,
-                    ) {
-                        confirmed = true;
-                    } else if point_in_rect(
-                        vx,
-                        vy,
-                        self.confirm_row_x + self.ok_w + self.ok_cancel_gap,
-                        self.confirm_row_y,
-                        self.cancel_w,
-                        self.cancel_h,
-                    ) {
-                        cancelled = true;
-                    } else if self.is_new_player {
-                        for ((_id, _label, level), (radio_x, radio_y)) in
-                            self.diff_labels.iter().zip(self.diff_positions)
+        let transform = screen.transform;
+        for event in &screen.events {
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => cancelled = true,
+                Some(ScreenKey::Confirm) => confirmed = true,
+                Some(ScreenKey::Next) => {}
+                None => match *event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Backspace,
+                        ..
+                    } => {
+                        self.input_widget.backspace();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Delete,
+                        ..
+                    } => {
+                        self.input_widget.delete_char();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Left,
+                        ..
+                    } => {
+                        self.input_widget.move_caret_left();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Right,
+                        ..
+                    } => {
+                        self.input_widget.move_caret_right();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Home,
+                        ..
+                    } => {
+                        self.input_widget.move_caret_home();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::End,
+                        ..
+                    } => {
+                        self.input_widget.move_caret_end();
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::TextInput { .. } => {
+                        // Text input flows through the widget below via
+                        // `ModalInputState::as_widget_input().text_input`;
+                        // reset the caret blink so the insertion is visible.
+                        self.caret_started_at_ms = crate::window::process_uptime_ms();
+                    }
+                    GameEvent::MouseUp(x, y, 1) => {
+                        let (vx, vy) = transform.from_screen(x, y);
+                        if (MenuRect {
+                            x: self.confirm_row_x,
+                            y: self.confirm_row_y,
+                            w: self.ok_w,
+                            h: self.ok_h,
+                        })
+                        .contains(vx, vy)
                         {
-                            if point_in_rect(
-                                vx,
-                                vy,
-                                radio_x - 8,
-                                radio_y - 8,
-                                self.diff_btn_w + 16,
-                                self.diff_btn_h + 38,
-                            ) {
-                                self.difficulty = *level;
-                                break;
+                            confirmed = true;
+                        } else if (MenuRect {
+                            x: self.confirm_row_x + self.ok_w + self.ok_cancel_gap,
+                            y: self.confirm_row_y,
+                            w: self.cancel_w,
+                            h: self.cancel_h,
+                        })
+                        .contains(vx, vy)
+                        {
+                            cancelled = true;
+                        } else if self.is_new_player {
+                            for ((_id, _label, level), (radio_x, radio_y)) in
+                                self.diff_labels.iter().zip(self.diff_positions)
+                            {
+                                if (MenuRect {
+                                    x: radio_x - 8,
+                                    y: radio_y - 8,
+                                    w: self.diff_btn_w + 16,
+                                    h: self.diff_btn_h + 38,
+                                })
+                                .contains(vx, vy)
+                                {
+                                    self.difficulty = *level;
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-                _ => {}
+                    _ => {}
+                },
             }
         }
+        (confirmed, cancelled)
+    }
 
+    /// Deliver widget input, feeding the text stream to the name field before
+    /// the frame's one-shot input is consumed.
+    fn process_widgets(&mut self, frame: &mut FrameWnd) -> Option<u32> {
         let widget_input = self.input_state.as_widget_input();
         let widget_events = frame.process_input(&widget_input);
         // Feed the accumulated text-input stream to the widget so its
@@ -1182,33 +1174,18 @@ impl NamePromptState {
             self.input_widget.enter_edit_mode();
         }
         self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
-            activated = Some(id);
-        }
+        widget_bridge::find_activated(&widget_events)
+    }
 
-        if let Some(id) = activated {
-            match id {
-                PROMPT_ID_OK => confirmed = true,
-                PROMPT_ID_CANCEL => cancelled = true,
-                PROMPT_ID_DIFF_EASY => self.difficulty = DifficultyLevel::Easy,
-                PROMPT_ID_DIFF_MEDIUM => self.difficulty = DifficultyLevel::Medium,
-                PROMPT_ID_DIFF_HARD => self.difficulty = DifficultyLevel::Hard,
-                PROMPT_ID_DIFF_LEGENDARY => self.difficulty = DifficultyLevel::Legendary,
-                PROMPT_ID_DIFF_CUSTOM => {
-                    self.difficulty = DifficultyLevel::Custom(DifficultyRules::MEDIUM)
-                }
-                _ => {}
-            }
-        }
-
-        if let Some(outcome) = self.finish(confirmed, cancelled) {
-            return outcome;
-        }
-
-        // ── Render ──────────────────────────────────────────────
-        enter_modal_gpu_phase(renderer);
-        if !self.is_new_player {
-            dim_screen(renderer);
+    fn draw(&self, io: &mut AnimatedScreenIo<'_, '_>, screen: &ScreenFrame, frame: &FrameWnd) {
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        // The new-player parchment covers the scene without the dim pass.
+        if self.is_new_player {
+            enter_modal_gpu_phase(renderer);
+        } else {
+            screen.begin_draw(renderer);
         }
 
         let bg = if self.is_new_player {
@@ -1325,7 +1302,7 @@ impl NamePromptState {
             );
         }
 
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, frame);
         if self.is_new_player
             && let Some(font) = resources.popup_font_any()
         {
@@ -1344,14 +1321,10 @@ impl NamePromptState {
                 );
             }
         }
-        if let Some(cursor) = cursor.as_mut() {
-            cursor.cursor.advance_ui_animation();
-            cursor.draw(renderer, transform, &self.input_state);
+        if let Some(cursor) = io.cursor_renderer() {
+            cursor.advance_ui_animation();
         }
-
-        renderer.present();
-
-        NamePromptTick::Presented
+        screen.finish(&mut io.screen_io(), &self.input_state);
     }
 }
 
@@ -1617,15 +1590,12 @@ fn advanced_rule_value(
 /// of their rules; selecting Custom makes every simulation-affecting field
 /// editable and stores the resolved values in the profile.
 async fn show_difficulty_prompt(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
+    io: &mut AnimatedScreenIo<'_, '_>,
     initial: DifficultyLevel,
-    mut cursor: Option<ModalCursor<'_>>,
 ) -> Option<DifficultyLevel> {
-    let mut state = DifficultyPromptState::new(event_pump, renderer, resources, initial);
+    let mut state = DifficultyPromptState::new(io, initial);
     loop {
-        match state.tick(event_pump, renderer, resources, &mut cursor) {
+        match state.tick(io) {
             DifficultyPromptTick::Closed(choice) => return choice,
             DifficultyPromptTick::Presented => crate::window::sleep_ui_frame().await,
         }
@@ -1684,23 +1654,15 @@ impl DifficultyPromptState {
         None
     }
 
-    fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-        initial: DifficultyLevel,
-    ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+    fn new(io: &AnimatedScreenIo<'_, '_>, initial: DifficultyLevel) -> Self {
+        let resources = io.resources;
         let preset_labels: [String; 5] = std::array::from_fn(|index| {
             difficulty_to_string(&resources.menu_text, preset_at(index, initial.rules()))
         });
         let custom_rules = initial.rules();
         let difficulty = initial;
         let focused_rule = 0usize;
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
         let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
         let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
         let ok_x = DIFFICULTY_PANEL.x + DIFFICULTY_PANEL.w / 2 - ok_w - 8;
@@ -1722,126 +1684,138 @@ impl DifficultyPromptState {
             button_y,
         }
     }
-    fn tick(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: &mut Option<ModalCursor<'_>>,
-    ) -> DifficultyPromptTick {
-        let mut confirmed = false;
-        let mut cancelled = false;
-        let (events, transform) =
-            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => cancelled = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => confirmed = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
-                    self.focused_rule = self.focused_rule.saturating_sub(1);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
-                    self.focused_rule = (self.focused_rule + 1).min(ADVANCED_RULES.len() - 1);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Left,
-                    ..
-                } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
-                    adjust_custom_rule(
-                        &mut self.custom_rules,
-                        ADVANCED_RULES[self.focused_rule],
-                        -1,
-                    );
-                    self.difficulty = DifficultyLevel::Custom(self.custom_rules);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Right,
-                    ..
-                } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
-                    adjust_custom_rule(
-                        &mut self.custom_rules,
-                        ADVANCED_RULES[self.focused_rule],
-                        1,
-                    );
-                    self.difficulty = DifficultyLevel::Custom(self.custom_rules);
-                }
-                GameEvent::MouseUp(x, y, 1) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if point_in_rect(vx, vy, self.ok_x, self.button_y, self.ok_w, self.ok_h) {
-                        confirmed = true;
-                    } else if point_in_rect(
-                        vx,
-                        vy,
-                        self.cancel_x,
-                        self.button_y,
-                        self.cancel_w,
-                        self.cancel_h,
-                    ) {
-                        cancelled = true;
-                    } else if (DIFFICULTY_PRESET_Y..DIFFICULTY_PRESET_Y + DIFFICULTY_PRESET_H)
-                        .contains(&vy)
-                    {
-                        for index in 0..self.preset_labels.len() {
-                            let x = DIFFICULTY_PRESET_X
-                                + index as i32 * (DIFFICULTY_PRESET_W + DIFFICULTY_PRESET_GAP);
-                            if point_in_rect(
-                                vx,
-                                vy,
-                                x,
-                                DIFFICULTY_PRESET_Y,
-                                DIFFICULTY_PRESET_W,
-                                DIFFICULTY_PRESET_H,
-                            ) {
-                                self.difficulty = preset_at(index, self.custom_rules);
-                                break;
-                            }
-                        }
-                    } else if matches!(self.difficulty, DifficultyLevel::Custom(_))
-                        && (DIFFICULTY_RULE_X..DIFFICULTY_RULE_X + DIFFICULTY_RULE_W).contains(&vx)
-                        && vy >= DIFFICULTY_RULE_Y
-                    {
-                        let row = ((vy - DIFFICULTY_RULE_Y) / DIFFICULTY_RULE_H) as usize;
-                        if row < ADVANCED_RULES.len() {
-                            self.focused_rule = row;
-                            let direction = if vx < DIFFICULTY_RULE_X + DIFFICULTY_RULE_W / 2 {
-                                -1
-                            } else {
-                                1
-                            };
-                            adjust_custom_rule(
-                                &mut self.custom_rules,
-                                ADVANCED_RULES[row],
-                                direction,
-                            );
-                            self.difficulty = DifficultyLevel::Custom(self.custom_rules);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+    fn tick(&mut self, io: &mut AnimatedScreenIo<'_, '_>) -> DifficultyPromptTick {
+        let screen = ScreenFrame::begin(&mut io.screen_io(), &mut self.input_state);
+        let (confirmed, cancelled) = self.handle_events(&screen);
         self.input_state.end_frame();
 
         if let Some(outcome) = self.finish(confirmed, cancelled) {
             return outcome;
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        self.draw(io, &screen);
+
+        DifficultyPromptTick::Presented
+    }
+
+    /// Preset/rule keys and pointer hits. Input state was already updated by
+    /// [`ScreenFrame::begin`] and is not read here.
+    fn handle_events(&mut self, screen: &ScreenFrame) -> (bool, bool) {
+        let mut confirmed = false;
+        let mut cancelled = false;
+        let transform = screen.transform;
+        for event in &screen.events {
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit | ScreenKey::Cancel) => cancelled = true,
+                Some(ScreenKey::Confirm) => confirmed = true,
+                Some(ScreenKey::Next) => {}
+                None => match *event {
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Up,
+                        ..
+                    } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
+                        self.focused_rule = self.focused_rule.saturating_sub(1);
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Down,
+                        ..
+                    } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
+                        self.focused_rule = (self.focused_rule + 1).min(ADVANCED_RULES.len() - 1);
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Left,
+                        ..
+                    } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
+                        adjust_custom_rule(
+                            &mut self.custom_rules,
+                            ADVANCED_RULES[self.focused_rule],
+                            -1,
+                        );
+                        self.difficulty = DifficultyLevel::Custom(self.custom_rules);
+                    }
+                    GameEvent::KeyDown {
+                        keycode: Keycode::Right,
+                        ..
+                    } if matches!(self.difficulty, DifficultyLevel::Custom(_)) => {
+                        adjust_custom_rule(
+                            &mut self.custom_rules,
+                            ADVANCED_RULES[self.focused_rule],
+                            1,
+                        );
+                        self.difficulty = DifficultyLevel::Custom(self.custom_rules);
+                    }
+                    GameEvent::MouseUp(x, y, 1) => {
+                        let (vx, vy) = transform.from_screen(x, y);
+                        if (MenuRect {
+                            x: self.ok_x,
+                            y: self.button_y,
+                            w: self.ok_w,
+                            h: self.ok_h,
+                        })
+                        .contains(vx, vy)
+                        {
+                            confirmed = true;
+                        } else if (MenuRect {
+                            x: self.cancel_x,
+                            y: self.button_y,
+                            w: self.cancel_w,
+                            h: self.cancel_h,
+                        })
+                        .contains(vx, vy)
+                        {
+                            cancelled = true;
+                        } else if (DIFFICULTY_PRESET_Y..DIFFICULTY_PRESET_Y + DIFFICULTY_PRESET_H)
+                            .contains(&vy)
+                        {
+                            for index in 0..self.preset_labels.len() {
+                                let x = DIFFICULTY_PRESET_X
+                                    + index as i32 * (DIFFICULTY_PRESET_W + DIFFICULTY_PRESET_GAP);
+                                if (MenuRect {
+                                    x,
+                                    y: DIFFICULTY_PRESET_Y,
+                                    w: DIFFICULTY_PRESET_W,
+                                    h: DIFFICULTY_PRESET_H,
+                                })
+                                .contains(vx, vy)
+                                {
+                                    self.difficulty = preset_at(index, self.custom_rules);
+                                    break;
+                                }
+                            }
+                        } else if matches!(self.difficulty, DifficultyLevel::Custom(_))
+                            && (DIFFICULTY_RULE_X..DIFFICULTY_RULE_X + DIFFICULTY_RULE_W)
+                                .contains(&vx)
+                            && vy >= DIFFICULTY_RULE_Y
+                        {
+                            let row = ((vy - DIFFICULTY_RULE_Y) / DIFFICULTY_RULE_H) as usize;
+                            if row < ADVANCED_RULES.len() {
+                                self.focused_rule = row;
+                                let direction = if vx < DIFFICULTY_RULE_X + DIFFICULTY_RULE_W / 2 {
+                                    -1
+                                } else {
+                                    1
+                                };
+                                adjust_custom_rule(
+                                    &mut self.custom_rules,
+                                    ADVANCED_RULES[row],
+                                    direction,
+                                );
+                                self.difficulty = DifficultyLevel::Custom(self.custom_rules);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+        (confirmed, cancelled)
+    }
+
+    fn draw(&self, io: &mut AnimatedScreenIo<'_, '_>, screen: &ScreenFrame) {
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
         draw_fallback_panel(renderer, transform, &DIFFICULTY_PANEL);
 
         if let Some(font) = resources.title_font_any() {
@@ -1930,13 +1904,12 @@ impl DifficultyPromptState {
         ));
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
 
-        if let Some(cursor) = cursor.as_mut() {
-            cursor.cursor.advance_animation();
-            cursor.draw(renderer, transform, &self.input_state);
+        // TODO: The roster dialogs use `advance_ui_animation`; this editor
+        // still advances once per presented frame, as before the migration.
+        if let Some(cursor) = io.cursor_renderer() {
+            cursor.advance_animation();
         }
-        renderer.present();
-
-        DifficultyPromptTick::Presented
+        screen.finish(&mut io.screen_io(), &self.input_state);
     }
 }
 
@@ -1949,15 +1922,16 @@ fn set_profile_difficulty(
         .rules()
         .validate()
         .expect("difficulty dialog returned invalid rules");
-    application_context
-        .update_and_retain_player_profiles(|profiles| {
+    require(
+        application_context.update_and_retain_player_profiles(|profiles| {
             let profile = profiles.profiles.get_mut(idx).unwrap_or_else(|| {
                 panic!("difficulty profile index {idx} disappeared during editing")
             });
             profile.difficulty = difficulty;
-        })
-        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist difficulty");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist difficulty");
 }
 
 #[cfg(test)]

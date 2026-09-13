@@ -1231,7 +1231,8 @@ the cheaper lever.
 ### RDO tile assignment: closed (2026-08-29, subagent)
 
 Tested whether re-pointing grid tiles at identical/near-identical dictionary
-entries reduces entropy (`sprite_probe_rdo.rs`). The premise is false for
+entries reduces entropy (research probe since removed; conclusions retained
+here). The premise is false for
 this data: the original VQ quantizer produced clean dictionaries — RobinTown
 0 / Knight01 1 / Guard A00 0 duplicate entries (lossless canonicalization:
 exactly 0 bytes), and <3% of tiles have any neighbor within max-channel
@@ -1298,9 +1299,10 @@ listed in the design section remains the open item before wasm shipping.
 
 ## Parallel research results (2026-08-29, subagents)
 
-Four parallel investigations; full data in each probe example.
+Four parallel investigations. The research probe examples have since been
+removed; the conclusions below are the retained record.
 
-### Family base topology (`sprite_probe_experiments.rs --topology`) — SHIPPED
+### Family base topology (removed research probe, topology mode) — SHIPPED
 
 Full pairwise real-codec matrix over all 9 families: the lexicographically
 first member is the best star base in only 1 of 9. Best-base stars total
@@ -1328,7 +1330,7 @@ context (3.41 vs 2.44 b/t Knight01; 3.78 vs 2.73 RobinTown) despite 33-46%
 of tiles mirroring exactly: directional lighting breaks bilateral symmetry
 (same root cause as the recolor/video negatives).
 
-### RLE bucket context modeling (`sprite_probe_rle_dict.rs --rle`) — closed
+### RLE bucket context modeling (removed research probe, RLE mode) — closed
 
 The RLE bucket is 10,134 sprites / 66.8 MB raw, dominated by the 116
 Data/Animations RHS. Pixel-domain PPM (left/above contexts): 16.65 MB total

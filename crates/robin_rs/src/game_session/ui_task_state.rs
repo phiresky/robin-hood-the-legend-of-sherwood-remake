@@ -1838,10 +1838,11 @@ impl SaveLoadTaskState {
                     renderer,
                     font,
                     self.transform,
-                    &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                    &crate::ingame_menu::layout::truncate_to_pixel_width(
                         font,
                         &format!("{prefix}{label}"),
                         view.content_width() - 20,
+                        crate::ingame_menu::layout::TruncationMarker::AsciiEllipsis,
                     ),
                     40,
                     row_y,
@@ -1853,10 +1854,11 @@ impl SaveLoadTaskState {
                         renderer,
                         font,
                         self.transform,
-                        &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                        &crate::ingame_menu::layout::truncate_to_pixel_width(
                             font,
                             detail,
                             view.content_width() - 34,
+                            crate::ingame_menu::layout::TruncationMarker::AsciiEllipsis,
                         ),
                         54,
                         row_y + 16 * (line_index as i32 + 1),
@@ -1981,17 +1983,18 @@ fn play_button_noise(
     audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) {
-    if let (Some(sound_manager), Some(sample_loader)) = (sound_manager, sample_loader) {
-        widget_bridge::play_frame_widget_noise(
-            events,
-            frame,
-            widget_bridge::WIDGET_NOISY_BUTTON,
-            sound_manager,
-            audio_backend,
+    widget_bridge::play_frame_widget_noise(
+        events,
+        frame,
+        widget_bridge::WIDGET_NOISY_BUTTON,
+        widget_bridge::ScreenAudio {
+            sound: sound_manager,
+            // Re-coerce the trait object to the bundle's shorter lifetime.
+            backend: audio_backend.map(|backend| &mut *backend as &mut dyn AudioBackend),
             sample_loader,
-            tracker,
-        );
-    }
+        },
+        tracker,
+    );
 }
 
 use crate::options_model::{

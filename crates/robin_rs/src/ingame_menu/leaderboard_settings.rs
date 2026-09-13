@@ -4,17 +4,14 @@
 //! capture, the compact replay format, and ranked protocol validation are not
 //! user-toggleable.
 
-use crate::gfx_types::{GameEvent, Keycode};
 use crate::leaderboard_preferences::LeaderboardPreferences;
-use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 
 use super::layout::{
-    MenuTransform, TooltipState, align_bottom_right, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    TooltipState, align_bottom_right, draw_screen_background, render_text_virt_font,
 };
-use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::resources::{MT_BTN_CANCEL, MT_BTN_OK};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_SHOW_MISSION_END_BOARDS: u32 = 0;
 const ID_ALWAYS_SUBMIT: u32 = 1;
@@ -34,27 +31,12 @@ const OPTIONS: [(&str, &str); 2] = [
 
 /// Show the leaderboard settings screen. Changes remain staged until OK.
 pub async fn show_leaderboard_settings(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     preferences: &mut LeaderboardPreferences,
 ) -> bool {
-    let mut state =
-        LeaderboardSettingsModalState::new(event_pump, renderer, resources, preferences);
-    let mut io = ModalScreenIo {
-        window: event_pump,
-        renderer,
-        resources,
-        cursor: cursor.as_ref(),
-    };
-    loop {
-        let done = state.tick(&mut io);
-        crate::window::sleep_ui_frame().await;
-        if done {
-            return state.commit(preferences);
-        }
-    }
+    let mut state = LeaderboardSettingsModalState::new(io, preferences);
+    widget_bridge::run_modal(io, |io| state.tick(io)).await;
+    state.commit(preferences)
 }
 
 /// Retained widget/input and staged preference state for one modal frame.
@@ -69,18 +51,10 @@ pub struct LeaderboardSettingsModalState {
 }
 
 impl LeaderboardSettingsModalState {
-    pub fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-        preferences: &LeaderboardPreferences,
-    ) -> Self {
+    pub fn new(io: &ModalScreenIo<'_, '_>, preferences: &LeaderboardPreferences) -> Self {
+        let resources = io.resources;
         let working = preferences.clone();
         let dirty = false;
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
         let (field_w, field_h) = resources.input_field_dimensions();
         let mut frame = FrameWnd::interactive();
         for (index, (label, tooltip)) in OPTIONS.iter().enumerate() {
@@ -125,9 +99,8 @@ impl LeaderboardSettingsModalState {
             bottom[1].h,
         ));
 
-        let mut input = ModalInputState::new();
+        let input = ModalInputState::for_screen(io.window, io.renderer);
         let tooltip = TooltipState::new();
-        input.seed_mouse_from_window(event_pump, transform);
 
         Self {
             working,
@@ -140,41 +113,33 @@ impl LeaderboardSettingsModalState {
         }
     }
 
-    /// Poll and draw exactly one frame; the caller owns pacing.
-    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
+    /// Poll and draw exactly one frame; the caller owns pacing. The frame that
+    /// closes the screen is still drawn and paced: `Some(())` is only reported
+    /// on the following tick, before polling.
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<()> {
         if self.done {
-            return true;
+            return Some(());
         }
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.done = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => {
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
                 }
-                _ => {}
+                ScreenKey::Next => {}
             }
         }
-        let events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             self.activate(id);
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[0] {
             draw_screen_background(renderer, &background);
         }
@@ -224,12 +189,9 @@ impl LeaderboardSettingsModalState {
                 widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
             }
         }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
+        screen.finish(io, &self.input);
 
-        self.done
+        None
     }
 
     fn activate(&mut self, id: u32) {
