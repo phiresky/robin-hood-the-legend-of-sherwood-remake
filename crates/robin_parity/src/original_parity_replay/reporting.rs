@@ -211,7 +211,7 @@ pub(super) fn write_engine_dump_snapshot_frame(
         .iter()
         .map(|original| entity_map.translate(*original).index() as usize)
         .collect::<BTreeSet<_>>();
-    let mut engine_value = robin_util::json_value::to_json_value(diagnostic_engine)
+    let mut engine_value = robin_rs::json_value::to_json_value(diagnostic_engine)
         .expect("serialize diagnostic engine state");
     if !selected_rust_indices.is_empty() {
         let entities = engine_value
