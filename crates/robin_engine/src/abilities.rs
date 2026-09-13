@@ -34,8 +34,6 @@ use crate::sprite::MotionState as SpriteMotionState;
 /// HP restored per bandage.
 pub const HEAL_AMOUNT: i16 = 75;
 
-use crate::pc_status::LIFEPOINTS_PC;
-
 /// Max distance² for healing / tying (40² = 1600).
 pub const DISTANCE_MAX_SQ: f32 = 1600.0;
 
@@ -4668,7 +4666,7 @@ mod tests {
             .unwrap()
             .pc_data_mut()
             .unwrap()
-            .life_points = LIFEPOINTS_PC;
+            .life_points = crate::pc_status::LIFEPOINTS_PC;
 
         let mut manager = SequenceManager::new();
         let seq_id = launch_ability_element(&mut manager, Command::HealCmd, healer);
