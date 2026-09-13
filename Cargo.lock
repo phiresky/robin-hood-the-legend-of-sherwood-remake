@@ -5954,6 +5954,7 @@ name = "robin_data_io"
 version = "0.0.0"
 dependencies = [
  "fastrand",
+ "robin_state_hash_derive",
  "robin_util",
  "serde",
  "tempfile",

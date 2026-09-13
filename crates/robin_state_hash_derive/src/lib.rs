@@ -34,6 +34,18 @@ use syn::{
     punctuated::Punctuated, spanned::Spanned,
 };
 
+mod legacy_read;
+
+/// See [`legacy_read`] for the generated reads and supported attributes.
+#[proc_macro_derive(LegacyRead, attributes(legacy))]
+pub fn derive_legacy_read(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match legacy_read::expand(&input) {
+        Ok(expanded) => TokenStream::from(expanded),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
 #[proc_macro_derive(StateHash, attributes(state_hash))]
 pub fn derive_state_hash(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

@@ -4,13 +4,15 @@
 //! writing one uniform base-first prefix. Each structure here is therefore an
 //! independently callable reader. Leaf readers must invoke it at the exact
 //! point where the original-game serializer handles shared state.
+//!
+//! Field declaration order is wire order: the `LegacyRead` derives read the
+//! fields top to bottom.
 
+use super::read_helpers::hex16;
 use super::read_helpers::{DEFAULT_BULK_LIMIT, DEFAULT_LIST_LIMIT};
-use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
-use super::read_helpers::{read_array, read_count_u16 as read_bounded_u16};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyContext, LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyContext, LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
@@ -100,6 +102,82 @@ pub trait LegacyPayloadDecodeContext {
     ) -> LegacyResult<Box<LegacyLocalAiPayload>>;
 }
 
+/// Decode context for [`LegacyElementPayloadBase`] and payloads that embed it:
+/// the caller's limits plus the phase-one identity the element must match.
+#[derive(Clone, Copy)]
+pub struct LegacyElementBaseDecode<'a> {
+    pub limits: &'a LegacyPayloadLimits,
+    pub expected_creation_order: Option<u32>,
+    pub expected_class: Option<LegacyElementClass>,
+}
+
+/// Decode context for actor-hierarchy and mobile leaves.
+#[derive(Clone, Copy)]
+pub struct LegacyLeafDecode<'a> {
+    pub limits: &'a LegacyPayloadLimits,
+    pub context: &'a dyn LegacyPayloadDecodeContext,
+    pub creation_order: u32,
+    pub class: LegacyElementClass,
+}
+
+impl LegacyLeafDecode<'_> {
+    fn element(&self) -> LegacyElementBaseDecode<'_> {
+        LegacyElementBaseDecode {
+            limits: self.limits,
+            expected_creation_order: Some(self.creation_order),
+            expected_class: Some(self.class),
+        }
+    }
+}
+
+/// Decode context for the Human and NPC payloads, whose repulsive-point
+/// geometry width depends on the producer ABI.
+#[derive(Clone, Copy)]
+pub struct LegacyHumanDecode<'a> {
+    pub abi_profile: LegacySaveAbiProfile,
+    pub leaf: LegacyLeafDecode<'a>,
+}
+
+impl<'a> LegacyHumanDecode<'a> {
+    fn new(
+        abi_profile: LegacySaveAbiProfile,
+        limits: &'a LegacyPayloadLimits,
+        context: &'a dyn LegacyPayloadDecodeContext,
+        creation_order: u32,
+        class: LegacyElementClass,
+    ) -> Self {
+        Self {
+            abi_profile,
+            leaf: LegacyLeafDecode {
+                limits,
+                context,
+                creation_order,
+                class,
+            },
+        }
+    }
+}
+
+/// Decode context for sprite and position-interface state. The engine-owned
+/// projectile helper reads the same layout with its own limit and fingerprint
+/// descriptions.
+#[derive(Clone, Copy)]
+pub struct LegacySpriteDecode {
+    pub animation_replacements: usize,
+    pub sprite_fingerprint: &'static str,
+    pub position_fingerprint: &'static str,
+}
+
+impl LegacySpriteDecode {
+    fn payload(limits: &LegacyPayloadLimits) -> Self {
+        Self {
+            animation_replacements: limits.sprite_animation_replacements,
+            sprite_fingerprint: "sprite",
+            position_fingerprint: "position interface",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyElementRef(pub Option<u32>);
 
@@ -132,27 +210,69 @@ pub struct LegacyLineRef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyOpaquePointer32(pub u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// Scalar references read exactly like the scalar they wrap.
+macro_rules! scalar_ref_legacy_read {
+    ($($ty:ty => $read:ident),* $(,)?) => {$(
+        impl<C: ?Sized> LegacyRead<C> for $ty {
+            fn read(reader: &mut LegacyReader<'_>, _: &C) -> LegacyResult<Self> {
+                $read(reader, "")
+            }
+
+            fn read_field(
+                reader: &mut LegacyReader<'_>,
+                field: impl Into<LegacyContext>,
+                _: &C,
+            ) -> LegacyResult<Self> {
+                $read(reader, field.into())
+            }
+        }
+    )*};
+}
+
+scalar_ref_legacy_read!(
+    LegacyElementRef => read_element_ref,
+    LegacyAiElementRef => read_ai_element_ref,
+    LegacySequenceElementRef => read_sequence_element_ref,
+    LegacySequenceRef => read_sequence_ref,
+    LegacyOrderRef => read_order_ref,
+    LegacySectorRef => read_sector_ref,
+    LegacySignedIndexRef => read_signed_ref,
+    LegacyOpaquePointer32 => read_opaque_pointer32,
+);
+
+/// Reported as `field.layer` / `field.index`.
+impl<C: ?Sized> LegacyRead<C> for LegacyLineRef {
+    fn read(reader: &mut LegacyReader<'_>, _: &C) -> LegacyResult<Self> {
+        let layer = reader.read_u16("layer")?;
+        let index = reader.read_i16("index")?;
+        Ok(Self {
+            layer: (layer != u16::MAX).then_some(layer),
+            index: (index != -1).then_some(index),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPoint2 {
     pub x: f32,
     pub y: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPoint3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyBoundingBox2 {
     pub top_left: LegacyPoint2,
     pub bottom_right: LegacyPoint2,
     pub bounds_are_set: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyBoundingBox3 {
     pub x_min: f32,
     pub x_max: f32,
@@ -162,7 +282,7 @@ pub struct LegacyBoundingBox3 {
     pub z_max: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPlane3 {
     pub a: LegacyPoint3,
     pub b: LegacyPoint3,
@@ -176,8 +296,14 @@ pub struct LegacyPlane3 {
     pub d: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyElementBaseDecode<'_>,
+    fingerprint = FINGERPRINT_ELEMENT,
+    expected = "element"
+)]
 pub struct LegacyElementPayloadBase {
+    #[legacy(read = read_creation_order(reader, ctx.expected_creation_order))]
     pub creation_order: u32,
     pub outline_colors: [u16; 5],
     pub current_outline: u32,
@@ -186,6 +312,7 @@ pub struct LegacyElementPayloadBase {
     pub active: bool,
     pub position_map_delayed: bool,
     pub position_delayed: bool,
+    #[legacy(read = read_element_class(reader, ctx.expected_class))]
     pub class: LegacyElementClass,
     pub delayed_map_position: LegacyPoint2,
     pub delayed_position: LegacyPoint3,
@@ -193,6 +320,11 @@ pub struct LegacyElementPayloadBase {
     pub index_in_elements_list: u16,
     pub blipped: bool,
     pub unreachable: bool,
+    #[legacy(read = LegacySpritePayload::read_field(
+        reader,
+        "sprite",
+        &LegacySpriteDecode::payload(ctx.limits),
+    ))]
     pub sprite: LegacySpritePayload,
 }
 
@@ -203,71 +335,66 @@ impl LegacyElementPayloadBase {
         expected_creation_order: Option<u32>,
         expected_class: Option<LegacyElementClass>,
     ) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_ELEMENT, "element")?;
-        let creation_offset = reader.offset();
-        let creation_order = reader.read_u32("creation_order")?;
-        if let Some(expected) = expected_creation_order
-            && creation_order != expected
-        {
-            return Err(reader.invalid_value(
-                creation_offset,
-                "creation_order",
-                creation_order,
-                "creation order from the phase-one envelope",
-            ));
-        }
-        let mut outline_colors = [0; 5];
-        for (index, color) in outline_colors.iter_mut().enumerate() {
-            *color = reader.read_u16(format_args!("outline_colors[{index}]"))?;
-        }
-        let current_outline = reader.read_u32("current_outline")?;
-        let outline_width = reader.read_u16("outline_width")?;
-        let custom_minimap_dot = reader.read_u16("custom_minimap_dot")?;
-        let active = reader.read_bool("active")?;
-        let position_map_delayed = reader.read_bool("position_map_delayed")?;
-        let position_delayed = reader.read_bool("position_delayed")?;
-        let class_offset = reader.offset();
-        let raw_class = reader.read_u16("class_id")?;
-        let Some(class) = LegacyElementClass::from_raw(raw_class) else {
-            return Err(reader.invalid_value(
-                class_offset,
-                "class_id",
-                format_args!("0x{raw_class:04x}"),
-                "known RHCLASSID concrete element class",
-            ));
-        };
-        if let Some(expected) = expected_class
-            && class != expected
-        {
-            return Err(reader.invalid_value(
-                class_offset,
-                "class_id",
-                format_args!("0x{raw_class:04x}"),
-                "class id from the phase-one envelope",
-            ));
-        }
-        Ok(Self {
-            creation_order,
-            outline_colors,
-            current_outline,
-            outline_width,
-            custom_minimap_dot,
-            active,
-            position_map_delayed,
-            position_delayed,
-            class,
-            delayed_map_position: read_point2(reader, "delayed_map_position")?,
-            delayed_position: read_point3(reader, "delayed_position")?,
-            in_honolulu: reader.read_bool("in_honolulu")?,
-            index_in_elements_list: reader.read_u16("index_in_elements_list")?,
-            blipped: reader.read_bool("blipped")?,
-            unreachable: reader.read_bool("unreachable")?,
-            sprite: reader.scope("sprite", |reader| LegacySpritePayload::read(reader, limits))?,
-        })
+        <Self as LegacyRead<_>>::read(
+            reader,
+            &LegacyElementBaseDecode {
+                limits,
+                expected_creation_order,
+                expected_class,
+            },
+        )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+fn read_creation_order(reader: &mut LegacyReader<'_>, expected: Option<u32>) -> LegacyResult<u32> {
+    let offset = reader.offset();
+    let creation_order = reader.read_u32("creation_order")?;
+    if let Some(expected) = expected
+        && creation_order != expected
+    {
+        return Err(reader.invalid_value(
+            offset,
+            "creation_order",
+            creation_order,
+            "creation order from the phase-one envelope",
+        ));
+    }
+    Ok(creation_order)
+}
+
+fn read_element_class(
+    reader: &mut LegacyReader<'_>,
+    expected: Option<LegacyElementClass>,
+) -> LegacyResult<LegacyElementClass> {
+    let class_offset = reader.offset();
+    let raw_class = reader.read_u16("class_id")?;
+    let Some(class) = LegacyElementClass::from_raw(raw_class) else {
+        return Err(reader.invalid_value(
+            class_offset,
+            "class_id",
+            format_args!("0x{raw_class:04x}"),
+            "known RHCLASSID concrete element class",
+        ));
+    };
+    if let Some(expected) = expected
+        && class != expected
+    {
+        return Err(reader.invalid_value(
+            class_offset,
+            "class_id",
+            format_args!("0x{raw_class:04x}"),
+            "class id from the phase-one envelope",
+        ));
+    }
+    Ok(class)
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacySpriteDecode,
+    fingerprint = FINGERPRINT_SPRITE,
+    expected = ctx.sprite_fingerprint
+)]
 pub struct LegacySpritePayload {
     pub current_row: u16,
     pub current_frame: u16,
@@ -288,78 +415,29 @@ pub struct LegacySpritePayload {
     pub last_sound_id: u16,
     pub last_processed_order_id: u32,
     pub bounding_box: LegacyBoundingBox2,
+    #[legacy(read = read_animation_replacements(reader, ctx.animation_replacements))]
     pub animation_replacements: Vec<(u32, u32)>,
     pub position: LegacyPositionPayload,
 }
 
-impl LegacySpritePayload {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPayloadLimits) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_SPRITE, "sprite")?;
-        let current_row = reader.read_u16("current_row")?;
-        let current_frame = reader.read_u16("current_frame")?;
-        let frame_count = reader.read_u16("frame_count")?;
-        let current_height = reader.read_u16("current_height")?;
-        let current_width = reader.read_u16("current_width")?;
-        let last_action = reader.read_u32("last_action")?;
-        let already_decompressed = reader.read_bool("already_decompressed")?;
-        let alternate_profile = reader.read_bool("alternate_profile")?;
-        let masked = reader.read_bool("masked")?;
-        let display_order = reader.read_f32("display_order")?;
-        let legacy_display_order_dummy = reader.read_i32("legacy_display_order_dummy")?;
-        let behind_display_order_reference = reader.read_bool("behind_display_order_reference")?;
-        let display_order_reference = read_element_ref(reader, "display_order_reference")?;
-        let action_done_frame = reader.read_u16("action_done_frame")?;
-        let action_done_counter = reader.read_u16("action_done_counter")?;
-        let frame_count_down = reader.read_u16("frame_count_down")?;
-        let last_sound_id = reader.read_u16("last_sound_id")?;
-        let last_processed_order_id = reader.read_u32("last_processed_order_id")?;
-        let bounding_box = read_box2(reader, "bounding_box")?;
-        let count = reader.read_count_u32(
-            "animation_replacements.count",
-            limits.sprite_animation_replacements,
-        )?;
-        let mut animation_replacements = Vec::new();
-        reserve(
-            reader,
-            &mut animation_replacements,
-            count,
-            "animation_replacements",
-        )?;
-        for index in 0..count {
-            animation_replacements.push(reader.scope_indexed(
-                "animation_replacements",
-                index,
-                |reader| Ok((reader.read_u32("from")?, reader.read_u32("to")?)),
-            )?);
-        }
-        let position = reader.scope("position", |reader| LegacyPositionPayload::read(reader))?;
-        Ok(Self {
-            current_row,
-            current_frame,
-            frame_count,
-            current_height,
-            current_width,
-            last_action,
-            already_decompressed,
-            alternate_profile,
-            masked,
-            display_order,
-            legacy_display_order_dummy,
-            behind_display_order_reference,
-            display_order_reference,
-            action_done_frame,
-            action_done_counter,
-            frame_count_down,
-            last_sound_id,
-            last_processed_order_id,
-            bounding_box,
-            animation_replacements,
-            position,
+fn read_animation_replacements(
+    reader: &mut LegacyReader<'_>,
+    maximum: usize,
+) -> LegacyResult<Vec<(u32, u32)>> {
+    let count = reader.read_count_u32("animation_replacements.count", maximum)?;
+    reader.read_list("animation_replacements", count, |reader, item| {
+        reader.scope(item, |reader| {
+            Ok((reader.read_u32("from")?, reader.read_u32("to")?))
         })
-    }
+    })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacySpriteDecode,
+    fingerprint = FINGERPRINT_POSITION,
+    expected = ctx.position_fingerprint
+)]
 pub struct LegacyPositionPayload {
     pub computed_position: u32,
     pub computed_increment: u32,
@@ -405,62 +483,12 @@ pub struct LegacyPositionPayload {
     pub blocked_box: LegacyBoundingBox2,
 }
 
-impl LegacyPositionPayload {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        read_fingerprint(
-            reader,
-            "fingerprint",
-            FINGERPRINT_POSITION,
-            "position interface",
-        )?;
-        Ok(Self {
-            computed_position: reader.read_u32("computed_position")?,
-            computed_increment: reader.read_u32("computed_increment")?,
-            material: reader.read_u32("material")?,
-            posture: reader.read_u32("posture")?,
-            old_posture: reader.read_u32("old_posture")?,
-            direction: reader.read_i16("direction")?,
-            direction_goal: reader.read_i16("direction_goal")?,
-            slow_turn_count: reader.read_u8("slow_turn_count")?,
-            layer: reader.read_u16("layer")?,
-            layer_goal: reader.read_u16("layer_goal")?,
-            tolerance: reader.read_f32("tolerance")?,
-            directional_tolerance: reader.read_bool("directional_tolerance")?,
-            accumulate_movement_map: reader.read_bool("accumulate_movement_map")?,
-            anti_collision_on: reader.read_bool("anti_collision_on")?,
-            goal_next_valid: reader.read_bool("goal_next_valid")?,
-            deviated: reader.read_bool("deviated")?,
-            direction_count: reader.read_i8("direction_count")?,
-            door_direction: reader.read_bool("door_direction")?,
-            reversed_movement: reader.read_bool("reversed_movement")?,
-            blocked_count: reader.read_u16("blocked_count")?,
-            radius: reader.read_f32("radius")?,
-            use_emergency_lying_box: reader.read_bool("use_emergency_lying_box")?,
-            sector: read_sector_ref(reader, "sector")?,
-            sector_goal: read_sector_ref(reader, "sector_goal")?,
-            door: read_signed_ref(reader, "door")?,
-            obstacle: read_signed_ref(reader, "obstacle")?,
-            target_element: read_element_ref(reader, "target_element")?,
-            position: read_point3(reader, "position")?,
-            map: read_point2(reader, "map")?,
-            sprite: read_point2(reader, "sprite")?,
-            old_position: read_point3(reader, "old_position")?,
-            old_map: read_point2(reader, "old_map")?,
-            old_sprite: read_point2(reader, "old_sprite")?,
-            goal_map: read_point2(reader, "goal_map")?,
-            goal_next_map: read_point2(reader, "goal_next_map")?,
-            goal: read_point3(reader, "goal")?,
-            increment: read_point3(reader, "increment")?,
-            increment_map: read_point2(reader, "increment_map")?,
-            accumulated_movement_map: read_point2(reader, "accumulated_movement_map")?,
-            forecasted_movement: read_point3(reader, "forecasted_movement")?,
-            move_box_map: read_box2(reader, "move_box_map")?,
-            blocked_box: read_box2(reader, "blocked_box")?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyElementBaseDecode<'_>,
+    fingerprint = FINGERPRINT_FX,
+    expected = "effect element"
+)]
 pub struct LegacyFxPayload {
     pub patch: LegacySignedIndexRef,
     pub force_display: bool,
@@ -475,48 +503,38 @@ impl LegacyFxPayload {
         expected_creation_order: Option<u32>,
         expected_class: Option<LegacyElementClass>,
     ) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_FX, "effect element")?;
-        let patch = read_signed_ref(reader, "patch")?;
-        let force_display = reader.read_bool("force_display")?;
-        let restore_background = reader.read_bool("restore_background")?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(reader, limits, expected_creation_order, expected_class)
-        })?;
-        Ok(Self {
-            patch,
-            force_display,
-            restore_background,
-            element,
-        })
+        <Self as LegacyRead<_>>::read(
+            reader,
+            &LegacyElementBaseDecode {
+                limits,
+                expected_creation_order,
+                expected_class,
+            },
+        )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyPayloadLimits,
+    fingerprint = FINGERPRINT_FX_MASKED,
+    expected = "masked effect element"
+)]
 pub struct LegacyFxMaskedPayload {
     pub animation_speed: f32,
+    #[legacy(read = LegacyElementPayloadBase::read_field(
+        reader,
+        "element",
+        &LegacyElementBaseDecode {
+            limits: ctx,
+            expected_creation_order: None,
+            expected_class: Some(LegacyElementClass::FxMasked),
+        },
+    ))]
     pub element: LegacyElementPayloadBase,
 }
 
-impl LegacyFxMaskedPayload {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPayloadLimits) -> LegacyResult<Self> {
-        read_fingerprint(
-            reader,
-            "fingerprint",
-            FINGERPRINT_FX_MASKED,
-            "masked effect element",
-        )?;
-        let animation_speed = reader.read_f32("animation_speed")?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(reader, limits, None, Some(LegacyElementClass::FxMasked))
-        })?;
-        Ok(Self {
-            animation_speed,
-            element,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPathHistoryEntry {
     pub position: LegacyPoint2,
     pub sector: LegacySectorRef,
@@ -525,56 +543,33 @@ pub struct LegacyPathHistoryEntry {
     pub distance: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyPayloadLimits,
+    fingerprint = FINGERPRINT_PATH_STATUS,
+    expected = "path status serialization"
+)]
 pub struct LegacyPathStatus {
     pub current_waypoint_index: u8,
     pub last_waypoint_index: u8,
     pub forward_movement: bool,
+    #[legacy(with = read_nullable_u16)]
     pub hiking_path_index: Option<u16>,
+    #[legacy(count_u16 = ctx.path_history)]
     pub history: Vec<LegacyPathHistoryEntry>,
 }
 
-impl LegacyPathStatus {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPayloadLimits) -> LegacyResult<Self> {
-        read_fingerprint(
-            reader,
-            "fingerprint",
-            FINGERPRINT_PATH_STATUS,
-            "path status serialization",
-        )?;
-        let current_waypoint_index = reader.read_u8("current_waypoint_index")?;
-        let last_waypoint_index = reader.read_u8("last_waypoint_index")?;
-        let forward_movement = reader.read_bool("forward_movement")?;
-        let raw_hiking_path = reader.read_u16("hiking_path_index")?;
-        let hiking_path_index = (raw_hiking_path != u16::MAX).then_some(raw_hiking_path);
-        let history_count = read_bounded_u16(reader, "history.count", limits.path_history)?;
-        let mut history = Vec::new();
-        reserve(reader, &mut history, history_count, "history")?;
-        for index in 0..history_count {
-            history.push(reader.scope_indexed("history", index, |reader| {
-                Ok(LegacyPathHistoryEntry {
-                    position: read_point2(reader, "position")?,
-                    sector: read_sector_ref(reader, "sector")?,
-                    level: reader.read_u16("level")?,
-                    direction: reader.read_u8("direction")?,
-                    distance: reader.read_u16("distance")?,
-                })
-            })?);
-        }
-        Ok(Self {
-            current_waypoint_index,
-            last_waypoint_index,
-            forward_movement,
-            hiking_path_index,
-            history,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyLeafDecode<'_>,
+    fingerprint = FINGERPRINT_MOBILE,
+    expected = "mobile element"
+)]
 pub struct LegacyMobilePayload {
+    #[legacy(read = read_mobile_sprites(reader, ctx))]
     pub sprites: Vec<LegacyFxMaskedPayload>,
     pub stopped: bool,
+    #[legacy(count_u32 = ctx.limits.mobile_vibrations)]
     pub vibrations: Vec<LegacyPoint2>,
     pub animation: u32,
     pub hook: LegacyPoint2,
@@ -582,9 +577,16 @@ pub struct LegacyMobilePayload {
     pub smoke_time: u32,
     pub smoke_delay: u32,
     pub relative_position: LegacyPoint2,
+    #[legacy(read = LegacyPathStatus::read_field(reader, "path", ctx.limits))]
     pub path: LegacyPathStatus,
     pub on_waypoint: bool,
+    #[legacy(read = if on_waypoint {
+        read_nullable_u32_ref(reader, "waypoint_data_offset")
+    } else {
+        Ok(None)
+    })]
     pub waypoint_data_offset: Option<u32>,
+    #[legacy(when = on_waypoint)]
     pub waypoint_bytes_remaining: Option<u16>,
     pub wait_time: u32,
     pub speed: f32,
@@ -593,12 +595,14 @@ pub struct LegacyMobilePayload {
     pub adaptive_speed: bool,
     pub front: LegacyPoint2,
     pub back: LegacyPoint2,
+    #[legacy(count_u32 = ctx.limits.mobile_alerted_animals)]
     pub alerted_animals: Vec<LegacyElementRef>,
     pub steam_sound_1: i16,
     pub steam_sound_2: i16,
     pub steam: bool,
     pub brakes_sound: i16,
     pub brakes: bool,
+    #[legacy(read = LegacyElementPayloadBase::read_field(reader, "element", &ctx.element()))]
     pub element: LegacyElementPayloadBase,
 }
 
@@ -609,121 +613,46 @@ impl LegacyMobilePayload {
         context: &dyn LegacyPayloadDecodeContext,
         expected_creation_order: u32,
     ) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_MOBILE, "mobile element")?;
-        let sprite_count =
-            context.mobile_sprite_count(reader, expected_creation_order, limits.mobile_sprites)?;
-        if sprite_count > limits.mobile_sprites {
-            let offset = reader.offset();
-            return Err(reader.invalid_value(
-                offset,
-                "sprites",
-                sprite_count,
-                "context sprite count within the caller-supplied limit",
-            ));
-        }
-        let mut sprites = Vec::new();
-        reserve(reader, &mut sprites, sprite_count, "sprites")?;
-        for index in 0..sprite_count {
-            sprites.push(reader.scope_indexed("sprites", index, |reader| {
-                LegacyFxMaskedPayload::read(reader, limits)
-            })?);
-        }
-        let stopped = reader.read_bool("stopped")?;
-        let vibration_count =
-            reader.read_count_u32("vibrations.count", limits.mobile_vibrations)?;
-        let mut vibrations = Vec::new();
-        reserve(reader, &mut vibrations, vibration_count, "vibrations")?;
-        for index in 0..vibration_count {
-            vibrations.push(read_point2(
-                reader,
-                LegacyContext::Indexed("vibrations", index),
-            )?);
-        }
-        let animation = reader.read_u32("animation")?;
-        let hook = read_point2(reader, "hook")?;
-        let hooked_actor = read_element_ref(reader, "hooked_actor")?;
-        let smoke_time = reader.read_u32("smoke_time")?;
-        let smoke_delay = reader.read_u32("smoke_delay")?;
-        let relative_position = read_point2(reader, "relative_position")?;
-        let path = reader.scope("path", |reader| LegacyPathStatus::read(reader, limits))?;
-        let on_waypoint = reader.read_bool("on_waypoint")?;
-        let (waypoint_data_offset, waypoint_bytes_remaining) = if on_waypoint {
-            let raw_offset = reader.read_u32("waypoint_data_offset")?;
-            (
-                (raw_offset != NULL_U32).then_some(raw_offset),
-                Some(reader.read_u16("waypoint_bytes_remaining")?),
-            )
-        } else {
-            (None, None)
-        };
-        let wait_time = reader.read_u32("wait_time")?;
-        let speed = reader.read_f32("speed")?;
-        let speed_goal = reader.read_f32("speed_goal")?;
-        let acceleration = reader.read_f32("acceleration")?;
-        let adaptive_speed = reader.read_bool("adaptive_speed")?;
-        let front = read_point2(reader, "front")?;
-        let back = read_point2(reader, "back")?;
-        let animal_count =
-            reader.read_count_u32("alerted_animals.count", limits.mobile_alerted_animals)?;
-        let mut alerted_animals = Vec::new();
-        reserve(
+        <Self as LegacyRead<_>>::read(
             reader,
-            &mut alerted_animals,
-            animal_count,
-            "alerted_animals",
-        )?;
-        for index in 0..animal_count {
-            alerted_animals.push(read_element_ref(
-                reader,
-                format!("alerted_animals[{index}]"),
-            )?);
-        }
-        let steam_sound_1 = reader.read_i16("steam_sound_1")?;
-        let steam_sound_2 = reader.read_i16("steam_sound_2")?;
-        let steam = reader.read_bool("steam")?;
-        let brakes_sound = reader.read_i16("brakes_sound")?;
-        let brakes = reader.read_bool("brakes")?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(
-                reader,
+            &LegacyLeafDecode {
                 limits,
-                Some(expected_creation_order),
-                Some(LegacyElementClass::Mobile),
-            )
-        })?;
-        Ok(Self {
-            sprites,
-            stopped,
-            vibrations,
-            animation,
-            hook,
-            hooked_actor,
-            smoke_time,
-            smoke_delay,
-            relative_position,
-            path,
-            on_waypoint,
-            waypoint_data_offset,
-            waypoint_bytes_remaining,
-            wait_time,
-            speed,
-            speed_goal,
-            acceleration,
-            adaptive_speed,
-            front,
-            back,
-            alerted_animals,
-            steam_sound_1,
-            steam_sound_2,
-            steam,
-            brakes_sound,
-            brakes,
-            element,
-        })
+                context,
+                creation_order: expected_creation_order,
+                class: LegacyElementClass::Mobile,
+            },
+        )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+fn read_mobile_sprites(
+    reader: &mut LegacyReader<'_>,
+    ctx: &LegacyLeafDecode<'_>,
+) -> LegacyResult<Vec<LegacyFxMaskedPayload>> {
+    let limits = ctx.limits;
+    let sprite_count =
+        ctx.context
+            .mobile_sprite_count(reader, ctx.creation_order, limits.mobile_sprites)?;
+    if sprite_count > limits.mobile_sprites {
+        let offset = reader.offset();
+        return Err(reader.invalid_value(
+            offset,
+            "sprites",
+            sprite_count,
+            "context sprite count within the caller-supplied limit",
+        ));
+    }
+    reader.read_list("sprites", sprite_count, |reader, item| {
+        LegacyFxMaskedPayload::read_field(reader, item, limits)
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyLeafDecode<'_>,
+    fingerprint = FINGERPRINT_ACTOR,
+    expected = "actor element"
+)]
 pub struct LegacyActorPayload {
     pub last_order_id: u32,
     pub old_action: u32,
@@ -756,147 +685,77 @@ pub struct LegacyActorPayload {
     pub wait_sequence_element: LegacySequenceElementRef,
     pub order: LegacyOrderRef,
     pub sequence_element_started: bool,
+    #[legacy(read = read_post_seek_sequence(reader, ctx))]
     pub post_seek_sequence: Option<LegacyInlineSequence>,
+    #[legacy(count_u16 = ctx.limits.actor_bypass_points)]
     pub bypass_points: Vec<LegacyPoint2>,
     pub script_class: String,
+    #[legacy(read = read_actor_script_members(reader, ctx, &script_class))]
     pub script_members: Option<LegacyVmMemberSection>,
+    #[legacy(read = read_actor_element(reader, ctx))]
     pub element: LegacyElementPayloadBase,
 }
 
-impl LegacyActorPayload {
-    pub fn read(
-        reader: &mut LegacyReader<'_>,
-        limits: &LegacyPayloadLimits,
-        context: &dyn LegacyPayloadDecodeContext,
-        expected_creation_order: u32,
-        expected_class: LegacyElementClass,
-    ) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_ACTOR, "actor element")?;
-        let last_order_id = reader.read_u32("last_order_id")?;
-        let old_action = reader.read_u32("old_action")?;
-        let action_state = reader.read_u32("action_state")?;
-        let execution_frozen = reader.read_bool("execution_frozen")?;
-        let about_to_surrender = reader.read_bool("about_to_surrender")?;
-        let ignored_for_anti_collision = reader.read_bool("ignored_for_anti_collision")?;
-        let surrendering = reader.read_bool("surrendering")?;
-        let distance_to_boundary_first = reader.read_f32("distance_to_boundary_first")?;
-        let new_order = reader.read_bool("new_order")?;
-        let distance_to_boundary_second = reader.read_f32("distance_to_boundary_second")?;
-        let motion_state = reader.read_u32("motion_state")?;
-        let wait_time = reader.read_u32("wait_time")?;
-        let seek_layer = reader.read_u16("seek_layer")?;
-        let bypassing = reader.read_bool("bypassing")?;
-        let on_railroad = reader.read_bool("on_railroad")?;
-        let seek_distance = reader.read_f32("seek_distance")?;
-        let seek_to_point = reader.read_bool("seek_to_point")?;
-        let check_for_jump = reader.read_bool("check_for_jump")?;
-        let passing_door_directly = reader.read_bool("passing_door_directly")?;
-        let bypass_exit = read_point2(reader, "bypass_exit")?;
-        let last_seek_target_position = read_point2(reader, "last_seek_target_position")?;
-        let position_at_last_distance_request =
-            read_point2(reader, "position_at_last_distance_request")?;
-        let menacer = read_element_ref(reader, "menacer")?;
-        let seek_target = read_element_ref(reader, "seek_target")?;
-        let bypass_reference = read_element_ref(reader, "bypass_reference")?;
-        let material_sector = read_sector_ref(reader, "material_sector")?;
-        let seek_sector = read_sector_ref(reader, "seek_sector")?;
-        let sequence_element = read_sequence_element_ref(reader, "sequence_element")?;
-        let wait_sequence_element = read_sequence_element_ref(reader, "wait_sequence_element")?;
-        let order = read_order_ref(reader, "order")?;
-        let sequence_element_started = reader.read_bool("sequence_element_started")?;
-        let has_post_seek = reader.read_bool("has_post_seek_sequence")?;
-        let post_seek_sequence = if has_post_seek {
-            Some(reader.scope("post_seek_sequence", |reader| {
-                context.read_inline_sequence(reader, expected_creation_order, expected_class)
-            })?)
-        } else {
-            None
-        };
-        let bypass_count =
-            read_bounded_u16(reader, "bypass_points.count", limits.actor_bypass_points)?;
-        let mut bypass_points = Vec::new();
-        reserve(reader, &mut bypass_points, bypass_count, "bypass_points")?;
-        for index in 0..bypass_count {
-            bypass_points.push(read_point2(
-                reader,
-                LegacyContext::Indexed("bypass_points", index),
-            )?);
-        }
-        let script_class = reader.read_string("script_class")?;
-        let script_members = if script_class.is_empty() {
-            None
-        } else {
-            Some(reader.scope("script_members", |reader| {
-                context.read_actor_script_members(
-                    reader,
-                    expected_creation_order,
-                    expected_class,
-                    &script_class,
-                )
-            })?)
-        };
-        // The Original intentionally brackets script state with the same
-        // actor fingerprint.
-        read_fingerprint(
-            reader,
-            "trailing_fingerprint",
-            FINGERPRINT_ACTOR,
-            "actor element",
-        )?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(
-                reader,
-                limits,
-                Some(expected_creation_order),
-                Some(expected_class),
-            )
-        })?;
-        Ok(Self {
-            last_order_id,
-            old_action,
-            action_state,
-            execution_frozen,
-            about_to_surrender,
-            ignored_for_anti_collision,
-            surrendering,
-            distance_to_boundary_first,
-            new_order,
-            distance_to_boundary_second,
-            motion_state,
-            wait_time,
-            seek_layer,
-            bypassing,
-            on_railroad,
-            seek_distance,
-            seek_to_point,
-            check_for_jump,
-            passing_door_directly,
-            bypass_exit,
-            last_seek_target_position,
-            position_at_last_distance_request,
-            menacer,
-            seek_target,
-            bypass_reference,
-            material_sector,
-            seek_sector,
-            sequence_element,
-            wait_sequence_element,
-            order,
-            sequence_element_started,
-            post_seek_sequence,
-            bypass_points,
-            script_class,
-            script_members,
-            element,
-        })
+fn read_post_seek_sequence(
+    reader: &mut LegacyReader<'_>,
+    ctx: &LegacyLeafDecode<'_>,
+) -> LegacyResult<Option<LegacyInlineSequence>> {
+    if !reader.read_bool("has_post_seek_sequence")? {
+        return Ok(None);
     }
+    reader
+        .scope("post_seek_sequence", |reader| {
+            ctx.context
+                .read_inline_sequence(reader, ctx.creation_order, ctx.class)
+        })
+        .map(Some)
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+fn read_actor_script_members(
+    reader: &mut LegacyReader<'_>,
+    ctx: &LegacyLeafDecode<'_>,
+    script_class: &str,
+) -> LegacyResult<Option<LegacyVmMemberSection>> {
+    if script_class.is_empty() {
+        return Ok(None);
+    }
+    reader
+        .scope("script_members", |reader| {
+            ctx.context.read_actor_script_members(
+                reader,
+                ctx.creation_order,
+                ctx.class,
+                script_class,
+            )
+        })
+        .map(Some)
+}
+
+fn read_actor_element(
+    reader: &mut LegacyReader<'_>,
+    ctx: &LegacyLeafDecode<'_>,
+) -> LegacyResult<LegacyElementPayloadBase> {
+    // The Original intentionally brackets script state with the same
+    // actor fingerprint.
+    read_fingerprint(
+        reader,
+        "trailing_fingerprint",
+        FINGERPRINT_ACTOR,
+        "actor element",
+    )?;
+    LegacyElementPayloadBase::read_field(reader, "element", &ctx.element())
+}
+
+/// Context: whether the geometry uses the wide Windows retail layout.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = bool)]
 pub struct LegacyRepulsivePoint {
+    #[legacy(read = read_geometry_point2(reader, "position", *ctx))]
     pub position: LegacyPoint2,
     pub concave: bool,
+    #[legacy(read = read_geometry_point2(reader, "limit_left", *ctx))]
     pub limit_left: LegacyPoint2,
+    #[legacy(read = read_geometry_point2(reader, "limit_right", *ctx))]
     pub limit_right: LegacyPoint2,
     pub action_radius: f32,
     pub force_a: f32,
@@ -909,53 +768,22 @@ pub struct LegacyRepulsivePoint {
     pub affects_animals: bool,
 }
 
-impl LegacyRepulsivePoint {
-    fn read(reader: &mut LegacyReader<'_>, wide_geometry: bool) -> LegacyResult<Self> {
-        let position = if wide_geometry {
-            LegacyPoint2 {
-                x: reader.read_f64("position.x")? as f32,
-                y: reader.read_f64("position.y")? as f32,
-            }
-        } else {
-            read_point2(reader, "position")?
-        };
-        let concave = reader.read_bool("concave")?;
-        let (limit_left, limit_right) = if wide_geometry {
-            (
-                LegacyPoint2 {
-                    x: reader.read_f64("limit_left.x")? as f32,
-                    y: reader.read_f64("limit_left.y")? as f32,
-                },
-                LegacyPoint2 {
-                    x: reader.read_f64("limit_right.x")? as f32,
-                    y: reader.read_f64("limit_right.y")? as f32,
-                },
-            )
-        } else {
-            (
-                read_point2(reader, "limit_left")?,
-                read_point2(reader, "limit_right")?,
-            )
-        };
-        Ok(Self {
-            position,
-            concave,
-            limit_left,
-            limit_right,
-            action_radius: reader.read_f32("action_radius")?,
-            force_a: reader.read_f32("force_a")?,
-            force_b: reader.read_f32("force_b")?,
-            radius: reader.read_f32("radius")?,
-            id: reader.read_u32("id")?,
-            affects_pcs: reader.read_bool("affects_pcs")?,
-            affects_soldiers: reader.read_bool("affects_soldiers")?,
-            affects_civilians: reader.read_bool("affects_civilians")?,
-            affects_animals: reader.read_bool("affects_animals")?,
+fn read_geometry_point2(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+    wide_geometry: bool,
+) -> LegacyResult<LegacyPoint2> {
+    if wide_geometry {
+        Ok(LegacyPoint2 {
+            x: reader.read_f64(format_args!("{field}.x"))? as f32,
+            y: reader.read_f64(format_args!("{field}.y"))? as f32,
         })
+    } else {
+        LegacyPoint2::read_field(reader, field, &())
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyShieldPayload {
     pub points: [LegacyShieldPoint; 4],
     pub top_plane: LegacyPlane3,
@@ -966,50 +794,34 @@ pub struct LegacyShieldPayload {
     pub on_ground: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyShieldPoint {
+    #[legacy(read = read_shield_obstacle(reader))]
     pub obstacle: [f32; 4],
     pub polygon: LegacyPoint2,
 }
 
-impl LegacyShieldPayload {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        let mut points = [LegacyShieldPoint {
-            obstacle: [0.0; 4],
-            polygon: LegacyPoint2 { x: 0.0, y: 0.0 },
-        }; 4];
-        for (index, point) in points.iter_mut().enumerate() {
-            *point = reader.scope_indexed("points", index, |reader| {
-                Ok(LegacyShieldPoint {
-                    obstacle: [
-                        reader.read_f32("obstacle.x")?,
-                        reader.read_f32("obstacle.y")?,
-                        reader.read_f32("obstacle.z_top")?,
-                        reader.read_f32("obstacle.z_bottom")?,
-                    ],
-                    polygon: read_point2(reader, "polygon")?,
-                })
-            })?;
-        }
-        Ok(Self {
-            points,
-            top_plane: read_plane3(reader, "top_plane")?,
-            bottom_plane: read_plane3(reader, "bottom_plane")?,
-            box_3d: read_box3(reader, "box_3d")?,
-            ground_box: read_box2(reader, "ground_box")?,
-            screen_box: read_box2(reader, "screen_box")?,
-            on_ground: reader.read_bool("on_ground")?,
-        })
-    }
+fn read_shield_obstacle(reader: &mut LegacyReader<'_>) -> LegacyResult<[f32; 4]> {
+    Ok([
+        reader.read_f32("obstacle.x")?,
+        reader.read_f32("obstacle.y")?,
+        reader.read_f32("obstacle.z_top")?,
+        reader.read_f32("obstacle.z_bottom")?,
+    ])
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacySwordOpponent {
     pub opponent: LegacyElementRef,
     pub jump_line: LegacyLineRef,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyHumanDecode<'_>,
+    fingerprint = FINGERPRINT_HUMAN,
+    expected = "human actor element"
+)]
 pub struct LegacyHumanPayload {
     pub already_detectable_body: bool,
     pub concussion_healing_timeout: u16,
@@ -1024,6 +836,7 @@ pub struct LegacyHumanPayload {
     pub received_smalltalk_initiative: bool,
     pub relative_fighting_ability: u16,
     pub hollow_man: bool,
+    #[legacy(count_u16 = ctx.leaf.limits.human_opponents)]
     pub opponents: Vec<LegacySwordOpponent>,
     pub killed_by_accident: bool,
     pub running_hulk: u32,
@@ -1032,20 +845,28 @@ pub struct LegacyHumanPayload {
     pub hulk_direction: bool,
     pub hulk_speed: f32,
     pub carrier: LegacyElementRef,
+    #[legacy(read = LegacyRepulsivePoint::read_field(
+        reader,
+        "repulsive_point",
+        &(ctx.abi_profile == LegacySaveAbiProfile::RetailWindowsX86V48),
+    ))]
     pub repulsive_point: LegacyRepulsivePoint,
     pub small_repulsive_radius: bool,
     pub building: LegacySectorRef,
     /// The original game's enum serialization writes only the first
     /// four bytes of the noise record, which begin with the origin's X coordinate.
     pub currently_produced_noise_first_word: f32,
+    #[legacy(read = LegacyActorPayload::read_field(reader, "actor", &ctx.leaf))]
     pub actor: LegacyActorPayload,
     pub shield: LegacyShieldPayload,
+    #[legacy(count_u16 = ctx.leaf.limits.human_sword_victims)]
     pub sword_strike_victims: Vec<LegacyElementRef>,
     pub initial_strike_angle: f32,
     pub current_strike_angle: f32,
     pub final_strike_angle: f32,
     pub stuck_under_nets_counter: u16,
     pub sword_strike_boredom: [u16; 9],
+    #[legacy(count_u32 = ctx.leaf.limits.human_shoots)]
     pub shoots: Vec<LegacySequenceElementRef>,
     pub smalltalk_hint: u32,
     pub hint_opponent: LegacyElementRef,
@@ -1060,144 +881,23 @@ impl LegacyHumanPayload {
         expected_creation_order: u32,
         expected_class: LegacyElementClass,
     ) -> LegacyResult<Self> {
-        read_fingerprint(
+        <Self as LegacyRead<_>>::read(
             reader,
-            "fingerprint",
-            FINGERPRINT_HUMAN,
-            "human actor element",
-        )?;
-        let already_detectable_body = reader.read_bool("already_detectable_body")?;
-        let concussion_healing_timeout = reader.read_u16("concussion_healing_timeout")?;
-        let unconscious = reader.read_bool("unconscious")?;
-        let tiredness = reader.read_u16("tiredness")?;
-        let concussion = reader.read_u16("concussion")?;
-        let parry_counter = reader.read_u16("parry_counter")?;
-        let detectable_list_index = reader.read_u16("detectable_list_index")?;
-        let invulnerable = reader.read_bool("invulnerable")?;
-        let last_motion_was_step_back = reader.read_bool("last_motion_was_step_back")?;
-        let smalltalk_initiative = reader.read_bool("smalltalk_initiative")?;
-        let received_smalltalk_initiative = reader.read_bool("received_smalltalk_initiative")?;
-        let relative_fighting_ability = reader.read_u16("relative_fighting_ability")?;
-        let hollow_man = reader.read_bool("hollow_man")?;
-        let opponent_count = read_bounded_u16(reader, "opponents.count", limits.human_opponents)?;
-        let mut opponents = Vec::new();
-        reserve(reader, &mut opponents, opponent_count, "opponents")?;
-        for index in 0..opponent_count {
-            opponents.push(reader.scope_indexed("opponents", index, |reader| {
-                Ok(LegacySwordOpponent {
-                    opponent: read_element_ref(reader, "opponent")?,
-                    jump_line: read_line_ref(reader, "jump_line")?,
-                })
-            })?);
-        }
-        let killed_by_accident = reader.read_bool("killed_by_accident")?;
-        let running_hulk = reader.read_u32("running_hulk")?;
-        let time_hulk = reader.read_u32("time_hulk")?;
-        let hulk_level = reader.read_u16("hulk_level")?;
-        let hulk_direction = reader.read_bool("hulk_direction")?;
-        let hulk_speed = reader.read_f32("hulk_speed")?;
-        let carrier = read_element_ref(reader, "carrier")?;
-        let repulsive_point = reader.scope("repulsive_point", |reader| {
-            LegacyRepulsivePoint::read(
-                reader,
-                abi_profile == LegacySaveAbiProfile::RetailWindowsX86V48,
-            )
-        })?;
-        let small_repulsive_radius = reader.read_bool("small_repulsive_radius")?;
-        let building = read_sector_ref(reader, "building")?;
-        let currently_produced_noise_first_word =
-            reader.read_f32("currently_produced_noise_first_word")?;
-        let actor = reader.scope("actor", |reader| {
-            LegacyActorPayload::read(
-                reader,
+            &LegacyHumanDecode::new(
+                abi_profile,
                 limits,
                 context,
                 expected_creation_order,
                 expected_class,
-            )
-        })?;
-        let shield = reader.scope("shield", LegacyShieldPayload::read)?;
-        let victim_count = read_bounded_u16(
-            reader,
-            "sword_strike_victims.count",
-            limits.human_sword_victims,
-        )?;
-        let mut sword_strike_victims = Vec::new();
-        reserve(
-            reader,
-            &mut sword_strike_victims,
-            victim_count,
-            "sword_strike_victims",
-        )?;
-        for index in 0..victim_count {
-            sword_strike_victims.push(read_element_ref(
-                reader,
-                format!("sword_strike_victims[{index}]"),
-            )?);
-        }
-        let initial_strike_angle = reader.read_f32("initial_strike_angle")?;
-        let current_strike_angle = reader.read_f32("current_strike_angle")?;
-        let final_strike_angle = reader.read_f32("final_strike_angle")?;
-        let stuck_under_nets_counter = reader.read_u16("stuck_under_nets_counter")?;
-        let mut sword_strike_boredom = [0; 9];
-        for (index, value) in sword_strike_boredom.iter_mut().enumerate() {
-            *value = reader.read_u16(format_args!("sword_strike_boredom[{index}]"))?;
-        }
-        let shoot_count = reader.read_count_u32("shoots.count", limits.human_shoots)?;
-        let mut shoots = Vec::new();
-        reserve(reader, &mut shoots, shoot_count, "shoots")?;
-        for index in 0..shoot_count {
-            shoots.push(read_sequence_element_ref(
-                reader,
-                format!("shoots[{index}]"),
-            )?);
-        }
-        let smalltalk_hint = reader.read_u32("smalltalk_hint")?;
-        let hint_opponent = read_element_ref(reader, "hint_opponent")?;
-        Ok(Self {
-            already_detectable_body,
-            concussion_healing_timeout,
-            unconscious,
-            tiredness,
-            concussion,
-            parry_counter,
-            detectable_list_index,
-            invulnerable,
-            last_motion_was_step_back,
-            smalltalk_initiative,
-            received_smalltalk_initiative,
-            relative_fighting_ability,
-            hollow_man,
-            opponents,
-            killed_by_accident,
-            running_hulk,
-            time_hulk,
-            hulk_level,
-            hulk_direction,
-            hulk_speed,
-            carrier,
-            repulsive_point,
-            small_repulsive_radius,
-            building,
-            currently_produced_noise_first_word,
-            actor,
-            shield,
-            sword_strike_victims,
-            initial_strike_angle,
-            current_strike_angle,
-            final_strike_angle,
-            stuck_under_nets_counter,
-            sword_strike_boredom,
-            shoots,
-            smalltalk_hint,
-            hint_opponent,
-        })
+            ),
+        )
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyNpcView {
     pub leaning: bool,
+    #[legacy(bytes)]
     pub leaning_padding: [u8; 3],
     pub alert_status: u32,
     pub status: u8,
@@ -1214,10 +914,12 @@ pub struct LegacyNpcView {
     pub future_half_aperture: f32,
     pub half_aperture_step: f32,
     pub half_aperture_changes: bool,
+    #[legacy(bytes)]
     pub half_aperture_padding: [u8; 3],
     pub crazy_iterator: f32,
     pub crazy_iterator_step: f32,
     pub color: u8,
+    #[legacy(bytes)]
     pub color_padding: [u8; 3],
     pub crazy_half_aperture: f32,
     pub direction: LegacyPoint2,
@@ -1232,76 +934,28 @@ pub struct LegacyNpcView {
     pub radius_step: u16,
     pub long_range: f32,
     pub real_radius: u16,
+    #[legacy(bytes)]
     pub real_radius_padding: [u8; 2],
     pub drunkenness: [f32; 4],
     pub sniper: bool,
+    #[legacy(bytes)]
     pub sniper_padding: [u8; 3],
 }
 
-impl LegacyNpcView {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        Ok(Self {
-            leaning: reader.read_bool("leaning")?,
-            leaning_padding: read_array(reader, "leaning_padding")?,
-            alert_status: reader.read_u32("alert_status")?,
-            status: reader.read_u8("status")?,
-            transitioning: reader.read_bool("transitioning")?,
-            alpha: reader.read_u16("alpha")?,
-            half_angle: reader.read_f32("half_angle")?,
-            angle_iterator: reader.read_f32("angle_iterator")?,
-            angle_iterator_step: reader.read_f32("angle_iterator_step")?,
-            angle_step: reader.read_f32("angle_step")?,
-            angle: reader.read_f32("angle")?,
-            half_aperture: reader.read_f32("half_aperture")?,
-            real_half_aperture: reader.read_f32("real_half_aperture")?,
-            half_aperture_cosine: reader.read_f32("half_aperture_cosine")?,
-            future_half_aperture: reader.read_f32("future_half_aperture")?,
-            half_aperture_step: reader.read_f32("half_aperture_step")?,
-            half_aperture_changes: reader.read_bool("half_aperture_changes")?,
-            half_aperture_padding: read_array(reader, "half_aperture_padding")?,
-            crazy_iterator: reader.read_f32("crazy_iterator")?,
-            crazy_iterator_step: reader.read_f32("crazy_iterator_step")?,
-            color: reader.read_u8("color")?,
-            color_padding: read_array(reader, "color_padding")?,
-            crazy_half_aperture: reader.read_f32("crazy_half_aperture")?,
-            direction: read_point2(reader, "direction")?,
-            left: read_point2(reader, "left")?,
-            right: read_point2(reader, "right")?,
-            stare: read_point2(reader, "stare")?,
-            raw_mobile_target_pointer: LegacyOpaquePointer32(
-                reader.read_u32("raw_mobile_target_pointer")?,
-            ),
-            radius_goal: reader.read_u16("radius_goal")?,
-            radius: reader.read_u16("radius")?,
-            radius_reduction: reader.read_u16("radius_reduction")?,
-            radius_step: reader.read_u16("radius_step")?,
-            long_range: reader.read_f32("long_range")?,
-            real_radius: reader.read_u16("real_radius")?,
-            real_radius_padding: read_array(reader, "real_radius_padding")?,
-            drunkenness: [
-                reader.read_f32("drunkenness[0]")?,
-                reader.read_f32("drunkenness[1]")?,
-                reader.read_f32("drunkenness[2]")?,
-                reader.read_f32("drunkenness[3]")?,
-            ],
-            sniper: reader.read_bool("sniper")?,
-            sniper_padding: read_array(reader, "sniper_padding")?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyNpcInitialPosition {
     pub x: f32,
     pub y: f32,
     /// Raw sector identity echoed by the original game before the logical sector ID.
     pub raw_sector_pointer: LegacyOpaquePointer32,
     pub level: u16,
+    #[legacy(bytes)]
     pub padding: [u8; 2],
     pub sector: LegacySectorRef,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = FINGERPRINT_DETECTABLE, expected = "detectable")]
 pub struct LegacyDetectable {
     pub detectable_type: u32,
     pub seen_last: bool,
@@ -1312,28 +966,20 @@ pub struct LegacyDetectable {
     pub element: LegacyAiElementRef,
 }
 
-impl LegacyDetectable {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_DETECTABLE, "detectable")?;
-        Ok(Self {
-            detectable_type: reader.read_u32("detectable_type")?,
-            seen_last: reader.read_bool("seen_last")?,
-            seen_now: reader.read_bool("seen_now")?,
-            shadow_seen_last: reader.read_bool("shadow_seen_last")?,
-            heard_last: reader.read_bool("heard_last")?,
-            visibility: reader.read_f32("visibility")?,
-            element: read_ai_element_ref(reader, "element")?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPayloadLimits)]
 pub struct LegacyDetectableBucket {
+    #[legacy(count_u32 = ctx.npc_detectables_per_type)]
     pub entries: Vec<LegacyDetectable>,
     pub suspect: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyHumanDecode<'_>,
+    fingerprint = FINGERPRINT_NPC,
+    expected = "NPC actor element"
+)]
 pub struct LegacyNpcPayload {
     pub life: i16,
     pub arrows: u16,
@@ -1349,11 +995,23 @@ pub struct LegacyNpcPayload {
     pub initial_position: LegacyNpcInitialPosition,
     pub initial_view: LegacyPoint2,
     pub fried: bool,
+    #[legacy(read = reader.scope("local_ai", |reader| {
+        ctx.leaf
+            .context
+            .read_local_ai(reader, ctx.leaf.creation_order, ctx.leaf.class)
+    }))]
     pub local_ai: Box<LegacyLocalAiPayload>,
     pub old_deafness: u16,
     pub old_frame: u32,
+    #[legacy(read = <[LegacyDetectableBucket; 6]>::read_field(
+        reader,
+        "detectable_buckets",
+        ctx.leaf.limits,
+    ))]
     pub detectable_buckets: [LegacyDetectableBucket; 6],
     pub maximum_suspect: u16,
+    /// Despite the stored value's misleading prefix, the original game treats this as the
+    /// 32-bit detectable-type value and serializes its raw storage.
     pub worst_detectable_type: u32,
     pub custom_values: [i32; 10],
     pub gave_money: bool,
@@ -1369,111 +1027,16 @@ impl LegacyNpcPayload {
         expected_creation_order: u32,
         expected_class: LegacyElementClass,
     ) -> LegacyResult<Self> {
-        read_fingerprint(reader, "fingerprint", FINGERPRINT_NPC, "NPC actor element")?;
-        let life = reader.read_i16("life")?;
-        let arrows = reader.read_u16("arrows")?;
-        let old_direction = reader.read_i16("old_direction")?;
-        let register = reader.read_u16("register")?;
-        let attached_scroll = read_element_ref(reader, "attached_scroll")?;
-        let inform = reader.read_bool("inform")?;
-        let money = reader.read_u32("money")?;
-        let wasp = reader.read_bool("wasp")?;
-        let body_visitors = reader.read_u16("body_visitors")?;
-        let view = reader.scope("view", LegacyNpcView::read)?;
-        let mobile_target = read_element_ref(reader, "mobile_target")?;
-        let initial_position = reader.scope("initial_position", |reader| {
-            Ok(LegacyNpcInitialPosition {
-                x: reader.read_f32("x")?,
-                y: reader.read_f32("y")?,
-                raw_sector_pointer: LegacyOpaquePointer32(reader.read_u32("raw_sector_pointer")?),
-                level: reader.read_u16("level")?,
-                padding: read_array(reader, "padding")?,
-                sector: read_sector_ref(reader, "sector")?,
-            })
-        })?;
-        let initial_view = read_point2(reader, "initial_view")?;
-        let fried = reader.read_bool("fried")?;
-        let local_ai = reader.scope("local_ai", |reader| {
-            context.read_local_ai(reader, expected_creation_order, expected_class)
-        })?;
-        let old_deafness = reader.read_u16("old_deafness")?;
-        let old_frame = reader.read_u32("old_frame")?;
-        let mut buckets = Vec::with_capacity(6);
-        for bucket_index in 0..6 {
-            buckets.push(
-                reader.scope_indexed("detectable_buckets", bucket_index, |reader| {
-                    let count =
-                        reader.read_count_u32("entries.count", limits.npc_detectables_per_type)?;
-                    let mut entries = Vec::new();
-                    reserve(reader, &mut entries, count, "entries")?;
-                    for index in 0..count {
-                        entries.push(reader.scope_indexed(
-                            "entries",
-                            index,
-                            LegacyDetectable::read,
-                        )?);
-                    }
-                    Ok(LegacyDetectableBucket {
-                        entries,
-                        suspect: reader.read_u16("suspect")?,
-                    })
-                })?,
-            );
-        }
-        let buckets_offset = reader.offset();
-        let detectable_buckets: [LegacyDetectableBucket; 6] =
-            buckets.try_into().map_err(|values: Vec<_>| {
-                reader.invalid_value(
-                    buckets_offset,
-                    "detectable_buckets",
-                    values.len(),
-                    "exactly six detectable buckets",
-                )
-            })?;
-        let maximum_suspect = reader.read_u16("maximum_suspect")?;
-        // Despite the stored value's misleading prefix, the original game treats this as the
-        // 32-bit detectable-type value and serializes its raw storage.
-        let worst_detectable_type = reader.read_u32("worst_detectable_type")?;
-        let mut custom_values = [0; 10];
-        for (index, value) in custom_values.iter_mut().enumerate() {
-            *value = reader.read_i32(format_args!("custom_values[{index}]"))?;
-        }
-        let gave_money = reader.read_bool("gave_money")?;
-        let human = reader.scope("human", |reader| {
-            LegacyHumanPayload::read(
-                reader,
+        <Self as LegacyRead<_>>::read(
+            reader,
+            &LegacyHumanDecode::new(
                 abi_profile,
                 limits,
                 context,
                 expected_creation_order,
                 expected_class,
-            )
-        })?;
-        Ok(Self {
-            life,
-            arrows,
-            old_direction,
-            register,
-            attached_scroll,
-            inform,
-            money,
-            wasp,
-            body_visitors,
-            view,
-            mobile_target,
-            initial_position,
-            initial_view,
-            fried,
-            local_ai,
-            old_deafness,
-            old_frame,
-            detectable_buckets,
-            maximum_suspect,
-            worst_detectable_type,
-            custom_values,
-            gave_money,
-            human,
-        })
+            ),
+        )
     }
 }
 
@@ -1490,8 +1053,7 @@ pub(super) fn read_element_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyElementRef> {
-    let raw = reader.read_u32(field)?;
-    Ok(LegacyElementRef((raw != NULL_U32).then_some(raw)))
+    read_nullable_u32_ref(reader, field).map(LegacyElementRef)
 }
 
 pub(super) fn read_ai_element_ref(
@@ -1524,12 +1086,29 @@ pub(super) fn read_order_ref(
     read_nullable_u32_ref(reader, field).map(LegacyOrderRef)
 }
 
-fn read_nullable_u32_ref(
+fn read_opaque_pointer32(
+    reader: &mut LegacyReader<'_>,
+    field: impl std::fmt::Display,
+) -> LegacyResult<LegacyOpaquePointer32> {
+    reader.read_u32(field).map(LegacyOpaquePointer32)
+}
+
+/// `None` for the `0xffffffff` null sentinel.
+pub(super) fn read_nullable_u32_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<Option<u32>> {
     let raw = reader.read_u32(field)?;
     Ok((raw != NULL_U32).then_some(raw))
+}
+
+/// `None` for the `0xffff` null sentinel.
+pub(super) fn read_nullable_u16(
+    reader: &mut LegacyReader<'_>,
+    field: impl std::fmt::Display,
+) -> LegacyResult<Option<u16>> {
+    let raw = reader.read_u16(field)?;
+    Ok((raw != u16::MAX).then_some(raw))
 }
 
 fn read_nonzero_u32_ref(
@@ -1555,8 +1134,7 @@ pub(super) fn read_sector_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacySectorRef> {
-    let raw = reader.read_u16(field)?;
-    Ok(LegacySectorRef((raw != u16::MAX).then_some(raw)))
+    read_nullable_u16(reader, field).map(LegacySectorRef)
 }
 
 pub(super) fn read_signed_ref(
@@ -1571,49 +1149,7 @@ pub(super) fn read_line_ref(
     reader: &mut LegacyReader<'_>,
     field: impl std::fmt::Display,
 ) -> LegacyResult<LegacyLineRef> {
-    let field = field.to_string();
-    let layer = reader.read_u16(format_args!("{field}.layer"))?;
-    let index = reader.read_i16(format_args!("{field}.index"))?;
-    Ok(LegacyLineRef {
-        layer: (layer != u16::MAX).then_some(layer),
-        index: (index != -1).then_some(index),
-    })
-}
-
-fn read_box3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<LegacyContext>,
-) -> LegacyResult<LegacyBoundingBox3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyBoundingBox3 {
-            x_min: reader.read_f32("x_min")?,
-            x_max: reader.read_f32("x_max")?,
-            y_min: reader.read_f32("y_min")?,
-            y_max: reader.read_f32("y_max")?,
-            z_min: reader.read_f32("z_min")?,
-            z_max: reader.read_f32("z_max")?,
-        })
-    })
-}
-
-fn read_plane3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<LegacyContext>,
-) -> LegacyResult<LegacyPlane3> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPlane3 {
-            a: read_point3(reader, "a")?,
-            b: read_point3(reader, "b")?,
-            normal: read_point3(reader, "normal")?,
-            origin: read_point3(reader, "origin")?,
-            u: read_point3(reader, "u")?,
-            v: read_point3(reader, "v")?,
-            az: reader.read_f32("az")?,
-            bz: reader.read_f32("bz")?,
-            dz: reader.read_f32("dz")?,
-            d: reader.read_f32("d")?,
-        })
-    })
+    LegacyLineRef::read_field(reader, field.to_string(), &())
 }
 
 #[cfg(test)]
@@ -1674,10 +1210,23 @@ mod tests {
     #[test]
     fn bounded_u16_count_fails_before_allocation() {
         with_reader(&2_u16.to_le_bytes(), |reader| {
-            let error = read_bounded_u16(reader, "items.count", 1).unwrap_err();
+            let error = reader.read_count_u16("items.count", 1).unwrap_err();
             assert_eq!(error.offset, 0);
             assert_eq!(error.field, "items.count");
             assert!(error.to_string().contains("caller-supplied limit"));
+        });
+    }
+
+    #[test]
+    fn line_reference_reports_nested_layer_and_index_fields() {
+        let mut bytes = u16::MAX.to_le_bytes().to_vec();
+        bytes.push(0);
+        with_reader(&bytes, |reader| {
+            let error = reader
+                .scope("opponents[2]", |reader| read_line_ref(reader, "jump_line"))
+                .unwrap_err();
+            assert_eq!(error.offset, 2);
+            assert_eq!(error.field, "opponents[2].jump_line.index");
         });
     }
 
@@ -1697,7 +1246,7 @@ mod tests {
         bytes.extend_from_slice(&[1, 0, 1, 0]);
 
         with_reader(&bytes, |reader| {
-            let point = LegacyRepulsivePoint::read(reader, true).unwrap();
+            let point = LegacyRepulsivePoint::read(reader, &true).unwrap();
             assert_eq!(point.position, LegacyPoint2 { x: 1.25, y: -2.5 });
             assert!(point.concave);
             assert_eq!(point.limit_left, LegacyPoint2 { x: 3.5, y: 4.5 });
@@ -1716,6 +1265,17 @@ mod tests {
     }
 
     #[test]
+    fn wide_repulsive_point_truncation_reports_the_component_field() {
+        let bytes = 1.25_f64.to_le_bytes();
+        with_reader(&bytes, |reader| {
+            let error =
+                LegacyRepulsivePoint::read_field(reader, "repulsive_point", &true).unwrap_err();
+            assert_eq!(error.offset, 8);
+            assert_eq!(error.field, "repulsive_point.position.y");
+        });
+    }
+
+    #[test]
     fn detectable_truncation_reports_nested_reference_field() {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&FINGERPRINT_DETECTABLE);
@@ -1724,9 +1284,29 @@ mod tests {
         bytes.extend_from_slice(&0.5_f32.to_le_bytes());
         bytes.push(7); // first byte of the two-byte AI-local reference
         with_reader(&bytes, |reader| {
-            let error = LegacyDetectable::read(reader).unwrap_err();
+            let error = LegacyDetectable::read(reader, &()).unwrap_err();
             assert_eq!(error.offset, 28);
             assert_eq!(error.field, "element");
+        });
+    }
+
+    #[test]
+    fn npc_view_padding_is_one_raw_field_and_drunkenness_is_indexed() {
+        // leaning(1) + 2 of the 3 padding bytes: the raw read fails as a whole.
+        with_reader(&[1, 0, 0], |reader| {
+            let error = LegacyNpcView::read_field(reader, "view", &()).unwrap_err();
+            assert_eq!(error.offset, 1);
+            assert_eq!(error.field, "view.leaning_padding");
+        });
+        // Everything up to and including drunkenness[1].
+        let prefix = 1 + 3 + 4 + 1 + 1 + 2 + 4 * 10 + 1 + 3 + 4 * 2 + 1 + 3 + 4 + 4 * 8;
+        // raw pointer, four u16 radii, long range, real radius + padding,
+        // drunkenness[0] and [1].
+        let bytes = vec![0; prefix + 4 + 2 * 4 + 4 + 2 + 2 + 4 * 2];
+        with_reader(&bytes, |reader| {
+            let error = LegacyNpcView::read(reader, &()).unwrap_err();
+            assert_eq!(error.offset, bytes.len() as u64);
+            assert_eq!(error.field, "drunkenness[2]");
         });
     }
 }
