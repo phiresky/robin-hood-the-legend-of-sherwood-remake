@@ -30,33 +30,6 @@ use robin_engine::tactical_control::TacticalFormation;
 
 // ─── Left-click resolution ──────────────────────────────────────────
 
-/// Resolve a left-click at `map_pt` into player commands.
-///
-/// The engine is read-only; all mutations are expressed as commands.
-#[cfg(test)]
-fn resolve_left_click(
-    host: &mut Host,
-    engine: &Engine,
-    assets: &LevelAssets,
-    map_pt: MapPoint,
-    shift_held: bool,
-    ctrl_held: bool,
-    is_double: bool,
-) -> Vec<PlayerCommand> {
-    resolve_left_click_with_planning(
-        host,
-        engine,
-        assets,
-        map_pt,
-        ClickModifiers {
-            shift: shift_held,
-            planning: shift_held,
-            control: ctrl_held,
-            double: is_double,
-        },
-    )
-}
-
 /// Resolve a click with Original physical-Shift behaviour separated from the
 /// post-port planning modifier.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
@@ -67,6 +40,42 @@ pub struct ClickModifiers {
     pub double: bool,
 }
 
+impl ClickModifiers {
+    /// Hover/cursor callers only know the planning modifier; the other
+    /// click-only flags are not part of a hover sample.
+    pub const fn hover(planning: bool) -> Self {
+        Self {
+            shift: false,
+            planning,
+            control: false,
+            double: false,
+        }
+    }
+}
+
+/// Per-click inputs shared by the left-click resolution phases. Selections
+/// are re-read from the immutable engine by each phase.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ClickCtx {
+    map_pt: MapPoint,
+    modifiers: ClickModifiers,
+    local_seat: PlayerId,
+}
+
+impl ClickCtx {
+    fn selected<'e>(&self, engine: &'e Engine) -> &'e [EntityId] {
+        engine.hero_selection(self.local_seat)
+    }
+    fn tactical_selected<'e>(&self, engine: &'e Engine) -> &'e [EntityId] {
+        engine.tactical_selection(self.local_seat)
+    }
+}
+
+/// Resolve a left-click at `map_pt` into player commands.
+///
+/// The engine is read-only; all mutations are expressed as commands. The
+/// phases below run in the original order; each returns `Some` when it
+/// consumes the click.
 pub fn resolve_left_click_with_planning(
     host: &mut Host,
     engine: &Engine,
@@ -74,17 +83,65 @@ pub fn resolve_left_click_with_planning(
     map_pt: MapPoint,
     modifiers: ClickModifiers,
 ) -> Vec<PlayerCommand> {
-    let ClickModifiers {
-        shift: shift_held,
-        planning: planning_held,
-        control: ctrl_held,
-        double: is_double,
-    } = modifiers;
-    let local_seat = host.transport.local_seat();
-    let selected = engine.hero_selection(local_seat);
-    let num_selected = selected.len();
-    let tactical_selected = engine.tactical_selection(local_seat);
+    let ctx = ClickCtx {
+        map_pt,
+        modifiers,
+        local_seat: host.transport.local_seat(),
+    };
+    let num_selected = ctx.selected(engine).len();
 
+    if let Some(commands) = click_tactical_unit(host, engine, assets, &ctx) {
+        return commands;
+    }
+    if let Some(commands) = click_with_armed_action(host, engine, assets, &ctx) {
+        return commands;
+    }
+
+    // Double-click repeat-interact
+    if modifiers.double
+        && num_selected > 0
+        && let Some(cached) = host.frontend.input.gestures.element_old_click
+    {
+        let cmds = resolve_double_click_repeat(engine, assets, cached, ctx.local_seat);
+        if !cmds.is_empty() {
+            return cmds;
+        }
+    }
+
+    // Clear the click cache at entry; every hit branch below
+    // re-assigns it, while the map-click fallback leaves it as `None`.
+    // Done once here so the clear doesn't get sprinkled across every
+    // early-exit path.  The double-click replay above still reads the
+    // cached value first.
+    host.frontend.input.gestures.element_old_click = None;
+
+    if num_selected == 0 {
+        return click_without_heroes(host, engine, assets, &ctx);
+    }
+
+    let is_swordfighting =
+        is_selected_unit_swordfighting(&engine.presentation_view(), ctx.local_seat);
+
+    if let Some(commands) = click_unselected_pc(host, engine, assets, &ctx) {
+        return commands;
+    }
+    if let Some(commands) = click_use_target(host, engine, assets, &ctx, is_swordfighting) {
+        return commands;
+    }
+    if let Some(commands) = click_sword_target(host, engine, assets, &ctx) {
+        return commands;
+    }
+    click_ground(host, engine, &ctx)
+}
+
+/// Allied-control unit pick; consumes the click when a soldier is hit.
+fn click_tactical_unit(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+) -> Option<Vec<PlayerCommand>> {
+    let shift_held = ctx.modifiers.shift;
     // The optional allied-control layer keeps soldier selection separate from
     // the original PC selection so scripts and hero action bars retain their
     // five-PC assumptions. A direct click still feels like ordinary unit
@@ -93,7 +150,7 @@ pub fn resolve_left_click_with_planning(
         && let Some(soldier) = engine.find_tactically_controllable_unit(
             assets,
             &host.frontend.presentation.draw_order.ids,
-            map_pt,
+            ctx.map_pt,
         )
     {
         let mut commands = Vec::new();
@@ -104,8 +161,27 @@ pub fn resolve_left_click_with_planning(
             soldiers: vec![soldier],
             append: shift_held,
         });
-        return commands;
+        return Some(commands);
     }
+    None
+}
+
+/// Armed-action dispatch, including the double-click availability gate and
+/// the double-click cancel/commit/swallow special cases.
+fn click_with_armed_action(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+) -> Option<Vec<PlayerCommand>> {
+    let ClickModifiers {
+        planning: planning_held,
+        double: is_double,
+        ..
+    } = ctx.modifiers;
+    let local_seat = ctx.local_seat;
+    let selected = ctx.selected(engine);
+    let num_selected = selected.len();
 
     // Pre-process for double-clicks: when an action is armed and any
     // selected PC's profile lacks the action or has it disabled, abort
@@ -125,7 +201,7 @@ pub fn resolve_left_click_with_planning(
         if pending_action != Action::NoAction {
             for &pc_id in selected {
                 if !engine.is_pc_action_available(&assets.profile_manager, pc_id, pending_action) {
-                    return vec![];
+                    return Some(vec![]);
                 }
             }
         }
@@ -149,7 +225,7 @@ pub fn resolve_left_click_with_planning(
             if is_double {
                 match selected_action {
                     Action::Whistle | Action::Listen | Action::Eat | Action::Guzzle => {
-                        return vec![PlayerCommand::UnselectAllActions];
+                        return Some(vec![PlayerCommand::UnselectAllActions]);
                     }
                     Action::Apple
                     | Action::Stone
@@ -159,7 +235,7 @@ pub fn resolve_left_click_with_planning(
                     | Action::Net
                         if engine.is_recording_macro() =>
                     {
-                        return vec![PlayerCommand::StopRecordingMacro];
+                        return Some(vec![PlayerCommand::StopRecordingMacro]);
                     }
                     _ => {}
                 }
@@ -168,13 +244,12 @@ pub fn resolve_left_click_with_planning(
                 host,
                 engine,
                 assets,
-                map_pt,
+                ctx.map_pt,
                 local_seat,
                 selected_action,
-                is_double,
-                planning_held,
+                ctx.modifiers,
             );
-            return cmds;
+            return Some(cmds);
         } else if is_double
             && (engine.is_alt_effective(&host.frontend.input) || engine.view_locked())
         {
@@ -182,106 +257,114 @@ pub fn resolve_left_click_with_planning(
             // the click (no run-move).  Without this, the GroupMove
             // fallback below would issue a running move on every
             // double-click regardless of modifiers.
-            return vec![];
+            return Some(vec![]);
         }
     }
+    None
+}
 
-    // Double-click repeat-interact
-    if is_double
-        && num_selected > 0
-        && let Some(cached) = host.frontend.input.gestures.element_old_click
-    {
-        let cmds = resolve_double_click_repeat(engine, assets, cached, local_seat);
-        if !cmds.is_empty() {
-            return cmds;
+/// No PCs selected: a controlled allied group can still engage a
+/// sword-focusable target, select a hero, or move.
+fn click_without_heroes(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+) -> Vec<PlayerCommand> {
+    let shift_held = ctx.modifiers.shift;
+    let map_pt = ctx.map_pt;
+    let tactical_selected = ctx.tactical_selected(engine);
+    if let Some(pc_id) = engine.find_focusable_entity(
+        assets,
+        &host.frontend.presentation.draw_order.ids,
+        map_pt,
+        Focus::Select,
+    ) {
+        host.frontend.input.gestures.element_old_click = Some(pc_id);
+        let mut commands = Vec::new();
+        if !shift_held && !tactical_selected.is_empty() {
+            commands.push(PlayerCommand::ClearTacticalSelection);
         }
+        commands.push(PlayerCommand::SelectPc {
+            pc_id,
+            append: shift_held,
+        });
+        return commands;
     }
-
-    // Clear the click cache at entry; every hit branch below
-    // re-assigns it, while the map-click fallback leaves it as `None`.
-    // Done once here so the clear doesn't get sprinkled across every
-    // early-exit path.  The double-click replay above still reads the
-    // cached value first.
-    host.frontend.input.gestures.element_old_click = None;
-
-    // No PCs selected: a controlled allied group can still engage a
-    // sword-focusable target, select a hero, or move.
-    if num_selected == 0 {
-        if let Some(pc_id) = engine.find_focusable_entity(
+    if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
+        if let Some(target_id) = engine.find_focusable_entity(
             assets,
             &host.frontend.presentation.draw_order.ids,
             map_pt,
-            Focus::Select,
+            Focus::Sword,
         ) {
-            host.frontend.input.gestures.element_old_click = Some(pc_id);
-            let mut commands = Vec::new();
-            if !shift_held && !tactical_selected.is_empty() {
-                commands.push(PlayerCommand::ClearTacticalSelection);
-            }
-            commands.push(PlayerCommand::SelectPc {
-                pc_id,
-                append: shift_held,
-            });
-            return commands;
+            host.frontend.input.gestures.element_old_click = Some(target_id);
+            return tactical_selected
+                .iter()
+                .copied()
+                .map(|actor| PlayerCommand::EnterSwordfight {
+                    actor,
+                    target: target_id,
+                    running: false,
+                })
+                .collect();
         }
-        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
-            if let Some(target_id) = engine.find_focusable_entity(
-                assets,
-                &host.frontend.presentation.draw_order.ids,
-                map_pt,
-                Focus::Sword,
-            ) {
-                host.frontend.input.gestures.element_old_click = Some(target_id);
-                return tactical_selected
-                    .iter()
-                    .copied()
-                    .map(|actor| PlayerCommand::EnterSwordfight {
-                        actor,
-                        target: target_id,
-                        running: false,
-                    })
-                    .collect();
-            }
-            return vec![PlayerCommand::MoveTacticalUnits {
-                formation: selected_tactical_formation(engine, tactical_selected),
-                soldiers: tactical_selected.to_vec(),
-                destination: map_pt,
-                running: is_double,
-            }];
-        }
-        host.frontend.input.gestures.element_old_click = None;
-        return vec![];
+        return vec![PlayerCommand::MoveTacticalUnits {
+            formation: selected_tactical_formation(engine, tactical_selected),
+            soldiers: tactical_selected.to_vec(),
+            destination: map_pt,
+            running: ctx.modifiers.double,
+        }];
     }
+    host.frontend.input.gestures.element_old_click = None;
+    vec![]
+}
 
-    let is_swordfighting = is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
-
-    // Unselected PC → select it
-    if let Some(pc_id) = engine.find_focusable_pc(assets, map_pt, Focus::Select)
-        && !selected.contains(&pc_id)
+/// Unselected PC → select it (or toggle it with Ctrl).
+fn click_unselected_pc(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+) -> Option<Vec<PlayerCommand>> {
+    let shift_held = ctx.modifiers.shift;
+    if let Some(pc_id) = engine.find_focusable_pc(assets, ctx.map_pt, Focus::Select)
+        && !ctx.selected(engine).contains(&pc_id)
     {
         host.frontend.input.gestures.element_old_click = Some(pc_id);
-        if ctrl_held {
-            return vec![PlayerCommand::TogglePcSelection { pc_id }];
+        if ctx.modifiers.control {
+            return Some(vec![PlayerCommand::TogglePcSelection { pc_id }]);
         } else {
             let mut commands = Vec::new();
-            if !shift_held && !tactical_selected.is_empty() {
+            if !shift_held && !ctx.tactical_selected(engine).is_empty() {
                 commands.push(PlayerCommand::ClearTacticalSelection);
             }
             commands.push(PlayerCommand::SelectPc {
                 pc_id,
                 append: shift_held,
             });
-            return commands;
+            return Some(commands);
         }
     }
+    None
+}
 
-    // Use-focusable entity (search/carry/tie) — single selection, not swordfighting
+/// Use-focusable entity (search/carry/tie) — single selection, not swordfighting.
+fn click_use_target(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+    is_swordfighting: bool,
+) -> Option<Vec<PlayerCommand>> {
+    let is_double = ctx.modifiers.double;
+    let selected = ctx.selected(engine);
     if !is_swordfighting
-        && num_selected == 1
+        && selected.len() == 1
         && let Some(target_id) = engine.find_focusable_entity(
             assets,
             &host.frontend.presentation.draw_order.ids,
-            map_pt,
+            ctx.map_pt,
             Focus::Use,
         )
     {
@@ -292,11 +375,11 @@ pub fn resolve_left_click_with_planning(
         // builds the composite and prepends a seek as needed.
         if is_target_scroll_attached_npc(engine, target_id) {
             host.frontend.input.gestures.element_old_click = Some(target_id);
-            return vec![PlayerCommand::LaunchScrollRead {
+            return Some(vec![PlayerCommand::LaunchScrollRead {
                 actor: pc_id,
                 target: target_id,
                 running: is_double,
-            }];
+            }]);
         }
         if let Some(cmd) = determine_use_command(engine, assets, pc_id, target_id) {
             host.frontend.input.gestures.element_old_click = Some(target_id);
@@ -319,10 +402,12 @@ pub fn resolve_left_click_with_planning(
             );
             let is_recording = engine.is_recording_macro();
             if is_double && target_is_net && cmd == Command::Take && !is_recording {
-                return selected
-                    .iter()
-                    .map(|&pc| PlayerCommand::MakePcFast { pc_id: pc })
-                    .collect();
+                return Some(
+                    selected
+                        .iter()
+                        .map(|&pc| PlayerCommand::MakePcFast { pc_id: pc })
+                        .collect(),
+                );
             }
             let running = is_double && target_is_net && cmd == Command::Take && is_recording;
             let mut cmds = vec![PlayerCommand::LaunchInteraction {
@@ -338,34 +423,43 @@ pub fn resolve_left_click_with_planning(
             if is_recording && target_is_net && cmd == Command::Take {
                 cmds.push(PlayerCommand::StopRecordingMacro);
             }
-            return cmds;
+            return Some(cmds);
         }
     }
+    None
+}
 
-    // Sword-focusable entity → engage in combat.
-    // This path only runs on single-click, so the seek uses walking
-    // animation (running=false).
-    //
-    // Soldier / non-soldier break: when the sword target is NOT a
-    // soldier, only the first selected PC engages.  For soldiers every
-    // selected PC piles on.
-    if let Some(target_id) = engine.find_focusable_entity(
+/// Sword-focusable entity → engage in combat.
+/// This path only runs on single-click, so the seek uses walking
+/// animation (running=false).
+///
+/// Soldier / non-soldier break: when the sword target is NOT a
+/// soldier, only the first selected PC engages.  For soldiers every
+/// selected PC piles on.
+fn click_sword_target(
+    host: &mut Host,
+    engine: &Engine,
+    assets: &LevelAssets,
+    ctx: &ClickCtx,
+) -> Option<Vec<PlayerCommand>> {
+    let target_id = engine.find_focusable_entity(
         assets,
         &host.frontend.presentation.draw_order.ids,
-        map_pt,
+        ctx.map_pt,
         Focus::Sword,
-    ) {
-        host.frontend.input.gestures.element_old_click = Some(target_id);
-        let target_is_soldier = engine
-            .get_entity(target_id)
-            .expect("same-frame sword focus must identify a live entity")
-            .is_soldier();
-        // Soldier targets accept the whole selection; other sword-focus targets
-        // use only the leading hero. Borrow both selections until commands own IDs.
-        let engager_limit = if target_is_soldier { usize::MAX } else { 1 };
-        return selected
+    )?;
+    host.frontend.input.gestures.element_old_click = Some(target_id);
+    let target_is_soldier = engine
+        .get_entity(target_id)
+        .expect("same-frame sword focus must identify a live entity")
+        .is_soldier();
+    // Soldier targets accept the whole selection; other sword-focus targets
+    // use only the leading hero. Borrow both selections until commands own IDs.
+    let engager_limit = if target_is_soldier { usize::MAX } else { 1 };
+    Some(
+        ctx.selected(engine)
             .iter()
-            .chain(tactical_selected)
+            .chain(ctx.tactical_selected(engine))
             .copied()
             .take(engager_limit)
             .map(|pc_id| PlayerCommand::EnterSwordfight {
@@ -373,9 +467,33 @@ pub fn resolve_left_click_with_planning(
                 target: target_id,
                 running: false,
             })
-            .collect();
-    }
+            .collect(),
+    )
+}
 
+/// Append the allied-group move that accompanies a hero move when the
+/// tactical-control preference is on and soldiers are selected.
+fn push_tactical_move(
+    commands: &mut Vec<PlayerCommand>,
+    host: &Host,
+    engine: &Engine,
+    ctx: &ClickCtx,
+    destination: MapPoint,
+    running: bool,
+) {
+    let tactical_selected = ctx.tactical_selected(engine);
+    if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
+        commands.push(PlayerCommand::MoveTacticalUnits {
+            formation: selected_tactical_formation(engine, tactical_selected),
+            soldiers: tactical_selected.to_vec(),
+            destination,
+            running,
+        });
+    }
+}
+
+fn click_ground(host: &mut Host, engine: &Engine, ctx: &ClickCtx) -> Vec<PlayerCommand> {
+    let is_double = ctx.modifiers.double;
     // Nothing hit: move to clicked location.
     //
     // Single-click:
@@ -397,44 +515,61 @@ pub fn resolve_left_click_with_planning(
     // The patch branch is intentionally ignored here — only the
     // recording arm honours the patch redirect.
     if is_double && !is_recording {
-        if host.frontend.input.spatial_hit().valid_position_for_move
-            && host
-                .frontend
-                .input
-                .spatial_hit()
-                .selected_sector_idx
-                .is_some()
-        {
-            let mut commands: Vec<_> = selected
-                .iter()
-                .map(|&pc_id| PlayerCommand::MakePcFast { pc_id })
-                .collect();
-            // A box selection may contain both PCs and controllable allied
-            // soldiers. The original-PC acceleration return above used to
-            // discard the soldiers' half of that mixed selection, making the
-            // gallery troops appear unable to run whenever Robin was boxed
-            // with them.
-            if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty()
-            {
-                commands.push(PlayerCommand::MoveTacticalUnits {
-                    formation: selected_tactical_formation(engine, tactical_selected),
-                    soldiers: tactical_selected.to_vec(),
-                    destination: map_pt,
-                    running: true,
-                });
-            }
-            return commands;
-        }
-        return vec![];
+        return click_ground_run_fast(host, engine, ctx);
     }
 
     // Single-click path, plus the recording double-click (which
     // follows the same patch→GroupMove / sector→GroupMove ordering
     // with the running gait on double-click).
-    if let Some(patch_idx) = host.frontend.input.spatial_hit().selected_patch_idx
-        && let Some(patch) = engine
-            .mission_script()
-            .and_then(|_| engine.patches().get(patch_idx as usize))
+    if let Some(commands) = click_patch(host, engine, ctx, is_recording) {
+        return commands;
+    }
+    click_sector_move(host, engine, ctx)
+}
+
+fn has_valid_move_sector(host: &Host) -> bool {
+    host.frontend.input.spatial_hit().valid_position_for_move
+        && host
+            .frontend
+            .input
+            .spatial_hit()
+            .selected_sector_idx
+            .is_some()
+}
+
+/// Non-recording double-click on the ground: accelerate the selection.
+fn click_ground_run_fast(host: &Host, engine: &Engine, ctx: &ClickCtx) -> Vec<PlayerCommand> {
+    if !has_valid_move_sector(host) {
+        return vec![];
+    }
+    let mut commands: Vec<_> = ctx
+        .selected(engine)
+        .iter()
+        .map(|&pc_id| PlayerCommand::MakePcFast { pc_id })
+        .collect();
+    // A box selection may contain both PCs and controllable allied
+    // soldiers. The original-PC acceleration return above used to
+    // discard the soldiers' half of that mixed selection, making the
+    // gallery troops appear unable to run whenever Robin was boxed
+    // with them.
+    push_tactical_move(&mut commands, host, engine, ctx, ctx.map_pt, true);
+    commands
+}
+
+/// Patch overlay click: group-move to the patch waypoint, or speak the
+/// locked-patch refusal.
+fn click_patch(
+    host: &Host,
+    engine: &Engine,
+    ctx: &ClickCtx,
+    is_recording: bool,
+) -> Option<Vec<PlayerCommand>> {
+    let is_double = ctx.modifiers.double;
+    let selected = ctx.selected(engine);
+    let patch_idx = host.frontend.input.spatial_hit().selected_patch_idx?;
+    let patch = engine
+        .mission_script()
+        .and_then(|_| engine.patches().get(patch_idx as usize))?;
     {
         if patch.locked {
             // Locked patch: the first selected PC speaks "unable to do
@@ -443,12 +578,12 @@ pub fn resolve_left_click_with_planning(
             // the waypoint, so we bypass the HeroSpeak in that case.
             if !(is_double && is_recording) {
                 if let Some(&pc_id) = selected.first() {
-                    return vec![PlayerCommand::HeroSpeak {
+                    return Some(vec![PlayerCommand::HeroSpeak {
                         pc_id,
                         expression: engine_api::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                    }];
+                    }]);
                 }
-                return vec![];
+                return Some(vec![]);
             }
         }
         let actors: Vec<EntityId> = selected.to_vec();
@@ -477,30 +612,21 @@ pub fn resolve_left_click_with_planning(
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
         }];
-        if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
-            commands.push(PlayerCommand::MoveTacticalUnits {
-                formation: selected_tactical_formation(engine, tactical_selected),
-                soldiers: tactical_selected.to_vec(),
-                destination: patch.waypoint,
-                running: is_double,
-            });
-        }
-        return commands;
+        push_tactical_move(&mut commands, host, engine, ctx, patch.waypoint, is_double);
+        Some(commands)
     }
+}
 
+/// Plain sector click: group-move to the clicked point.
+fn click_sector_move(host: &Host, engine: &Engine, ctx: &ClickCtx) -> Vec<PlayerCommand> {
+    let map_pt = ctx.map_pt;
+    let is_double = ctx.modifiers.double;
     // Sector-click branch — gated on both predicates.
-    if !(host.frontend.input.spatial_hit().valid_position_for_move
-        && host
-            .frontend
-            .input
-            .spatial_hit()
-            .selected_sector_idx
-            .is_some())
-    {
+    if !has_valid_move_sector(host) {
         return vec![];
     }
 
-    let actors: Vec<EntityId> = selected.to_vec();
+    let actors: Vec<EntityId> = ctx.selected(engine).to_vec();
     let goal_sector_index = host.frontend.input.spatial_hit().selected_sector_idx;
     let goal_override = goal_sector_index.and_then(|idx| {
         engine
@@ -533,14 +659,7 @@ pub fn resolve_left_click_with_planning(
         recorded_gate_routes: Vec::new(),
         recorded_failed_gate_routes: Vec::new(),
     }];
-    if host.frontend.preferences().control_tactical_units() && !tactical_selected.is_empty() {
-        commands.push(PlayerCommand::MoveTacticalUnits {
-            formation: selected_tactical_formation(engine, tactical_selected),
-            soldiers: tactical_selected.to_vec(),
-            destination: map_pt,
-            running: is_double,
-        });
-    }
+    push_tactical_move(&mut commands, host, engine, ctx, map_pt, is_double);
     commands
 }
 

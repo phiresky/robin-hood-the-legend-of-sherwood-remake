@@ -189,7 +189,7 @@ pub enum PrintScreenRequest {
 ///
 /// These are intentionally not inserted into `Engine::titbit_manager`:
 /// they are local UI feedback and must not affect rollback state.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum HostTitbitPreview {
     JumpHelperGhost {
         position: WorldPoint3D,

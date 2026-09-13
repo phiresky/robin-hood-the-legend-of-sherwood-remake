@@ -31,6 +31,31 @@ fn sword_seek_distance_distinguishes_simple_click_from_thrust_a_gesture() {
 
 use crate::host::test_support::{add_pc_with_status, fixture};
 
+const NO_MODS: ClickModifiers = ClickModifiers {
+    shift: false,
+    planning: false,
+    control: false,
+    double: false,
+};
+/// Physical Shift doubles as the planning modifier in these click tests.
+const SHIFT: ClickModifiers = ClickModifiers {
+    shift: true,
+    planning: true,
+    ..NO_MODS
+};
+const PLANNING: ClickModifiers = ClickModifiers {
+    planning: true,
+    ..NO_MODS
+};
+const CTRL: ClickModifiers = ClickModifiers {
+    control: true,
+    ..NO_MODS
+};
+const DOUBLE: ClickModifiers = ClickModifiers {
+    double: true,
+    ..NO_MODS
+};
+
 /// A live, selectable PC at `(x, y)`. Zero-size sprites hit-test as a
 /// 20-unit radius around the entity position, so clicks at the exact
 /// position always register.
@@ -211,8 +236,7 @@ fn world_shield_clicks_select_protectee_then_require_danger_point() {
         MapPoint::new(125.0, 125.0),
         seat,
         Action::Shield,
-        false,
-        false,
+        NO_MODS,
     );
     assert_cmds!(
         first,
@@ -232,8 +256,7 @@ fn world_shield_clicks_select_protectee_then_require_danger_point() {
         MapPoint::new(300.0, 275.0),
         seat,
         Action::Shield,
-        false,
-        false,
+        NO_MODS,
     );
     assert!(matches!(
         second.as_slice(),
@@ -280,8 +303,7 @@ fn portrait_shield_click_only_selects_protectee_before_danger_phase() {
         MapPoint::new(325.0, 250.0),
         seat,
         Action::BigShield,
-        false,
-        false,
+        NO_MODS,
     );
     assert!(matches!(
         danger.first(),
@@ -330,8 +352,7 @@ fn planned_shield_portrait_uses_the_same_two_phase_protocol() {
             danger_point,
             seat,
             Action::Shield,
-            false,
-            true,
+            PLANNING,
         ),
         Action::Shield,
         true,
@@ -540,14 +561,12 @@ fn left_click_empty_ground_without_selection_is_noop_and_clears_cache() {
     host.frontend.input.gestures.element_old_click =
         Some(EntityId::Pc(robin_engine::entity_id::PcId(3)));
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(100.0, 100.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert!(cmds.is_empty());
@@ -560,14 +579,12 @@ fn left_click_on_pc_without_selection_selects_it() {
     let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
     host.frontend.presentation.draw_order.ids.push(pc);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(50.0, 50.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -586,14 +603,12 @@ fn left_click_shift_appends_to_selection() {
     let pc = add_pc(&mut engine, 50.0, 50.0, Posture::Upright);
     host.frontend.presentation.draw_order.ids.push(pc);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(50.0, 50.0),
-        true,
-        false,
-        false,
+        SHIFT,
     );
 
     assert_cmds!(
@@ -617,14 +632,12 @@ fn left_click_ctrl_on_unselected_pc_toggles_selection() {
         .extend([selected, other]);
     select(&mut engine, &assets, selected);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(200.0, 200.0),
-        false,
-        true,
-        false,
+        CTRL,
     );
 
     assert_cmds!(
@@ -648,7 +661,7 @@ fn left_click_ground_with_selection_issues_group_move() {
         });
 
     let dest = MapPoint::new(300.0, 300.0);
-    let cmds = resolve_left_click(&mut host, &engine, &assets, dest, false, false, false);
+    let cmds = resolve_left_click_with_planning(&mut host, &engine, &assets, dest, NO_MODS);
 
     assert_cmds!(
         cmds,
@@ -680,14 +693,12 @@ fn double_click_ground_not_recording_accelerates_instead_of_moving() {
             ..Default::default()
         });
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        true,
+        DOUBLE,
     );
 
     assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
@@ -727,7 +738,8 @@ fn double_click_ground_runs_allies_in_mixed_selection() {
         });
 
     let destination = MapPoint::new(300.0, 300.0);
-    let commands = resolve_left_click(&mut host, &engine, &assets, destination, false, false, true);
+    let commands =
+        resolve_left_click_with_planning(&mut host, &engine, &assets, destination, DOUBLE);
 
     assert_cmds!(
         commands,
@@ -750,14 +762,12 @@ fn left_click_ground_without_valid_move_position_is_noop() {
     select(&mut engine, &assets, pc);
     // valid_position_for_move stays false.
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert!(cmds.is_empty());
@@ -777,14 +787,12 @@ fn double_click_with_unavailable_armed_action_is_swallowed() {
         Action::Whistle
     );
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        true,
+        DOUBLE,
     );
 
     assert!(cmds.is_empty());
@@ -799,14 +807,12 @@ fn whistle_click_launches_and_disarms() {
     select(&mut engine, &assets, pc);
     arm_action(&mut engine, &assets, pc, Action::Whistle);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -828,14 +834,12 @@ fn eat_click_launches_eat_ability() {
     select(&mut engine, &assets, pc);
     arm_action(&mut engine, &assets, pc, Action::Eat);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -857,14 +861,12 @@ fn listen_click_enters_listen_from_inactive_phase() {
     select(&mut engine, &assets, pc);
     arm_action(&mut engine, &assets, pc, Action::Listen);
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -887,14 +889,12 @@ fn purse_click_is_gated_on_valid_trajectory() {
     arm_action(&mut engine, &assets, pc, Action::Purse);
     host.frontend.reject_trajectory_hit();
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert!(cmds.is_empty());
@@ -908,14 +908,12 @@ fn net_click_is_gated_on_valid_trajectory() {
     arm_action(&mut engine, &assets, pc, Action::Net);
     host.frontend.reject_trajectory_hit();
 
-    let cmds = resolve_left_click(
+    let cmds = resolve_left_click_with_planning(
         &mut host,
         &engine,
         &assets,
         MapPoint::new(300.0, 300.0),
-        false,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert!(cmds.is_empty());
@@ -937,8 +935,7 @@ fn beggar_double_click_while_simulating_accelerates() {
         MapPoint::new(300.0, 300.0),
         seat,
         Action::Beggar,
-        true,
-        false,
+        DOUBLE,
     );
 
     assert_cmds!(cmds, vec![PlayerCommand::MakePcFast { pc_id: pc }]);
@@ -958,8 +955,7 @@ fn beggar_click_from_default_posture_enters_beggar() {
         MapPoint::new(300.0, 300.0),
         seat,
         Action::Beggar,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -988,8 +984,7 @@ fn help_to_climb_click_from_default_posture_launches() {
         MapPoint::new(300.0, 300.0),
         seat,
         Action::HelpToClimb,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert_cmds!(
@@ -1018,8 +1013,7 @@ fn help_to_climb_click_while_helping_falls_through_to_walk() {
         MapPoint::new(300.0, 300.0),
         seat,
         Action::HelpToClimb,
-        false,
-        false,
+        NO_MODS,
     );
 
     assert!(cmds.is_empty());
