@@ -513,18 +513,18 @@ pub fn draw_panel(
             // active recording target.
             let upper_top = sh - pos_top_scroll;
             let qa_strip_y = upper_top.saturating_sub(QA_ICON_HEIGHT);
+            // `MacroStore` creates a PC's record lazily (`get_or_insert`) on its
+            // first recorded quick-action step, so a PC that has never recorded
+            // one (or whose recording is armed but has no step yet) legitimately
+            // has no record: that means "no macros", not missing state.
+            let macro_state = engine.portrait_macro(pc_id);
             let recording_slot = if engine.is_qa_recording_for(pc_id) {
-                engine
-                    .portrait_macro(pc_id)
-                    .and_then(|m| m.recording_slot())
+                macro_state.and_then(|m| m.recording_slot())
             } else {
                 None
             };
             for slot_idx in 0..NUMBER_OF_QA_MEMORY_U16 {
-                let has_macro = engine
-                    .portrait_macro(pc_id)
-                    .map(|m| m.has_macro(slot_idx as usize))
-                    .unwrap_or(false);
+                let has_macro = macro_state.is_some_and(|m| m.has_macro(slot_idx as usize));
                 let is_recording_slot = recording_slot == Some(slot_idx as u8);
                 if !has_macro && !is_recording_slot {
                     continue;
@@ -584,17 +584,17 @@ pub fn draw_panel(
                     // to the slot's titbit phase if one is still live, so
                     // interact-only flows (`LaunchInteraction`) keep their
                     // player/NPC interaction fallback from `commands.rs`.
-                    let frame_from_last_step = engine
-                        .portrait_macro(pc_id)
-                        .and_then(|m| m.slot(slot_idx as usize))
+                    let macro_state =
+                        macro_state.expect("has_macro implies the PC's macro record exists");
+                    let frame_from_last_step = macro_state
+                        .slot(slot_idx as usize)
                         .and_then(|s| s.steps.last())
                         .and_then(|step| {
                             robin_engine::macro_store::action_to_qa_frame(step.action)
                         });
                     let phase_from_slot_titbit = || {
-                        engine
-                            .portrait_macro(pc_id)
-                            .and_then(|m| m.get_slot_titbit(slot_idx as usize))
+                        macro_state
+                            .get_slot_titbit(slot_idx as usize)
                             .and_then(|id| engine.titbit_manager().get_phase(id))
                     };
                     // The titbit phase is target/command-specific (Take,
@@ -605,12 +605,10 @@ pub fn draw_panel(
                     // shifting-titbit renderer, which then draws a second
                     // copy of the sprite offset by `(3, 0)`.  The flag is
                     // driven by `is_running_for_qa(...)` on the slot's
-                    // titbit id.
-                    let run = engine
-                        .portrait_macro(pc_id)
-                        .and_then(|m| m.get_slot_titbit(slot_idx as usize))
-                        .map(|id| engine.titbit_manager().is_running_for_qa(id))
-                        .unwrap_or(false);
+                    // titbit id; a slot without a live titbit is not running.
+                    let run = macro_state
+                        .get_slot_titbit(slot_idx as usize)
+                        .is_some_and(|id| engine.titbit_manager().is_running_for_qa(id));
                     if let (Some(tbr), Some(frame)) = (titbit_renderer_opt.as_mut(), frame) {
                         let shift_px = shift_phase.round() as i32;
                         tbr.blit_ui_frame(
