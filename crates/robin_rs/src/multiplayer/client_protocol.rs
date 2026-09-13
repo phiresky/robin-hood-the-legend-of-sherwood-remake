@@ -4,10 +4,10 @@
 //! message ordering and authenticated metadata checks; it never emits simulation
 //! events or acknowledges content before the adapter has prepared it.
 //!
-//! Ordinary gameplay delivery is shared in `client_gameplay`; ranked transitions
-//! remain adapter-specific. Native
-//! unresolved ranked BeginSim downgrades to browse-only; browser rejects it.
-//! Those intentional adapter policies must not be accidentally normalized.
+//! Ordinary gameplay delivery is shared in `client_gameplay`; the in-session
+//! state machine (including the single browse-only policy for a BeginSim or
+//! co-sign request released before ranked admission) lives in
+//! `client_session`, with ranked trust decisions behind its adapter traits.
 
 use super::{
     InboundFramePolicy, MultiplayerSessionId, NetFrameClass, NetMsg, decode_msg, encode_msg,

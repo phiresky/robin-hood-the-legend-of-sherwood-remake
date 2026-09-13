@@ -26,20 +26,20 @@ use server_protocol::{
     ReadyBarrier, SnapshotTransitions,
 };
 
-use super::client_protocol::{ClientSessionMetadata, WelcomeData, validate_reconnect_state};
 #[cfg(test)]
 use super::encode_msg;
+use super::framing::{read_frame, write_frame};
 use super::identity::{
     GAME_ALPN, bind_endpoint, bind_endpoint_with_relay, game_secret_key, parse_connect_addr,
 };
+use super::ranked_client::ranked_lifecycle_lock;
 use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot,
     MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerSessionId, NET_PROTOCOL_VERSION,
     NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason, RankedJoinAccepted,
     RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinClaimDocument,
     RankedJoinResponse, RankedParticipantRosterDocument, RankedSessionGenesisDocument,
-    SharedClientLeaderboardCoSignState, SharedClientRankedJoinState,
-    verify_leaderboard_cosign_response,
+    SharedClientRankedJoinState, verify_leaderboard_cosign_response,
 };
 use crate::distributed_mod::{
     DistributedModPackage, ValidatedDistributedMod, make_distributed_mod_offer,
@@ -50,7 +50,7 @@ use crate::leaderboard_ranked_session::{
     SharedRankedSessionLifecycle, decode_ranked_wire_document, encode_ranked_wire_document,
     sign_named_seat_join,
 };
-use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
+use iroh::endpoint::{RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 // Non-poisoning mutex: a panicking worker must not turn every later
 // lock of the shared peer state into a second panic.
@@ -65,7 +65,6 @@ use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use robin_run_protocol::{
     CampaignContinuationPreflightRequestClaimV1, LeaderboardCoSignInstanceV1,
     LeaderboardCoSignRequestV1, ParticipantPublicDisclosureV1, ParticipantSignatureV1, PublicKey32,
-    Validate as _,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -241,37 +240,7 @@ fn pending_host_session_continuation(
 }
 
 // ─── Framing ─────────────────────────────────────────────────────
-
-async fn write_frame(send: &mut SendStream, msg: &NetMsg) -> Result<(), String> {
-    let (header, bytes) = super::client_protocol::encode_frame(msg)?;
-    send.write_all(&header)
-        .await
-        .map_err(|e| format!("write frame header: {e}"))?;
-    send.write_all(&bytes)
-        .await
-        .map_err(|e| format!("write frame body: {e}"))?;
-    Ok(())
-}
-
-/// Read one frame.  `Ok(None)` means the stream finished cleanly at a
-/// frame boundary (graceful close).
-async fn read_frame(
-    recv: &mut RecvStream,
-    policy: InboundFramePolicy,
-) -> Result<Option<NetMsg>, String> {
-    let mut header = [0u8; 5];
-    match recv.read_exact(&mut header).await {
-        Ok(()) => {}
-        Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
-        Err(e) => return Err(format!("read frame header: {e}")),
-    }
-    let (class, len) = super::client_protocol::decode_header(header, policy)?;
-    let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf)
-        .await
-        .map_err(|e| format!("read frame body: {e}"))?;
-    super::client_protocol::decode_body(class, &buf).map(Some)
-}
+// `write_frame`/`read_frame` are shared with the browser client in `framing`.
 
 async fn read_frame_bounded_with_timeout(
     recv: &mut RecvStream,

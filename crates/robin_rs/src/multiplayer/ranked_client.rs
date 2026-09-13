@@ -59,6 +59,19 @@ use robin_run_protocol::{
     ReplaySessionGenesisV1, Validate,
 };
 
+/// Lock a ranked lifecycle, keeping the authoritative state if a panicking
+/// holder poisoned it. Shared by the native server and both client adapters.
+pub(crate) fn ranked_lifecycle_lock(
+    lifecycle: &crate::leaderboard_ranked_session::SharedRankedSessionLifecycle,
+) -> std::sync::MutexGuard<'_, crate::leaderboard_ranked_session::RankedSessionLifecycle> {
+    lifecycle.lock().unwrap_or_else(|poisoned| {
+        tracing::error!(
+            "ranked session lifecycle lock was poisoned; retaining authoritative state"
+        );
+        poisoned.into_inner()
+    })
+}
+
 /// A multiplayer campaign can span every shipped mission. This bound covers
 /// both purpose-specific requests for every allowed participant at every
 /// mission end with ample headroom, while keeping a malicious or defective

@@ -9,11 +9,15 @@
 
 use super::*;
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub(super) mod browser_ranked;
 pub(super) mod client_gameplay;
 pub(super) mod client_outgoing;
 pub(super) mod client_protocol;
+pub(super) mod client_session;
 pub(super) mod content_transfer;
 pub use client_protocol::ClientSessionMetadata;
+pub use client_session::ClientHandle;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
@@ -50,16 +54,15 @@ pub mod rendezvous;
 pub(super) mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerChannels, ServerConfig,
-    ServerHandle, connect_client, connect_client_in_campaign, start_server_in_campaign,
+    HostedModContent, MultiplayerCampaignSession, ServerChannels, ServerConfig, ServerHandle,
+    connect_client, connect_client_in_campaign, start_server_in_campaign,
 };
 
 #[cfg(target_arch = "wasm32")]
 pub(super) mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::{
-    ClientHandle, MultiplayerCampaignSession, ServerHandle, connect_client,
-    connect_client_in_campaign,
+    MultiplayerCampaignSession, ServerHandle, connect_client, connect_client_in_campaign,
 };
 
 /// Owns every worker and platform resource for one multiplayer transport.

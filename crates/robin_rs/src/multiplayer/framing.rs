@@ -118,3 +118,39 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         | NetMsg::LeaderboardCoSignResponse(_) => NetFrameClass::Control,
     }
 }
+
+/// Write one length-prefixed frame. Shared by the native server, the native
+/// client and the browser client; all three speak iroh bidirectional streams.
+pub(super) async fn write_frame(
+    send: &mut iroh::endpoint::SendStream,
+    msg: &NetMsg,
+) -> Result<(), String> {
+    let (header, bytes) = super::client_protocol::encode_frame(msg)?;
+    send.write_all(&header)
+        .await
+        .map_err(|e| format!("write frame header: {e}"))?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|e| format!("write frame body: {e}"))?;
+    Ok(())
+}
+
+/// Read one frame.  `Ok(None)` means the stream finished cleanly at a
+/// frame boundary (graceful close).
+pub(super) async fn read_frame(
+    recv: &mut iroh::endpoint::RecvStream,
+    policy: InboundFramePolicy,
+) -> Result<Option<NetMsg>, String> {
+    let mut header = [0u8; 5];
+    match recv.read_exact(&mut header).await {
+        Ok(()) => {}
+        Err(iroh::endpoint::ReadExactError::FinishedEarly(0)) => return Ok(None),
+        Err(e) => return Err(format!("read frame header: {e}")),
+    }
+    let (class, len) = super::client_protocol::decode_header(header, policy)?;
+    let mut buf = vec![0u8; len];
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| format!("read frame body: {e}"))?;
+    super::client_protocol::decode_body(class, &buf).map(Some)
+}

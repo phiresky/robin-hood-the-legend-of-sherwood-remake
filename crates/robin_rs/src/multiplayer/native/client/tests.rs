@@ -1,33 +1,78 @@
-//! Native client transport tests: server-to-client wire handling,
-//! outbound gameplay validation, and reconnect state.
+//! Native client transport tests: server-to-client wire handling through the
+//! shared session handler, outbound gameplay validation, and reconnect state.
 use super::super::test_support::{leaderboard_request, signed_response};
 use super::{
-    SharedClientLeaderboardCoSignState, client_gameplay_wire_msg, discard_session_outbound,
-    handle_client_wire_msg, validate_reconnect_state,
+    ClientRankedAdmission as _, ClientTransport, NativeClientTransport, NativeRankedAdmission,
 };
+use crate::leaderboard_ranked_session::RankedSessionLifecycle;
+use crate::multiplayer::SharedClientLeaderboardCoSignState;
+use crate::multiplayer::client_protocol::validate_reconnect_state;
+use crate::multiplayer::client_session::tests::{
+    assert_premature_begin_sim_downgrades, assert_premature_cosign_request_downgrades, begin_sim,
+    handle,
+};
+use robin_engine::multiplayer::{NetEvent, NetMsg, NetOutbound};
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::LeaderboardCoSignPurposeV1;
 use std::sync::Arc;
+use std::sync::mpsc::Sender;
+
+/// A welcomed native admission with no prepared ranked setup yet.
+fn admission() -> NativeRankedAdmission {
+    let (_setup_tx, setup_rx) = crate::multiplayer::client_session::ranked_setup_channel();
+    let ranked = NativeRankedAdmission::new(
+        Arc::new(std::sync::Mutex::new(
+            RankedSessionLifecycle::awaiting_prepared_inputs(),
+        )),
+        setup_rx,
+        None,
+        [3; 32],
+        [4; 32],
+    );
+    ranked.welcomed(PlayerId(1));
+    ranked
+}
+
+fn handle_native(
+    incoming_tx: &Sender<NetEvent>,
+    cosign_state: &SharedClientLeaderboardCoSignState,
+    message: NetMsg,
+) -> Result<(), String> {
+    handle(&admission(), incoming_tx, cosign_state, message)
+}
+
+fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
+    let (incoming, _receiver) = std::sync::mpsc::channel();
+    crate::multiplayer::client_outgoing::prepare(
+        outgoing,
+        &incoming,
+        &Default::default(),
+        crate::multiplayer::client_outgoing::ClientPublicationAuthority {
+            co_sign_allowed: false,
+            durable_public_key: None,
+        },
+    )
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "outgoing publication has no wire frame".to_owned())
+}
+
+#[test]
+fn native_premature_begin_sim_downgrades_to_browse_only() {
+    assert_premature_begin_sim_downgrades(&admission());
+}
+
+#[test]
+fn native_premature_cosign_request_downgrades_to_browse_only() {
+    assert_premature_cosign_request_downgrades(&admission());
+}
 
 #[test]
 fn begin_sim_requires_a_live_local_receiver() {
     let (tx, rx) = std::sync::mpsc::channel();
-    let state = std::sync::Arc::new(Default::default());
-    let begin = || super::NetMsg::BeginSim {
-        frame: 9,
-        start_epoch_ms: 12,
-    };
-    super::handle_client_wire_msg(&tx, &state, None, begin()).unwrap();
-    assert!(matches!(
-        rx.try_recv().unwrap(),
-        super::NetEvent::BeginSim {
-            frame: 9,
-            start_epoch_ms: 12
-        }
-    ));
+    let state = Arc::new(Default::default());
     drop(rx);
     assert!(
-        super::handle_client_wire_msg(&tx, &state, None, begin())
+        handle_native(&tx, &state, begin_sim())
             .unwrap_err()
             .contains("channel is closed")
     );
@@ -57,21 +102,19 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
     let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
     let cosign_state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     assert!(
-        handle_client_wire_msg(
+        handle_native(
             &incoming_tx,
             &cosign_state,
-            None,
-            super::NetMsg::ContentOffer { offer: offer() },
+            NetMsg::ContentOffer { offer: offer() },
         )
         .unwrap_err()
         .contains("invalid native session message")
     );
     assert!(
-        handle_client_wire_msg(
+        handle_native(
             &incoming_tx,
             &cosign_state,
-            None,
-            super::NetMsg::ContentChunk {
+            NetMsg::ContentChunk {
                 full_mod_sha256: [1; 32],
                 offset: 0,
                 total_bytes: 1,
@@ -81,11 +124,10 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
         .is_err()
     );
     assert!(
-        handle_client_wire_msg(
+        handle_native(
             &incoming_tx,
             &cosign_state,
-            None,
-            super::NetMsg::Reject {
+            NetMsg::Reject {
                 reason: "session revoked".into(),
             },
         )
@@ -93,11 +135,10 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
         .contains("session revoked")
     );
     assert!(
-        handle_client_wire_msg(
+        handle_native(
             &incoming_tx,
             &cosign_state,
-            None,
-            super::NetMsg::Welcome {
+            NetMsg::Welcome {
                 your_seat: PlayerId(1),
                 mission_id: "late".into(),
                 mission_seed: 1,
@@ -110,25 +151,17 @@ fn native_gameplay_rejects_late_content_and_opening_messages() {
         .unwrap_err()
         .contains("invalid native session message")
     );
-    assert!(
-        handle_client_wire_msg(
-            &incoming_tx,
-            &cosign_state,
-            None,
-            super::NetMsg::Note("legal".into()),
-        )
-        .is_ok()
-    );
+    assert!(handle_native(&incoming_tx, &cosign_state, NetMsg::Note("legal".into())).is_ok());
     assert!(matches!(
         incoming_rx.recv().unwrap(),
-        super::NetEvent::Note(note) if note == "legal"
+        NetEvent::Note(note) if note == "legal"
     ));
 }
 
 #[test]
 fn native_gameplay_rejects_host_only_and_late_content_outbound() {
     assert!(
-        client_gameplay_wire_msg(super::NetOutbound::StateHash {
+        client_gameplay_wire_msg(NetOutbound::StateHash {
             frame: 1,
             hash: Some(2),
             clock_frame: Some(3),
@@ -138,15 +171,15 @@ fn native_gameplay_rejects_host_only_and_late_content_outbound() {
         .contains("host-only")
     );
     assert!(
-        client_gameplay_wire_msg(super::NetOutbound::ContentReady {
+        client_gameplay_wire_msg(NetOutbound::ContentReady {
             full_mod_sha256: [1; 32],
         })
         .unwrap_err()
         .contains("after gameplay began")
     );
     assert!(matches!(
-        client_gameplay_wire_msg(super::NetOutbound::ReadyToSim { frame: 7 }).unwrap(),
-        super::NetMsg::ReadyToSim { frame: 7 }
+        client_gameplay_wire_msg(NetOutbound::ReadyToSim { frame: 7 }).unwrap(),
+        NetMsg::ReadyToSim { frame: 7 }
     ));
 }
 
@@ -155,23 +188,24 @@ fn client_wire_handler_never_exposes_unarmed_or_wrong_direction_cosign() {
     let request = leaderboard_request(LeaderboardCoSignPurposeV1::Submission, 73);
     let state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
-    handle_client_wire_msg(
+    // Before ranked admission the host request is dropped, never exposed.
+    handle_native(
         &incoming_tx,
         &state,
-        None,
-        robin_engine::multiplayer::NetMsg::LeaderboardCoSignRequest(request),
+        NetMsg::LeaderboardCoSignRequest(request),
     )
     .unwrap();
     assert!(incoming_rx.try_recv().is_err());
+    // The co-sign gate itself exposes only an exact locally armed request.
+    assert_eq!(state.receive_wire_request(request).unwrap(), None);
     assert_eq!(state.arm_request(request).unwrap(), Some(request));
 
     let response = signed_response(&request, &iroh::SecretKey::generate());
     assert!(
-        handle_client_wire_msg(
+        handle_native(
             &incoming_tx,
             &state,
-            None,
-            robin_engine::multiplayer::NetMsg::LeaderboardCoSignResponse(response),
+            NetMsg::LeaderboardCoSignResponse(response),
         )
         .unwrap_err()
         .contains("client-only")
@@ -292,11 +326,10 @@ fn reconnect_rejects_wrong_session_mission_config_or_speech_locale() {
 fn host_reconnect_directive_ends_the_complete_client_session() {
     let (incoming_tx, _incoming_rx) = std::sync::mpsc::channel();
     let cosign_state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
-    let error = handle_client_wire_msg(
+    let error = handle_native(
         &incoming_tx,
         &cosign_state,
-        None,
-        robin_engine::multiplayer::NetMsg::ReconnectRequired {
+        NetMsg::ReconnectRequired {
             reason: "late input predates rollback horizon".to_string(),
         },
     )
@@ -309,16 +342,19 @@ fn host_reconnect_directive_ends_the_complete_client_session() {
 fn reconnect_discards_commands_queued_for_abandoned_session() {
     let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
     sender
-        .send(robin_engine::multiplayer::NetOutbound::Input {
+        .send(NetOutbound::Input {
             origin_frame: 41,
             command: robin_engine::player_command::PlayerCommand::CrouchDown,
         })
         .expect("queue old-session command");
     sender
-        .send(robin_engine::multiplayer::NetOutbound::ReadyToSim { frame: 40 })
+        .send(NetOutbound::ReadyToSim { frame: 40 })
         .expect("queue old-session readiness");
 
-    assert_eq!(discard_session_outbound(&mut receiver), 2);
+    assert_eq!(
+        <NativeClientTransport<'_> as ClientTransport>::discard_outbound(&mut receiver),
+        2
+    );
     assert!(receiver.try_recv().is_err());
 }
 
@@ -331,11 +367,10 @@ fn client_transition_events_preserve_exact_prepare_bytes_and_commit_id() {
         sequence: 9,
     };
     let save_bytes = vec![0, 17, 34, 255];
-    handle_client_wire_msg(
+    handle_native(
         &incoming_tx,
         &cosign_state,
-        None,
-        robin_engine::multiplayer::NetMsg::PrepareSnapshotTransition {
+        NetMsg::PrepareSnapshotTransition {
             id,
             payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
                 mission_id: 71,
@@ -346,7 +381,7 @@ fn client_transition_events_preserve_exact_prepare_bytes_and_commit_id() {
     .unwrap();
     assert!(matches!(
         incoming_rx.recv().unwrap(),
-        robin_engine::multiplayer::NetEvent::PrepareSnapshotTransition {
+        NetEvent::PrepareSnapshotTransition {
             id: decoded_id,
             payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
                 mission_id: 71,
@@ -355,16 +390,15 @@ fn client_transition_events_preserve_exact_prepare_bytes_and_commit_id() {
         } if decoded_id == id && decoded_bytes == save_bytes
     ));
 
-    handle_client_wire_msg(
+    handle_native(
         &incoming_tx,
         &cosign_state,
-        None,
-        robin_engine::multiplayer::NetMsg::CommitSnapshotTransition { id },
+        NetMsg::CommitSnapshotTransition { id },
     )
     .unwrap();
     assert!(matches!(
         incoming_rx.recv().unwrap(),
-        robin_engine::multiplayer::NetEvent::CommitSnapshotTransition { id: decoded_id }
+        NetEvent::CommitSnapshotTransition { id: decoded_id }
             if decoded_id == id
     ));
 }

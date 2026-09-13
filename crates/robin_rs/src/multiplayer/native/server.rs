@@ -810,17 +810,6 @@ pub(super) async fn run_server(
     tracing::info!("multiplayer server runtime stopped");
 }
 
-pub(super) fn ranked_lifecycle_lock(
-    lifecycle: &SharedRankedSessionLifecycle,
-) -> std::sync::MutexGuard<'_, RankedSessionLifecycle> {
-    lifecycle.lock().unwrap_or_else(|poisoned| {
-        tracing::error!(
-            "ranked session lifecycle lock was poisoned; retaining authoritative state"
-        );
-        poisoned.into_inner()
-    })
-}
-
 pub(super) fn validate_official_ranked_session(
     context: &ServerContext,
     session: &crate::leaderboard_ranked_session::RankedSessionHost,
