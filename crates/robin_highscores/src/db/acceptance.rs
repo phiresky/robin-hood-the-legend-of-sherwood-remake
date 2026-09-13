@@ -474,7 +474,7 @@ async fn validate_campaign_predecessor(
                         )
                     })?
                 || fixed_32(predecessor.try_get("config_id")?)? != config_id
-                || fixed_32(predecessor.try_get("ruleset_id")?)? != ruleset_id
+                || decode_ruleset_id(&predecessor)? != ruleset_id
                 || predecessor_competition != competition_manifest_id
                 || predecessor
                     .try_get::<String, _>("canonical_campaign_state_json")?

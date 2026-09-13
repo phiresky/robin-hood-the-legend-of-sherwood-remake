@@ -2195,6 +2195,8 @@ impl Database {
             ));
         }
         let chain_owner_public_key = fixed_32(owner_rows[0].try_get("host_public_key")?)?;
+        let (max_concurrent_players, participant_instance_count) =
+            decode_player_and_instance_counts(&row)?;
         Ok(CampaignPredecessor {
             run_id: row.try_get("id")?,
             chain_id: row
@@ -2211,7 +2213,7 @@ impl Database {
             content_manifest_id: fixed_32(row.try_get("content_manifest_id")?)?,
             campaign_content_manifest_id: fixed_32(row.try_get("campaign_content_manifest_id")?)?,
             rules_config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             competition_manifest_id: row
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
@@ -2223,16 +2225,8 @@ impl Database {
                     })?,
             )
             .map_err(|_| DbError::Corrupt("campaign session ordinal out of range".to_owned()))?,
-            max_concurrent_players: checked_count(
-                &row,
-                "max_concurrent_players",
-                "player count out of range",
-            )?,
-            participant_instance_count: checked_count(
-                &row,
-                "participant_instance_count",
-                "participant instance count out of range",
-            )?,
+            max_concurrent_players,
+            participant_instance_count,
             chain_owner_public_key,
             participants,
         })
@@ -2566,7 +2560,7 @@ impl Database {
             controller_public_key,
             campaign_content_manifest_id: fixed_32(row.try_get("campaign_content_manifest_id")?)?,
             config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             competition_manifest_id: row
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
@@ -2918,6 +2912,57 @@ fn checked_count<T: TryFrom<i64>>(
     corruption: &'static str,
 ) -> Result<T, DbError> {
     T::try_from(row.try_get::<i64, _>(column)?).map_err(|_| DbError::Corrupt(corruption.to_owned()))
+}
+
+/// Decode the 32-byte `ruleset_id` column shared by run, campaign and object rows.
+fn decode_ruleset_id(row: &SqliteRow) -> Result<[u8; 32], DbError> {
+    fixed_32(row.try_get("ruleset_id")?)
+}
+
+/// Decode `max_concurrent_players` and `participant_instance_count` with their
+/// canonical out-of-range corruption messages (checked, never wrapping).
+fn decode_player_and_instance_counts<I: TryFrom<i64>>(
+    row: &SqliteRow,
+) -> Result<(u16, I), DbError> {
+    let max_concurrent_players =
+        checked_count(row, "max_concurrent_players", "player count out of range")?;
+    let participant_instance_count = checked_count(
+        row,
+        "participant_instance_count",
+        "participant instance count out of range",
+    )?;
+    Ok((max_concurrent_players, participant_instance_count))
+}
+
+/// The four public participant-count columns of a verified run or board row.
+struct ParticipantCounts {
+    max_concurrent_players: u16,
+    participant_instance_count: u32,
+    named_participant_instance_count: u32,
+    anonymous_participant_instance_count: u32,
+}
+
+impl ParticipantCounts {
+    /// Columns are read and range-checked in declaration order; each
+    /// out-of-range value yields its canonical `DbError::Corrupt` message.
+    fn decode(row: &SqliteRow) -> Result<Self, DbError> {
+        let (max_concurrent_players, participant_instance_count) =
+            decode_player_and_instance_counts(row)?;
+        Ok(Self {
+            max_concurrent_players,
+            participant_instance_count,
+            named_participant_instance_count: checked_count(
+                row,
+                "named_participant_instance_count",
+                "named participant count out of range",
+            )?,
+            anonymous_participant_instance_count: checked_count(
+                row,
+                "anonymous_participant_instance_count",
+                "anonymous participant count out of range",
+            )?,
+        })
+    }
 }
 
 fn optional_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<Option<u32>, DbError> {
