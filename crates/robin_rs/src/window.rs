@@ -42,6 +42,7 @@ use winit::window::{Window, WindowId};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::touch_input::{TouchClassifier, TouchOutput};
 use robin_engine::graphic_config::GraphicConfig;
+use robin_util::sync::lock;
 
 #[cfg(not(target_arch = "wasm32"))]
 // The unoptimized native async launch chain can consume nearly 8 MiB before
@@ -240,25 +241,21 @@ impl SharedSurface {
     }
 
     pub fn configure(&self, device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) {
-        self.inner
-            .lock()
-            .expect("surface mutex poisoned")
+        lock(&self.inner)
             .as_ref()
             .expect("surface missing")
             .configure(device, config);
     }
 
     pub fn get_current_texture(&self) -> wgpu::CurrentSurfaceTexture {
-        self.inner
-            .lock()
-            .expect("surface mutex poisoned")
+        lock(&self.inner)
             .as_ref()
             .expect("surface missing")
             .get_current_texture()
     }
 
     fn replace(&self, surface: wgpu::Surface<'static>) {
-        let mut guard = self.inner.lock().expect("surface mutex poisoned");
+        let mut guard = lock(&self.inner);
         #[cfg(target_os = "android")]
         if let Some(old_surface) = guard.take() {
             // Android/wgpu 29.0.1: dropping a Vulkan surface after the
@@ -276,7 +273,7 @@ impl SharedSurface {
 impl Drop for SharedSurface {
     fn drop(&mut self) {
         if Arc::strong_count(&self.inner) == 1
-            && let Some(surface) = self.inner.lock().expect("surface mutex poisoned").take()
+            && let Some(surface) = lock(&self.inner).take()
         {
             // Android/wgpu 29.0.1: see `replace`. During process
             // shutdown this is preferable to a destructor abort while the
@@ -331,11 +328,7 @@ pub extern "system" fn Java_io_github_phiresky_robinhood_RobinHoodActivity_nativ
     _this: *mut std::ffi::c_void,
 ) {
     tracing::info!("Android Back pressed");
-    if let Some(tx) = android_back_tx()
-        .lock()
-        .expect("android back tx poisoned")
-        .as_ref()
-    {
+    if let Some(tx) = lock(android_back_tx()).as_ref() {
         report_window_send(tx.try_send(HostMsg::Event(GameEvent::MenuToggleRequested)));
     }
 }
@@ -354,15 +347,11 @@ fn game_window_slot() -> &'static std::sync::Mutex<Option<Arc<Window>>> {
 }
 
 fn set_game_window(window: Arc<Window>) {
-    *game_window_slot().lock().expect("game window poisoned") = Some(window);
+    *lock(game_window_slot()) = Some(window);
 }
 
 fn with_game_window<F: FnOnce(&Window)>(f: F) {
-    if let Some(w) = game_window_slot()
-        .lock()
-        .expect("game window poisoned")
-        .as_ref()
-    {
+    if let Some(w) = lock(game_window_slot()).as_ref() {
         f(w);
     }
 }
@@ -1675,7 +1664,7 @@ where
     install_browser_lifecycle_autosave(lifecycle_autosave_requested.clone())?;
     #[cfg(target_os = "android")]
     {
-        *android_back_tx().lock().expect("android back tx poisoned") = Some(events_tx.clone());
+        *lock(android_back_tx()) = Some(events_tx.clone());
     }
 
     // The game future receives the bare winit window through this

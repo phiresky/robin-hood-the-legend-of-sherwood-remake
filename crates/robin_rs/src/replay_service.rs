@@ -3,6 +3,7 @@
 //! The composition root shares one service. Recorder writers carry generation
 //! authority; snapshots own immutable chunks; pending launches reject duplicates.
 use robin_engine::replay as engine_replay;
+use robin_util::sync::lock;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -97,7 +98,7 @@ impl ReplayService {
     /// Single-slot admission is first-accepted-wins until the launch is consumed.
     /// A rejected request never displaces an already acknowledged launch.
     pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
-        let mut pending = self.pending.lock().expect("pending replay poisoned");
+        let mut pending = lock(&self.pending);
         if pending.is_some() {
             return Err(
                 "a replay launch is already pending; consume it before queuing another".into(),
@@ -107,12 +108,10 @@ impl ReplayService {
         Ok(())
     }
     pub fn take_pending(&self) -> Option<PendingReplay> {
-        self.pending.lock().expect("pending replay poisoned").take()
+        lock(&self.pending).take()
     }
     pub fn pending_mission(&self) -> Option<String> {
-        self.pending
-            .lock()
-            .expect("pending replay poisoned")
+        lock(&self.pending)
             .as_ref()
             .map(|p| p.data.header().mission_id.clone())
     }
@@ -122,10 +121,7 @@ impl ReplayService {
     }
     /// Invalidates active recording without touching already frozen snapshots.
     pub(crate) fn invalidate(&self, reason: impl Into<String>) {
-        *self
-            .capture_recorder
-            .lock()
-            .expect("capture recorder poisoned") = None;
+        *lock(&self.capture_recorder) = None;
         self.begin_recording().poison(reason);
     }
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
@@ -153,10 +149,7 @@ impl ReplayService {
         let (complete, result) = async_channel::bounded(1);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut worker = self
-                .export_worker
-                .lock()
-                .expect("replay export worker poisoned");
+            let mut worker = lock(&self.export_worker);
             match worker.sender() {
                 Ok(sender) => try_enqueue_native_replay_export(sender, snapshot, complete),
                 Err(error) => deliver_export(complete, Err(error)),
@@ -269,24 +262,16 @@ impl ReplayRecordingControl {
         &self,
         recorder: Option<crate::replay_recording::SharedReplayRecorder>,
     ) {
-        *self
-            .0
-            .capture_recorder
-            .lock()
-            .expect("capture recorder poisoned") = recorder;
-        *self.0.ranked_source.lock().expect("ranked source poisoned") = None;
-        *self
-            .0
-            .restored_ranked
-            .lock()
-            .expect("ranked restore poisoned") = None;
+        *lock(&self.0.capture_recorder) = recorder;
+        *lock(&self.0.ranked_source) = None;
+        *lock(&self.0.restored_ranked) = None;
     }
 
     pub(crate) fn set_ranked_source(
         &self,
         source: crate::game_session::leaderboard_runtime::RankedMissionAdmission,
     ) {
-        *self.0.ranked_source.lock().expect("ranked source poisoned") = Some(source);
+        *lock(&self.0.ranked_source) = Some(source);
         self.checkpoint_ranked_input();
     }
 
@@ -294,25 +279,16 @@ impl ReplayRecordingControl {
         &self,
         input: Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>,
     ) {
-        *self.0.ranked_source.lock().expect("ranked source poisoned") = input
+        *lock(&self.0.ranked_source) = input
             .as_ref()
             .ok()
             .cloned()
             .map(crate::game_session::leaderboard_runtime::RankedMissionAdmission::Authorized);
-        *self
-            .0
-            .restored_ranked
-            .lock()
-            .expect("ranked restore poisoned") = Some(input);
+        *lock(&self.0.restored_ranked) = Some(input);
     }
 
     pub(crate) fn checkpoint_ranked_input(&self) {
-        let source = self
-            .0
-            .ranked_source
-            .lock()
-            .expect("ranked source poisoned")
-            .clone();
+        let source = lock(&self.0.ranked_source).clone();
         let Some(source) = source else {
             return;
         };
@@ -342,11 +318,7 @@ impl ReplayRecordingControl {
     }
 
     pub(crate) fn capture_recorder(&self) -> Option<crate::replay_recording::SharedReplayRecorder> {
-        self.0
-            .capture_recorder
-            .lock()
-            .expect("capture recorder poisoned")
-            .clone()
+        lock(&self.0.capture_recorder).clone()
     }
     /// Persist a fresh snapshot's save event at the recording owner's current
     /// boundary, then attach its archive link before publication. Publication
@@ -383,11 +355,7 @@ impl ReplayExports {
     pub(crate) fn restored_ranked_input(
         &self,
     ) -> Option<Result<crate::leaderboard_mission_end::MissionEndSubmissionInput, String>> {
-        self.0
-            .restored_ranked
-            .lock()
-            .expect("ranked restore poisoned")
-            .clone()
+        lock(&self.0.restored_ranked).clone()
     }
 
     pub(crate) fn same_service(&self, other: &Self) -> bool {
@@ -607,7 +575,7 @@ impl ReplaySpool {
     }
 
     fn begin(&self) -> ReplaySpoolWriter {
-        let mut state = self.inner.lock().expect("replay spool poisoned");
+        let mut state = lock(&self.inner);
         state.generation = state
             .generation
             .checked_add(1)
@@ -624,7 +592,7 @@ impl ReplaySpool {
     }
 
     fn snapshot(&self) -> Result<ReplaySnapshot, String> {
-        let state = self.inner.lock().expect("replay spool poisoned");
+        let state = lock(&self.inner);
         if let Some(error) = &state.failure {
             return Err(format!("active replay spool is unavailable: {error}"));
         }
@@ -658,7 +626,7 @@ impl ReplaySpoolWriter {
     }
 
     fn preflight(&self, additional: usize) -> std::io::Result<()> {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        let mut state = lock(&self.spool.inner);
         if state.generation != self.generation {
             return Err(Self::io_error(
                 "replay spool writer belongs to an earlier mission",
@@ -706,7 +674,7 @@ impl ReplaySpoolWriter {
     /// Permanently invalidate this mission's spool after the durable primary
     /// reports an ambiguous write or flush failure.
     pub fn poison(&self, reason: impl Into<String>) {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        let mut state = lock(&self.spool.inner);
         if state.generation == self.generation && state.failure.is_none() {
             state.failure = Some(reason.into());
         }
@@ -721,7 +689,7 @@ impl std::io::Write for ReplaySpoolWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut state = self.spool.inner.lock().expect("replay spool poisoned");
+        let mut state = lock(&self.spool.inner);
         if state.generation != self.generation {
             return Err(Self::io_error(
                 "replay spool writer belongs to an earlier mission",
@@ -912,7 +880,7 @@ mod tests {
                 deliver_export(job.complete, job.snapshot.compact_sync());
             }
         });
-        *service.export_worker.lock().unwrap() = NativeExportWorker::Running { sender, thread };
+        *lock(&service.export_worker) = NativeExportWorker::Running { sender, thread };
         let running = service.exports().export();
         started_rx
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -938,7 +906,7 @@ mod tests {
         assert_eq!(error.to_string(), "replay export service is shut down");
         futures::executor::block_on(service.shutdown()).unwrap();
         assert!(!matches!(
-            *service.export_worker.lock().unwrap(),
+            *lock(&service.export_worker),
             NativeExportWorker::Running { .. }
         ));
     }
@@ -976,7 +944,7 @@ mod tests {
     fn llvm_export_worker_failure_is_joined_and_remains_reportable() {
         let service = ReplayService::default();
         let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
-        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+        *lock(&service.export_worker) = NativeExportWorker::Running {
             sender,
             thread: std::thread::spawn(|| panic!("injected export worker failure")),
         };
@@ -987,7 +955,7 @@ mod tests {
             error
         );
         assert!(!matches!(
-            *service.export_worker.lock().unwrap(),
+            *lock(&service.export_worker),
             NativeExportWorker::Running { .. }
         ));
         let export_error = service.export().recv_blocking().unwrap().unwrap_err();
@@ -1009,7 +977,7 @@ mod tests {
         record_export_fixture(&service, "worker-disconnected");
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         drop(receiver);
-        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+        *lock(&service.export_worker) = NativeExportWorker::Running {
             sender,
             // This fixture owns the receiver directly to control queue timing.
             thread: std::thread::spawn(|| {}),
@@ -1027,7 +995,7 @@ mod tests {
         // Hold the worker queue explicitly: scheduling and replacement order do
         // not depend on thread timing or how quickly compact encoding finishes.
         let (sender, worker) = std::sync::mpsc::sync_channel(1);
-        *service.export_worker.lock().unwrap() = NativeExportWorker::Running {
+        *lock(&service.export_worker) = NativeExportWorker::Running {
             sender,
             // This fixture owns the receiver directly to control queue timing.
             thread: std::thread::spawn(|| {}),
@@ -1087,10 +1055,7 @@ mod tests {
         // A callback barrier drains the single queue slot before the next job.
         // Access to the sender here is deliberately test-only.
         let (tx, rx) = async_channel::bounded(1);
-        service
-            .export_worker
-            .lock()
-            .unwrap()
+        lock(&service.export_worker)
             .sender()
             .unwrap()
             .send(NativeReplayExportJob {
@@ -1244,7 +1209,7 @@ mod tests {
 
         let error = old.write_all(b"9").unwrap_err().to_string();
         assert!(error.contains("bounded spool limit"), "{error}");
-        let state = spool.inner.lock().unwrap();
+        let state = lock(&spool.inner);
         assert_eq!(state.committed_bytes, 8);
         assert_eq!(state.tail.as_slice(), b"12345678");
         drop(state);
@@ -1337,7 +1302,7 @@ mod tests {
         }
         let snapshot = spool.snapshot().unwrap();
         assert_eq!(snapshot.byte_length, expected_len);
-        let state = spool.inner.lock().unwrap();
+        let state = lock(&spool.inner);
         assert!(
             state
                 .chunks

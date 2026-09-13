@@ -15,6 +15,8 @@
 
 use std::sync::{Arc, Condvar, Mutex};
 
+use robin_util::sync::lock;
+
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
@@ -162,26 +164,23 @@ impl LoadingJob {
     }
 
     fn is_cancelled(&self) -> bool {
-        matches!(
-            *self.result.lock().expect("asset loading job lock poisoned"),
-            JobResult::Cancelled
-        )
+        matches!(*lock(&self.result), JobResult::Cancelled)
     }
 
     fn completed(&self) -> Option<Arc<ProcessAssetCache>> {
-        match &*self.result.lock().expect("asset loading job lock poisoned") {
+        match &*lock(&self.result) {
             JobResult::Complete(cache) => Some(cache.clone()),
             _ => None,
         }
     }
 
     fn cancel(&self) {
-        *self.result.lock().expect("asset loading job lock poisoned") = JobResult::Cancelled;
+        *lock(&self.result) = JobResult::Cancelled;
         self.changed.notify_all();
     }
 
     fn finish(&self, result: JobResult) {
-        let mut current = self.result.lock().expect("asset loading job lock poisoned");
+        let mut current = lock(&self.result);
         if matches!(*current, JobResult::Pending) {
             *current = result;
         }
@@ -189,7 +188,7 @@ impl LoadingJob {
     }
 
     fn wait(&self) -> Option<Arc<ProcessAssetCache>> {
-        let mut result = self.result.lock().expect("asset loading job lock poisoned");
+        let mut result = lock(&self.result);
         while matches!(*result, JobResult::Pending) {
             result = self
                 .changed
@@ -249,10 +248,7 @@ impl ApplicationAssetCache {
         datadir: &assets_shipping_datadir::ShippingDatadir,
     ) -> Result<(), String> {
         job.publish(datadir)?;
-        *self
-            .early_terrain
-            .lock()
-            .expect("early terrain lock poisoned") = Some(job);
+        *lock(&self.early_terrain) = Some(job);
         Ok(())
     }
 
@@ -266,19 +262,14 @@ impl ApplicationAssetCache {
         // Taking even a mismatched entry retires it; it must never be reused
         // after an installation switch or superseding mission activation.
         // Locale/overlay changes are checked against the final reader bytes.
-        self.early_terrain
-            .lock()
-            .expect("early terrain lock poisoned")
+        lock(&self.early_terrain)
             .take()
             .filter(|job| job.matches(datadir, mission, map, ambiance))
     }
 
     /// Retain stable banks while invalidating locale-dependent parsed tables.
     pub fn invalidate_localized(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("application asset cache lock poisoned");
+        let mut state = lock(&self.state);
         state.localized_epoch = state
             .localized_epoch
             .checked_add(1)
@@ -298,10 +289,7 @@ impl ApplicationAssetCache {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut state = self
-                .state
-                .lock()
-                .expect("application asset cache lock poisoned");
+            let mut state = lock(&self.state);
             if state.loading.is_some() || state.ready.is_some() {
                 return;
             }
@@ -353,10 +341,7 @@ impl ApplicationAssetCache {
         ) -> Option<Arc<ProcessAssetCache>>,
     ) -> Arc<ProcessAssetCache> {
         loop {
-            let mut state = self
-                .state
-                .lock()
-                .expect("application asset cache lock poisoned");
+            let mut state = lock(&self.state);
             let key = capture(state.localized_epoch);
             if let Some(cache) = &state.ready
                 && cache.key == key
@@ -384,10 +369,7 @@ impl ApplicationAssetCache {
                 job.run(|| build_cache(key.clone(), stable, &job));
             }
             let result = job.wait();
-            let mut state = self
-                .state
-                .lock()
-                .expect("application asset cache lock poisoned");
+            let mut state = lock(&self.state);
             if !state
                 .loading
                 .as_ref()

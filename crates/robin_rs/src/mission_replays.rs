@@ -102,7 +102,7 @@ impl RecordingIndex {
     pub(crate) fn take_completion(&self) -> Option<Result<(), String>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut scan = self.scan.lock().expect("recording scan lock poisoned");
+            let mut scan = robin_util::sync::lock(&self.scan);
             if scan
                 .worker
                 .as_ref()
@@ -359,9 +359,9 @@ impl RecordingIndex {
             return;
         }
         match path.canonicalize() {
-            Ok(path) => *self.active_path.lock().expect("recording path lock") = Some(path),
+            Ok(path) => *robin_util::sync::lock(&self.active_path) = Some(path),
             Err(error) => {
-                *self.active_path.lock().expect("recording path lock") = None;
+                *robin_util::sync::lock(&self.active_path) = None;
                 tracing::warn!("Cannot track mission recording: {error}");
             }
         }
@@ -373,7 +373,7 @@ impl RecordingIndex {
             let Some(dir) = self.directory.as_ref() else {
                 return;
             };
-            let Some(path) = self.active_path.lock().expect("recording path lock").take() else {
+            let Some(path) = robin_util::sync::lock(&self.active_path).take() else {
                 tracing::warn!("Completed attempt has no local recording path");
                 return;
             };
@@ -593,13 +593,10 @@ mod tests {
             Err("unobserved scan result".to_owned())
         });
         let worker_id = worker.thread().id();
-        index.scan.lock().unwrap().worker = Some(worker);
+        robin_util::sync::lock(&index.scan).worker = Some(worker);
         index.refresh_index().unwrap();
         assert_eq!(
-            index
-                .scan
-                .lock()
-                .unwrap()
+            robin_util::sync::lock(&index.scan)
                 .worker
                 .as_ref()
                 .unwrap()
@@ -609,10 +606,7 @@ mod tests {
         );
         release.send(()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !index
-            .scan
-            .lock()
-            .unwrap()
+        while !robin_util::sync::lock(&index.scan)
             .worker
             .as_ref()
             .unwrap()
@@ -626,10 +620,7 @@ mod tests {
         }
         index.refresh_index().unwrap();
         assert_eq!(
-            index
-                .scan
-                .lock()
-                .unwrap()
+            robin_util::sync::lock(&index.scan)
                 .worker
                 .as_ref()
                 .unwrap()
@@ -741,7 +732,7 @@ mod tests {
     fn worker_panic_is_observable_and_does_not_wedge_retry() {
         let dir = tempfile::tempdir().unwrap();
         let index = RecordingIndex::native(dir.path().join("attempts"));
-        index.scan.lock().unwrap().worker =
+        robin_util::sync::lock(&index.scan).worker =
             Some(std::thread::spawn(|| panic!("injected scanner panic")));
         assert!(completion(&index).unwrap_err().contains("panicked"));
         index.refresh_index().unwrap();
@@ -752,7 +743,7 @@ mod tests {
     fn shutdown_and_drop_join_workers_and_prevent_new_scans() {
         let index = RecordingIndex::disabled();
         let cancelled = index.cancelled.clone();
-        index.scan.lock().unwrap().worker = Some(std::thread::spawn(move || {
+        robin_util::sync::lock(&index.scan).worker = Some(std::thread::spawn(move || {
             while !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::yield_now();
             }
@@ -764,7 +755,7 @@ mod tests {
                 .unwrap_err()
                 .contains("injected worker failure")
         );
-        assert!(index.scan.lock().unwrap().worker.is_none());
+        assert!(robin_util::sync::lock(&index.scan).worker.is_none());
         assert!(index.refresh_index().unwrap_err().contains("shut down"));
         index.shutdown().unwrap();
 
@@ -772,7 +763,7 @@ mod tests {
         let cancelled = index.cancelled.clone();
         let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_finished = finished.clone();
-        index.scan.lock().unwrap().worker = Some(std::thread::spawn(move || {
+        robin_util::sync::lock(&index.scan).worker = Some(std::thread::spawn(move || {
             while !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
                 std::thread::yield_now();
             }
@@ -792,7 +783,7 @@ mod tests {
         assert!(!attempts.exists());
         let index = RecordingIndex::disabled();
         index.refresh_index().unwrap();
-        assert!(index.scan.lock().unwrap().worker.is_none());
+        assert!(robin_util::sync::lock(&index.scan).worker.is_none());
         assert!(index.take_completion().is_none());
         assert!(serde_json::from_str::<RecordingIndex>("{}").is_err());
     }
