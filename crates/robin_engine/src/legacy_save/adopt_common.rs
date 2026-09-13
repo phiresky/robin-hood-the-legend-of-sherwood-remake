@@ -14,11 +14,14 @@ use std::fmt;
 use crate::{
     coordinates::{MapPoint, MapVec, WorldPoint3D, WorldVec3D},
     element::{Command, EntityId, ObjectType, QuickAction},
+    engine::{EngineInner, LevelAssets},
     gate::GateType,
     sequence::{Field, SequenceElementRef, SequenceState},
 };
 
 use super::{
+    adopt::{LegacyEntityFixups, LegacyPositionTopology},
+    adopt_sequences::LegacySequenceTopology,
     elements::{LegacyDynamicElementFactory, LegacyElementClass},
     payload_base::{LegacyPoint2, LegacyPoint3},
     payload_vm::LegacyVmMemberKind,
@@ -562,6 +565,18 @@ pub enum AdoptErrorKind {
     MacroCommandKind { command: &'static str },
     #[error("has macro progress without a patrol-path-relative cursor")]
     MacroWithoutPatrolPath,
+}
+
+/// Borrowed preflight authority shared by the adoption stages: the initialized
+/// mission plus the save-wide identity maps derived once by
+/// `LegacyKnownAdoptionPlan::preflight`. It never escapes preflight.
+#[derive(Clone, Copy)]
+pub(crate) struct AdoptCtx<'a> {
+    pub engine: &'a EngineInner,
+    pub assets: &'a LevelAssets,
+    pub entities: &'a LegacyEntityFixups,
+    pub position_topology: &'a LegacyPositionTopology,
+    pub sequence_topology: &'a LegacySequenceTopology,
 }
 
 /// Fixed error context for one validation scope; builds errors without each

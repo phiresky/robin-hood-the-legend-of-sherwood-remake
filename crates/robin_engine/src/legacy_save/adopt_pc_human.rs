@@ -14,22 +14,18 @@ use crate::{
         PcAmmoData, PcData, PcPortraitQuickIconState, PcPortraitState, Posture, QuickAction,
         SmalltalkHint, WorkIcon,
     },
-    engine::{EngineInner, LevelAssets},
+    engine::EngineInner,
     pc_status::{HumanStatus, PcStatus, Skill},
     position_interface::SectorHandle,
-    profiles::{Action, CharacterProfileIdx, ProfileManager},
+    profiles::{Action, CharacterProfileIdx},
     sequence::{SequenceElementData, SequenceElementRef},
 };
 
 use super::{
     LegacySaveAbiProfile,
-    adopt::{
-        LegacyEntityFixups, LegacyLineTopology, LegacyPositionTopology, missing_creation_order,
-    },
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError, point2, point3},
-    adopt_sequences::{
-        LegacySequenceAdoptionPlan, LegacySequenceTopology, convert_owner_local_sequence,
-    },
+    adopt::{LegacyLineTopology, LegacyPositionTopology, missing_creation_order},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError, point2, point3},
+    adopt_sequences::{LegacySequenceAdoptionPlan, convert_owner_local_sequence},
     campaign::LegacyCampaign,
     payload_actors::{LegacyPcPayload, LegacyPcStatus},
     payload_base::{
@@ -106,16 +102,18 @@ struct ConvertedPc {
 
 impl LegacyPcHumanAdoptionPlan {
     pub(crate) fn preflight(
-        engine: &EngineInner,
+        ctx: &AdoptCtx<'_>,
         payloads: &LegacyElementPayloadStream,
         abi_profile: LegacySaveAbiProfile,
-        entities: &LegacyEntityFixups,
-        position_topology: &LegacyPositionTopology,
-        sequence_topology: &LegacySequenceTopology,
         sequences: &LegacySequenceAdoptionPlan,
         live_campaign: &LegacyCampaign,
-        assets: &LevelAssets,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            ..
+        } = *ctx;
         let line_topology = LegacyLineTopology::derive(engine, assets)?;
         let mut records = Vec::new();
         for record in &payloads.records {
@@ -146,12 +144,10 @@ impl LegacyPcHumanAdoptionPlan {
                 return Err(expected_human());
             }
             let human = convert_human(
-                engine,
+                ctx,
                 saved_human,
                 abi_profile,
                 creation_order,
-                entities,
-                position_topology,
                 &line_topology,
                 sequences,
             )?;
@@ -165,15 +161,7 @@ impl LegacyPcHumanAdoptionPlan {
                             },
                         ));
                     };
-                    convert_pc(
-                        saved,
-                        &runtime_pc.pc,
-                        creation_order,
-                        entities,
-                        sequence_topology,
-                        live_campaign,
-                        &assets.profile_manager,
-                    )
+                    convert_pc(ctx, saved, &runtime_pc.pc, creation_order, live_campaign)
                 })
                 .transpose()?;
             records.push(ConvertedRecord {
@@ -247,15 +235,19 @@ impl LegacyPcHumanAdoptionPlan {
 }
 
 fn convert_human(
-    engine: &EngineInner,
+    ctx: &AdoptCtx<'_>,
     saved: &LegacyHumanPayload,
     abi_profile: LegacySaveAbiProfile,
     creation_order: u32,
-    entities: &LegacyEntityFixups,
-    position_topology: &LegacyPositionTopology,
     line_topology: &LegacyLineTopology,
     sequences: &LegacySequenceAdoptionPlan,
 ) -> Result<ConvertedHuman, LegacyAdoptError> {
+    let AdoptCtx {
+        engine,
+        entities,
+        position_topology,
+        ..
+    } = *ctx;
     let carrier = checked_ref(
         entities.resolve_element(saved.carrier)?,
         creation_order,
@@ -413,14 +405,19 @@ fn convert_building_sector(
 }
 
 fn convert_pc(
+    ctx: &AdoptCtx<'_>,
     saved: &LegacyPcPayload<LegacyHumanPayload, LegacyInlineSequence>,
     runtime: &PcData,
     creation_order: u32,
-    entities: &LegacyEntityFixups,
-    sequence_topology: &LegacySequenceTopology,
     live_campaign: &LegacyCampaign,
-    profiles: &ProfileManager,
 ) -> Result<ConvertedPc, LegacyAdoptError> {
+    let AdoptCtx {
+        assets,
+        entities,
+        sequence_topology,
+        ..
+    } = *ctx;
+    let profiles = &assets.profile_manager;
     let character_index = saved.pre_human.description.0 as usize;
     let pc = pc_site(creation_order);
     let description = live_campaign

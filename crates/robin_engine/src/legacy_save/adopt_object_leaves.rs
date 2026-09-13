@@ -12,7 +12,7 @@ use crate::{
         Entity, EntityId, ObjectData, ObjectType, ProjectileData, TrajectoryPoint,
         TrajectoryPointRuntime,
     },
-    engine::{EngineInner, LevelAssets},
+    engine::EngineInner,
     natives::{ComputedScriptLocation, ScriptHandleCodec},
     order::OrderType,
     patch::PatchIndex,
@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, missing_creation_order},
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     adopt_vm_arena::LegacyVmArenaPlan,
     payload_base::LegacyFxPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
@@ -183,13 +183,17 @@ impl LegacyVmOwnerKind {
 impl LegacyObjectLeafAdoptionPlan {
     /// Validate and convert every concrete non-actor leaf without mutation.
     ///
-    pub fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
+    pub(crate) fn preflight(
+        ctx: &AdoptCtx<'_>,
         payloads: &LegacyElementPayloadStream,
-        entities: &LegacyEntityFixups,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            ..
+        } = *ctx;
         let mut records = Vec::new();
         for record in &payloads.records {
             if matches!(
@@ -233,12 +237,12 @@ impl LegacyObjectLeafAdoptionPlan {
                         vm_arena.element_prefix(creation_order, saved.script_members.as_ref())?;
                     let mut computed_locations = Vec::new();
                     let vm_heap = preflight_vm(
-                        engine,
-                        assets,
-                        entities,
-                        entity_id,
-                        creation_order,
-                        LegacyVmOwnerKind::Scroll,
+                        ctx,
+                        LegacyVmOwner {
+                            entity: entity_id,
+                            creation_order,
+                            kind: LegacyVmOwnerKind::Scroll,
+                        },
                         saved.script_members.as_ref(),
                         location_prefix,
                         &mut computed_locations,
@@ -295,12 +299,12 @@ impl LegacyObjectLeafAdoptionPlan {
                         })
                         .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
                     let vm_heap = preflight_vm(
-                        engine,
-                        assets,
-                        entities,
-                        entity_id,
-                        creation_order,
-                        LegacyVmOwnerKind::Target,
+                        ctx,
+                        LegacyVmOwner {
+                            entity: entity_id,
+                            creation_order,
+                            kind: LegacyVmOwnerKind::Target,
+                        },
                         saved.script_members.as_ref(),
                         location_prefix,
                         &mut computed_locations,
@@ -908,17 +912,33 @@ fn apply_fx(runtime: &mut crate::element::FxData, saved: PlannedFx) {
     runtime.restore_background = saved.restore_background;
 }
 
+/// One script-VM owning element: its runtime entity, Original creation order
+/// and VM table.
+#[derive(Clone, Copy)]
+pub(crate) struct LegacyVmOwner {
+    pub entity: EntityId,
+    pub creation_order: u32,
+    pub kind: LegacyVmOwnerKind,
+}
+
 pub(crate) fn preflight_vm(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-    entities: &LegacyEntityFixups,
-    owner: EntityId,
-    creation_order: u32,
-    owner_kind: LegacyVmOwnerKind,
+    ctx: &AdoptCtx<'_>,
+    owner: LegacyVmOwner,
     saved: Option<&LegacyVmMemberSection>,
     location_prefix: usize,
     computed_locations: &mut Vec<Option<ComputedScriptLocation>>,
 ) -> Result<Option<Vec<u8>>, LegacyAdoptError> {
+    let AdoptCtx {
+        engine,
+        assets,
+        entities,
+        ..
+    } = *ctx;
+    let LegacyVmOwner {
+        entity: owner,
+        creation_order,
+        kind: owner_kind,
+    } = owner;
     let handle = ScriptHandleCodec::actor_handle(owner);
     let runtime = engine
         .scripts

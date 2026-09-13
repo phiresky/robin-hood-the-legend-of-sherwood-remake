@@ -20,6 +20,7 @@ use super::payload_base::{
     LegacyPayloadLimits, LegacyPoint2, LegacyPoint3, LegacySectorRef, read_element_ref,
     read_sector_ref,
 };
+use super::payload_dispatch::LegacyElementPayloadLimits;
 use super::payload_nonactors::{LegacyObjectPayload, read_object_payload};
 
 const NULL_U32: u32 = u32::MAX;
@@ -76,12 +77,13 @@ pub enum LegacyObjectItemPayload {
 pub fn read_object_item_payload(
     reader: &mut LegacyReader<'_>,
     abi_profile: LegacySaveAbiProfile,
-    limits: &LegacyObjectPayloadLimits,
-    base_limits: &LegacyPayloadLimits,
+    payload_limits: &LegacyElementPayloadLimits,
     context: &dyn LegacyPayloadDecodeContext,
     creation_order: u32,
     class: LegacyElementClass,
 ) -> LegacyResult<LegacyObjectItemPayload> {
+    let limits = &payload_limits.objects;
+    let base_limits = &payload_limits.base;
     reader.scope(format!("object_item.{class:?}"), |reader| {
         Ok(match class {
             LegacyElementClass::Object => LegacyObjectItemPayload::Object(read_object_payload(

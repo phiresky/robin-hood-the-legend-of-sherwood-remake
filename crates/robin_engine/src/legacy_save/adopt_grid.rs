@@ -9,7 +9,7 @@ use crate::{
     ai::{Position, RepulsivePoint},
     coordinates::MapVec,
     element::{Entity, EntityId},
-    engine::{EngineInner, LegacyGridGateAsset, LevelAssets},
+    engine::{EngineInner, LegacyGridGateAsset},
     fast_find_grid::LiftRuntimeState,
     gate::GateType,
     patch::OccupantId,
@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacyPositionTopology},
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     adopt_elements::LegacyElementBaseAdoption,
     adopt_vm_arena::{LegacyVmArenaOwner, LegacyVmArenaPlan},
     gate_topology::derive_legacy_gate_order,
@@ -107,14 +107,18 @@ struct PlannedBuilding {
 impl LegacyFastFindGridAdoptionPlan {
     /// Validate all topology, references, indices, and unsupported lossless
     /// representation boundaries before the candidate engine is mutated.
-    pub fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
+    pub(crate) fn preflight(
+        ctx: &AdoptCtx<'_>,
         state: &LegacyFastFindGridState,
-        entities: &LegacyEntityFixups,
-        position_topology: &LegacyPositionTopology,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            position_topology,
+            ..
+        } = *ctx;
         let static_repulsive_points = preflight_static_repulsive_points(state)?;
 
         let decoded_topology = derive_grid_topology(engine, assets)?;
@@ -222,9 +226,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 .zip(runtime_vm)
                 .map(|(members, (class, heap))| {
                     vm_arena.preflight_heap(
-                        engine,
-                        assets,
-                        entities,
+                        ctx,
                         LegacyVmArenaOwner::ScriptZone(zone_index),
                         members,
                         class,
@@ -1073,12 +1075,20 @@ mod tests {
     fn windows_profile_reaches_normal_topology_validation() {
         let mut state = empty_state();
         state.abi_profile = LegacySaveAbiProfile::RetailWindowsX86V48;
+        let (engine, assets) = (EngineInner::new(), LevelAssets::new());
+        let (entities, position_topology) = (empty_fixups(), empty_position_topology());
+        let sequence_topology =
+            crate::legacy_save::adopt_sequences::LegacySequenceTopology::default();
+        let ctx = AdoptCtx {
+            engine: &engine,
+            assets: &assets,
+            entities: &entities,
+            position_topology: &position_topology,
+            sequence_topology: &sequence_topology,
+        };
         let error = LegacyFastFindGridAdoptionPlan::preflight(
-            &EngineInner::new(),
-            &LevelAssets::new(),
+            &ctx,
             &state,
-            &empty_fixups(),
-            &empty_position_topology(),
             &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();

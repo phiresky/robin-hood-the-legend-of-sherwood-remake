@@ -10,18 +10,16 @@
 
 use crate::{
     element::{Command, Entity, EntityId, InstalledActorOrder},
-    engine::{EngineInner, LevelAssets},
+    engine::EngineInner,
     natives::ScriptHandleCodec,
     sequence::{PostSeekSequence, SequenceElementRef},
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, missing_creation_order},
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
-    adopt_object_leaves::{LegacyVmOwnerKind, preflight_vm},
-    adopt_sequences::{
-        LegacySequenceAdoptionPlan, LegacySequenceTopology, convert_owner_local_sequence,
-    },
+    adopt::missing_creation_order,
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_object_leaves::{LegacyVmOwner, LegacyVmOwnerKind, preflight_vm},
+    adopt_sequences::{LegacySequenceAdoptionPlan, convert_owner_local_sequence},
     adopt_vm_arena::LegacyVmArenaPlan,
     payload_base::LegacyActorPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
@@ -48,14 +46,17 @@ impl LegacyActorOwnershipAdoptionPlan {
     /// Validate all actor pointers against the not-yet-installed converted
     /// SequenceManager, then convert actor-owned inline/script state.
     pub(crate) fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
+        ctx: &AdoptCtx<'_>,
         payloads: &LegacyElementPayloadStream,
-        entities: &LegacyEntityFixups,
-        sequence_topology: &LegacySequenceTopology,
         sequences: &LegacySequenceAdoptionPlan,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            entities,
+            sequence_topology,
+            ..
+        } = *ctx;
         let mut records = Vec::new();
         for record in &payloads.records {
             let Some(saved) = actor_payload(&record.payload) else {
@@ -178,12 +179,12 @@ impl LegacyActorOwnershipAdoptionPlan {
                 vm_arena.element_prefix(creation_order, saved.script_members.as_ref())?;
             let mut computed_locations = Vec::new();
             let vm_heap = preflight_vm(
-                engine,
-                assets,
-                entities,
-                entity,
-                creation_order,
-                LegacyVmOwnerKind::Actor,
+                ctx,
+                LegacyVmOwner {
+                    entity,
+                    creation_order,
+                    kind: LegacyVmOwnerKind::Actor,
+                },
                 saved.script_members.as_ref(),
                 location_prefix,
                 &mut computed_locations,

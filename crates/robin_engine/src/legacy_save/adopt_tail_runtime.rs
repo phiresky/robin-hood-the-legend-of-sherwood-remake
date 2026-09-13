@@ -15,13 +15,13 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     adopt_sequences::LegacySequenceAdoptionPlan,
     adopt_vm_arena::{LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_vm::{
         LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberSection, LegacyVmMemberValue,
     },
-    post_tail::{LegacyScriptGlobals, LegacyTimerSequenceState},
+    post_tail::LegacyEnginePostTitbitsTail,
     vm_schema::{HANDLE_INDEX_MAX, check_location_topology},
 };
 
@@ -45,15 +45,20 @@ struct PlannedGlobalVm {
 
 impl LegacyTailRuntimeAdoptionPlan {
     pub(crate) fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
-        global_members: Option<&LegacyVmMemberSection>,
-        script_globals: &LegacyScriptGlobals,
-        timers: &LegacyTimerSequenceState,
-        entities: &LegacyEntityFixups,
+        ctx: &AdoptCtx<'_>,
+        tail: &LegacyEnginePostTitbitsTail,
         sequences: &LegacySequenceAdoptionPlan,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            ..
+        } = *ctx;
+        let global_members = tail.global_script_members.as_ref();
+        let script_globals = &tail.script_globals;
+        let timers = &tail.timers;
         let global_vm = global_members
             .map(|members| {
                 let location_prefix = vm_arena.owner_prefix(LegacyVmArenaOwner::Global, members)?;

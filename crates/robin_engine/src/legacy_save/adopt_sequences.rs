@@ -453,16 +453,15 @@ pub(crate) fn preflight_v48_sequence_manager(
         }
     }
 
+    let refs = SequenceRefs {
+        entities,
+        topology,
+        sequence_ids: &sequence_ids,
+        element_refs: &element_refs,
+    };
     let mut sequences = Vec::with_capacity(saved.sequences.len());
     for saved_sequence in &saved.sequences {
-        sequences.push(convert_sequence(
-            &saved_sequence.body,
-            true,
-            entities,
-            topology,
-            &sequence_ids,
-            &element_refs,
-        )?);
+        sequences.push(convert_sequence(&saved_sequence.body, true, refs)?);
     }
 
     let mut elements_to_go = VecDeque::with_capacity(saved.deferred_elements.len());
@@ -501,13 +500,19 @@ pub(crate) fn preflight_v48_sequence_manager(
     })
 }
 
+/// Identity spaces shared by every element of one sequence conversion.
+#[derive(Clone, Copy)]
+struct SequenceRefs<'a> {
+    entities: &'a LegacyEntityFixups,
+    topology: &'a LegacySequenceTopology,
+    sequence_ids: &'a BTreeMap<u32, SequenceId>,
+    element_refs: &'a BTreeMap<u32, SequenceElementRef>,
+}
+
 fn convert_sequence(
     saved: &LegacyInlineSequence,
     manager_owned: bool,
-    entities: &LegacyEntityFixups,
-    topology: &LegacySequenceTopology,
-    sequence_ids: &BTreeMap<u32, SequenceId>,
-    element_refs: &BTreeMap<u32, SequenceElementRef>,
+    refs: SequenceRefs<'_>,
 ) -> Result<Sequence, LegacyAdoptError> {
     let cursor = usize::from(saved.sequence_element_cursor);
     if cursor > saved.elements.len() {
@@ -524,10 +529,7 @@ fn convert_sequence(
             saved.unique_id.0,
             element,
             manager_owned,
-            entities,
-            topology,
-            sequence_ids,
-            element_refs,
+            refs,
         )?);
     }
     for pair in elements.windows(2) {
@@ -567,10 +569,12 @@ pub(crate) fn convert_owner_local_sequence(
     convert_sequence(
         saved,
         false,
-        entities,
-        topology,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        SequenceRefs {
+            entities,
+            topology,
+            sequence_ids: &BTreeMap::new(),
+            element_refs: &BTreeMap::new(),
+        },
     )
 }
 
@@ -578,11 +582,14 @@ fn convert_element(
     sequence_id: u32,
     saved: &LegacyInlineSequenceElement,
     manager_owned: bool,
-    entities: &LegacyEntityFixups,
-    topology: &LegacySequenceTopology,
-    sequence_ids: &BTreeMap<u32, SequenceId>,
-    element_refs: &BTreeMap<u32, SequenceElementRef>,
+    refs: SequenceRefs<'_>,
 ) -> Result<SequenceElement, LegacyAdoptError> {
+    let SequenceRefs {
+        entities,
+        topology,
+        sequence_ids,
+        element_refs,
+    } = refs;
     let base = saved.base();
     let command = Command::try_from(base.command)
         .map_err(|_| SEQUENCE.invalid("command", base.command, "a known command discriminant"))?;
@@ -781,15 +788,7 @@ fn convert_element(
                 .post_seek_sequence
                 .as_deref()
                 .map(|sequence| {
-                    convert_sequence(
-                        sequence,
-                        false,
-                        entities,
-                        topology,
-                        sequence_ids,
-                        element_refs,
-                    )
-                    .and_then(|sequence| {
+                    convert_sequence(sequence, false, refs).and_then(|sequence| {
                         sequence.try_into_post_seek().map_err(|_| {
                             SEQUENCE.invalid(
                                 "movement.post_seek_sequence",

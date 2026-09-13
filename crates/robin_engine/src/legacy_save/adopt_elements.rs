@@ -29,8 +29,8 @@ use crate::{
 
 use super::{
     adopt::{
-        LegacyEntityFixups, LegacyLineTopology, LegacyPositionTopology, missing_creation_order,
-        preflight_v48_position,
+        LegacyEnemyJumpLineGeometry, LegacyEntityFixups, LegacyLineTopology,
+        LegacyPositionTopology, missing_creation_order, preflight_v48_position,
     },
     adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_ai::{
@@ -964,12 +964,14 @@ fn resolve_saved_enemy_jump_line(
         "local_ai.enemy.jump_line",
         reference,
         &engine.world.fast_grid,
-        owner_creation_order,
-        owner_sector,
-        target_creation_order,
-        target_sector,
-        target_geometry.map,
-        maximal_sword_range,
+        LegacyEnemyJumpLineGeometry {
+            owner: owner_creation_order,
+            owner_sector,
+            target: target_creation_order,
+            target_sector,
+            target_position: target_geometry.map,
+            maximal_sword_range,
+        },
     )
 }
 
@@ -1244,7 +1246,6 @@ fn convert_local_ai(
 ) -> Result<ConvertedLocalAi, LegacyAdoptError> {
     let entities = context.entities;
     let topology = context.topology;
-    let assets = context.assets;
     let ai_global = &context.engine.ai.global;
     let owner = entities.resolve_ai_element(saved.common.owner)?;
     if owner != Some(entity_id) {
@@ -1267,10 +1268,8 @@ fn convert_local_ai(
             })
         })?,
         creation_order,
-        entities,
-        topology,
+        context,
         view_alert_status,
-        assets,
     )?;
     match (&saved.tail, &runtime.ai_brain) {
         (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
@@ -1587,11 +1586,12 @@ fn convert_local_ai_common(
     saved: &LegacyLocalAiCommon,
     runtime: &AiController,
     creation_order: u32,
-    entities: &LegacyEntityFixups,
-    topology: &LegacyPositionTopology,
+    context: &ElementAdoptContext<'_>,
     view_alert_status: AlertLevel,
-    assets: &LevelAssets,
 ) -> Result<AiController, LegacyAdoptError> {
+    let entities = context.entities;
+    let topology = context.topology;
+    let assets = context.assets;
     let macro_cursor =
         convert_macro_command(saved, creation_order, &assets.navigation.hiking_paths)?;
     let (patrol_path, detached_patrol_path_status) = convert_patrol_path(

@@ -279,8 +279,7 @@ fn read_concrete_payload<C: LegacyElementPayloadDecodeContext>(
         | LegacyElementClass::Mobile => LegacyElementPayload::ObjectItem(read_object_item_payload(
             reader,
             abi_profile,
-            &limits.objects,
-            &limits.base,
+            limits,
             context,
             creation_order,
             class,

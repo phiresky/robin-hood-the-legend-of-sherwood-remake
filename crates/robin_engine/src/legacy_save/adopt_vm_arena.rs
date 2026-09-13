@@ -15,8 +15,7 @@ use crate::{
 };
 
 use super::{
-    adopt::LegacyEntityFixups,
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
     post_grid::LegacyFastFindGridState,
@@ -159,14 +158,18 @@ impl LegacyVmArenaPlan {
     /// absolute Location allocation prefix.
     pub(crate) fn preflight_heap(
         &self,
-        engine: &EngineInner,
-        assets: &LevelAssets,
-        entities: &LegacyEntityFixups,
+        ctx: &AdoptCtx<'_>,
         owner: LegacyVmArenaOwner,
         saved: &LegacyVmMemberSection,
         class: &crate::scb::ClassEntry,
         current_heap: &[u8],
     ) -> Result<Vec<u8>, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            ..
+        } = *ctx;
         let location_prefix = self.owner_prefix(owner, saved)?;
         if saved.class_name != class.class_name {
             return Err(owner_site(owner).error(AdoptErrorKind::VmClassMismatch {

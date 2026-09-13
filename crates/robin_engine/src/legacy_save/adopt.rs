@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::fast_find_grid::{GridSector, SectorIndex};
 use crate::{
     coordinates::MapBBox,
@@ -125,6 +127,18 @@ pub struct LegacyLineTopology {
 
 const JUMP_LINE: AdoptSite = AdoptSite::new("saved jump-line");
 
+/// Saved owner/primary-target geometry that identifies a shifted retail
+/// enemy jump line (see [`LegacyLineTopology::resolve_enemy_jump_line`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacyEnemyJumpLineGeometry {
+    pub owner: u32,
+    pub owner_sector: SectorHandle,
+    pub target: u32,
+    pub target_sector: SectorHandle,
+    pub target_position: crate::coordinates::MapPoint,
+    pub maximal_sword_range: f32,
+}
+
 impl LegacyLineTopology {
     /// Reconstruct exact `(layer, combined-line ordinal)` identities retained
     /// while the initialized mission's complete line arrays were built.
@@ -233,13 +247,16 @@ impl LegacyLineTopology {
         field: &'static str,
         reference: LegacyLineRef,
         fast_grid: &crate::fast_find_grid::FastFindGrid,
-        owner: u32,
-        owner_sector: crate::position_interface::SectorHandle,
-        target: u32,
-        target_sector: crate::position_interface::SectorHandle,
-        target_position: crate::coordinates::MapPoint,
-        maximal_sword_range: f32,
+        geometry: LegacyEnemyJumpLineGeometry,
     ) -> Result<Option<JumpLineIndex>, LegacyAdoptError> {
+        let LegacyEnemyJumpLineGeometry {
+            owner,
+            owner_sector,
+            target,
+            target_sector,
+            target_position,
+            maximal_sword_range,
+        } = geometry;
         let (layer, index) = match (reference.layer, reference.index) {
             (None, None) => return Ok(None),
             (Some(layer), Some(index)) if index >= 0 => (layer, index),
@@ -1547,6 +1564,21 @@ mod tests {
         grid
     }
 
+    fn test_enemy_geometry() -> LegacyEnemyJumpLineGeometry {
+        LegacyEnemyJumpLineGeometry {
+            owner: 126,
+            owner_sector: SectorHandle::new(10)
+                .unwrap()
+                .with_arena_index(SectorIndex::new(0).unwrap()),
+            target: 172,
+            target_sector: SectorHandle::new(20)
+                .unwrap()
+                .with_arena_index(SectorIndex::new(1).unwrap()),
+            target_position: MapPoint::new(5.0, 4.0),
+            maximal_sword_range: 50.0,
+        }
+    }
+
     #[test]
     fn shifted_enemy_line_uses_unique_primary_target_geometry() {
         let grid = ambiguous_jump_grid(12.0);
@@ -1559,16 +1591,7 @@ mod tests {
                     index: Some(1399),
                 },
                 &grid,
-                126,
-                SectorHandle::new(10)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(0).unwrap()),
-                172,
-                SectorHandle::new(20)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(1).unwrap()),
-                MapPoint::new(5.0, 4.0),
-                50.0,
+                test_enemy_geometry(),
             )
             .unwrap();
         assert_eq!(resolved, JumpLineIndex::new(0));
@@ -1586,16 +1609,7 @@ mod tests {
                     index: Some(1399),
                 },
                 &grid,
-                126,
-                SectorHandle::new(10)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(0).unwrap()),
-                172,
-                SectorHandle::new(20)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(1).unwrap()),
-                MapPoint::new(5.0, 4.0),
-                50.0,
+                test_enemy_geometry(),
             )
             .unwrap_err();
         assert!(matches!(

@@ -11,16 +11,18 @@
 use crate::{
     ai::PathId,
     element::{Entity, EntityId},
-    engine::{EngineInner, LevelAssets},
+    engine::EngineInner,
     natives::{ComputedScriptLocation, ScriptHandleCodec},
 };
 
 use super::{
     adopt::LegacyEntityFixups,
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     adopt_vm_arena::{LegacyVmArenaOwner, LegacyVmArenaPlan, value_kind},
     payload_base::LegacyElementRef,
-    payload_vm::{LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberValue},
+    payload_vm::{
+        LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberState, LegacyVmMemberValue,
+    },
     post_hiking::{LegacyHikingGuideState, LegacyProjectileTrajectorySection},
     post_tail::{LegacyEnginePostTitbitsTail, LegacyPendingShieldState},
     vm_schema::{HANDLE_INDEX_MAX, check_location_topology},
@@ -56,16 +58,17 @@ pub(crate) struct LegacyHikingTailAdoptionPlan {
 
 impl LegacyHikingTailAdoptionPlan {
     pub(crate) fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
+        ctx: &AdoptCtx<'_>,
         hiking: &LegacyHikingGuideState,
         trajectory: &LegacyProjectileTrajectorySection,
         tail: &LegacyEnginePostTitbitsTail,
         shield_is_protected: bool,
-        entities: &LegacyEntityFixups,
         vm_arena: &LegacyVmArenaPlan,
     ) -> Result<Self, LegacyAdoptError> {
-        let waypoint_heaps = preflight_waypoints(engine, assets, hiking, entities, vm_arena)?;
+        let AdoptCtx {
+            engine, entities, ..
+        } = *ctx;
+        let waypoint_heaps = preflight_waypoints(ctx, hiking, vm_arena)?;
         let dead_pc = resolve_typed(
             engine,
             entities,
@@ -174,12 +177,11 @@ fn preflight_shield(
 }
 
 fn preflight_waypoints(
-    engine: &EngineInner,
-    assets: &LevelAssets,
+    ctx: &AdoptCtx<'_>,
     hiking: &LegacyHikingGuideState,
-    entities: &LegacyEntityFixups,
     vm_arena: &LegacyVmArenaPlan,
 ) -> Result<Vec<(PathId, u8, Vec<u8>)>, LegacyAdoptError> {
+    let AdoptCtx { engine, assets, .. } = *ctx;
     if hiking.paths.len() != assets.navigation.hiking_paths.len() {
         return Err(AdoptSite::new("saved hiking data").field_error(
             "paths",
@@ -304,16 +306,8 @@ fn preflight_waypoints(
                     "hiking_guide.paths[{path_index}].waypoints[{waypoint_index}].{}",
                     saved_member.schema.name
                 );
-                let bits = convert_member(
-                    engine,
-                    assets,
-                    entities,
-                    &field,
-                    &saved_member.schema.kind,
-                    &saved_member.value,
-                    location_prefix,
-                    &mut locations,
-                )?;
+                let bits =
+                    convert_member(ctx, &field, saved_member, location_prefix, &mut locations)?;
                 heap[address..end].copy_from_slice(&bits.to_le_bytes());
             }
             heaps.push((path, waypoint, heap));
@@ -338,15 +332,19 @@ fn validate_schema(
 }
 
 fn convert_member(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-    entities: &LegacyEntityFixups,
+    ctx: &AdoptCtx<'_>,
     field: &str,
-    kind: &LegacyVmMemberKind,
-    value: &LegacyVmMemberValue,
+    member: &LegacyVmMemberState,
     location_prefix: usize,
     locations: &mut Vec<Option<ComputedScriptLocation>>,
 ) -> Result<u32, LegacyAdoptError> {
+    let AdoptCtx {
+        engine,
+        assets,
+        entities,
+        ..
+    } = *ctx;
+    let (kind, value) = (&member.schema.kind, &member.value);
     match (kind, value) {
         (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => Ok(*bits),
         (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {

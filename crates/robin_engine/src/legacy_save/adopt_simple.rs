@@ -16,12 +16,9 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
-    body::LegacyUserLockState,
-    post_simple::{
-        LegacyElementSelection, LegacyFollowViewRefs, LegacyGroundMarkState, LegacyMinimapState,
-        LegacyTitbitsState,
-    },
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    body::LegacySaveBody,
+    post_simple::{LegacyElementSelection, LegacyMinimapState},
 };
 
 const TITBIT: AdoptSite = AdoptSite::new("saved titbit");
@@ -43,17 +40,20 @@ pub struct LegacySimpleAdoptionPlan {
 }
 
 impl LegacySimpleAdoptionPlan {
-    pub fn preflight(
-        engine: &EngineInner,
-        entities: &LegacyEntityFixups,
-        user_lock: &LegacyUserLockState,
-        selected: &LegacyElementSelection,
-        selected_before_lock: &LegacyElementSelection,
-        follow_view: &LegacyFollowViewRefs,
-        ground_mark: &LegacyGroundMarkState,
-        titbits: &LegacyTitbitsState,
-        minimap: &LegacyMinimapState,
+    pub(crate) fn preflight(
+        ctx: &AdoptCtx<'_>,
+        body: &LegacySaveBody,
     ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine, entities, ..
+        } = *ctx;
+        let user_lock = &body.user_lock;
+        let selected = &body.selected_elements;
+        let selected_before_lock = &body.selected_before_lock;
+        let follow_view = &body.follow_view;
+        let ground_mark = &body.ground_mark;
+        let titbits = &body.titbits;
+        let minimap = &body.minimap;
         let selected = resolve_pc_selection(engine, entities, selected, "selected_elements")?;
         let selected_before_lock = resolve_pc_selection(
             engine,

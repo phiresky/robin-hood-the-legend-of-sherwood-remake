@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
-    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     adopt_sequences::LegacySequenceAdoptionPlan,
     payload_base::{LegacyElementRef, LegacyPoint2, LegacySequenceElementRef},
     post_simple::LegacyFailedPathRequests,
@@ -63,13 +63,12 @@ impl LegacyPathAdoptionPlan {
 /// Preflight both engine-owned failed requests and pathfinder-owned pending
 /// requests against the exact sequence conversion that will be installed.
 pub(crate) fn preflight_v48_paths(
-    engine: &EngineInner,
-    assets: &LevelAssets,
+    ctx: &AdoptCtx<'_>,
     failed: &LegacyFailedPathRequests,
     pathfinder: &LegacyPathfinderState,
     sequences: &LegacySequenceAdoptionPlan,
-    entities: &LegacyEntityFixups,
 ) -> Result<LegacyPathAdoptionPlan, LegacyAdoptError> {
+    let AdoptCtx { engine, assets, .. } = *ctx;
     if pathfinder.do_not_ignore_next_path {
         return Err(AdoptErrorKind::IgnoredHeadNotRepresentable.into());
     }
@@ -77,10 +76,8 @@ pub(crate) fn preflight_v48_paths(
     let mut converted_failed = Vec::with_capacity(failed.requests.len());
     for (index, saved) in failed.requests.iter().enumerate() {
         let request = convert_request(
-            engine,
-            assets,
+            ctx,
             sequences,
-            entities,
             "failed",
             index,
             SavedRequest {
@@ -107,10 +104,8 @@ pub(crate) fn preflight_v48_paths(
     let mut converted_pending = Vec::with_capacity(pathfinder.requests.len());
     for (index, saved) in pathfinder.requests.iter().enumerate() {
         let request = convert_request(
-            engine,
-            assets,
+            ctx,
             sequences,
-            entities,
             "pending",
             index,
             SavedRequest::from_pending(saved),
@@ -177,14 +172,18 @@ impl SavedRequest {
 }
 
 fn convert_request(
-    engine: &EngineInner,
-    assets: &LevelAssets,
+    ctx: &AdoptCtx<'_>,
     sequences: &LegacySequenceAdoptionPlan,
-    entities: &LegacyEntityFixups,
     queue: &'static str,
     index: usize,
     saved: SavedRequest,
 ) -> Result<PendingPathRequest, LegacyAdoptError> {
+    let AdoptCtx {
+        engine,
+        assets,
+        entities,
+        ..
+    } = *ctx;
     let site = request_site(queue, index);
     let actor = resolve_required_entity(entities, &site, "actor", saved.actor)?;
     let antagonist = resolve_optional_entity(entities, "antagonist", saved.antagonist)?;
