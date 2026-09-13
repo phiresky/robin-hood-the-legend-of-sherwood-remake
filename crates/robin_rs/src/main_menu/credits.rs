@@ -13,6 +13,7 @@
 use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
+use crate::application::require;
 use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::main_entry::picture_to_surface;
@@ -35,9 +36,7 @@ pub(crate) async fn show_credits(
         return;
     }
 
-    let shipping = application_context
-        .shipping()
-        .unwrap_or_else(|error| panic!("Credits lost its ApplicationContext: {error}"));
+    let shipping = require(application_context.shipping(), "Credits screen");
     let files = match application_context.preparation_files() {
         Ok(files) => files.clone(),
         Err(error) => {

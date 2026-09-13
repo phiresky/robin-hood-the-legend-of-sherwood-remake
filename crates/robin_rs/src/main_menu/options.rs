@@ -6,6 +6,7 @@
 //! the game is in-session or at the main menu — the dialog always writes
 //! back to the active player profile.
 
+use crate::application::require;
 use crate::audio_backend::PlatformAudioBackend;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
@@ -13,6 +14,8 @@ use crate::ingame_menu::{IngameMenuResources, show_options};
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
+
+const SCREEN: &str = "Main menu Options screen";
 
 /// Show the options dialog over the main-menu background.
 ///
@@ -132,8 +135,8 @@ pub(crate) async fn show_main_menu_options(
     );
 
     if outcome.changed {
-        application_context
-            .update_and_retain_player_profiles(|mgr| {
+        require(
+            application_context.update_and_retain_player_profiles(|mgr| {
                 let profile = mgr
                     .profiles
                     .iter_mut()
@@ -143,19 +146,21 @@ pub(crate) async fn show_main_menu_options(
                 profile.gameplay_config = gameplay;
                 profile.multiplayer_config = multiplayer;
                 profile.sound_config = sound_cfg;
-            })
-            .unwrap_or_else(|error| panic!("Main menu Options profile update failed: {error}"))
-            .log_persistence_error("Main menu Options: failed to save profile manager");
+            }),
+            SCREEN,
+        )
+        .log_persistence_error("Main menu Options: failed to save profile manager");
     }
     if outcome.key_config_changed {
-        application_context
-            .with_key_configs_mut(|store| {
+        require(
+            application_context.with_key_configs_mut(|store| {
                 *store.entry_or_default(active_profile_id) = key_cfg;
                 if let Err(err) = store.save() {
                     tracing::error!("Main menu Options: failed to save key configs: {err:#}");
                 }
-            })
-            .unwrap_or_else(|error| panic!("Main menu Options key update failed: {error}"));
+            }),
+            SCREEN,
+        );
     }
     // `audio_backend` drops here: PlatformAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.

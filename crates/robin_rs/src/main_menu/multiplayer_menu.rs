@@ -3,6 +3,7 @@
 
 use robin_engine::campaign::Campaign;
 
+use crate::application::require;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
@@ -37,10 +38,10 @@ const ID_CREATE: u32 = 1;
 const ID_START: u32 = 2;
 const ID_BACK: u32 = 3;
 
+const SCREEN: &str = "Multiplayer menu";
+
 fn localized_text(application_context: &ApplicationContext, key: PortTextKey) -> &'static str {
-    application_context
-        .port_text(key)
-        .unwrap_or_else(|error| panic!("Multiplayer menu lost localized text: {error}"))
+    require(application_context.port_text(key), SCREEN)
 }
 
 fn localized_format(
@@ -48,9 +49,7 @@ fn localized_format(
     key: PortTextKey,
     arguments: &[(&str, &str)],
 ) -> String {
-    application_context
-        .format_port_text(key, arguments)
-        .unwrap_or_else(|error| panic!("Multiplayer menu lost localized text: {error}"))
+    require(application_context.format_port_text(key, arguments), SCREEN)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1490,9 +1489,10 @@ fn mission_choices(
 }
 
 fn multiplayer_nickname(application_context: &ApplicationContext) -> String {
-    let name = application_context
-        .with_active_profile(|profile| profile.name.clone())
-        .unwrap_or_else(|error| panic!("multiplayer menu requires an active profile: {error}"));
+    let name = require(
+        application_context.with_active_profile(|profile| profile.name.clone()),
+        SCREEN,
+    );
     if !name.trim().is_empty() {
         return name;
     }

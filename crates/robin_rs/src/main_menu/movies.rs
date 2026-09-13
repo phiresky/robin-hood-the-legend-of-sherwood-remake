@@ -9,6 +9,7 @@
 //! standard menu buttons with localised text labels instead. Tracked as
 //! a deliberate deviation from the original game's menu behavior.
 
+use crate::application::require;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
@@ -70,9 +71,10 @@ impl MoviesModalState {
 
         // Outro stays out of the focus group until the player has finished
         // the campaign (progression < 100).
-        let outro_enabled = application_context
-            .with_active_profile(|profile| profile.progression >= 100)
-            .unwrap_or_else(|error| panic!("Show Movies requires an active profile: {error}"));
+        let outro_enabled = require(
+            application_context.with_active_profile(|profile| profile.progression >= 100),
+            "Show Movies screen",
+        );
 
         // Localised labels for the Intro / Outro buttons. The original game
         // leaves the label empty and relies on the sprite to convey meaning;

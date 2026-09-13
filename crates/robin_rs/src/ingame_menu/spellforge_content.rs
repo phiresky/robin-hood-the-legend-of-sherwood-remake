@@ -5,6 +5,7 @@
 //! authenticated distributor identity, licence attestation, and byte size are
 //! visible before the player can click the approval button.
 
+use crate::application::require;
 use crate::cache_maintenance::CacheClearStatus;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
@@ -48,10 +49,10 @@ const CONSENT_WARNING_MAX_LINES: usize = 2;
 const CONSENT_TOTAL_MAX_LINES: usize =
     CONSENT_PRE_HASH_MAX_LINES + CONSENT_HASH_BLOCK_LINES + CONSENT_WARNING_MAX_LINES;
 
+const SCREEN: &str = "Spellforge content screen";
+
 fn localized_text(application_context: &ApplicationContext, key: PortTextKey) -> &'static str {
-    application_context
-        .port_text(key)
-        .unwrap_or_else(|error| panic!("Spellforge content screen lost localized text: {error}"))
+    require(application_context.port_text(key), SCREEN)
 }
 
 fn localized_format(
@@ -59,9 +60,7 @@ fn localized_format(
     key: PortTextKey,
     arguments: &[(&str, &str)],
 ) -> String {
-    application_context
-        .format_port_text(key, arguments)
-        .unwrap_or_else(|error| panic!("Spellforge content screen lost localized text: {error}"))
+    require(application_context.format_port_text(key, arguments), SCREEN)
 }
 
 fn bounded_display_lines(font: &Font, text: &str, max_width: i32, max_lines: usize) -> Vec<String> {

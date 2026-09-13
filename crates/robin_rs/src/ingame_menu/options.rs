@@ -8,6 +8,7 @@
 //! Buttons are driven by the [`crate::widget`] system via the
 //! [`super::widget_bridge`].
 
+use crate::application::require;
 use crate::gfx_types::Keycode;
 use robin_engine::sound_cache::SampleLoader;
 
@@ -55,6 +56,7 @@ pub struct OptionsOutcome {
     pub language_changed: bool,
 }
 
+const SCREEN: &str = "Options screen";
 const BUTTON_GRAPHICS: u32 = 0;
 const BUTTON_SOUNDS: u32 = 1;
 const BUTTON_SHORTCUTS: u32 = 2;
@@ -207,13 +209,12 @@ impl OptionsModalState {
         ];
         #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
         entries.push((BUTTON_MULTIPLAYER_PRIVACY, "Multiplayer / Privacy"));
-        let language_label = application_context
-            .port_text(crate::localization::PortTextKey::Language)
-            .unwrap_or_else(|error| panic!("Options lost localized text: {error}"));
+        let language_label = require(
+            application_context.port_text(crate::localization::PortTextKey::Language),
+            SCREEN,
+        );
         let selector_visible = allow_language_switching
-            && application_context
-                .language_selector_visible()
-                .unwrap_or_else(|error| panic!("Options lost language preferences: {error}"));
+            && require(application_context.language_selector_visible(), SCREEN);
         if language_option_visible(allow_language_switching, selector_visible) {
             entries.push((BUTTON_LANGUAGE, language_label));
         }

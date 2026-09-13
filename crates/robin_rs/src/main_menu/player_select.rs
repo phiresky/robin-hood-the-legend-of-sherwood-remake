@@ -7,6 +7,7 @@
 //! keyboards).
 
 use super::difficulty_to_string;
+use crate::application::require;
 use crate::gfx_types::Keycode;
 use crate::ingame_menu::resources::SealButton;
 use robin_engine::sprite::BBox;
@@ -42,6 +43,8 @@ use robin_engine::player_profile::{
 };
 use robin_engine::resource_ids;
 use serde::{Deserialize, Serialize};
+
+const SCREEN: &str = "Select Player screen";
 
 /// Maximum number of player profiles that can coexist on disk.
 const MAX_PROFILES: usize = 10;
@@ -536,14 +539,15 @@ impl From<&PlayerProfile> for PlayerProfileRow {
 fn profiles_snapshot(
     application_context: &ApplicationContext,
 ) -> (Vec<PlayerProfileRow>, Option<usize>) {
-    application_context
-        .with_player_profiles(|mgr| {
+    require(
+        application_context.with_player_profiles(|mgr| {
             (
                 mgr.profiles.iter().map(PlayerProfileRow::from).collect(),
                 mgr.active_index,
             )
-        })
-        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
+        }),
+        SCREEN,
+    )
 }
 
 fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize> {
@@ -563,9 +567,10 @@ fn profile_row_at(vx: i32, vy: i32, field_w: i32, field_h: i32) -> Option<usize>
 }
 
 fn profile_count(application_context: &ApplicationContext) -> usize {
-    application_context
-        .with_player_profiles(|mgr| mgr.profile_count())
-        .unwrap_or_else(|error| panic!("Select Player lost its ApplicationContext: {error}"))
+    require(
+        application_context.with_player_profiles(|mgr| mgr.profile_count()),
+        SCREEN,
+    )
 }
 
 fn can_delete_profile(profile_count: usize) -> bool {
@@ -573,22 +578,24 @@ fn can_delete_profile(profile_count: usize) -> bool {
 }
 
 fn commit_active(application_context: &ApplicationContext, idx: usize) {
-    let profile_id = application_context
-        .update_and_retain_player_profiles(|mgr| {
+    let profile_id = require(
+        application_context.update_and_retain_player_profiles(|mgr| {
             if idx < mgr.profile_count() {
                 mgr.set_active(idx);
                 return Some(mgr.profiles[idx].id);
             }
             None
-        })
-        .unwrap_or_else(|error| panic!("Select Player commit failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist active profile change");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist active profile change");
     if let Some(profile_id) = profile_id {
-        application_context
-            .with_key_configs_mut(|store| {
+        require(
+            application_context.with_key_configs_mut(|store| {
                 store.entry_or_default(profile_id);
-            })
-            .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
+            }),
+            SCREEN,
+        );
     }
 }
 
@@ -598,8 +605,8 @@ fn commit_active(application_context: &ApplicationContext, idx: usize) {
 /// immediately usable rather than relying on the empty→Anonymous
 /// fallback.
 fn default_new_player_name(application_context: &ApplicationContext) -> String {
-    application_context
-        .with_player_profiles(|mgr| {
+    require(
+        application_context.with_player_profiles(|mgr| {
             if !mgr.has_profile("Player") {
                 return "Player".to_string();
             }
@@ -611,8 +618,9 @@ fn default_new_player_name(application_context: &ApplicationContext) -> String {
                 }
                 n += 1;
             }
-        })
-        .unwrap_or_else(|error| panic!("Select Player name generation failed: {error}"))
+        }),
+        SCREEN,
+    )
 }
 
 fn create_new_profile(
@@ -626,20 +634,22 @@ fn create_new_profile(
     // double-click) to commit and persist.  Pass the live window
     // dimensions so the new profile inherits them when no other profile
     // is active (the "screen open" arm of profile creation).
-    let (idx, profile_id) = application_context
-        .with_player_profiles_mut(|mgr| {
+    let (idx, profile_id) = require(
+        application_context.with_player_profiles_mut(|mgr| {
             let idx = mgr.create_profile_with_screen_dims(name, difficulty, screen_dims);
             (idx, mgr.profiles[idx].id)
-        })
-        .unwrap_or_else(|error| panic!("Select Player create failed: {error}"));
-    application_context
-        .with_key_configs_mut(|store| {
+        }),
+        SCREEN,
+    );
+    require(
+        application_context.with_key_configs_mut(|store| {
             store.configs.insert(
                 profile_id,
                 crate::key_config_store::ProfileKeyConfig::fresh(),
             );
-        })
-        .unwrap_or_else(|error| panic!("Select Player key setup failed: {error}"));
+        }),
+        SCREEN,
+    );
     Some(idx)
 }
 
@@ -651,16 +661,17 @@ fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name
     // the active slot.
     let trimmed = new_name.trim();
     let final_name = if trimmed.is_empty() { "Robin" } else { trimmed };
-    application_context
-        .update_and_retain_player_profiles(|mgr| {
+    require(
+        application_context.update_and_retain_player_profiles(|mgr| {
             if idx >= mgr.profile_count() {
                 return;
             }
             mgr.profiles[idx].name = final_name.to_string();
             mgr.set_active(idx);
-        })
-        .unwrap_or_else(|error| panic!("Select Player rename failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist rename");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist rename");
 }
 
 fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Result<bool, String> {
@@ -1949,15 +1960,16 @@ fn set_profile_difficulty(
         .rules()
         .validate()
         .expect("difficulty dialog returned invalid rules");
-    application_context
-        .update_and_retain_player_profiles(|profiles| {
+    require(
+        application_context.update_and_retain_player_profiles(|profiles| {
             let profile = profiles.profiles.get_mut(idx).unwrap_or_else(|| {
                 panic!("difficulty profile index {idx} disappeared during editing")
             });
             profile.difficulty = difficulty;
-        })
-        .unwrap_or_else(|error| panic!("Select Player difficulty update failed: {error}"))
-        .log_persistence_error("Select Player: failed to persist difficulty");
+        }),
+        SCREEN,
+    )
+    .log_persistence_error("Select Player: failed to persist difficulty");
 }
 
 #[cfg(test)]
