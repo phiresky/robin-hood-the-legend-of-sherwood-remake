@@ -2,9 +2,9 @@
 //! trackers, seat ownership, co-signing, and real-iroh host sessions.
 use super::super::test_support::{leaderboard_request, signed_response};
 use super::{
-    HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind, ServerPeers,
-    connect_client_with_keys, retain_transition_peer_for_reconnect, start_server_with_key,
-    take_committed_snapshot_transition, validate_peer_command_authority,
+    ClientKeys, HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind,
+    ServerPeers, connect_client_with_keys, retain_transition_peer_for_reconnect,
+    start_server_with_key, take_committed_snapshot_transition, validate_peer_command_authority,
     validate_server_gameplay_outbound, validate_server_gameplay_wire_msg,
 };
 use crate::leaderboard_ranked_session::{
@@ -1264,8 +1264,10 @@ fn real_iroh_ranked_admission_uses_durable_key_and_gates_begin_and_reconnect() {
     let (client_in_tx, client_in_rx) = channel();
     let (client_out_tx, client_out_rx) = channel();
     let mut client = connect_client_with_keys(
-        transport_key.clone(),
-        Some(durable_key.clone()),
+        ClientKeys {
+            transport_key: transport_key.clone(),
+            durable_ranked_key: Some(durable_key.clone()),
+        },
         server.connect_string(),
         "alice".into(),
         client_in_tx,
@@ -1458,8 +1460,10 @@ fn real_iroh_ready_before_browse_downgrade_still_begins_gameplay() {
     let (client_in_tx, client_in_rx) = channel();
     let (client_out_tx, client_out_rx) = channel();
     let mut client = connect_client_with_keys(
-        iroh::SecretKey::generate(),
-        None,
+        ClientKeys {
+            transport_key: iroh::SecretKey::generate(),
+            durable_ranked_key: None,
+        },
         server.connect_string(),
         "alice".into(),
         client_in_tx,

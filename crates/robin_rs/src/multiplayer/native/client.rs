@@ -121,8 +121,10 @@ pub fn connect_client_in_campaign(
         }
     };
     connect_client_inner(
-        campaign.state().client_key.clone(),
-        durable_ranked_key,
+        ClientKeys {
+            transport_key: campaign.state().client_key.clone(),
+            durable_ranked_key,
+        },
         addr,
         nickname,
         incoming_tx,
@@ -134,22 +136,14 @@ pub fn connect_client_in_campaign(
 /// two keys independently injectable prevents tests from accidentally blessing
 /// the transport endpoint as durable ranking authority.
 #[cfg(test)]
-pub(crate) fn connect_client_with_keys(
-    transport_key: SecretKey,
-    durable_ranked_key: Option<SecretKey>,
+pub(super) fn connect_client_with_keys(
+    keys: ClientKeys,
     addr: impl AsRef<str>,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
 ) -> std::io::Result<ClientHandle> {
-    connect_client_inner(
-        transport_key,
-        durable_ranked_key,
-        addr,
-        nickname,
-        incoming_tx,
-        outgoing_rx,
-    )
+    connect_client_inner(keys, addr, nickname, incoming_tx, outgoing_rx)
 }
 
 /// Explicit-key client entry used by transport tests.
@@ -164,8 +158,10 @@ pub fn connect_client_with_key(
     outgoing_rx: Receiver<NetOutbound>,
 ) -> std::io::Result<ClientHandle> {
     connect_client_inner(
-        key.clone(),
-        Some(key),
+        ClientKeys {
+            transport_key: key.clone(),
+            durable_ranked_key: Some(key),
+        },
         addr,
         nickname,
         incoming_tx,
@@ -173,14 +169,27 @@ pub fn connect_client_with_key(
     )
 }
 
+/// The two identities of a native client. The transport key names the QUIC
+/// endpoint; the optional durable key is the install's ranked identity. They
+/// stay separate so a transport key is never taken as ranking authority.
+///
+/// Not serde: secret key material.
+pub(super) struct ClientKeys {
+    pub(super) transport_key: SecretKey,
+    pub(super) durable_ranked_key: Option<SecretKey>,
+}
+
 pub(super) fn connect_client_inner(
-    transport_key: SecretKey,
-    durable_ranked_key: Option<SecretKey>,
+    keys: ClientKeys,
     addr: impl AsRef<str>,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     outgoing_rx: Receiver<NetOutbound>,
 ) -> std::io::Result<ClientHandle> {
+    let ClientKeys {
+        transport_key,
+        durable_ranked_key,
+    } = keys;
     robin_engine::multiplayer::validate_display_name(&nickname).map_err(std::io::Error::other)?;
     let server_addr = parse_connect_addr(addr.as_ref()).map_err(std::io::Error::other)?;
     let ranked_authenticated_host_public_key = PublicKey32::from_bytes(*server_addr.id.as_bytes());
@@ -221,18 +230,24 @@ pub(super) fn connect_client_inner(
             let cancellation_for_io = Arc::clone(&cancellation_for_thread);
             rt.block_on(async move {
                 run_client_io_async(
-                    transport_key,
-                    durable_ranked_key,
-                    server_addr,
-                    nickname,
-                    incoming_tx,
-                    &mut outgoing_async_rx,
-                    session_metadata_for_thread,
-                    ranked_lifecycle_for_thread,
-                    &mut ranked_setup_rx,
-                    content_offer_for_thread,
-                    handshake_tx,
-                    cancellation_for_io,
+                    ClientKeys {
+                        transport_key,
+                        durable_ranked_key,
+                    },
+                    crate::multiplayer::client_protocol::ClientConfig {
+                        server_addr,
+                        nickname,
+                    },
+                    ClientIo {
+                        incoming_tx,
+                        outgoing_rx: &mut outgoing_async_rx,
+                        session_metadata: session_metadata_for_thread,
+                        ranked_lifecycle: ranked_lifecycle_for_thread,
+                        ranked_setup_rx: &mut ranked_setup_rx,
+                        content_offer: content_offer_for_thread,
+                        initial_handshake_tx: handshake_tx,
+                        cancellation: cancellation_for_io,
+                    },
                 )
                 .await;
             });
@@ -551,48 +566,48 @@ pub(super) async fn resolve_reconnect_prelude(
     }
 }
 
+/// Channel ends and shared slots the native client I/O task uses to talk to
+/// the game loop and its [`ClientHandle`]. The two receivers are borrowed:
+/// their owner outlives the task so the outgoing bridge closes only after the
+/// task has finished.
+///
+/// Field order is the former parameter order of `run_client_io_inner`, which
+/// unpacks the struct in that order so the owned ends drop exactly as before.
+/// Not serde: live channel ends and shared slots.
+pub(super) struct ClientIo<'a> {
+    pub(super) incoming_tx: Sender<NetEvent>,
+    pub(super) outgoing_rx: &'a mut UnboundedReceiver<NetOutbound>,
+    pub(super) session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
+    pub(super) ranked_lifecycle: SharedRankedSessionLifecycle,
+    pub(super) ranked_setup_rx: &'a mut UnboundedReceiver<
+        Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
+    >,
+    pub(super) content_offer: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
+    pub(super) initial_handshake_tx: std::sync::mpsc::SyncSender<Result<InitialHandshake, String>>,
+    pub(super) cancellation: Arc<AtomicBool>,
+}
+
 /// Drive one connection until it ends, then auto-reconnect with
 /// exponential backoff.  Returns when the game loop drops the
 /// outgoing queue (`host.net` dropped) or shutdown is requested.
 pub(super) async fn run_client_io_async(
-    transport_key: SecretKey,
-    durable_ranked_key: Option<SecretKey>,
-    server_addr: EndpointAddr,
-    nickname: String,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
-    session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
-    ranked_lifecycle: SharedRankedSessionLifecycle,
-    ranked_setup_rx: &mut UnboundedReceiver<
-        Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
-    >,
-    content_offer_shared: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
-    initial_handshake_tx: std::sync::mpsc::SyncSender<Result<InitialHandshake, String>>,
-    cancellation: Arc<AtomicBool>,
+    keys: ClientKeys,
+    config: crate::multiplayer::client_protocol::ClientConfig,
+    io: ClientIo<'_>,
 ) {
+    let ClientKeys {
+        transport_key,
+        durable_ranked_key,
+    } = keys;
     let endpoint = match bind_endpoint(transport_key, GAME_ALPN).await {
         Ok(endpoint) => endpoint,
         Err(e) => {
-            let _ = initial_handshake_tx.send(Err(e));
+            let _ = io.initial_handshake_tx.send(Err(e));
             return;
         }
     };
 
-    run_client_io_inner(
-        &endpoint,
-        durable_ranked_key,
-        server_addr,
-        nickname,
-        incoming_tx,
-        outgoing_async_rx,
-        session_metadata,
-        ranked_lifecycle,
-        ranked_setup_rx,
-        content_offer_shared,
-        initial_handshake_tx,
-        cancellation,
-    )
-    .await;
+    run_client_io_inner(&endpoint, durable_ranked_key, config, io).await;
 
     endpoint.close().await;
 }
@@ -600,19 +615,23 @@ pub(super) async fn run_client_io_async(
 pub(super) async fn run_client_io_inner(
     endpoint: &Endpoint,
     durable_ranked_key: Option<SecretKey>,
-    server_addr: EndpointAddr,
-    nickname: String,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
-    session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
-    ranked_lifecycle: SharedRankedSessionLifecycle,
-    ranked_setup_rx: &mut UnboundedReceiver<
-        Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
-    >,
-    content_offer_shared: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
-    initial_handshake_tx: std::sync::mpsc::SyncSender<Result<InitialHandshake, String>>,
-    cancellation: Arc<AtomicBool>,
+    config: crate::multiplayer::client_protocol::ClientConfig,
+    io: ClientIo<'_>,
 ) {
+    let crate::multiplayer::client_protocol::ClientConfig {
+        server_addr,
+        nickname,
+    } = config;
+    let ClientIo {
+        incoming_tx,
+        outgoing_rx: outgoing_async_rx,
+        session_metadata,
+        ranked_lifecycle,
+        ranked_setup_rx,
+        content_offer: content_offer_shared,
+        initial_handshake_tx,
+        cancellation,
+    } = io;
     let prelude = {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut backoff = std::time::Duration::from_millis(50);
@@ -755,18 +774,22 @@ pub(super) async fn run_client_io_inner(
     loop {
         match run_session_async(
             session,
-            your_seat,
-            *endpoint.id().as_bytes(),
-            *server_addr.id.as_bytes(),
-            durable_ranked_key.clone(),
-            &ranked_lifecycle,
-            &ranked_join_state,
-            ranked_setup_rx,
-            &ranked_setup_state,
-            &incoming_tx,
-            outgoing_async_rx,
-            &leaderboard_cosign_state,
-            &cancellation,
+            ClientSessionRanked {
+                local_seat: your_seat,
+                local_transport_endpoint: *endpoint.id().as_bytes(),
+                authenticated_host_endpoint: *server_addr.id.as_bytes(),
+                durable_ranked_key: durable_ranked_key.clone(),
+                lifecycle: &ranked_lifecycle,
+                join_state: &ranked_join_state,
+                setup_state: &ranked_setup_state,
+            },
+            ClientSessionIo {
+                ranked_setup_rx: &mut *ranked_setup_rx,
+                incoming_tx: &incoming_tx,
+                outgoing_rx: &mut *outgoing_async_rx,
+                leaderboard_cosign_state: &leaderboard_cosign_state,
+                cancellation: &cancellation,
+            },
         )
         .await
         {
@@ -953,6 +976,30 @@ pub(super) fn discard_session_outbound(outgoing_rx: &mut UnboundedReceiver<NetOu
     discarded
 }
 
+/// Ranked identity and shared ranked state for one client session; becomes
+/// the session's [`ClientRankedTransportContext`].
+pub(super) struct ClientSessionRanked<'a> {
+    pub(super) local_seat: PlayerId,
+    pub(super) local_transport_endpoint: [u8; 32],
+    pub(super) authenticated_host_endpoint: [u8; 32],
+    pub(super) durable_ranked_key: Option<SecretKey>,
+    pub(super) lifecycle: &'a SharedRankedSessionLifecycle,
+    pub(super) join_state: &'a SharedClientRankedJoinState,
+    pub(super) setup_state: &'a Arc<AtomicU8>,
+}
+
+/// Borrowed game-loop links of one client session. Rebuilt for every session
+/// so the reconnect loop gets its receivers back between sessions.
+pub(super) struct ClientSessionIo<'a> {
+    pub(super) ranked_setup_rx: &'a mut UnboundedReceiver<
+        Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
+    >,
+    pub(super) incoming_tx: &'a Sender<NetEvent>,
+    pub(super) outgoing_rx: &'a mut UnboundedReceiver<NetOutbound>,
+    pub(super) leaderboard_cosign_state: &'a SharedClientLeaderboardCoSignState,
+    pub(super) cancellation: &'a AtomicBool,
+}
+
 /// Run one client session by racing a whole-session reader loop
 /// against a whole-session writer loop, so local inputs are sent as
 /// soon as the game loop queues them.  The reader and writer each own
@@ -961,21 +1008,25 @@ pub(super) fn discard_session_outbound(outgoing_rx: &mut UnboundedReceiver<NetOu
 /// when another branch fires first.
 pub(super) async fn run_session_async(
     session: ClientSession,
-    local_seat: PlayerId,
-    local_transport_endpoint: [u8; 32],
-    authenticated_host_endpoint: [u8; 32],
-    durable_ranked_key: Option<SecretKey>,
-    ranked_lifecycle: &SharedRankedSessionLifecycle,
-    ranked_join_state: &SharedClientRankedJoinState,
-    ranked_setup_rx: &mut UnboundedReceiver<
-        Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
-    >,
-    ranked_setup_state: &Arc<AtomicU8>,
-    incoming_tx: &Sender<NetEvent>,
-    outgoing_rx: &mut UnboundedReceiver<NetOutbound>,
-    leaderboard_cosign_state: &SharedClientLeaderboardCoSignState,
-    cancellation: &AtomicBool,
+    ranked: ClientSessionRanked<'_>,
+    io: ClientSessionIo<'_>,
 ) -> SessionEnd {
+    let ClientSessionRanked {
+        local_seat,
+        local_transport_endpoint,
+        authenticated_host_endpoint,
+        durable_ranked_key,
+        lifecycle: ranked_lifecycle,
+        join_state: ranked_join_state,
+        setup_state: ranked_setup_state,
+    } = ranked;
+    let ClientSessionIo {
+        ranked_setup_rx,
+        incoming_tx,
+        outgoing_rx,
+        leaderboard_cosign_state,
+        cancellation,
+    } = io;
     let ClientSession {
         _conn,
         mut send,

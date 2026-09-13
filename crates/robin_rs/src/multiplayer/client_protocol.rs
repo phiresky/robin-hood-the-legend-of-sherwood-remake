@@ -346,6 +346,15 @@ pub(super) fn decode_body(class: NetFrameClass, bytes: &[u8]) -> Result<NetMsg, 
     Ok(message)
 }
 
+/// Immutable parameters of one client transport, shared by the native (iroh)
+/// and browser (relay) adapters: the resolved host endpoint and the display
+/// name sent in `Hello`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ClientConfig {
+    pub(super) server_addr: iroh::EndpointAddr,
+    pub(super) nickname: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct WelcomeData {
     pub(super) seat: PlayerId,

@@ -9,7 +9,7 @@
 //! TODO(browser-webrtc): if iroh gains a production WebRTC path, add it below
 //! this endpoint abstraction instead of inventing a second game protocol.
 
-use super::client_protocol::validate_reconnect_state;
+use super::client_protocol::{ClientConfig, validate_reconnect_state};
 use super::join_ticket::BrowserJoinTicket;
 use super::{
     InboundFramePolicy, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound,
@@ -200,8 +200,10 @@ pub fn connect_client(
     ));
     wasm_bindgen_futures::spawn_local(run_client_io(
         ticket,
-        server_addr,
-        nickname,
+        ClientConfig {
+            server_addr,
+            nickname,
+        },
         incoming_tx,
         outgoing_rx,
         Rc::clone(&session_metadata),
@@ -265,8 +267,7 @@ async fn with_timeout<T>(millis: u32, future: impl Future<Output = T>) -> Result
 
 async fn run_client_io(
     ticket: BrowserJoinTicket,
-    server_addr: EndpointAddr,
-    nickname: String,
+    config: ClientConfig,
     incoming_tx: Sender<NetEvent>,
     mut outgoing_rx: Receiver<NetOutbound>,
     session_metadata: Rc<RefCell<Option<super::ClientSessionMetadata>>>,
@@ -277,6 +278,10 @@ async fn run_client_io(
     startup_error: Rc<RefCell<Option<String>>>,
     cancellation: Rc<Cell<bool>>,
 ) {
+    let ClientConfig {
+        server_addr,
+        nickname,
+    } = config;
     let transport_key = SecretKey::generate();
     let transport_endpoint_id = transport_key.public();
     let browser_auth = match browser_peer_auth(&ticket, transport_endpoint_id).await {
