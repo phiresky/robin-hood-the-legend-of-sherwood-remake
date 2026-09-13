@@ -454,12 +454,12 @@ pub(super) fn publication_lock(
     topology.lock(manifest_sha256)
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 pub(super) fn publication_lock_from_actual_for_test(
     root: &Path,
     manifest_sha256: Digest32,
 ) -> Result<PublicationLockV3> {
-    let inventory = publication_tree_inventory_v3(root)?;
+    let inventory = super::inventory::publication_tree_inventory_v3(root)?;
     let files = inventory
         .files
         .iter()
@@ -532,12 +532,7 @@ pub(super) fn validate_publication_inventory_against_lock_v3(
 /// Validate an already-authored publication strictly from its canonical lock.
 pub fn validate_publication_v3(root: &Path) -> Result<Digest32> {
     validate_mount_root(root)?;
-    #[cfg(target_os = "linux")]
-    {
-        Ok(validate_publication_v3_authority(root)?.lock_sha256)
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("PublicationV3 validation requires Linux openat2 filesystem authority")
+    Ok(validate_publication_v3_authority(root)?.lock_sha256)
 }
 
 /// Validate a PublicationV3 tree through an already-pinned directory handle.
@@ -545,7 +540,6 @@ pub fn validate_publication_v3(root: &Path) -> Result<Digest32> {
 /// The caller owns and pins `descriptor`; `diagnostic_root` is used only for
 /// mount/root-rebind diagnostics. The complete descendant closure remains
 /// rooted in that descriptor.
-#[cfg(target_os = "linux")]
 pub(crate) fn validate_pinned_publication_v3(
     root_rebind_path: &Path,
     descriptor: &fs::File,
@@ -582,7 +576,6 @@ pub(crate) fn validate_pinned_publication_v3(
     })
 }
 
-#[cfg(target_os = "linux")]
 pub(crate) fn validate_publication_v3_authority(
     root_path: &Path,
 ) -> Result<ValidatedPublicationV3> {
@@ -590,7 +583,6 @@ pub(crate) fn validate_publication_v3_authority(
     validate_pinned_publication_v3(root_path, &root)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn validate_publication_v3_contents(
     root: &Path,
     root_descriptor: &fs::File,

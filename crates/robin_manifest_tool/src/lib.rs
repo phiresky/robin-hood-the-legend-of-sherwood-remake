@@ -17,6 +17,7 @@ pub mod campaign_template_v1;
 /// projection exporter and operator verification tooling.
 pub mod official_content_source;
 pub mod plan_v3;
+#[cfg(target_os = "linux")]
 pub mod publication_v3;
 pub mod release_admission_v1;
 pub mod sandbox_v3;
@@ -1204,7 +1205,6 @@ fn sync_directory_tree(root: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn make_verifier_bundles_read_only(root: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     if !root.exists() {
@@ -1227,16 +1227,6 @@ fn make_verifier_bundles_read_only(root: &Path) -> Result<()> {
     directories.sort_by_key(|directory| std::cmp::Reverse(directory.components().count()));
     for directory in directories {
         fs::set_permissions(directory, fs::Permissions::from_mode(0o555))?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn make_verifier_bundles_read_only(root: &Path) -> Result<()> {
-    for (_, file) in walk_regular_files(root)? {
-        let mut permissions = fs::metadata(&file)?.permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(file, permissions)?;
     }
     Ok(())
 }

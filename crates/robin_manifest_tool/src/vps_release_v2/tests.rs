@@ -1,3 +1,35 @@
+use super::activation::{
+    VpsActivationExecOperationV2, clear_vps_close_on_exec, pin_vps_activation_candidate_at,
+    pin_vps_activation_exec_authorities,
+};
+use super::activation_lock::{
+    acquire_vps_activation_lock_at, pin_inherited_vps_activation_lock_at,
+};
+use super::bundle::{
+    candidate_release_directory_name, copy_publication_tree_exact,
+    expected_deploy_bootstrap_sha256sums, expected_root_once_sha256sums, expected_sha256sums,
+    extend_real_runtime_fence_payload_paths, forbidden_release_path, mode_inventory_bytes,
+    payload_inventory, promote_pinned_vps_release_with, publication_file_to_vps_path,
+    reject_links_and_special_nodes, reject_mounts_strictly_below, valid_release_directory_name,
+    validate_deploy_bootstrap_sha256sums, validate_root_once_sha256sums,
+    validate_vps_release_assembly_output,
+};
+use super::config_policy::validate_raw_content_against_manifest;
+use super::host_policy::{
+    CANONICAL_API_SERVICE, SYSTEM_UNIT_ROOT, VALIDATOR_SYSTEM_UNIT_DENYLIST_BLOCK,
+    validate_literal_install_root_assignment, validate_system_unit_root_authority,
+};
+use super::runtime_fence::{
+    RUNTIME_FENCE_INTENT_NAME, RUNTIME_FENCE_INTENT_TEMPORARY_NAME, RuntimeFenceInitBoundaryV1,
+    RuntimeFenceInitIntentV1, initialize_vps_runtime_fence_v1_at, runtime_fence_bound_identity,
+};
+use super::sources::{
+    PinnedVpsSourceRoot, VpsSourceConsumeEntryV1, VpsSourceEntryKindV1, clear_pinned_vps_directory,
+    consume_vps_sources_in_with, inventory_pinned_vps_source_directory, open_vps_source_root,
+    pin_inherited_vps_candidate_root_at, pin_inherited_vps_candidate_root_at_with,
+    with_pinned_vps_source_publication,
+};
+use super::staging::persist_vps_staging_with;
 use super::*;
 use crate::test_fixtures::fact;
 

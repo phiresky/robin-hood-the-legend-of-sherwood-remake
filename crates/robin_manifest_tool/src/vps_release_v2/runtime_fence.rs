@@ -382,13 +382,41 @@ pub(super) fn initialize_vps_runtime_fence_v1_at<F>(
 where
     F: FnMut(RuntimeFenceInitBoundaryV1) -> Result<()>,
 {
-    use rustix::fs::{
-        AtFlags, FileType, Mode, OFlags, RawDir, RenameFlags, ResolveFlags, fchmod, mkdirat,
-        openat2, renameat_with, statat,
-    };
-    use std::ffi::{OsStr, OsString};
+    let ctx = pin_runtime_fence_state(source_commit, activation_lock, state_path)?;
+    if pinned_entry_exists(&ctx.state, &ctx.final_name)? {
+        return finish_sealed_runtime_fence(&ctx, &mut after_boundary);
+    }
+    let intent = recover_runtime_fence_intent(&ctx, &mut after_boundary)?;
+    let intent = bind_runtime_fence_staging(&ctx, intent, &mut after_boundary)?;
+    seal_and_publish_runtime_fence_staging(&ctx, &intent, &mut after_boundary)
+}
+
+/// Pinned state root and fixed entry names shared by every phase of
+/// [`initialize_vps_runtime_fence_v1_at`].
+// Runtime-only descriptor context; never serialized.
+struct RuntimeFenceInitContextV1<'a> {
+    source_commit: &'a str,
+    activation_lock: &'a PinnedVpsActivationLockV2,
+    state: std::os::fd::OwnedFd,
+    state_device: u64,
+    final_name: std::ffi::OsString,
+    staging_name: std::ffi::OsString,
+    staging_name_text: String,
+    intent_name: std::ffi::OsString,
+    intent_temporary_name: std::ffi::OsString,
+    intent_writing_name: std::ffi::OsString,
+}
+
+/// Validate and pin the canonical state root, derive the initializer names,
+/// and reject foreign staging evidence.
+fn pin_runtime_fence_state<'a>(
+    source_commit: &'a str,
+    activation_lock: &'a PinnedVpsActivationLockV2,
+    state_path: &Path,
+) -> Result<RuntimeFenceInitContextV1<'a>> {
+    use rustix::fs::{Mode, OFlags, RawDir, ResolveFlags, openat2};
+    use std::ffi::OsString;
     use std::os::fd::AsFd as _;
-    use std::os::unix::ffi::OsStringExt as _;
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     ensure!(
@@ -445,96 +473,122 @@ where
             );
         }
     }
+    let staging_name_text = staging_name_text.to_owned();
+    Ok(RuntimeFenceInitContextV1 {
+        source_commit,
+        activation_lock,
+        state,
+        state_device: state_pinned.st_dev,
+        final_name,
+        staging_name,
+        staging_name_text,
+        intent_name,
+        intent_temporary_name,
+        intent_writing_name,
+    })
+}
 
-    let validate_fence =
-        |root: &std::os::fd::OwnedFd, mode: u32, allow_subset: bool| -> Result<()> {
-            let root_metadata = rustix::fs::fstat(root)?;
-            ensure!(
-                FileType::from_raw_mode(root_metadata.st_mode).is_dir()
-                    && root_metadata.st_uid == rustix::process::geteuid().as_raw()
-                    && root_metadata.st_dev == state_pinned.st_dev
-                    && root_metadata.st_mode & 0o777 == mode,
-                "runtime-fence directory has unsafe identity, owner, device, or mode"
-            );
-            let scan = openat2(
-                root.as_fd(),
-                ".",
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-                Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-            )?;
-            let mut buffer = Vec::with_capacity(4096);
-            let mut directory = RawDir::new(&scan, buffer.spare_capacity_mut());
-            let mut names = BTreeSet::new();
-            while let Some(entry) = directory.next() {
-                let entry = entry?;
-                let bytes = entry.file_name().to_bytes();
-                if bytes == b"." || bytes == b".." {
-                    continue;
-                }
-                let name = OsString::from_vec(bytes.to_vec());
-                ensure!(
-                    name == "db-admission.lock" || name == "db-quiescence.lock",
-                    "runtime-fence contains an unexpected entry"
-                );
-                ensure!(
-                    names.insert(name.clone()),
-                    "runtime-fence entry is duplicated"
-                );
-                let named = statat(root.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
-                fd_policy::ensure_private_regular(
-                    named.st_mode,
-                    named.st_uid,
-                    named.st_nlink as u64,
-                    "runtime-fence leaf has unsafe type, owner, device, links, size, or mode",
-                )?;
-                fd_policy::ensure_device(
-                    named.st_dev,
-                    state_pinned.st_dev,
-                    "runtime-fence leaf has unsafe device",
-                )?;
-                fd_policy::ensure_size(named.st_size, 0, 0, "runtime-fence leaf has unsafe size")?;
-                fd_policy::ensure_mode(
-                    named.st_mode,
-                    &[0o400],
-                    "runtime-fence leaf has unsafe mode",
-                )?;
-                let leaf = openat2(
-                    root.as_fd(),
-                    &name,
-                    OFlags::RDONLY | OFlags::CLOEXEC,
-                    Mode::empty(),
-                    ResolveFlags::BENEATH
-                        | ResolveFlags::NO_SYMLINKS
-                        | ResolveFlags::NO_MAGICLINKS
-                        | ResolveFlags::NO_XDEV,
-                )?;
-                let pinned = rustix::fs::fstat(&leaf)?;
-                ensure!(
-                    pinned.st_dev == named.st_dev
-                        && pinned.st_ino == named.st_ino
-                        && pinned.st_uid == named.st_uid
-                        && pinned.st_mode == named.st_mode
-                        && pinned.st_nlink == named.st_nlink
-                        && pinned.st_size == named.st_size,
-                    "runtime-fence leaf changed while it was pinned"
-                );
+impl RuntimeFenceInitContextV1<'_> {
+    fn validate_fence(
+        &self,
+        root: &std::os::fd::OwnedFd,
+        mode: u32,
+        allow_subset: bool,
+    ) -> Result<()> {
+        use rustix::fs::{AtFlags, FileType, Mode, OFlags, RawDir, ResolveFlags, openat2, statat};
+        use std::ffi::OsString;
+        use std::os::fd::AsFd as _;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let root_metadata = rustix::fs::fstat(root)?;
+        ensure!(
+            FileType::from_raw_mode(root_metadata.st_mode).is_dir()
+                && root_metadata.st_uid == rustix::process::geteuid().as_raw()
+                && root_metadata.st_dev == self.state_device
+                && root_metadata.st_mode & 0o777 == mode,
+            "runtime-fence directory has unsafe identity, owner, device, or mode"
+        );
+        let scan = openat2(
+            root.as_fd(),
+            ".",
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
+            Mode::empty(),
+            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+        )?;
+        let mut buffer = Vec::with_capacity(4096);
+        let mut directory = RawDir::new(&scan, buffer.spare_capacity_mut());
+        let mut names = BTreeSet::new();
+        while let Some(entry) = directory.next() {
+            let entry = entry?;
+            let bytes = entry.file_name().to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
             }
+            let name = OsString::from_vec(bytes.to_vec());
             ensure!(
-                allow_subset
-                    || names
-                        == BTreeSet::from([
-                            OsString::from("db-admission.lock"),
-                            OsString::from("db-quiescence.lock"),
-                        ]),
-                "runtime-fence final inventory is incomplete"
+                name == "db-admission.lock" || name == "db-quiescence.lock",
+                "runtime-fence contains an unexpected entry"
             );
-            Ok(())
-        };
+            ensure!(
+                names.insert(name.clone()),
+                "runtime-fence entry is duplicated"
+            );
+            let named = statat(root.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
+            fd_policy::ensure_private_regular(
+                named.st_mode,
+                named.st_uid,
+                named.st_nlink as u64,
+                "runtime-fence leaf has unsafe type, owner, device, links, size, or mode",
+            )?;
+            fd_policy::ensure_device(
+                named.st_dev,
+                self.state_device,
+                "runtime-fence leaf has unsafe device",
+            )?;
+            fd_policy::ensure_size(named.st_size, 0, 0, "runtime-fence leaf has unsafe size")?;
+            fd_policy::ensure_mode(
+                named.st_mode,
+                &[0o400],
+                "runtime-fence leaf has unsafe mode",
+            )?;
+            let leaf = openat2(
+                root.as_fd(),
+                &name,
+                OFlags::RDONLY | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH
+                    | ResolveFlags::NO_SYMLINKS
+                    | ResolveFlags::NO_MAGICLINKS
+                    | ResolveFlags::NO_XDEV,
+            )?;
+            let pinned = rustix::fs::fstat(&leaf)?;
+            ensure!(
+                pinned.st_dev == named.st_dev
+                    && pinned.st_ino == named.st_ino
+                    && pinned.st_uid == named.st_uid
+                    && pinned.st_mode == named.st_mode
+                    && pinned.st_nlink == named.st_nlink
+                    && pinned.st_size == named.st_size,
+                "runtime-fence leaf changed while it was pinned"
+            );
+        }
+        ensure!(
+            allow_subset
+                || names
+                    == BTreeSet::from([
+                        OsString::from("db-admission.lock"),
+                        OsString::from("db-quiescence.lock"),
+                    ]),
+            "runtime-fence final inventory is incomplete"
+        );
+        Ok(())
+    }
 
-    let open_fence = |name: &OsStr| -> Result<std::os::fd::OwnedFd> {
-        use rustix::fs::StatxFlags;
+    fn open_fence(&self, name: &std::ffi::OsStr) -> Result<std::os::fd::OwnedFd> {
+        use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, StatxFlags, openat2, statat};
+        use std::os::fd::AsFd as _;
 
+        let state = &self.state;
         let named = statat(state.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
         let state_mount = rustix::fs::statx(
             state.as_fd(),
@@ -573,97 +627,117 @@ where
             "runtime-fence directory changed while it was pinned"
         );
         Ok(root)
-    };
-
-    if pinned_entry_exists(&state, &final_name)? {
-        ensure!(
-            !pinned_entry_exists(&state, &staging_name)?
-                && !pinned_entry_exists(&state, &intent_temporary_name)?
-                && !pinned_entry_exists(&state, &intent_writing_name)?,
-            "sealed runtime-fence coexists with non-terminal initializer evidence"
-        );
-        let final_root = open_fence(&final_name)?;
-        validate_fence(&final_root, 0o500, false)?;
-        if pinned_entry_exists(&state, &intent_name)? {
-            let pinned_intent = pin_runtime_fence_intent(&state, &intent_name, &[0o400])?;
-            validate_runtime_fence_intent(
-                &pinned_intent.document,
-                source_commit,
-                staging_name_text,
-                state_pinned.st_dev,
-            )?;
-            let final_metadata = rustix::fs::fstat(&final_root)?;
-            ensure!(
-                (final_metadata.st_dev, final_metadata.st_ino)
-                    == runtime_fence_bound_identity(&pinned_intent.document)?,
-                "sealed runtime-fence differs from its durable initializer intent"
-            );
-            if pinned_entry_exists(&state, &intent_temporary_name)? {
-                let old = pin_runtime_fence_intent(&state, &intent_temporary_name, &[0o400])?;
-                validate_runtime_fence_intent(
-                    &old.document,
-                    source_commit,
-                    staging_name_text,
-                    state_pinned.st_dev,
-                )?;
-                ensure!(
-                    old.document.phase == RuntimeFenceInitPhaseV1::Authorized,
-                    "sealed runtime-fence retained a non-authorized predecessor intent"
-                );
-                activation_lock.ensure_canonical()?;
-                remove_exact_runtime_fence_intent(&state, &intent_temporary_name, &old)?;
-            }
-            activation_lock.ensure_canonical()?;
-            remove_exact_runtime_fence_intent(&state, &intent_name, &pinned_intent)?;
-            after_boundary(RuntimeFenceInitBoundaryV1::IntentRemoved)?;
-        } else {
-            ensure!(
-                !pinned_entry_exists(&state, &intent_temporary_name)?,
-                "sealed runtime-fence lacks its primary intent but retains .new"
-            );
-        }
-        activation_lock.ensure_canonical()?;
-        return Ok(());
     }
 
-    let mut intent = if pinned_entry_exists(&state, &intent_name)? {
-        let current = pin_runtime_fence_intent(&state, &intent_name, &[0o400])?;
+    fn exists(&self, name: &std::ffi::OsString) -> Result<bool> {
+        pinned_entry_exists(&self.state, name)
+    }
+
+    fn pin_intent(&self, name: &std::ffi::OsString) -> Result<PinnedRuntimeFenceIntentV1> {
+        pin_runtime_fence_intent(&self.state, name, &[0o400])
+    }
+
+    fn validate_intent(&self, document: &RuntimeFenceInitIntentV1) -> Result<()> {
         validate_runtime_fence_intent(
-            &current.document,
-            source_commit,
-            staging_name_text,
-            state_pinned.st_dev,
-        )?;
+            document,
+            self.source_commit,
+            &self.staging_name_text,
+            self.state_device,
+        )
+    }
+}
+
+/// Terminal recovery: the sealed final already exists, so only its durable
+/// intent documents remain to be verified and removed.
+fn finish_sealed_runtime_fence<F>(
+    ctx: &RuntimeFenceInitContextV1<'_>,
+    after_boundary: &mut F,
+) -> Result<()>
+where
+    F: FnMut(RuntimeFenceInitBoundaryV1) -> Result<()>,
+{
+    let activation_lock = ctx.activation_lock;
+    ensure!(
+        !ctx.exists(&ctx.staging_name)?
+            && !ctx.exists(&ctx.intent_temporary_name)?
+            && !ctx.exists(&ctx.intent_writing_name)?,
+        "sealed runtime-fence coexists with non-terminal initializer evidence"
+    );
+    let final_root = ctx.open_fence(&ctx.final_name)?;
+    ctx.validate_fence(&final_root, 0o500, false)?;
+    if ctx.exists(&ctx.intent_name)? {
+        let pinned_intent = ctx.pin_intent(&ctx.intent_name)?;
+        ctx.validate_intent(&pinned_intent.document)?;
+        let final_metadata = rustix::fs::fstat(&final_root)?;
+        ensure!(
+            (final_metadata.st_dev, final_metadata.st_ino)
+                == runtime_fence_bound_identity(&pinned_intent.document)?,
+            "sealed runtime-fence differs from its durable initializer intent"
+        );
+        if ctx.exists(&ctx.intent_temporary_name)? {
+            let old = ctx.pin_intent(&ctx.intent_temporary_name)?;
+            ctx.validate_intent(&old.document)?;
+            ensure!(
+                old.document.phase == RuntimeFenceInitPhaseV1::Authorized,
+                "sealed runtime-fence retained a non-authorized predecessor intent"
+            );
+            activation_lock.ensure_canonical()?;
+            remove_exact_runtime_fence_intent(&ctx.state, &ctx.intent_temporary_name, &old)?;
+        }
+        activation_lock.ensure_canonical()?;
+        remove_exact_runtime_fence_intent(&ctx.state, &ctx.intent_name, &pinned_intent)?;
+        after_boundary(RuntimeFenceInitBoundaryV1::IntentRemoved)?;
+    } else {
+        ensure!(
+            !ctx.exists(&ctx.intent_temporary_name)?,
+            "sealed runtime-fence lacks its primary intent but retains .new"
+        );
+    }
+    activation_lock.ensure_canonical()?;
+    Ok(())
+}
+
+/// Reconcile interrupted intent writes and return the primary durable intent,
+/// publishing a fresh authorization intent when none exists yet.
+fn recover_runtime_fence_intent<F>(
+    ctx: &RuntimeFenceInitContextV1<'_>,
+    after_boundary: &mut F,
+) -> Result<PinnedRuntimeFenceIntentV1>
+where
+    F: FnMut(RuntimeFenceInitBoundaryV1) -> Result<()>,
+{
+    use rustix::fs::{RenameFlags, renameat_with};
+    use std::os::fd::AsFd as _;
+
+    let activation_lock = ctx.activation_lock;
+    let state = &ctx.state;
+    let mut intent = if ctx.exists(&ctx.intent_name)? {
+        let current = ctx.pin_intent(&ctx.intent_name)?;
+        ctx.validate_intent(&current.document)?;
         Some(current)
     } else {
         None
     };
 
-    if pinned_entry_exists(&state, &intent_writing_name)? {
+    if ctx.exists(&ctx.intent_writing_name)? {
         ensure!(
             intent.is_some()
-                || (!pinned_entry_exists(&state, &staging_name)?
-                    && !pinned_entry_exists(&state, &intent_temporary_name)?),
+                || (!ctx.exists(&ctx.staging_name)? && !ctx.exists(&ctx.intent_temporary_name)?),
             "unauthorized runtime-fence intent scratch coexists with mutated state"
         );
         activation_lock.ensure_canonical()?;
-        remove_runtime_fence_writing_scratch(&state, &intent_writing_name)?;
+        remove_runtime_fence_writing_scratch(state, &ctx.intent_writing_name)?;
         activation_lock.ensure_canonical()?;
     }
 
     if intent.is_none() {
         ensure!(
-            !pinned_entry_exists(&state, &staging_name)?,
+            !ctx.exists(&ctx.staging_name)?,
             "runtime-fence staging exists before a durable authorization intent"
         );
-        if pinned_entry_exists(&state, &intent_temporary_name)? {
-            let authorized = pin_runtime_fence_intent(&state, &intent_temporary_name, &[0o400])?;
-            validate_runtime_fence_intent(
-                &authorized.document,
-                source_commit,
-                staging_name_text,
-                state_pinned.st_dev,
-            )?;
+        if ctx.exists(&ctx.intent_temporary_name)? {
+            let authorized = ctx.pin_intent(&ctx.intent_temporary_name)?;
+            ctx.validate_intent(&authorized.document)?;
             ensure!(
                 authorized.document.phase == RuntimeFenceInitPhaseV1::Authorized,
                 "initial runtime-fence .new is not an authorization intent"
@@ -672,15 +746,15 @@ where
             let authorized = RuntimeFenceInitIntentV1 {
                 schema_version: 1,
                 phase: RuntimeFenceInitPhaseV1::Authorized,
-                source_commit: source_commit.to_owned(),
-                staging_name: staging_name_text.to_owned(),
+                source_commit: ctx.source_commit.to_owned(),
+                staging_name: ctx.staging_name_text.clone(),
                 staging_device: None,
                 staging_inode: None,
             };
             write_runtime_fence_intent_new(
-                &state,
-                &intent_writing_name,
-                &intent_temporary_name,
+                state,
+                &ctx.intent_writing_name,
+                &ctx.intent_temporary_name,
                 &authorized,
                 activation_lock,
                 (
@@ -688,85 +762,97 @@ where
                     RuntimeFenceInitBoundaryV1::IntentWritingSynced,
                     RuntimeFenceInitBoundaryV1::IntentNewPublished,
                 ),
-                &mut after_boundary,
+                after_boundary,
             )?;
         }
         activation_lock.ensure_canonical()?;
         renameat_with(
             state.as_fd(),
-            &intent_temporary_name,
+            &ctx.intent_temporary_name,
             state.as_fd(),
-            &intent_name,
+            &ctx.intent_name,
             RenameFlags::NOREPLACE,
         )?;
-        rustix::fs::fsync(&state)?;
+        rustix::fs::fsync(state)?;
         after_boundary(RuntimeFenceInitBoundaryV1::AuthorizedIntentPublished)?;
-        intent = Some(pin_runtime_fence_intent(&state, &intent_name, &[0o400])?);
+        intent = Some(ctx.pin_intent(&ctx.intent_name)?);
     }
 
     let mut intent = intent.context("runtime-fence initialization lacks a durable intent")?;
-    if pinned_entry_exists(&state, &intent_temporary_name)? {
-        let adjacent = pin_runtime_fence_intent(&state, &intent_temporary_name, &[0o400])?;
-        validate_runtime_fence_intent(
-            &adjacent.document,
-            source_commit,
-            staging_name_text,
-            state_pinned.st_dev,
-        )?;
+    if ctx.exists(&ctx.intent_temporary_name)? {
+        let adjacent = ctx.pin_intent(&ctx.intent_temporary_name)?;
+        ctx.validate_intent(&adjacent.document)?;
         match (intent.document.phase, adjacent.document.phase) {
             (RuntimeFenceInitPhaseV1::Authorized, RuntimeFenceInitPhaseV1::StagingBound) => {
                 ensure!(
-                    runtime_fence_named_identity(&state, &staging_name)?
+                    runtime_fence_named_identity(state, &ctx.staging_name)?
                         == Some(runtime_fence_bound_identity(&adjacent.document)?),
                     "bound .new intent differs from the retained staging inode"
                 );
                 activation_lock.ensure_canonical()?;
                 renameat_with(
                     state.as_fd(),
-                    &intent_name,
+                    &ctx.intent_name,
                     state.as_fd(),
-                    &intent_temporary_name,
+                    &ctx.intent_temporary_name,
                     RenameFlags::EXCHANGE,
                 )?;
-                rustix::fs::fsync(&state)?;
+                rustix::fs::fsync(state)?;
                 after_boundary(RuntimeFenceInitBoundaryV1::BoundIntentExchanged)?;
-                intent = pin_runtime_fence_intent(&state, &intent_name, &[0o400])?;
+                intent = ctx.pin_intent(&ctx.intent_name)?;
             }
             (RuntimeFenceInitPhaseV1::StagingBound, RuntimeFenceInitPhaseV1::Authorized) => {}
             _ => anyhow::bail!("runtime-fence intents are not an exact adjacent transition"),
         }
-        let predecessor = pin_runtime_fence_intent(&state, &intent_temporary_name, &[0o400])?;
+        let predecessor = ctx.pin_intent(&ctx.intent_temporary_name)?;
         ensure!(
             predecessor.document.phase == RuntimeFenceInitPhaseV1::Authorized,
             "runtime-fence .new does not contain the exact authorized predecessor"
         );
         activation_lock.ensure_canonical()?;
-        remove_exact_runtime_fence_intent(&state, &intent_temporary_name, &predecessor)?;
+        remove_exact_runtime_fence_intent(state, &ctx.intent_temporary_name, &predecessor)?;
         after_boundary(RuntimeFenceInitBoundaryV1::StagingBoundIntentPublished)?;
     }
+    Ok(intent)
+}
 
+/// Create (if needed) the private staging directory and durably bind its
+/// inode into the primary intent. No-op once the intent is already bound.
+fn bind_runtime_fence_staging<F>(
+    ctx: &RuntimeFenceInitContextV1<'_>,
+    mut intent: PinnedRuntimeFenceIntentV1,
+    after_boundary: &mut F,
+) -> Result<PinnedRuntimeFenceIntentV1>
+where
+    F: FnMut(RuntimeFenceInitBoundaryV1) -> Result<()>,
+{
+    use rustix::fs::{Mode, RenameFlags, mkdirat, renameat_with};
+    use std::os::fd::AsFd as _;
+
+    let activation_lock = ctx.activation_lock;
+    let state = &ctx.state;
     if intent.document.phase == RuntimeFenceInitPhaseV1::Authorized {
-        if !pinned_entry_exists(&state, &staging_name)? {
+        if !ctx.exists(&ctx.staging_name)? {
             activation_lock.ensure_canonical()?;
-            mkdirat(state.as_fd(), &staging_name, Mode::from_raw_mode(0o700))?;
-            rustix::fs::fsync(&state)?;
+            mkdirat(state.as_fd(), &ctx.staging_name, Mode::from_raw_mode(0o700))?;
+            rustix::fs::fsync(state)?;
             after_boundary(RuntimeFenceInitBoundaryV1::StagingCreated)?;
         }
-        let staging = open_fence(&staging_name)?;
-        validate_fence(&staging, 0o700, true)?;
+        let staging = ctx.open_fence(&ctx.staging_name)?;
+        ctx.validate_fence(&staging, 0o700, true)?;
         let staging_metadata = rustix::fs::fstat(&staging)?;
         let bound = RuntimeFenceInitIntentV1 {
             schema_version: 1,
             phase: RuntimeFenceInitPhaseV1::StagingBound,
-            source_commit: source_commit.to_owned(),
-            staging_name: staging_name_text.to_owned(),
+            source_commit: ctx.source_commit.to_owned(),
+            staging_name: ctx.staging_name_text.clone(),
             staging_device: Some(staging_metadata.st_dev),
             staging_inode: Some(staging_metadata.st_ino),
         };
         write_runtime_fence_intent_new(
-            &state,
-            &intent_writing_name,
-            &intent_temporary_name,
+            state,
+            &ctx.intent_writing_name,
+            &ctx.intent_temporary_name,
             &bound,
             activation_lock,
             (
@@ -774,45 +860,64 @@ where
                 RuntimeFenceInitBoundaryV1::BoundIntentWritingSynced,
                 RuntimeFenceInitBoundaryV1::BoundIntentNewPublished,
             ),
-            &mut after_boundary,
+            after_boundary,
         )?;
         activation_lock.ensure_canonical()?;
         renameat_with(
             state.as_fd(),
-            &intent_name,
+            &ctx.intent_name,
             state.as_fd(),
-            &intent_temporary_name,
+            &ctx.intent_temporary_name,
             RenameFlags::EXCHANGE,
         )?;
-        rustix::fs::fsync(&state)?;
+        rustix::fs::fsync(state)?;
         after_boundary(RuntimeFenceInitBoundaryV1::BoundIntentExchanged)?;
-        let predecessor = pin_runtime_fence_intent(&state, &intent_temporary_name, &[0o400])?;
+        let predecessor = ctx.pin_intent(&ctx.intent_temporary_name)?;
         ensure!(
             predecessor.document == intent.document,
             "runtime-fence bound-intent exchange did not retain its exact predecessor"
         );
-        intent = pin_runtime_fence_intent(&state, &intent_name, &[0o400])?;
+        intent = ctx.pin_intent(&ctx.intent_name)?;
         ensure!(
             intent.document == bound,
             "runtime-fence bound-intent exchange did not publish its exact successor"
         );
         activation_lock.ensure_canonical()?;
-        remove_exact_runtime_fence_intent(&state, &intent_temporary_name, &predecessor)?;
+        remove_exact_runtime_fence_intent(state, &ctx.intent_temporary_name, &predecessor)?;
         after_boundary(RuntimeFenceInitBoundaryV1::StagingBoundIntentPublished)?;
     }
+    Ok(intent)
+}
 
-    let staging_identity = runtime_fence_named_identity(&state, &staging_name)?;
+/// Populate the bound staging directory with both lock leaves, seal it,
+/// publish it as the final fence, and remove the durable intent.
+fn seal_and_publish_runtime_fence_staging<F>(
+    ctx: &RuntimeFenceInitContextV1<'_>,
+    intent: &PinnedRuntimeFenceIntentV1,
+    after_boundary: &mut F,
+) -> Result<()>
+where
+    F: FnMut(RuntimeFenceInitBoundaryV1) -> Result<()>,
+{
+    use rustix::fs::{
+        AtFlags, Mode, OFlags, RenameFlags, ResolveFlags, fchmod, openat2, renameat_with, statat,
+    };
+    use std::os::fd::AsFd as _;
+
+    let activation_lock = ctx.activation_lock;
+    let state = &ctx.state;
+    let staging_identity = runtime_fence_named_identity(state, &ctx.staging_name)?;
     ensure!(
         staging_identity == Some(runtime_fence_bound_identity(&intent.document)?),
         "runtime-fence staging differs from its durable initializer intent"
     );
-    let staging = open_fence(&staging_name)?;
+    let staging = ctx.open_fence(&ctx.staging_name)?;
     let staging_mode = rustix::fs::fstat(&staging)?.st_mode & 0o777;
     ensure!(
         staging_mode == 0o700 || staging_mode == 0o500,
         "runtime-fence staging has an unsafe mode"
     );
-    validate_fence(&staging, staging_mode, true)?;
+    ctx.validate_fence(&staging, staging_mode, true)?;
     activation_lock.ensure_canonical()?;
     fchmod(&staging, Mode::from_raw_mode(0o700))?;
     for (leaf_name, boundary) in [
@@ -854,7 +959,7 @@ where
         )?;
         fd_policy::ensure_device(
             metadata.st_dev,
-            state_pinned.st_dev,
+            ctx.state_device,
             "runtime-fence leaf creation did not produce the exact device",
         )?;
         fd_policy::ensure_size(
@@ -875,41 +980,41 @@ where
     activation_lock.ensure_canonical()?;
     fchmod(&staging, Mode::from_raw_mode(0o500))?;
     rustix::fs::fsync(&staging)?;
-    validate_fence(&staging, 0o500, false)?;
+    ctx.validate_fence(&staging, 0o500, false)?;
     after_boundary(RuntimeFenceInitBoundaryV1::StagingSealed)?;
     let staging_metadata = rustix::fs::fstat(&staging)?;
     activation_lock.ensure_canonical()?;
     let rename = renameat_with(
         state.as_fd(),
-        &staging_name,
+        &ctx.staging_name,
         state.as_fd(),
-        &final_name,
+        &ctx.final_name,
         RenameFlags::NOREPLACE,
     );
     if let Err(error) = rename {
-        let final_metadata = statat(state.as_fd(), &final_name, AtFlags::SYMLINK_NOFOLLOW);
+        let final_metadata = statat(state.as_fd(), &ctx.final_name, AtFlags::SYMLINK_NOFOLLOW);
         if !final_metadata.as_ref().is_ok_and(|metadata| {
             metadata.st_dev == staging_metadata.st_dev && metadata.st_ino == staging_metadata.st_ino
         }) {
             return Err(error.into());
         }
     }
-    rustix::fs::fsync(&state)?;
+    rustix::fs::fsync(state)?;
     after_boundary(RuntimeFenceInitBoundaryV1::FinalPublished)?;
-    let final_root = open_fence(&final_name)?;
+    let final_root = ctx.open_fence(&ctx.final_name)?;
     let final_metadata = rustix::fs::fstat(&final_root)?;
     ensure!(
         (final_metadata.st_dev, final_metadata.st_ino)
             == runtime_fence_bound_identity(&intent.document)?,
         "runtime-fence final differs from its durable initializer intent"
     );
-    validate_fence(&final_root, 0o500, false)?;
+    ctx.validate_fence(&final_root, 0o500, false)?;
     ensure!(
-        !pinned_entry_exists(&state, &staging_name)?,
+        !ctx.exists(&ctx.staging_name)?,
         "runtime-fence staging remains after publication"
     );
     activation_lock.ensure_canonical()?;
-    remove_exact_runtime_fence_intent(&state, &intent_name, &intent)?;
+    remove_exact_runtime_fence_intent(state, &ctx.intent_name, intent)?;
     after_boundary(RuntimeFenceInitBoundaryV1::IntentRemoved)?;
     activation_lock.ensure_canonical()?;
     Ok(())

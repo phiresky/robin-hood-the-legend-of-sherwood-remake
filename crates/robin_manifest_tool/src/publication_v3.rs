@@ -21,8 +21,6 @@ use persistence::{
     discard_failed_publication_staging, installed_publication_durability_error,
     persist_publication_staging,
 };
-#[cfg(test)]
-use persistence::{discard_failed_publication_staging_with, persist_publication_staging_with};
 use std::fs;
 use std::io::{BufReader, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -1036,199 +1034,33 @@ mod staging;
 
 mod inventory;
 
-use plan::LoadedPublication;
+use plan::{LoadedPublication, load_publication, validate_complete_ranked_rules_config};
 
-use plan::load_publication;
-
-use plan::validate_complete_ranked_rules_config;
-
-#[cfg(test)]
-use plan::validate_campaign_state_source;
-
-#[cfg(test)]
-use cloudflare::derive_cloudflare_origin_inventories_v1;
-
-#[cfg(test)]
-use cloudflare::CloudflareMaterializationProvenanceV1;
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-use cloudflare::resolve_cloudflare_materialization_git_authority_v1;
-
-#[cfg(test)]
-use cloudflare::expected_topology_from_materialized_inventory_v1;
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-use cloudflare::populate_cloudflare_materialization_staging_v1;
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-use cloudflare::persist_cloudflare_materialization_v1;
-
-pub use cloudflare::materialize_cloudflare_publication_v3;
-
-pub use cloudflare::validate_cloudflare_publication_materialization_v1;
-
-use closure::validate_publication_closure;
-
-#[cfg(test)]
-use closure::validate_official_campaign_offer_fields;
-
-use closure::expected_publication_topology_from_loaded_v3;
-
-use closure::publication_lock;
-
-#[cfg(all(test, target_os = "linux"))]
-use closure::publication_lock_from_actual_for_test;
-
-#[cfg(test)]
-use closure::validate_publication_inventory_against_lock_v3;
+pub use cloudflare::{
+    materialize_cloudflare_publication_v3, validate_cloudflare_publication_materialization_v1,
+};
 
 pub use closure::validate_publication_v3;
+use closure::{
+    expected_publication_topology_from_loaded_v3, publication_lock, release_file_exposure,
+    validate_publication_closure, validate_transition,
+};
+pub(crate) use closure::{validate_pinned_publication_v3, validate_publication_v3_authority};
 
-#[cfg(target_os = "linux")]
-pub(crate) use closure::validate_pinned_publication_v3;
+use staging::{
+    backend_publication, make_lock_files_read_only, make_private_executables_and_states_read_only,
+    materialize_publication, publication_manifest,
+};
 
-#[cfg(target_os = "linux")]
-pub(crate) use closure::validate_publication_v3_authority;
-
-#[cfg(test)]
-use closure::validate_deployment_exposure;
-
-use closure::release_file_exposure;
-
-#[cfg(test)]
-use closure::validate_deployment_metadata_inventory;
-
-#[cfg(test)]
-use closure::scan_public_tree;
-
-#[cfg(test)]
-use closure::PublicJsonSchema;
-
-#[cfg(test)]
-use closure::public_json_schema;
-
-#[cfg(test)]
-use closure::reject_private_json_keys;
-
-#[cfg(test)]
-use closure::file_contains_bytes;
-
-#[cfg(test)]
-use closure::load_addressed_documents;
-
-use closure::validate_transition;
-
-#[cfg(test)]
-use closure::validate_transition_with;
-
-#[cfg(test)]
-use closure::TransitionRule;
-
-#[cfg(test)]
-use closure::compare_transition;
-
-use staging::materialize_publication;
-
-use staging::backend_publication;
-
-use staging::publication_manifest;
-
-#[cfg(test)]
-use staging::copy_directory_exact_preserving_modes;
-
-#[cfg(test)]
-use staging::copy_directory_exact_preserving_modes_with;
-
-#[cfg(test)]
-use staging::create_private_publication_root;
-
-use staging::make_private_executables_and_states_read_only;
-
-use staging::make_lock_files_read_only;
-
-pub(crate) use inventory::PublicationNodeIdentityV3;
-
-use inventory::PublicationTreeInventoryV3;
-
-pub(crate) use inventory::ValidatedPublicationV3;
-
-use inventory::PublicationTreeAuthorityV3;
-
-use inventory::publication_inventory_matches_after_root_rename_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::read_inventory_file_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::load_inventory_canonical_document_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::load_inventory_document_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::inventory_artifact_v3;
-
-use inventory::inventory_relative_files_v3;
-
-use inventory::inventory_has_directory_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::publication_node_identity_v3;
-
-use inventory::publication_same_stable_node_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::open_publication_root_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::pin_publication_root_parent_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::open_publication_child_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::open_publication_child_identity_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::open_optional_publication_child_identity_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::publication_directory_entries_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::validate_publication_node_v3;
-
-#[cfg(target_os = "linux")]
-use inventory::stable_publication_file_artifact_v3;
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-use inventory::stable_publication_file_artifact_v3_with;
-
-#[cfg(target_os = "linux")]
-use inventory::publication_tree_inventory_v3_from_fd;
-
-#[cfg(target_os = "linux")]
-#[cfg(test)]
-use inventory::publication_tree_inventory_v3_from_fd_with;
-
-#[cfg(test)]
-use inventory::publication_tree_inventory_v3;
-
-#[cfg(test)]
-use inventory::publication_directories;
-
-#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
-use inventory::reject_publication_mounts_in_v3;
-
-#[cfg(test)]
-use inventory::publication_unix_mode;
-
-use inventory::file_artifacts;
-
-use inventory::immutable_transition_files;
-
-use inventory::status_transition_files;
+pub(crate) use inventory::{PublicationNodeIdentityV3, ValidatedPublicationV3};
+use inventory::{
+    PublicationTreeAuthorityV3, PublicationTreeInventoryV3, file_artifacts,
+    immutable_transition_files, inventory_artifact_v3, inventory_has_directory_v3,
+    inventory_relative_files_v3, load_inventory_canonical_document_v3, load_inventory_document_v3,
+    open_optional_publication_child_identity_v3, open_publication_child_identity_v3,
+    open_publication_child_v3, open_publication_root_v3, pin_publication_root_parent_v3,
+    publication_directory_entries_v3, publication_inventory_matches_after_root_rename_v3,
+    publication_node_identity_v3, publication_same_stable_node_v3,
+    publication_tree_inventory_v3_from_fd, read_inventory_file_v3,
+    stable_publication_file_artifact_v3, status_transition_files, validate_publication_node_v3,
+};

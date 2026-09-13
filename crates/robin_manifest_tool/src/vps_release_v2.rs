@@ -8,18 +8,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 mod host_policy;
-#[cfg(test)]
-use host_policy::{
-    CANONICAL_API_SERVICE, SYSTEM_UNIT_ROOT, VALIDATOR_SYSTEM_UNIT_DENYLIST_BLOCK,
-    validate_literal_install_root_assignment, validate_system_unit_root_authority,
-};
 use host_policy::{DEPLOY_BOOTSTRAP_FILES, ROOT_ONCE_KIT_FILES, validate_host_template_bytes};
 mod activation_lock;
 pub use activation_lock::{
     PinnedVpsActivationLockV2, acquire_vps_activation_lock_v2, pin_inherited_vps_activation_lock_v2,
 };
-#[cfg(test)]
-use activation_lock::{acquire_vps_activation_lock_at, pin_inherited_vps_activation_lock_at};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -419,197 +412,34 @@ mod config_policy;
 
 mod staging;
 
-pub use bundle::assemble_vps_release_v2;
-
-#[cfg(test)]
-use bundle::validate_vps_release_assembly_output;
-
-pub use bundle::validate_vps_release_v2;
-
-pub use bundle::promote_vps_release_v2;
-
-#[cfg(test)]
-use bundle::promote_pinned_vps_release_with;
-
-use bundle::validate_pinned_current_vps_release_root;
-
-#[cfg(test)]
-use bundle::copy_publication_tree_exact;
-
-#[cfg(test)]
-use bundle::payload_inventory;
-
-#[cfg(test)]
-use bundle::mode_inventory_bytes;
-
-#[cfg(test)]
-use bundle::expected_sha256sums;
-
-#[cfg(test)]
-use bundle::expected_root_once_sha256sums;
-
-#[cfg(test)]
-use bundle::validate_root_once_sha256sums;
-
-#[cfg(test)]
-use bundle::expected_deploy_bootstrap_sha256sums;
-
-#[cfg(test)]
-use bundle::validate_deploy_bootstrap_sha256sums;
-
-use bundle::reject_mounts_at_or_below;
-
-#[cfg(test)]
-use bundle::reject_mounts_strictly_below;
-
-#[cfg(test)]
-use bundle::extend_real_runtime_fence_payload_paths;
-
-#[cfg(test)]
-use bundle::publication_file_to_vps_path;
-
-use bundle::load_canonical;
-
-use bundle::validate_immutable_raw_root;
-
-#[cfg(test)]
-use bundle::reject_links_and_special_nodes;
-
-use bundle::reject_hardlink;
-
-use bundle::paths_overlap;
-
-use bundle::normalized_absolute;
-
-use bundle::valid_source_commit;
-
-#[cfg(test)]
-use bundle::valid_release_directory_name;
-
-#[cfg(test)]
-use bundle::candidate_release_directory_name;
-
-#[cfg(test)]
-use bundle::forbidden_release_path;
-
-use bundle::valid_relative_manifest_path;
-
-use bundle::canonical_user_deployment;
-
-use bundle::canonical_file_mode;
-
-pub use activation::project_vps_publication_lock_v2;
+pub use bundle::{assemble_vps_release_v2, promote_vps_release_v2, validate_vps_release_v2};
+use bundle::{
+    canonical_file_mode, canonical_user_deployment, load_canonical, normalized_absolute,
+    paths_overlap, reject_hardlink, reject_mounts_at_or_below, valid_relative_manifest_path,
+    valid_source_commit, validate_immutable_raw_root, validate_pinned_current_vps_release_root,
+};
 
 use activation::load_pinned_vps_plan;
+pub use activation::{
+    exec_vps_deploy_activation_v2, exec_vps_rollback_activation_v2, project_vps_publication_lock_v2,
+};
 
-pub use activation::exec_vps_deploy_activation_v2;
-
-pub use activation::exec_vps_rollback_activation_v2;
-
-#[cfg(test)]
-use activation::VpsActivationExecOperationV2;
-
-#[cfg(test)]
-use activation::pin_vps_activation_exec_authorities;
-
-#[cfg(test)]
-use activation::clear_vps_close_on_exec;
-
-#[cfg(test)]
-use activation::pin_vps_activation_candidate_at;
-
-#[cfg(test)]
-use sources::VpsSourceEntryKindV1;
-
-#[cfg(test)]
-use sources::VpsSourceConsumeEntryV1;
-
-pub use sources::consume_vps_sources_v2;
-
-pub use sources::promote_inherited_vps_release_v2;
-
-#[cfg(test)]
-use sources::PinnedVpsSourceRoot;
-
-#[cfg(test)]
-use sources::pin_inherited_vps_candidate_root_at;
-
-use sources::pin_vps_candidate_parents_at;
-
-#[cfg(test)]
-use sources::pin_inherited_vps_candidate_root_at_with;
-
-#[cfg(test)]
-use sources::consume_vps_sources_in_with;
-
-#[cfg(test)]
-use sources::open_vps_source_root;
-
-#[cfg(test)]
-use sources::with_pinned_vps_source_publication;
-
-#[cfg(test)]
-use sources::inventory_pinned_vps_source_directory;
-
-#[cfg(test)]
-use sources::clear_pinned_vps_directory;
-
-use sources::pinned_entry_exists;
-
-#[cfg(test)]
-use runtime_fence::RUNTIME_FENCE_INTENT_NAME;
-
-#[cfg(test)]
-use runtime_fence::RUNTIME_FENCE_INTENT_TEMPORARY_NAME;
-
-#[cfg(test)]
-use runtime_fence::RuntimeFenceInitIntentV1;
-
-#[cfg(test)]
-use runtime_fence::RuntimeFenceInitBoundaryV1;
-
-#[cfg(test)]
-use runtime_fence::runtime_fence_bound_identity;
+pub use sources::{consume_vps_sources_v2, promote_inherited_vps_release_v2};
+use sources::{pin_vps_candidate_parents_at, pinned_entry_exists};
 
 pub use runtime_fence::initialize_vps_runtime_fence_v1;
 
-#[cfg(test)]
-use runtime_fence::initialize_vps_runtime_fence_v1_at;
+use plan::{
+    validate_assembly_inputs, validate_linux_elf, validate_pinned_file, validate_plan_shape,
+};
 
-use plan::validate_plan_shape;
-
-use plan::validate_assembly_inputs;
-
-use plan::validate_pinned_file;
-
-use plan::validate_linux_elf;
-
-use config_policy::validate_final_config;
-
-use config_policy::validate_worker_raw_authority;
-
-#[cfg(test)]
-use config_policy::validate_raw_content_against_manifest;
-
-use config_policy::validate_final_host_file;
-
-use config_policy::validate_backup_sandbox_contract;
-
-use config_policy::reject_placeholders;
-
-use staging::MAX_FAILED_VPS_STAGING_ENTRIES;
-
-use staging::MAX_FAILED_VPS_STAGING_DEPTH;
+use config_policy::{
+    reject_placeholders, validate_backup_sandbox_contract, validate_final_config,
+    validate_final_host_file, validate_worker_raw_authority,
+};
 
 pub use staging::VpsReleaseInstalledButParentSyncFailed;
-
-use staging::vps_installed_durability_error;
-
-use staging::VpsPersistenceOutcome;
-
-use staging::persist_vps_staging;
-
-#[cfg(test)]
-use staging::persist_vps_staging_with;
-
-use staging::discard_failed_vps_staging;
+use staging::{
+    MAX_FAILED_VPS_STAGING_DEPTH, MAX_FAILED_VPS_STAGING_ENTRIES, VpsPersistenceOutcome,
+    discard_failed_vps_staging, persist_vps_staging, vps_installed_durability_error,
+};

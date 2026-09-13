@@ -1,13 +1,11 @@
 //! cloudflare responsibilities of the admitted release pipeline.
 use super::*;
 
-#[cfg(target_os = "linux")]
 pub(super) struct CloudflareMaterializationOutputBuilderV1 {
     pub(super) directories: BTreeMap<String, fs::File>,
     pub(super) files: BTreeMap<String, fs::File>,
 }
 
-#[cfg(target_os = "linux")]
 impl CloudflareMaterializationOutputBuilderV1 {
     pub(super) fn new(staging: &PinnedPublicationStagingV3) -> Result<Self> {
         Ok(Self {
@@ -322,7 +320,6 @@ pub(super) struct CloudflareMaterializationProvenanceV1 {
     pub(super) publication_lock_sha256: Digest32,
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn resolve_cloudflare_materialization_git_authority_v1(
     repository: &fs::File,
 ) -> Result<(String, String)> {
@@ -372,7 +369,6 @@ pub(super) fn resolve_cloudflare_materialization_git_authority_v1(
     Ok((source_commit, source_tree_sha1))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_cloudflare_materialization_provenance_v1(
     publication: &mut ValidatedPublicationV3,
     expected_publication_lock_sha256: Digest32,
@@ -509,7 +505,6 @@ pub(super) fn register_prefixed_materialized_origin_v1(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_cloudflare_materialization_canonical_document_v1<T>(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -527,7 +522,6 @@ where
     Ok(document)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn derive_cloudflare_materialized_origin_authority_v1(
     inventory: &mut PublicationTreeInventoryV3,
     receipt: &CloudflarePublicationMaterializationV1,
@@ -649,7 +643,6 @@ pub(super) fn derive_cloudflare_materialized_origin_authority_v1(
     Ok(expected)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn validate_cloudflare_materialization_inventory_v1(
     root_path: &Path,
     root: &fs::File,
@@ -723,7 +716,6 @@ pub(super) fn validate_cloudflare_materialization_inventory_v1(
     Ok((receipt, inventory))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn populate_cloudflare_materialization_staging_v1<F>(
     staging: &PinnedPublicationStagingV3,
     publication: &mut ValidatedPublicationV3,
@@ -823,7 +815,6 @@ where
     Ok((receipt_sha256, candidate))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn persist_cloudflare_materialization_v1(
     staging: PinnedPublicationStagingV3,
     publication: &ValidatedPublicationV3,
@@ -880,35 +871,23 @@ pub fn materialize_cloudflare_publication_v3(
         publication_root.is_absolute() && output.is_absolute() && repo_root.is_absolute(),
         "Cloudflare materialization paths must be absolute"
     );
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (
-            publication_root,
-            output,
-            repo_root,
-            expected_publication_lock_sha256,
-        );
-        anyhow::bail!("Cloudflare PublicationV3 materialization requires Linux openat2");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        validate_mount_root(publication_root)?;
-        let mut publication = validate_publication_v3_authority(publication_root)?;
-        let (manifest, build, provenance) = load_cloudflare_materialization_provenance_v1(
-            &mut publication,
-            expected_publication_lock_sha256,
-            repo_root,
-        )?;
-        let origins = derive_cloudflare_origin_inventories_v1(&publication, &manifest, &build)?;
-        let staging = create_pinned_publication_staging_v3(output)?;
-        let assembled = populate_cloudflare_materialization_staging_v1(
-            &staging,
-            &mut publication,
-            &provenance,
-            &origins,
-            || {},
-        );
-        match assembled {
+    validate_mount_root(publication_root)?;
+    let mut publication = validate_publication_v3_authority(publication_root)?;
+    let (manifest, build, provenance) = load_cloudflare_materialization_provenance_v1(
+        &mut publication,
+        expected_publication_lock_sha256,
+        repo_root,
+    )?;
+    let origins = derive_cloudflare_origin_inventories_v1(&publication, &manifest, &build)?;
+    let staging = create_pinned_publication_staging_v3(output)?;
+    let assembled = populate_cloudflare_materialization_staging_v1(
+        &staging,
+        &mut publication,
+        &provenance,
+        &origins,
+        || {},
+    );
+    match assembled {
             Ok((materialization_sha256, candidate)) => persist_cloudflare_materialization_v1(
                 staging,
                 &publication,
@@ -923,7 +902,6 @@ pub fn materialize_cloudflare_publication_v3(
                 ))),
             },
         }
-    }
 }
 
 /// Revalidate a materialized Cloudflare V1 output against an independently
@@ -934,20 +912,12 @@ pub fn validate_cloudflare_publication_materialization_v1(
     root_path: &Path,
     expected_materialization_sha256: Digest32,
 ) -> Result<CloudflarePublicationMaterializationV1> {
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (root_path, expected_materialization_sha256);
-        anyhow::bail!("Cloudflare materialization validation requires Linux openat2");
-    }
-    #[cfg(target_os = "linux")]
-    {
-        validate_mount_root(root_path)?;
-        let root = open_publication_root_v3(root_path)?;
-        let (receipt, _) = validate_cloudflare_materialization_inventory_v1(
-            root_path,
-            &root,
-            expected_materialization_sha256,
-        )?;
-        Ok(receipt)
-    }
+    validate_mount_root(root_path)?;
+    let root = open_publication_root_v3(root_path)?;
+    let (receipt, _) = validate_cloudflare_materialization_inventory_v1(
+        root_path,
+        &root,
+        expected_materialization_sha256,
+    )?;
+    Ok(receipt)
 }

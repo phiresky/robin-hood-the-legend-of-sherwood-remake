@@ -50,7 +50,7 @@ pub(crate) struct ValidatedPublicationV3 {
 }
 
 impl ValidatedPublicationV3 {
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     pub(crate) fn synthetic_for_consumer_test(root_path: &Path) -> Result<Self> {
         let root = open_publication_root_v3(root_path)?;
         let (root_parent_path, root_parent, root_name) = pin_publication_root_parent_v3(root_path)?;
@@ -260,7 +260,6 @@ pub(super) fn publication_inventory_matches_after_root_rename_v3(
             })
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn read_inventory_file_v3(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -286,7 +285,6 @@ pub(super) fn read_inventory_file_v3(
     Ok(bytes)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_inventory_canonical_document_v3<T>(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -304,7 +302,6 @@ where
     Ok(document)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_inventory_document_v3<T>(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -317,7 +314,6 @@ where
     Ok(document)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn inventory_artifact_v3(
     inventory: &PublicationTreeInventoryV3,
     path: &str,
@@ -355,7 +351,6 @@ pub(super) fn inventory_has_directory_v3(
         .is_ok()
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_node_identity_v3(metadata: &fs::Metadata) -> PublicationNodeIdentityV3 {
     use std::os::unix::fs::MetadataExt as _;
 
@@ -385,7 +380,6 @@ pub(super) fn publication_same_stable_node_v3(
         && left.mode == right.mode
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_root_v3(root: &Path) -> Result<fs::File> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
 
@@ -400,7 +394,6 @@ pub(super) fn open_publication_root_v3(root: &Path) -> Result<fs::File> {
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn pin_publication_root_parent_v3(
     root: &Path,
 ) -> Result<(PathBuf, fs::File, std::ffi::OsString)> {
@@ -417,7 +410,6 @@ pub(super) fn pin_publication_root_parent_v3(
     Ok((parent_path, parent, name))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_child_v3(parent: &fs::File, name: &Path) -> Result<fs::File> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
     use std::os::fd::AsFd as _;
@@ -435,7 +427,6 @@ pub(super) fn open_publication_child_v3(parent: &fs::File, name: &Path) -> Resul
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_child_identity_v3(
     parent: &fs::File,
     name: &Path,
@@ -456,7 +447,6 @@ pub(super) fn open_publication_child_identity_v3(
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_optional_publication_child_identity_v3(
     parent: &fs::File,
     name: &Path,
@@ -480,7 +470,6 @@ pub(super) fn open_optional_publication_child_identity_v3(
     }
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_directory_entries_v3(
     directory: &fs::File,
 ) -> Result<Vec<(std::ffi::OsString, u64, rustix::fs::FileType)>> {
@@ -508,7 +497,6 @@ pub(super) fn publication_directory_entries_v3(
     Ok(entries)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn validate_publication_node_v3(
     identity: &PublicationNodeIdentityV3,
     expected_uid: u32,
@@ -522,7 +510,6 @@ pub(super) fn validate_publication_node_v3(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn stable_publication_file_artifact_v3(
     file: &mut fs::File,
     expected_identity: &PublicationNodeIdentityV3,
@@ -531,7 +518,6 @@ pub(super) fn stable_publication_file_artifact_v3(
     stable_publication_file_artifact_v3_with(file, expected_identity, path, || {})
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn stable_publication_file_artifact_v3_with<F>(
     file: &mut fs::File,
     expected_identity: &PublicationNodeIdentityV3,
@@ -560,7 +546,6 @@ where
 }
 
 /// Enumerate and hash the complete PublicationV3 tree through pinned dirfds.
-#[cfg(target_os = "linux")]
 pub(super) fn publication_tree_inventory_v3_from_fd(
     root_path: &Path,
     root: &fs::File,
@@ -568,7 +553,6 @@ pub(super) fn publication_tree_inventory_v3_from_fd(
     publication_tree_inventory_v3_from_fd_with(root_path, root, || {})
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_tree_inventory_v3_from_fd_with<F>(
     root_path: &Path,
     root: &fs::File,
@@ -822,16 +806,8 @@ where
 }
 
 pub(super) fn publication_tree_inventory_v3(root: &Path) -> Result<PublicationTreeInventoryV3> {
-    #[cfg(target_os = "linux")]
-    {
-        let descriptor = open_publication_root_v3(root)?;
-        publication_tree_inventory_v3_from_fd(root, &descriptor)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = root;
-        anyhow::bail!("PublicationV3 requires Linux openat2 filesystem authority")
-    }
+    let descriptor = open_publication_root_v3(root)?;
+    publication_tree_inventory_v3_from_fd(root, &descriptor)
 }
 
 #[cfg(test)]
@@ -839,7 +815,7 @@ pub(super) fn publication_directories(root: &Path) -> Result<Vec<PublicationDire
     Ok(publication_tree_inventory_v3(root)?.directories)
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+#[cfg(test)]
 pub(super) fn reject_publication_mounts_in_v3(
     canonical_root: &Path,
     mountinfo: &[u8],
@@ -885,15 +861,10 @@ pub(super) fn reject_publication_mounts_in_v3(
     Ok(())
 }
 
-#[cfg(all(unix, test))]
+#[cfg(test)]
 pub(super) fn publication_unix_mode(path: &Path) -> Result<u32> {
     use std::os::unix::fs::PermissionsExt as _;
     Ok(fs::symlink_metadata(path)?.permissions().mode() & 0o7777)
-}
-
-#[cfg(all(not(unix), test))]
-pub(super) fn publication_unix_mode(_path: &Path) -> Result<u32> {
-    anyhow::bail!("operator publications require Unix permission semantics")
 }
 
 pub(super) fn file_artifacts(root: &Path) -> Result<BTreeMap<String, ArtifactRefV1>> {

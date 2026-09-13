@@ -57,7 +57,6 @@ impl PinnedPublicationStagingV3 {
     }
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn create_pinned_publication_staging_v3(
     output: &Path,
 ) -> Result<PinnedPublicationStagingV3> {
@@ -117,13 +116,6 @@ pub(super) fn create_pinned_publication_staging_v3(
     };
     staging.ensure_live()?;
     Ok(staging)
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(super) fn create_pinned_publication_staging_v3(
-    _output: &Path,
-) -> Result<PinnedPublicationStagingV3> {
-    anyhow::bail!("PublicationV3 pinned staging requires Linux openat2")
 }
 
 const MAX_FAILED_PUBLICATION_STAGING_ENTRIES: usize = 262_144;
@@ -433,14 +425,12 @@ where
     })
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn discard_failed_publication_staging(
     staging: PinnedPublicationStagingV3,
 ) -> Result<()> {
     discard_failed_publication_staging_with(&staging, |_| {})
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn discard_failed_publication_staging_with<F>(
     staging: &PinnedPublicationStagingV3,
     mut before_operation: F,
@@ -674,11 +664,4 @@ where
     );
     staging.parent.sync_all()?;
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub(super) fn discard_failed_publication_staging(
-    _staging: PinnedPublicationStagingV3,
-) -> Result<()> {
-    anyhow::bail!("PublicationV3 guarded cleanup requires Linux dirfds")
 }

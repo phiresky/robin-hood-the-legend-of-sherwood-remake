@@ -747,7 +747,8 @@ pub(super) fn reject_mounts(root: &Path, reject_root_itself: bool) -> Result<()>
     Ok(())
 }
 
-pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2) -> Result<()> {
+/// Required, forbidden, and out-of-closure path checks over the manifest inventory.
+fn validate_bundle_path_inventory(manifest: &VpsReleaseManifestV2) -> Result<()> {
     let paths = manifest
         .files
         .iter()
@@ -807,6 +808,11 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
         }),
         "VPS release contains public/private static or copyrighted raw files"
     );
+    Ok(())
+}
+
+pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2) -> Result<()> {
+    validate_bundle_path_inventory(manifest)?;
     let declarations: PrivateRawRootDeclarationsV2 =
         load_canonical(&root.join(RAW_ROOT_DECLARATIONS_FILE))?;
     declarations.validate()?;
@@ -870,6 +876,21 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
     )?;
     validate_root_once_sha256sums(root)?;
     validate_deploy_bootstrap_sha256sums(root)?;
+    validate_bundle_host_files(root, &manifest.source_commit)?;
+    validate_backup_sandbox_contract(
+        &root.join("config/highscores-server.toml"),
+        &root.join("systemd/user/robin-highscores-api.service"),
+        &root.join("systemd/user/robin-highscores-worker.service"),
+        &root.join("systemd/user/robin-highscores-backup.service"),
+        &root.join("systemd/user/robin-highscores-backup.timer"),
+        &manifest.source_commit,
+    )?;
+    Ok(())
+}
+
+/// Validate every reviewed host template (systemd units, deploy scripts,
+/// nginx snippets, runbooks) against its role policy.
+fn validate_bundle_host_files(root: &Path, source_commit: &str) -> Result<()> {
     for (role, relative) in [
         (
             VpsHostFileRoleV2::UserTarget,
@@ -939,16 +960,8 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
         ),
         (VpsHostFileRoleV2::BackupRunbook, "deploy/BACKUP_RESTORE.md"),
     ] {
-        validate_final_host_file(role, &root.join(relative), &manifest.source_commit)?;
+        validate_final_host_file(role, &root.join(relative), source_commit)?;
     }
-    validate_backup_sandbox_contract(
-        &root.join("config/highscores-server.toml"),
-        &root.join("systemd/user/robin-highscores-api.service"),
-        &root.join("systemd/user/robin-highscores-worker.service"),
-        &root.join("systemd/user/robin-highscores-backup.service"),
-        &root.join("systemd/user/robin-highscores-backup.timer"),
-        &manifest.source_commit,
-    )?;
     Ok(())
 }
 

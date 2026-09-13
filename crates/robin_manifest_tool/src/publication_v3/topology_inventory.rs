@@ -64,7 +64,6 @@ impl ExpectedPublicationTopologyV3 {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     pub(super) fn seal_and_validate(&self, root_path: &Path, root: &fs::File) -> Result<()> {
         use rustix::fs::{Mode, fchmod};
         use std::os::fd::AsFd as _;

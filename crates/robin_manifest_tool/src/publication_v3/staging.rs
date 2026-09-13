@@ -340,15 +340,10 @@ where
 {
     validate_mount_root(&fs::canonicalize(source)?)?;
     ensure!(!destination.exists(), "copy destination already exists");
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("mode-preserving authority copy requires Linux openat2");
-    #[cfg(target_os = "linux")]
     let source_root = open_publication_root_v3(source)?;
-    #[cfg(target_os = "linux")]
     let mut inventory = publication_tree_inventory_v3_from_fd(source, &source_root)?;
     let source_snapshot = inventory.snapshot();
     let expected_authority = inventory.authority();
-    #[cfg(target_os = "linux")]
     {
         use rustix::fs::{Mode, OFlags, ResolveFlags, fchmod, mkdirat, openat2};
         use std::os::fd::AsFd as _;
@@ -546,7 +541,6 @@ pub(super) fn create_private_publication_root(root: &Path) -> Result<PathBuf> {
     // directory. Do not use create_dir_all here: the private authority must
     // never follow or manufacture an unchecked ancestry.
     fs::create_dir(&private_root)?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&private_root, fs::Permissions::from_mode(0o755))?;
@@ -568,42 +562,34 @@ pub(super) fn make_private_executables_and_states_read_only(
     root: &Path,
     loaded: &LoadedPublication,
 ) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let verifier = root
-            .join("private/verifier/bin")
-            .join(loaded.authority.build.verifier.artifact.sha256.to_string());
-        fs::set_permissions(&verifier, fs::Permissions::from_mode(0o555))?;
-        ensure!(
-            fs::metadata(&verifier)?.permissions().mode() & 0o111 != 0,
-            "verifier program is not executable"
-        );
-        for directory in [
-            root.join("private/campaign-states"),
-            root.join("private/verifier/operator-config"),
-        ] {
-            for (_, file) in walk_regular_files(&directory)? {
-                fs::set_permissions(file, fs::Permissions::from_mode(0o444))?;
-            }
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o555))?;
+    use std::os::unix::fs::PermissionsExt as _;
+    let verifier = root
+        .join("private/verifier/bin")
+        .join(loaded.authority.build.verifier.artifact.sha256.to_string());
+    fs::set_permissions(&verifier, fs::Permissions::from_mode(0o555))?;
+    ensure!(
+        fs::metadata(&verifier)?.permissions().mode() & 0o111 != 0,
+        "verifier program is not executable"
+    );
+    for directory in [
+        root.join("private/campaign-states"),
+        root.join("private/verifier/operator-config"),
+    ] {
+        for (_, file) in walk_regular_files(&directory)? {
+            fs::set_permissions(file, fs::Permissions::from_mode(0o444))?;
         }
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o555))?;
     }
     Ok(())
 }
 
 pub(super) fn make_lock_files_read_only(root: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        for file in [
-            root.join("publication-lock-v3.json"),
-            root.join("publication-lock-v3.sha256"),
-        ] {
-            fs::set_permissions(file, fs::Permissions::from_mode(0o444))?;
-        }
-        Ok(())
+    use std::os::unix::fs::PermissionsExt as _;
+    for file in [
+        root.join("publication-lock-v3.json"),
+        root.join("publication-lock-v3.sha256"),
+    ] {
+        fs::set_permissions(file, fs::Permissions::from_mode(0o444))?;
     }
-    #[cfg(not(unix))]
-    anyhow::bail!("operator publications require Unix permission semantics")
+    Ok(())
 }
