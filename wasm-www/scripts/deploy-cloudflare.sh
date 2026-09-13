@@ -3,7 +3,7 @@
 #
 # Usage (from anywhere):
 #   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_ZONE_ID=... CLOUDFLARE_API_TOKEN=... \
-#   ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.127 \
+#   ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.128 \
 #     wasm-www/scripts/deploy-cloudflare.sh [--datadir | --datadir-only] [--runtime]
 #
 # --datadir  also deploy wasm-www/datadir-dist (assembled beforehand with
@@ -45,7 +45,7 @@ fi
 
 cd "$(dirname "$0")/.."
 repository="$(cd .. && pwd -P)"
-test "$(pnpm exec wrangler --version)" = "4.127.1"
+test "$(pnpm exec wrangler --version)" = "4.131.1"
 
 # Deploy one Worker and print the version ID from Wrangler's NDJSON output.
 deploy_worker() {

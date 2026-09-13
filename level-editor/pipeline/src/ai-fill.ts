@@ -31,7 +31,7 @@ import {
 } from "./provider-cache.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type Sharp } from "sharp";
 import { requireEnv, workDir } from "./env.ts";
 import { loadProtoLevel, mapImageSource } from "./asset-writer.ts";
 
@@ -328,7 +328,7 @@ async function main() {
     .split(";")
     .filter(Boolean)
     .map((b) => b.split(",").map(Number) as [number, number, number, number]);
-  let mapImg: sharp.Sharp | null = null;
+  let mapImg: Sharp | null = null;
   let mapSize: [number, number] = [0, 0];
   if (get("map") && contexts.length) {
     const level = await loadProtoLevel(get("map")!);

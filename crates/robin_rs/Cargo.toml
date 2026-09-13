@@ -220,9 +220,9 @@ web-sys = { version = "0.3", features = [
     "UrlSearchParams",
 ] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "stream"] }
-# Must match reqwest's wasm-streams: two versions export duplicate wasm-bindgen
-# symbols at link time even when `cargo check` succeeds.
-wasm-streams = "0.5"
+# Browser response-stream adapter; wasm-bindgen 0.2.128 supports linking this
+# alongside the older wasm-streams version still used by reqwest.
+wasm-streams = "0.6"
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
 gloo-timers = { version = "0.4", features = ["futures"] }

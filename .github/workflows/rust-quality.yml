@@ -142,13 +142,16 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - name: Install pinned pnpm and Node.js
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: scripts/release/package-lock.json
+          version: 12.3.4
+          runtime: node@24.19.0
+          working-directory: scripts/release
+          cache: true
+          install: false
       - name: Install release script type-checking dependencies
-        run: npm ci --prefix scripts/release
+        run: pnpm --dir scripts/release install --frozen-lockfile
       - name: Install test prerequisites
         run: sudo apt-get update && sudo apt-get install -y zstd rsync
       - name: Test orchestration

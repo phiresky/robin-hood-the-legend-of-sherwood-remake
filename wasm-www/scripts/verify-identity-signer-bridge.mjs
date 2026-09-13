@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from 'es-module-lexer/js';
+import { parse } from 'es-module-lexer/minimal/js';
 
 const ENTRY = 'leaderboard_identity_bridge.js';
 const WASM = 'leaderboard_identity_bridge_bg.wasm';

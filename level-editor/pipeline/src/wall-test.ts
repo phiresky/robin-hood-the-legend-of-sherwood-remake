@@ -1,7 +1,7 @@
 // Render isolated wall runs at various directions to a test sheet.
 import fs from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { readAssetDescriptor } from "./library.ts";
 import { expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 import { libraryDir, workDir } from "./env.ts";
@@ -38,7 +38,7 @@ async function main() {
     { label: "up-right -51", points: [[1100, 1450], [1500, 950]] },
     { label: "zigzag", points: [[100, 1400], [500, 1150], [900, 1400], [1300, 1420], [1600, 1200]] },
   ];
-  const comps: sharp.OverlayOptions[] = [];
+  const comps: OverlayOptions[] = [];
   let svg = `<svg width="${W}" height="${H}">`;
   for (const r of runs) {
     const stamps = expandWallRunDirectional(r.points, specs);

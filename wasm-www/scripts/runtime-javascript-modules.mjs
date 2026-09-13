@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from 'es-module-lexer/js';
+import { parse } from 'es-module-lexer/minimal/js';
 
 const ENTRY = 'robin.js';
 const ADMISSION = 'replay_admission.js';

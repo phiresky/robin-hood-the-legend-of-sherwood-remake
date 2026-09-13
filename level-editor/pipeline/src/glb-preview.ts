@@ -2,7 +2,7 @@
 //
 //   node src/glb-preview.ts <file.glb> [--out preview.png] [--size 400]
 import fs from "node:fs/promises";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { bounds, loadGlb } from "./mesh.ts";
 import { orbitView, render } from "./render.ts";
 
@@ -36,7 +36,7 @@ async function main() {
     (bz.min[2] + bz.max[2]) / 2,
   ];
   const extent = Math.max(bz.max[0] - bz.min[0], bz.max[1] - bz.min[1], bz.max[2] - bz.min[2]);
-  const tiles: sharp.OverlayOptions[] = [];
+  const tiles: OverlayOptions[] = [];
   for (const [i, yaw] of [0, 90, 180, 270].entries()) {
     const img = render([{ mesh, positions: zup }], orbitView(center, yaw, 30, size, size, (size * 0.8) / extent));
     tiles.push({

@@ -39,15 +39,15 @@
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",
-    "@types/node": "^25.6.0",
-    "es-module-lexer": "2.3.2",
+    "@types/node": "^26.5.1",
+    "es-module-lexer": "3.0.2",
     "jsdom": "^30.0.1",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.10",
-    "wrangler": "4.127.1"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "wrangler": "4.131.1"
   },
   "packageManager": "pnpm@12.3.4",
   "dependencies": {
-    "@noble/hashes": "1.8.0"
+    "@noble/hashes": "2.4.0"
   }
 }

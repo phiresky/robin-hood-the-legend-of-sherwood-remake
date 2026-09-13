@@ -1,5 +1,5 @@
 // Participant identity, roster, metric and timing invariants.
-import { sha256 as nobleSha256 } from '@noble/hashes/sha256';
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import {
     type BoardMetricValue,
     type TickDuration,

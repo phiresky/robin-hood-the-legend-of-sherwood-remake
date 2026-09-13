@@ -36,7 +36,7 @@ test('Cloudflare deploy verifies builds, deploys signer before public, then reco
     assert.match(workflow, /run: wasm-www\/scripts\/deploy-cloudflare\.sh$/mu);
     for (const text of [workflow, await repositoryFile('.github/workflows/build-static-runtime.yml')]) {
         assert.match(text, /scripts\/install_pinned_wasm_bindgen\.sh/u);
-        assert.match(text, /wasm-bindgen 0\.2\.127/u);
+        assert.match(text, /wasm-bindgen 0\.2\.128/u);
         assert.doesNotMatch(text, /cargo install wasm-bindgen-cli|wrangler pages|github-pages/iu);
     }
 });

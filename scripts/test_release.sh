@@ -22,7 +22,7 @@ touch "$fixture/Cargo.lock" "$work/main/tmp/ssh_deploy_config"
 printf 'CLOUDFLARE_ACCOUNT_ID=fake\nCLOUDFLARE_ZONE_ID=fake\nCLOUDFLARE_API_TOKEN=fake\n' >"$work/main/.env"
 toolchain=$HOME/.local/share/robin_hood/deployment-toolchain
 staging=$HOME/.local/share/robin_hood/deployment-staging
-mkdir -p "$toolchain/wasm-bindgen-0.2.127/bin" "$staging/prior/runtime-dist" \
+mkdir -p "$toolchain/wasm-bindgen-0.2.128/bin" "$staging/prior/runtime-dist" \
     "$staging/prior/datadir-dist" "$staging/prior/public-dist"
 echo '{}' >"$staging/prior/datadir-authority.json"
 printf '{"demo":{"datadir_sha256":"%064d","datadir_byte_length":12,"native_content_sha256":"%064d"},"worker_version_id":"datadir-old"}\n' \
@@ -37,7 +37,7 @@ fake() {
     } >"$path"
     chmod +x "$path"
 }
-fake "$toolchain/wasm-bindgen-0.2.127/bin/wasm-bindgen" </dev/null
+fake "$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen" </dev/null
 fake "$bin/git" <<'EOF'
 case "$*" in
     "status --porcelain --untracked-files=no") [[ -z ${FAKE_DIRTY:-} ]] || echo ' M crates/robin_rs/src/lib.rs' ;;

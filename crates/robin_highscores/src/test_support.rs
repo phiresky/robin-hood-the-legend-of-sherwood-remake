@@ -144,7 +144,7 @@ pub fn viewer_build_v2() -> BuildManifestV2 {
                 recipe: BrowserViewerEngineBuildRecipeV2::WasmBindgenWebBinaryenOzStripDebugDwarfWabtStripV1,
                 rust_toolchain: rust_toolchain.clone(),
                 rust_toolchain_sha256,
-                wasm_bindgen_cli: build_tool(43, "0.2.127"),
+                wasm_bindgen_cli: build_tool(43, "0.2.128"),
                 binaryen_wasm_opt: BuildToolAuthorityV1 {
                     version: binaryen_authority.version.clone(),
                     authority_sha256: binaryen_authority.canonical_digest().unwrap(),
@@ -187,7 +187,7 @@ pub fn viewer_build_v2() -> BuildManifestV2 {
                 deployment_policy: BrowserIdentitySignerDeploymentPolicyV2::SeparateAllowlistedOriginCspFrameAncestorsAndBridgeShaV1,
                 rust_toolchain,
                 rust_toolchain_sha256,
-                wasm_bindgen_cli: build_tool(43, "0.2.127"),
+                wasm_bindgen_cli: build_tool(43, "0.2.128"),
                 identity_signer_origin_artifacts: vec![
                     BrowserPagesArtifactV2 {
                         path: "identity-signer/bridge/leaderboard_identity_bridge.js"

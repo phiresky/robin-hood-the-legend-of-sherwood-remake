@@ -1,5 +1,5 @@
 /** Publish a complete, hash-verified draft without replacing existing assets.
- * Runtime dependencies come from github-script; npm dependencies are type-only.
+ * Runtime dependencies come from github-script; package dependencies are type-only.
  */
 import type * as actionsCore from '@actions/core';
 import type * as actionsGithub from '@actions/github';

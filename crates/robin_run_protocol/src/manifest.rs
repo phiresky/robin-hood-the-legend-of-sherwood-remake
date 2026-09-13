@@ -579,7 +579,7 @@ pub(crate) mod tests {
                     recipe: BrowserViewerEngineBuildRecipeV2::WasmBindgenWebBinaryenOzStripDebugDwarfWabtStripV1,
                     rust_toolchain_sha256: rust_toolchain.canonical_digest().unwrap(),
                     rust_toolchain: rust_toolchain.clone(),
-                    wasm_bindgen_cli: build_tool(16, "0.2.127"),
+                    wasm_bindgen_cli: build_tool(16, "0.2.128"),
                     binaryen_wasm_opt: BuildToolAuthorityV1 {
                         version: binaryen_authority.version.clone(),
                         authority_sha256: binaryen_authority.canonical_digest().unwrap(),
@@ -624,7 +624,7 @@ pub(crate) mod tests {
                     deployment_policy: BrowserIdentitySignerDeploymentPolicyV2::SeparateAllowlistedOriginCspFrameAncestorsAndBridgeShaV1,
                     rust_toolchain_sha256: rust_toolchain.canonical_digest().unwrap(),
                     rust_toolchain,
-                    wasm_bindgen_cli: build_tool(16, "0.2.127"),
+                    wasm_bindgen_cli: build_tool(16, "0.2.128"),
                     identity_signer_origin_artifacts: vec![
                         BrowserPagesArtifactV2 {
                             path: "identity-signer/bridge/leaderboard_identity_bridge.js".into(),
@@ -698,7 +698,7 @@ pub(crate) mod tests {
     fn official_wasm_tool_authorities_are_exact_upstream_distributions() {
         let wasm_bindgen_json = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../.github/tool-authorities/wasm-bindgen-cli-v0.2.127.json"
+            "/../../.github/tool-authorities/wasm-bindgen-cli-v0.2.128.json"
         ));
         let binaryen_json = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -759,9 +759,9 @@ pub(crate) mod tests {
             wasm_bindgen.distribution_url.clone(),
             wasm_bindgen.distribution.sha256.to_string(),
             wasm_bindgen.distribution.byte_length.to_string(),
-            "420a0f944d2521032fbdc6a46d1519b7943ffe8254d019dc37ab8865428fceb9".into(),
-            "59375".into(),
-            "wasm-bindgen 0.2.127".into(),
+            "bd306494454acd7c409b37950530527495c0c9cffdbf21e449ffa4bd4454fc7a".into(),
+            "59779".into(),
+            "wasm-bindgen 0.2.128".into(),
         ] {
             assert!(
                 wasm_bindgen_installer.contains(&exact_fact),

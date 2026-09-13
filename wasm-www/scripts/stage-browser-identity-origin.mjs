@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 import { dirname, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from 'es-module-lexer/js';
+import { parse } from 'es-module-lexer/minimal/js';
 
 const STATIC_IMPORT = 1;
 const IMPORT_META = 3;

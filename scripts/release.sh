@@ -147,7 +147,7 @@ release_web() {
     set -a; . "$main_repo/.env"; set +a
     : "${CLOUDFLARE_ACCOUNT_ID:?}" "${CLOUDFLARE_ZONE_ID:?}" "${CLOUDFLARE_API_TOKEN:?}"
     export PATH=$toolchain/bin:$toolchain/node-v24.19.0-linux-x64/bin:$toolchain/wasm-tools-132-1.0.41/binaryen/bin:$toolchain/wasm-tools-132-1.0.41/wabt/bin:$PATH
-    export ROBINHOOD_WASM_BINDGEN=$toolchain/wasm-bindgen-0.2.127/bin/wasm-bindgen
+    export ROBINHOOD_WASM_BINDGEN=$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen
     [[ -x $ROBINHOOD_WASM_BINDGEN ]] || die "missing $ROBINHOOD_WASM_BINDGEN"
     for binding in runtime-dist datadir-dist public-dist datadir-authority.json datadir-deployment.json; do
         [[ -e $prior/$binding ]] || die "$prior/$binding missing; point $prior at the last deployed staging directory"

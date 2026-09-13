@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 ABSOLUTE_WASM_BINDGEN_0_2_127" >&2
+    echo "usage: $0 ABSOLUTE_WASM_BINDGEN_0_2_128" >&2
     exit 2
 fi
 
@@ -11,8 +11,8 @@ if [[ "$wasm_bindgen" != /* || ! -f "$wasm_bindgen" || -L "$wasm_bindgen" || ! -
     echo "wasm-bindgen must be an absolute regular executable: $wasm_bindgen" >&2
     exit 2
 fi
-if [[ "$($wasm_bindgen --version)" != 'wasm-bindgen 0.2.127' ]]; then
-    echo "identity signer requires the exact accepted wasm-bindgen 0.2.127 CLI" >&2
+if [[ "$($wasm_bindgen --version)" != 'wasm-bindgen 0.2.128' ]]; then
+    echo "identity signer requires the exact accepted wasm-bindgen 0.2.128 CLI" >&2
     exit 1
 fi
 

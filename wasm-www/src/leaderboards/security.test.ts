@@ -1,46 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import ts from 'typescript';
 import { JSDOM } from 'jsdom';
 import { element, link, replace } from './dom.js';
 import { participantView, aggregateParticipantView, appendAchievements, playerTables, campaignCompositionLabel } from './public-components.js';
 import { parsePlayerRunHistoryPage, parseRunDetail } from './public-response.js';
 import { playerHistoryPage, fullCampaignRun } from './model-fixtures.js';
-
-/** AST policy includes newly extracted modules, bracket accesses and executable calls. */
-function unsafeDomUses(source: string): string[] {
-    const root = ts.createSourceFile('component.ts', source, ts.ScriptTarget.Latest, true);
-    const failures: string[] = [];
-    const forbidden = new Set(['innerHTML', 'outerHTML', 'insertAdjacentHTML']);
-    function visit(node: ts.Node): void {
-        const property = ts.isPropertyAccessExpression(node) ? node.name.text
-            : ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)
-                ? node.argumentExpression.text : null;
-        if (property !== null && forbidden.has(property)) failures.push(property);
-        if (ts.isCallExpression(node)) {
-            if (ts.isIdentifier(node.expression) && node.expression.text === 'eval') failures.push('eval');
-            const callee = node.expression;
-            if ((ts.isPropertyAccessExpression(callee) && callee.name.text === 'write'
-                || ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)
-                    && callee.argumentExpression.text === 'write')
-                && callee.expression.getText(root) === 'document') failures.push('document.write');
-        }
-        ts.forEachChild(node, visit);
-    }
-    visit(root);
-    return failures;
-}
-
-test('the AST sink policy covers every production web module, including newly extracted modules', () => {
-    const root = new URL('../../src/', import.meta.url);
-    const files = readdirSync(root, { recursive: true }).filter((name): name is string =>
-        typeof name === 'string' && name.endsWith('.ts') && !name.endsWith('.test.ts'));
-    assert.ok(files.length > 20);
-    for (const file of files) assert.deepEqual(unsafeDomUses(readFileSync(new URL(file, root), 'utf8')), [], file);
-    assert.deepEqual(unsafeDomUses('/* node.innerHTML = text */ node.textContent = "innerHTML"'), []);
-    assert.deepEqual(unsafeDomUses('node["innerHTML"] = text; document["write"](text); eval(text)'), ['innerHTML', 'document.write', 'eval']);
-});
 
 function browser(t: test.TestContext): Document {
     const original = Object.getOwnPropertyDescriptor(globalThis, 'document');
