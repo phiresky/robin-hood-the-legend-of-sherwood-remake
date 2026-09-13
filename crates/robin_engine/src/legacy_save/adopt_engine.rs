@@ -259,6 +259,14 @@ impl LegacyKnownAdoptionPlan {
         engine: &mut EngineInner,
         assets: &LevelAssets,
     ) -> LegacyKnownHostState {
+        // Apply-order invariant: several plans store whole engine components
+        // that were cloned from this candidate during preflight and then
+        // overwritten with saved members — `elements` stores `NpcData`
+        // (including the local-AI brain) and `pc_human` stores `HumanData` and
+        // `PcData`. No plan applied before those may write the same
+        // components, or its writes are silently reverted by the stale
+        // preflight clone. Components written by more than one plan
+        // (`ElementData`/sprite, `ActorData`) stay field-wise for that reason.
         self.campaign.apply(engine);
         engine.apply_legacy_linux_preamble_state(self.preamble);
         engine.world.next_original_creation_order = self.post_dynamic_creation_counter;

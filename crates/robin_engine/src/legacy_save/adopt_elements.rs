@@ -15,10 +15,12 @@ use crate::{
         PathHistoryEntry, PathId, PatrolPath, Position, Question, ReconnaissanceReport, Remark,
         ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
+    ai_enemy::EnemyAi,
+    ai_friendly::FriendlyAi,
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
-        ActionState, AiBrain, Detectable, DetectableType, EntityId, EyeStatus, NpcData,
-        OutlineColorName,
+        ActionState, AiActorData, AiBrain, Detectable, DetectableType, EntityId, EyeStatus,
+        NpcData, OutlineColorName,
     },
     engine::{EngineInner, LevelAssets},
     level_data::WaypointCommand,
@@ -91,7 +93,10 @@ struct ConvertedElement {
     creation_order: u32,
     element: ConvertedElementBase,
     actor: Option<ConvertedActor>,
-    npc: Option<ConvertedNpc>,
+    /// Finished NPC component: the preflight-time runtime clone with every
+    /// serialized NPC/view/local-AI member replaced. See the apply-order
+    /// invariant in [`super::adopt_engine`].
+    npc: Option<NpcData>,
     npc_leaf: Option<ConvertedNpcLeaf>,
 }
 
@@ -215,165 +220,6 @@ struct ConvertedActor {
     passing_door_directly: bool,
     sequence_element_started: bool,
     script_class: String,
-}
-
-#[derive(Clone, Debug)]
-struct ConvertedNpc {
-    life: i16,
-    arrows: u16,
-    old_direction: i16,
-    register: u16,
-    attached_scroll: Option<EntityId>,
-    body_visitors: u16,
-    fried_pikachu: bool,
-    inform: bool,
-    money: u32,
-    wasp: bool,
-    old_deafness: u16,
-    old_frame: u32,
-    detectable_lists: Vec<Vec<Detectable>>,
-    detection_suspects: [u16; DetectableType::COUNT],
-    maximum_suspect: u16,
-    worst_detectable_type: DetectableType,
-    custom_values: [i32; 10],
-    gave_money: bool,
-    view: ConvertedNpcView,
-    initial_position_x: f32,
-    initial_position_y: f32,
-    initial_position_sector: Option<SectorHandle>,
-    initial_position_level: u16,
-    initial_view_direction: MapVec,
-    local_ai: ConvertedLocalAi,
-}
-
-#[derive(Clone, Debug)]
-struct ConvertedNpcView {
-    eye_status: EyeStatus,
-    transition: bool,
-    alpha: u16,
-    half_angle: f32,
-    angle_iterator: f32,
-    angle_iterator_step: f32,
-    angle_step: f32,
-    angle: f32,
-    half_aperture: f32,
-    real_half_aperture: f32,
-    half_aperture_cosine: f32,
-    future_half_aperture: f32,
-    half_aperture_step: f32,
-    half_aperture_changes: bool,
-    crazy_angle_iterator: f32,
-    crazy_angle_iterator_step: f32,
-    crazy_color_iterator: u8,
-    crazy_half_angle_range: f32,
-    direction: [f32; 2],
-    left_side: [f32; 2],
-    right_side: [f32; 2],
-    stare: GroundPoint,
-    follow_target: Option<EntityId>,
-    radius_goal: u16,
-    radius: u16,
-    radius_reduction_permil: u16,
-    radius_step: u16,
-    long_range: f32,
-    real_radius: u16,
-    drunkenness: [f32; 4],
-    sniper: bool,
-    leaning: bool,
-}
-
-#[derive(Clone, Debug)]
-enum ConvertedLocalAi {
-    Friendly {
-        common: AiController,
-        fleeing_seen_enemy_counter: u16,
-        beggar_dont_talk_counter: u16,
-        wants_to_talk: bool,
-        last_talk_partner: Option<AiEntityHandle>,
-        can_go_away: bool,
-    },
-    Enemy {
-        common: AiController,
-        last_stimulus_dispatched_to_patrol: Stimulus,
-        frame_when_missed_charly: u32,
-        heard_nets: Vec<u32>,
-        frame_when_enemy_detected: u32,
-        fleeing_seen_enemy_counter: u16,
-        other_seen_ale: Vec<u32>,
-        pc_gone_away_direction: u16,
-        detected_something_there: Position,
-        missed_pc: Option<AiEntityHandle>,
-        last_seek_direction_index: u8,
-        beggar_to_examine: Option<AiEntityHandle>,
-        pc_missed: bool,
-        search_charly_way: Vec<Position>,
-        current_task_priority: u16,
-        minimal_task_priority: u16,
-        new_task_priority: u16,
-        number_of_different_checkpoints: u8,
-        delta_sorrow_level: u16,
-        missed_in_action: Vec<u32>,
-        other_bodies_to_examine: Vec<u32>,
-        beggars_to_control: Vec<u32>,
-        thirsty: bool,
-        old_life_points: u8,
-        initial_life_points: u8,
-        list_them: Vec<u32>,
-        old_odds: i16,
-        position_change_locked_for_test: bool,
-        ambush_point_array_reset: bool,
-        ambush_point_status: Vec<crate::ai_enemy::AmbushPointStatus>,
-        my_seek_points: Vec<u16>,
-        personal_seek_point_1: Option<crate::ai::SeekPoint>,
-        personal_seek_point_2: Option<crate::ai::SeekPoint>,
-        seek_center: Position,
-        actual_seek_point: Option<u16>,
-        seek_point_view_directions: Vec<u16>,
-        positions_of_beggars_to_control: Vec<Position>,
-        seek_flags: crate::ai_enemy::SeekFlags,
-        forced_next_battle_decision: crate::ai::Decision,
-        reset_battle_decision: bool,
-        synchronize_index: u16,
-        seen_dead_body: bool,
-        seeking_charly: bool,
-        initial_view_cone: crate::ai::ViewCone,
-        company_number: u16,
-        left_combat_neighbour: Option<AiEntityHandle>,
-        right_combat_neighbour: Option<AiEntityHandle>,
-        attentive: bool,
-        will_be_attentive: bool,
-        forced_attentive: bool,
-        guarded_pc: Option<crate::entity_id::PcId>,
-        tower_guard: bool,
-        combat_trainer: bool,
-        gather_position: Position,
-        gather_direction: u16,
-        gather_position_instructed: bool,
-        officers_position: Position,
-        previous_state: i32,
-        previous_substate: i32,
-        reported_to_officer: bool,
-        missed_soldier_timer: u16,
-        old_money: u16,
-        other_seen_money: Vec<u32>,
-        money_fight_enemies: Vec<u32>,
-        money_fight_victims: Vec<u32>,
-        archer_behind_me: Option<AiEntityHandle>,
-        shield_bearer_before_me: Option<AiEntityHandle>,
-        already_seen_bodies: Vec<u32>,
-        my_line_jump: Option<u32>,
-        shield_bearer_direction: u16,
-        phalanx_aborted: bool,
-        changed_to_alert_path: bool,
-        my_shooting_point: Option<(u16, u16)>,
-        my_archery_sector: Option<u16>,
-        my_archery_sector_index: u16,
-        my_archery_point_index: crate::sector::ArcheryPointIdx,
-        my_archery_point_increment: i8,
-        enemy_seen_below: bool,
-        enemy_had_this_elevation: u16,
-        known_enemy_strikes: [Option<crate::weapons::SwordStrike>; 3],
-    },
 }
 
 #[derive(Clone, Copy)]
@@ -523,7 +369,7 @@ impl LegacyStaticElementAdoption {
             record
                 .npc
                 .as_ref()
-                .is_some_and(|npc| matches!(&npc.local_ai, ConvertedLocalAi::Enemy { .. }))
+                .is_some_and(|npc| matches!(npc.ai_brain, AiBrain::Enemy(_)))
         });
         Ok(Self {
             records,
@@ -576,12 +422,9 @@ impl LegacyStaticElementAdoption {
                 actor.script_class = saved.script_class;
             }
             if let Some(saved) = converted.npc {
-                apply_npc(
-                    entity
-                        .npc_data_mut()
-                        .expect("preflighted v48 NPC changed kind in candidate engine"),
-                    saved,
-                );
+                *entity
+                    .npc_data_mut()
+                    .expect("preflighted v48 NPC changed kind in candidate engine") = saved;
             }
             if let Some(saved) = converted.npc_leaf {
                 match (entity, saved) {
@@ -994,7 +837,7 @@ fn convert_npc(
     runtime: &NpcData,
     entity_id: EntityId,
     creation_order: u32,
-) -> Result<ConvertedNpc, LegacyAdoptError> {
+) -> Result<NpcData, LegacyAdoptError> {
     let entities = context.entities;
     let topology = context.topology;
     let site = element_site(creation_order);
@@ -1037,144 +880,128 @@ fn convert_npc(
         &detectable_lists,
         |target_id| entities.creation_order_by_entity.get(&target_id).copied(),
     );
-    Ok(ConvertedNpc {
-        life: saved.life,
-        arrows: saved.arrows,
-        old_direction: saved.old_direction,
-        register: saved.register,
-        attached_scroll: checked_reference(
-            entities.resolve_element(saved.attached_scroll)?,
-            ReferenceKind::Scroll,
-            creation_order,
-            "attached_scroll",
-        )?,
-        body_visitors: saved.body_visitors,
-        fried_pikachu: saved.fried,
-        inform: saved.inform,
-        money: saved.money,
-        wasp: saved.wasp,
-        old_deafness: saved.old_deafness,
-        old_frame: saved.old_frame,
-        detectable_lists,
-        detection_suspects,
-        maximum_suspect: saved.maximum_suspect,
-        worst_detectable_type: detectable_type(
-            saved.worst_detectable_type,
-            creation_order,
-            "worst_detectable_type",
-        )?,
-        custom_values: saved.custom_values,
-        gave_money: saved.gave_money,
-        view: convert_npc_view(
-            &saved.view,
-            entities.resolve_element(saved.mobile_target)?,
-            creation_order,
-        )?,
-        initial_position_x: saved.initial_position.x,
-        initial_position_y: saved.initial_position.y,
-        initial_position_sector: sector(
-            saved.initial_position.sector.0,
-            topology,
-            creation_order,
-            "initial_position.sector",
-        )?,
-        initial_position_level: saved.initial_position.level,
-        initial_view_direction: MapVec::new(saved.initial_view.x, saved.initial_view.y),
-        local_ai: convert_local_ai(
-            &saved.local_ai,
-            runtime,
-            entity_id,
-            creation_order,
-            context,
-            alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
-        )?,
-    })
-}
-
-fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
-    let ai_initial_position = Position {
-        x: saved.initial_position_x,
-        y: saved.initial_position_y,
-        sector: saved.initial_position_sector,
-        level: saved.initial_position_level,
-    };
-    let ai_initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
-        saved.initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
-        saved.initial_view_direction.y,
-    ) as u16;
-    npc.life_points = saved.life;
-    npc.number_of_arrows = saved.arrows;
-    npc.direction_old = saved.old_direction;
-    npc.register_number = saved.register;
-    npc.attached_scroll = saved.attached_scroll;
-    npc.body_visitors = saved.body_visitors;
-    npc.fried_pikachu = saved.fried_pikachu;
-    npc.inform_my_friends = saved.inform;
-    npc.money = saved.money;
-    npc.wasp_victim = saved.wasp;
-    npc.old_cover_noise_deafness = saved.old_deafness;
-    npc.old_cover_noise_deafness_frame_counter = saved.old_frame;
-    npc.detectable_lists = saved.detectable_lists;
-    npc.detection_suspects = saved.detection_suspects;
-    npc.maximal_detection_suspect = saved.maximum_suspect;
-    npc.worst_detected_type = saved.worst_detectable_type;
-    npc.custom_values = saved.custom_values;
-    npc.has_given_money_to_beggar = saved.gave_money;
-    npc.initial_position_x = saved.initial_position_x;
-    npc.initial_position_y = saved.initial_position_y;
-    npc.initial_position_sector = saved.initial_position_sector;
-    npc.initial_position_level = saved.initial_position_level;
-    npc.initial_view_direction = saved.initial_view_direction;
-    npc.eye_status = saved.view.eye_status;
-    npc.view_transition = saved.view.transition;
-    npc.view_alpha_start = saved.view.alpha;
-    npc.view_half_angle_range = saved.view.half_angle;
-    npc.view_angle_iterator = saved.view.angle_iterator;
-    npc.view_angle_iterator_step = saved.view.angle_iterator_step;
-    npc.view_angle_step = saved.view.angle_step;
-    npc.view_angle = saved.view.angle;
-    npc.half_aperture = saved.view.half_aperture;
-    npc.real_half_aperture = saved.view.real_half_aperture;
-    npc.view_half_aperture_cosine = saved.view.half_aperture_cosine;
-    npc.view_future_half_aperture = saved.view.future_half_aperture;
-    npc.view_half_aperture_step = saved.view.half_aperture_step;
-    npc.view_half_aperture_changes = saved.view.half_aperture_changes;
-    npc.view_crazy_angle_iterator = saved.view.crazy_angle_iterator;
-    npc.view_crazy_angle_iterator_step = saved.view.crazy_angle_iterator_step;
-    npc.view_crazy_color_iterator = saved.view.crazy_color_iterator;
-    npc.view_crazy_half_angle_range = saved.view.crazy_half_angle_range;
-    npc.view_direction = saved.view.direction;
-    npc.view_left_side = saved.view.left_side;
-    npc.view_right_side = saved.view.right_side;
-    npc.stare_point = saved.view.stare;
-    npc.follow_target = saved.view.follow_target;
-    npc.view_radius_goal = saved.view.radius_goal;
-    npc.view_radius_base = saved.view.radius;
-    npc.view_radius_reduction_permil = saved.view.radius_reduction_permil;
-    npc.view_radius_step = saved.view.radius_step;
-    npc.view_longrange_radius_factor = saved.view.long_range;
-    npc.view_radius = saved.view.real_radius;
-    npc.drunken_cone_iterators = saved.view.drunkenness;
-    npc.view_sniper = saved.view.sniper;
-    npc.view_lean_out = saved.view.leaning;
-    apply_local_ai(&mut npc.ai_brain, saved.local_ai);
-    let ai = ai_base_mut(&mut npc.ai_brain)
-        .expect("preflighted local-AI kind cannot become None in candidate engine");
+    // Fallible conversions keep the evaluation order of the former
+    // `ConvertedNpc` literal so a multiply-invalid save reports the same error.
+    let attached_scroll = checked_reference(
+        entities.resolve_element(saved.attached_scroll)?,
+        ReferenceKind::Scroll,
+        creation_order,
+        "attached_scroll",
+    )?;
+    let worst_detected_type = detectable_type(
+        saved.worst_detectable_type,
+        creation_order,
+        "worst_detectable_type",
+    )?;
+    // The raw pointer echo inside LegacyNpcView is ABI residue;
+    // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
+    let follow_target = entities.resolve_element(saved.mobile_target)?;
+    let eye_status = validate_npc_view(&saved.view, creation_order)?;
+    let initial_position_sector = sector(
+        saved.initial_position.sector.0,
+        topology,
+        creation_order,
+        "initial_position.sector",
+    )?;
+    let mut ai_brain = convert_local_ai(
+        &saved.local_ai,
+        runtime,
+        entity_id,
+        creation_order,
+        context,
+        alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
+    )?;
+    let initial_view_direction = MapVec::new(saved.initial_view.x, saved.initial_view.y);
+    let ai = ai_base_mut(&mut ai_brain)
+        .expect("convert_local_ai only produces Friendly or Enemy brains");
     // The saved view status and follow target are already authoritative.
     // Rust's edge-triggered primary-target reconciliation is runtime-only
     // bookkeeping; leaving its marker at the constructor default would make
     // the first post-load view refresh focus on the primary target and
     // overwrite a saved LookForward/Stare state that Original preserves.
     ai.last_synced_focus_target = ai.primary_target;
-    ai.initial_position = ai_initial_position;
-    ai.initial_view_direction = ai_initial_view_direction;
+    ai.initial_position = Position {
+        x: saved.initial_position.x,
+        y: saved.initial_position.y,
+        sector: initial_position_sector,
+        level: saved.initial_position.level,
+    };
+    ai.initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
+        initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
+        initial_view_direction.y,
+    ) as u16;
+    let view = &saved.view;
+    Ok(NpcData {
+        life_points: saved.life,
+        ai: AiActorData {
+            number_of_arrows: saved.arrows,
+            direction_old: saved.old_direction,
+            register_number: saved.register,
+            attached_scroll,
+            body_visitors: saved.body_visitors,
+            fried_pikachu: saved.fried,
+            inform_my_friends: saved.inform,
+            money: saved.money,
+            wasp_victim: saved.wasp,
+            old_cover_noise_deafness: saved.old_deafness,
+            old_cover_noise_deafness_frame_counter: saved.old_frame,
+            detectable_lists,
+            detection_suspects,
+            maximal_detection_suspect: saved.maximum_suspect,
+            worst_detected_type,
+            custom_values: saved.custom_values,
+            has_given_money_to_beggar: saved.gave_money,
+            initial_position_x: saved.initial_position.x,
+            initial_position_y: saved.initial_position.y,
+            initial_position_sector,
+            initial_position_level: saved.initial_position.level,
+            initial_view_direction,
+            eye_status,
+            view_transition: view.transitioning,
+            view_alpha_start: view.alpha,
+            view_half_angle_range: view.half_angle,
+            view_angle_iterator: view.angle_iterator,
+            view_angle_iterator_step: view.angle_iterator_step,
+            view_angle_step: view.angle_step,
+            view_angle: view.angle,
+            half_aperture: view.half_aperture,
+            real_half_aperture: view.real_half_aperture,
+            view_half_aperture_cosine: view.half_aperture_cosine,
+            view_future_half_aperture: view.future_half_aperture,
+            view_half_aperture_step: view.half_aperture_step,
+            view_half_aperture_changes: view.half_aperture_changes,
+            view_crazy_angle_iterator: view.crazy_iterator,
+            view_crazy_angle_iterator_step: view.crazy_iterator_step,
+            view_crazy_color_iterator: view.color,
+            view_crazy_half_angle_range: view.crazy_half_aperture,
+            view_direction: [view.direction.x, view.direction.y],
+            view_left_side: [view.left.x, view.left.y],
+            view_right_side: [view.right.x, view.right.y],
+            stare_point: GroundPoint::new(view.stare.x, view.stare.y),
+            follow_target,
+            view_radius_goal: view.radius_goal,
+            view_radius_base: view.radius,
+            view_radius_reduction_permil: view.radius_reduction,
+            view_radius_step: view.radius_step,
+            view_longrange_radius_factor: view.long_range,
+            view_radius: view.real_radius,
+            drunken_cone_iterators: view.drunkenness,
+            view_sniper: view.sniper,
+            view_lean_out: view.leaning,
+            ai_brain,
+            // Preserve mission-initialized NPC state outside this save
+            // section's ownership (e.g. display/ladder/alerted bookkeeping).
+            ..runtime.ai.clone()
+        },
+    })
 }
 
-fn convert_npc_view(
+/// Validate the serialized view cone and convert its eye status; the other view
+/// members are copied verbatim by [`convert_npc`].
+fn validate_npc_view(
     saved: &LegacyNpcView,
-    follow_target: Option<EntityId>,
     creation_order: u32,
-) -> Result<ConvertedNpcView, LegacyAdoptError> {
+) -> Result<EyeStatus, LegacyAdoptError> {
     let site = element_site(creation_order);
     site.finite("view.half_angle", saved.half_angle)?;
     site.finite("view.angle_iterator", saved.angle_iterator)?;
@@ -1198,42 +1025,7 @@ fn convert_npc_view(
         site.finite("view.drunkenness", value)?;
     }
 
-    Ok(ConvertedNpcView {
-        eye_status: eye_status(saved.status, creation_order)?,
-        transition: saved.transitioning,
-        alpha: saved.alpha,
-        half_angle: saved.half_angle,
-        angle_iterator: saved.angle_iterator,
-        angle_iterator_step: saved.angle_iterator_step,
-        angle_step: saved.angle_step,
-        angle: saved.angle,
-        half_aperture: saved.half_aperture,
-        real_half_aperture: saved.real_half_aperture,
-        half_aperture_cosine: saved.half_aperture_cosine,
-        future_half_aperture: saved.future_half_aperture,
-        half_aperture_step: saved.half_aperture_step,
-        half_aperture_changes: saved.half_aperture_changes,
-        crazy_angle_iterator: saved.crazy_iterator,
-        crazy_angle_iterator_step: saved.crazy_iterator_step,
-        crazy_color_iterator: saved.color,
-        crazy_half_angle_range: saved.crazy_half_aperture,
-        direction: [saved.direction.x, saved.direction.y],
-        left_side: [saved.left.x, saved.left.y],
-        right_side: [saved.right.x, saved.right.y],
-        stare: GroundPoint::new(saved.stare.x, saved.stare.y),
-        // The raw pointer echo inside LegacyNpcView is ABI residue;
-        // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
-        follow_target,
-        radius_goal: saved.radius_goal,
-        radius: saved.radius,
-        radius_reduction_permil: saved.radius_reduction,
-        radius_step: saved.radius_step,
-        long_range: saved.long_range,
-        real_radius: saved.real_radius,
-        drunkenness: saved.drunkenness,
-        sniper: saved.sniper,
-        leaning: saved.leaning,
-    })
+    eye_status(saved.status, creation_order)
 }
 
 fn convert_local_ai(
@@ -1243,7 +1035,7 @@ fn convert_local_ai(
     creation_order: u32,
     context: &ElementAdoptContext<'_>,
     view_alert_status: AlertLevel,
-) -> Result<ConvertedLocalAi, LegacyAdoptError> {
+) -> Result<AiBrain, LegacyAdoptError> {
     let entities = context.entities;
     let topology = context.topology;
     let ai_global = &context.engine.ai.global;
@@ -1272,9 +1064,9 @@ fn convert_local_ai(
         view_alert_status,
     )?;
     match (&saved.tail, &runtime.ai_brain) {
-        (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
-            Ok(ConvertedLocalAi::Friendly {
-                common,
+        (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(runtime_ai)) => {
+            Ok(AiBrain::Friendly(Box::new(FriendlyAi {
+                base: common,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
                 beggar_dont_talk_counter: tail.beggar_dont_talk_counter,
                 wants_to_talk: tail.wants_to_talk,
@@ -1285,7 +1077,10 @@ fn convert_local_ai(
                     "local_ai.friendly.last_talk_partner",
                 )?,
                 can_go_away: tail.can_go_away,
-            })
+                // Preserve mission-initialized civilian AI state outside this
+                // save section's ownership.
+                ..FriendlyAi::clone(runtime_ai)
+            })))
         }
         (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(runtime_ai)) => {
             let actual_seek_point = convert_actual_seek_point(
@@ -1302,70 +1097,83 @@ fn convert_local_ai(
             )?;
             let (my_shooting_point, my_archery_sector) =
                 convert_archery_refs(tail, ai_global, creation_order)?;
-            Ok(ConvertedLocalAi::Enemy {
-                common,
-                last_stimulus_dispatched_to_patrol: convert_stimulus(
-                    &tail.last_stimulus_dispatched_to_patrol,
-                    creation_order,
-                    entities,
-                    topology,
-                )?,
+            // Fallible conversions keep the evaluation order of the former
+            // `ConvertedLocalAi::Enemy` literal: everything up to the first
+            // base-owned fallible member is hoisted, and the base-owned
+            // members are converted at the literal position of the last one.
+            let last_stimulus_dispatched_to_patrol = convert_stimulus(
+                &tail.last_stimulus_dispatched_to_patrol,
+                creation_order,
+                entities,
+                topology,
+            )?;
+            let heard_nets = ai_handle_list(
+                &tail.heard_nets,
+                ReferenceKind::Net,
+                creation_order,
+                "local_ai.enemy.heard_nets",
+                entities,
+            )?;
+            let other_seen_ale = ai_handle_list(
+                &tail.other_seen_ale,
+                ReferenceKind::Object,
+                creation_order,
+                "local_ai.enemy.other_seen_ale",
+                entities,
+            )?;
+            let detected_something_there = ai_position(
+                tail.detected_something_there,
+                topology,
+                creation_order,
+                "local_ai.enemy.detected_something_there.sector",
+            )?;
+            let missed_pc = optional_ai_handle(
+                entities.resolve_ai_element(tail.missed_pc)?,
+                ReferenceKind::Human,
+                creation_order,
+                "local_ai.enemy.missed_pc",
+            )?;
+            let beggar_to_examine = optional_ai_handle(
+                entities.resolve_ai_element(tail.beggar_to_examine)?,
+                ReferenceKind::Human,
+                creation_order,
+                "local_ai.enemy.beggar_to_examine",
+            )?;
+            let search_charly_way = ai_position_list(
+                &tail.search_charly_way,
+                topology,
+                creation_order,
+                "local_ai.enemy.search_charly_way.sector",
+            )?;
+            let missed_in_action = ai_handle_list(
+                &tail.missed_in_action,
+                ReferenceKind::Npc,
+                creation_order,
+                "local_ai.enemy.missed_in_action",
+                entities,
+            )?;
+            let mut ai = EnemyAi {
+                // The original game has one alerted-us list on the common AI
+                // base. Runtime EnemyAi keeps the actively coordinated officer
+                // group in its typed mirror, so restore that mirror from the
+                // authoritative serialized list as part of adoption.
+                alerted_us: common.list_alerted_us.clone(),
+                last_stimulus_dispatched_to_patrol: Some(last_stimulus_dispatched_to_patrol),
                 frame_when_missed_charly: tail.frame_when_missed_charly,
-                heard_nets: ai_handle_list(
-                    &tail.heard_nets,
-                    ReferenceKind::Net,
-                    creation_order,
-                    "local_ai.enemy.heard_nets",
-                    entities,
-                )?,
-                frame_when_enemy_detected: tail.frame_when_enemy_detected,
+                heard_nets,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
-                other_seen_ale: ai_handle_list(
-                    &tail.other_seen_ale,
-                    ReferenceKind::Object,
-                    creation_order,
-                    "local_ai.enemy.other_seen_ale",
-                    entities,
-                )?,
-                pc_gone_away_direction: tail.pc_gone_away_direction,
-                detected_something_there: ai_position(
-                    tail.detected_something_there,
-                    topology,
-                    creation_order,
-                    "local_ai.enemy.detected_something_there.sector",
-                )?,
-                missed_pc: optional_ai_handle(
-                    entities.resolve_ai_element(tail.missed_pc)?,
-                    ReferenceKind::Human,
-                    creation_order,
-                    "local_ai.enemy.missed_pc",
-                )?,
+                other_seen_ale,
+                pc_gone_away_in_this_direction: tail.pc_gone_away_direction,
+                detected_something_there,
+                missed_pc,
                 last_seek_direction_index: tail.last_seek_direction_index,
-                beggar_to_examine: optional_ai_handle(
-                    entities.resolve_ai_element(tail.beggar_to_examine)?,
-                    ReferenceKind::Human,
-                    creation_order,
-                    "local_ai.enemy.beggar_to_examine",
-                )?,
+                beggar_to_examine,
                 pc_missed: tail.pc_missed,
-                search_charly_way: ai_position_list(
-                    &tail.search_charly_way,
-                    topology,
-                    creation_order,
-                    "local_ai.enemy.search_charly_way.sector",
-                )?,
+                search_charly_way,
                 current_task_priority: tail.current_task_priority,
                 minimal_task_priority: tail.minimal_task_priority,
                 new_task_priority: tail.new_task_priority,
                 number_of_different_checkpoints: tail.number_of_different_checkpoints,
-                delta_sorrow_level: tail.delta_sorrow_level,
-                missed_in_action: ai_handle_list(
-                    &tail.missed_in_action,
-                    ReferenceKind::Npc,
-                    creation_order,
-                    "local_ai.enemy.missed_in_action",
-                    entities,
-                )?,
                 other_bodies_to_examine: ai_handle_list(
                     &tail.other_bodies_to_examine,
                     ReferenceKind::Human,
@@ -1435,10 +1243,16 @@ fn convert_local_ai(
                     creation_order,
                 )?,
                 reset_battle_decision: tail.reset_battle_decision,
-                synchronize_index: tail.synchronize_index,
                 seen_dead_body: tail.seen_dead_body,
                 seeking_charly: tail.seeking_charly,
-                initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
+                base: AiController {
+                    frame_when_enemy_detected: tail.frame_when_enemy_detected,
+                    delta_sorrow_level: tail.delta_sorrow_level,
+                    missed_in_action,
+                    synchronize_index: tail.synchronize_index,
+                    initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
+                    ..common
+                },
                 company_number: tail.company_number,
                 left_combat_neighbour: optional_ai_handle(
                     entities.resolve_ai_element(tail.left_combat_neighbour)?,
@@ -1544,14 +1358,21 @@ fn convert_local_ai(
                 my_archery_point_increment: tail.archery_point_increment,
                 enemy_seen_below: tail.enemy_seen_below,
                 enemy_had_this_elevation: tail.enemy_had_this_elevation,
-                known_enemy_strikes: tail
-                    .known_enemy_strike_commands
-                    .map(|command| known_enemy_strike(command, creation_order))
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                    .try_into()
-                    .expect("fixed-size strike conversion preserves length"),
-            })
+                // Preserve mission-initialized soldier AI state outside this
+                // save section's ownership.
+                ..EnemyAi::clone(runtime_ai)
+            };
+            let [strike_1, strike_2, strike_3]: [Option<crate::weapons::SwordStrike>; 3] = tail
+                .known_enemy_strike_commands
+                .map(|command| known_enemy_strike(command, creation_order))
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .expect("fixed-size strike conversion preserves length");
+            ai.known_enemy_strike_1 = strike_1;
+            ai.known_enemy_strike_2 = strike_2;
+            ai.known_enemy_strike_3 = strike_3;
+            Ok(AiBrain::Enemy(Box::new(ai)))
         }
         (LegacyLocalAiTail::Friendly(_), brain) => Err(npc_site(creation_order).error(
             AdoptErrorKind::AiKindMismatch {
@@ -1897,204 +1718,6 @@ fn convert_local_ai_common(
     // Saved patrol membership is authoritative, not a bootstrap reinitialization request.
     converted.needs_patrol_reinit = false;
     Ok(converted)
-}
-
-fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
-    match (brain, saved) {
-        (
-            AiBrain::Friendly(ai),
-            ConvertedLocalAi::Friendly {
-                common,
-                fleeing_seen_enemy_counter,
-                beggar_dont_talk_counter,
-                wants_to_talk,
-                last_talk_partner,
-                can_go_away,
-            },
-        ) => {
-            ai.base = common;
-            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
-            ai.beggar_dont_talk_counter = beggar_dont_talk_counter;
-            ai.wants_to_talk = wants_to_talk;
-            ai.last_talk_partner = last_talk_partner;
-            ai.can_go_away = can_go_away;
-        }
-        (
-            AiBrain::Enemy(ai),
-            ConvertedLocalAi::Enemy {
-                common,
-                last_stimulus_dispatched_to_patrol,
-                frame_when_missed_charly,
-                heard_nets,
-                frame_when_enemy_detected,
-                fleeing_seen_enemy_counter,
-                other_seen_ale,
-                pc_gone_away_direction,
-                detected_something_there,
-                missed_pc,
-                last_seek_direction_index,
-                beggar_to_examine,
-                pc_missed,
-                search_charly_way,
-                current_task_priority,
-                minimal_task_priority,
-                new_task_priority,
-                number_of_different_checkpoints,
-                delta_sorrow_level,
-                missed_in_action,
-                other_bodies_to_examine,
-                beggars_to_control,
-                thirsty,
-                old_life_points,
-                initial_life_points,
-                list_them,
-                old_odds,
-                position_change_locked_for_test,
-                ambush_point_array_reset,
-                ambush_point_status,
-                my_seek_points,
-                personal_seek_point_1,
-                personal_seek_point_2,
-                seek_center,
-                actual_seek_point,
-                seek_point_view_directions,
-                positions_of_beggars_to_control,
-                seek_flags,
-                forced_next_battle_decision,
-                reset_battle_decision,
-                synchronize_index,
-                seen_dead_body,
-                seeking_charly,
-                initial_view_cone,
-                company_number,
-                left_combat_neighbour,
-                right_combat_neighbour,
-                attentive,
-                will_be_attentive,
-                forced_attentive,
-                guarded_pc,
-                tower_guard,
-                combat_trainer,
-                gather_position,
-                gather_direction,
-                gather_position_instructed,
-                officers_position,
-                previous_state,
-                previous_substate,
-                reported_to_officer,
-                missed_soldier_timer,
-                old_money,
-                other_seen_money,
-                money_fight_enemies,
-                money_fight_victims,
-                archer_behind_me,
-                shield_bearer_before_me,
-                already_seen_bodies,
-                my_line_jump,
-                shield_bearer_direction,
-                phalanx_aborted,
-                changed_to_alert_path,
-                my_shooting_point,
-                my_archery_sector,
-                my_archery_sector_index,
-                my_archery_point_index,
-                my_archery_point_increment,
-                enemy_seen_below,
-                enemy_had_this_elevation,
-                known_enemy_strikes,
-            },
-        ) => {
-            ai.base = common;
-            // The original game has one alerted-us list on the common AI
-            // base. Runtime EnemyAi keeps the actively coordinated officer
-            // group in its typed mirror, so restore that mirror from the
-            // authoritative serialized list as part of adoption.
-            ai.alerted_us = ai.base.list_alerted_us.clone();
-            ai.last_stimulus_dispatched_to_patrol = Some(last_stimulus_dispatched_to_patrol);
-            ai.frame_when_missed_charly = frame_when_missed_charly;
-            ai.heard_nets = heard_nets;
-            ai.base.frame_when_enemy_detected = frame_when_enemy_detected;
-            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
-            ai.other_seen_ale = other_seen_ale;
-            ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
-            ai.detected_something_there = detected_something_there;
-            ai.missed_pc = missed_pc;
-            ai.last_seek_direction_index = last_seek_direction_index;
-            ai.beggar_to_examine = beggar_to_examine;
-            ai.pc_missed = pc_missed;
-            ai.search_charly_way = search_charly_way;
-            ai.current_task_priority = current_task_priority;
-            ai.minimal_task_priority = minimal_task_priority;
-            ai.new_task_priority = new_task_priority;
-            ai.number_of_different_checkpoints = number_of_different_checkpoints;
-            ai.base.delta_sorrow_level = delta_sorrow_level;
-            ai.base.missed_in_action = missed_in_action;
-            ai.other_bodies_to_examine = other_bodies_to_examine;
-            ai.beggars_to_control = beggars_to_control;
-            ai.thirsty = thirsty;
-            ai.old_life_points = old_life_points;
-            ai.initial_life_points = initial_life_points;
-            ai.list_them = list_them;
-            ai.old_odds = old_odds;
-            ai.position_change_locked_for_test = position_change_locked_for_test;
-            ai.ambush_point_array_reset = ambush_point_array_reset;
-            ai.ambush_point_status = ambush_point_status;
-            ai.my_seek_points = my_seek_points;
-            ai.personal_seek_point_1 = personal_seek_point_1;
-            ai.personal_seek_point_2 = personal_seek_point_2;
-            ai.seek_center = seek_center;
-            ai.actual_seek_point = actual_seek_point;
-            ai.seek_point_view_directions = seek_point_view_directions;
-            ai.positions_of_beggars_to_control = positions_of_beggars_to_control;
-            ai.seek_flags = seek_flags;
-            ai.forced_next_battle_decision = forced_next_battle_decision;
-            ai.reset_battle_decision = reset_battle_decision;
-            ai.base.synchronize_index = synchronize_index;
-            ai.seen_dead_body = seen_dead_body;
-            ai.seeking_charly = seeking_charly;
-            ai.base.initial_view_cone = initial_view_cone;
-            ai.company_number = company_number;
-            ai.left_combat_neighbour = left_combat_neighbour;
-            ai.right_combat_neighbour = right_combat_neighbour;
-            ai.attentive = attentive;
-            ai.will_be_attentive = will_be_attentive;
-            ai.forced_attentive = forced_attentive;
-            ai.guarded_pc = guarded_pc;
-            ai.tower_guard = tower_guard;
-            ai.combat_trainer = combat_trainer;
-            ai.gather_position = gather_position;
-            ai.gather_direction = gather_direction;
-            ai.gather_position_instructed = gather_position_instructed;
-            ai.officers_position = officers_position;
-            ai.previous_state = previous_state;
-            ai.previous_substate = previous_substate;
-            ai.reported_to_officer = reported_to_officer;
-            ai.missed_soldier_timer = missed_soldier_timer;
-            ai.old_money = old_money;
-            ai.other_seen_money = other_seen_money;
-            ai.money_fight_enemies = money_fight_enemies;
-            ai.money_fight_victims = money_fight_victims;
-            ai.archer_behind_me = archer_behind_me;
-            ai.shield_bearer_before_me = shield_bearer_before_me;
-            ai.already_seen_bodies = already_seen_bodies;
-            ai.my_line_jump = my_line_jump;
-            ai.shield_bearer_direction = shield_bearer_direction;
-            ai.phalanx_aborted = phalanx_aborted;
-            ai.changed_to_alert_path = changed_to_alert_path;
-            ai.my_shooting_point = my_shooting_point;
-            ai.my_archery_sector = my_archery_sector;
-            ai.my_archery_sector_index = my_archery_sector_index;
-            ai.my_archery_point_index = my_archery_point_index;
-            ai.my_archery_point_increment = my_archery_point_increment;
-            ai.enemy_seen_below = enemy_seen_below;
-            ai.enemy_had_this_elevation = enemy_had_this_elevation;
-            let [strike_1, strike_2, strike_3] = known_enemy_strikes;
-            ai.known_enemy_strike_1 = strike_1;
-            ai.known_enemy_strike_2 = strike_2;
-            ai.known_enemy_strike_3 = strike_3;
-        }
-        _ => unreachable!("preflighted local-AI kind changed in candidate engine"),
-    }
 }
 
 fn reset_loaded_ai_completion_ownership(ai: &mut AiController) {

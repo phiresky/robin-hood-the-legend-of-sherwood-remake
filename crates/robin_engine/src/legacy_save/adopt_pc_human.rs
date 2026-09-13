@@ -18,7 +18,7 @@ use crate::{
     pc_status::{HumanStatus, PcStatus, Skill},
     position_interface::SectorHandle,
     profiles::{Action, CharacterProfileIdx},
-    sequence::{SequenceElementData, SequenceElementRef},
+    sequence::SequenceElementData,
 };
 
 use super::{
@@ -52,45 +52,19 @@ pub struct LegacyPcHumanAdoptionPlan {
 #[derive(Debug)]
 struct ConvertedRecord {
     entity_id: EntityId,
-    human: ConvertedHuman,
+    /// Finished Human component: the preflight-time runtime clone with every
+    /// serialized Human member replaced. See the apply-order invariant in
+    /// [`super::adopt_engine`].
+    human: HumanData,
     pc: Option<ConvertedPc>,
 }
 
-#[derive(Debug)]
-struct ConvertedHuman {
-    carrier: Option<EntityId>,
-    concussion: u16,
-    concussion_healing_timeout: u16,
-    tiredness: u16,
-    unconscious: bool,
-    already_detectable_body: bool,
-    detectable_list_index: u16,
-    sword_strike_boredom: Vec<u16>,
-    stuck_under_nets_counter: u16,
-    hollow_man: bool,
-    opponents: Vec<EntityId>,
-    opponent_jump_lines: Vec<Option<crate::jump_line::JumpLineIndex>>,
-    smalltalk_initiative: bool,
-    received_smalltalk_initiative: bool,
-    smalltalk_hint: SmalltalkHint,
-    smalltalk_hint_opponent: Option<EntityId>,
-    relative_fighting_ability: u16,
-    small_repulsive_radius: bool,
-    killed_by_accident: bool,
-    parry_counter: u16,
-    invulnerable: bool,
-    last_motion_was_step_back: bool,
-    running_hulk: u32,
-    time_hulk: u32,
-    hulk_level: u16,
-    hulk_direction: bool,
-    hulk_speed: f32,
-    repulsive_point: HumanRepulsivePointState,
-    building_sector: Option<SectorHandle>,
-    produced_noise_first_word: f32,
-    shield: HumanShieldState,
-    sword_sweep: HumanSwordSweepState,
-    pending_shoots: Vec<SequenceElementRef>,
+/// Preflight authorities shared by every Human conversion in one plan.
+#[derive(Clone, Copy)]
+struct HumanSources<'a> {
+    abi_profile: LegacySaveAbiProfile,
+    line_topology: &'a LegacyLineTopology,
+    sequences: &'a LegacySequenceAdoptionPlan,
 }
 
 #[derive(Debug)]
@@ -115,6 +89,11 @@ impl LegacyPcHumanAdoptionPlan {
             ..
         } = *ctx;
         let line_topology = LegacyLineTopology::derive(engine, assets)?;
+        let sources = HumanSources {
+            abi_profile,
+            line_topology: &line_topology,
+            sequences,
+        };
         let mut records = Vec::new();
         for record in &payloads.records {
             let creation_order = record.header.creation_order;
@@ -140,17 +119,10 @@ impl LegacyPcHumanAdoptionPlan {
                 .entities
                 .get(entity_id)
                 .ok_or_else(expected_human)?;
-            if runtime.human_data().is_none() {
+            let Some(runtime_human) = runtime.human_data() else {
                 return Err(expected_human());
-            }
-            let human = convert_human(
-                ctx,
-                saved_human,
-                abi_profile,
-                creation_order,
-                &line_topology,
-                sequences,
-            )?;
+            };
+            let human = convert_human(ctx, saved_human, runtime_human, creation_order, sources)?;
             let pc = saved_pc
                 .map(|saved| {
                     let Entity::Pc(runtime_pc) = runtime else {
@@ -182,12 +154,9 @@ impl LegacyPcHumanAdoptionPlan {
                 .entities
                 .get_mut(record.entity_id)
                 .expect("preflighted Human disappeared from adoption candidate");
-            apply_human(
-                entity
-                    .human_data_mut()
-                    .expect("preflighted Human changed concrete kind"),
-                record.human,
-            );
+            *entity
+                .human_data_mut()
+                .expect("preflighted Human changed concrete kind") = record.human;
             restore_saved_shield_obstacle(entity);
             if let Some(saved) = record.pc {
                 let Entity::Pc(pc) = entity else {
@@ -237,17 +206,21 @@ impl LegacyPcHumanAdoptionPlan {
 fn convert_human(
     ctx: &AdoptCtx<'_>,
     saved: &LegacyHumanPayload,
-    abi_profile: LegacySaveAbiProfile,
+    runtime: &HumanData,
     creation_order: u32,
-    line_topology: &LegacyLineTopology,
-    sequences: &LegacySequenceAdoptionPlan,
-) -> Result<ConvertedHuman, LegacyAdoptError> {
+    sources: HumanSources<'_>,
+) -> Result<HumanData, LegacyAdoptError> {
     let AdoptCtx {
         engine,
         entities,
         position_topology,
         ..
     } = *ctx;
+    let HumanSources {
+        abi_profile,
+        line_topology,
+        sequences,
+    } = sources;
     let carrier = checked_ref(
         entities.resolve_element(saved.carrier)?,
         creation_order,
@@ -305,9 +278,14 @@ fn convert_human(
         }
         pending_shoots.push(element_ref);
     }
-    Ok(ConvertedHuman {
+    assert_eq!(
+        opponents.len(),
+        opponent_jump_lines.len(),
+        "converted legacy opponents must retain their jump-line records"
+    );
+    Ok(HumanData {
         carrier,
-        concussion: saved.concussion,
+        concussion_of_the_brain: saved.concussion,
         concussion_healing_timeout: saved.concussion_healing_timeout,
         tiredness: saved.tiredness,
         unconscious: saved.unconscious,
@@ -316,8 +294,9 @@ fn convert_human(
         sword_strike_boredom: saved.sword_strike_boredom.to_vec(),
         stuck_under_nets_counter: saved.stuck_under_nets_counter,
         hollow_man: saved.hollow_man,
-        opponents,
-        opponent_jump_lines,
+        opponents: crate::element::SwordfightOpponents::from_pairs(
+            opponents.into_iter().zip(opponent_jump_lines),
+        ),
         smalltalk_initiative: saved.smalltalk_initiative,
         received_smalltalk_initiative: saved.received_smalltalk_initiative,
         smalltalk_hint: smalltalk_hint(saved.smalltalk_hint, creation_order)?,
@@ -330,10 +309,14 @@ fn convert_human(
         )?,
         relative_fighting_ability: saved.relative_fighting_ability,
         small_repulsive_radius: saved.small_repulsive_radius,
+        // The corpse-intersection observer is a Rust-only derived cache. None
+        // makes its first tick seed from the authoritative saved flag without
+        // generating an update.
+        last_is_lying_for_corpse_intersection: None,
         killed_by_accident: saved.killed_by_accident,
         parry_counter: saved.parry_counter,
         invulnerable: saved.invulnerable,
-        last_motion_was_step_back: saved.last_motion_was_step_back,
+        last_motion_was_step_back_in_combat: saved.last_motion_was_step_back,
         running_hulk: saved.running_hulk,
         time_hulk: saved.time_hulk,
         hulk_level: saved.hulk_level,
@@ -359,6 +342,9 @@ fn convert_human(
             final_angle: saved.final_strike_angle,
         },
         pending_shoots,
+        // Preserve mission-initialized Human state outside this save
+        // section's ownership.
+        ..runtime.clone()
     })
 }
 
@@ -714,52 +700,6 @@ fn refresh_actions_after_load(
         }
     }
     (current, saved)
-}
-
-fn apply_human(human: &mut HumanData, saved: ConvertedHuman) {
-    human.carrier = saved.carrier;
-    human.concussion_of_the_brain = saved.concussion;
-    human.concussion_healing_timeout = saved.concussion_healing_timeout;
-    human.tiredness = saved.tiredness;
-    human.unconscious = saved.unconscious;
-    human.already_detectable_body = saved.already_detectable_body;
-    human.detectable_list_index = saved.detectable_list_index;
-    human.sword_strike_boredom = saved.sword_strike_boredom;
-    human.stuck_under_nets_counter = saved.stuck_under_nets_counter;
-    human.hollow_man = saved.hollow_man;
-    assert_eq!(
-        saved.opponents.len(),
-        saved.opponent_jump_lines.len(),
-        "converted legacy opponents must retain their jump-line records"
-    );
-    human.opponents = crate::element::SwordfightOpponents::from_pairs(
-        saved.opponents.into_iter().zip(saved.opponent_jump_lines),
-    );
-    human.smalltalk_initiative = saved.smalltalk_initiative;
-    human.received_smalltalk_initiative = saved.received_smalltalk_initiative;
-    human.smalltalk_hint = saved.smalltalk_hint;
-    human.smalltalk_hint_opponent = saved.smalltalk_hint_opponent;
-    human.relative_fighting_ability = saved.relative_fighting_ability;
-    human.small_repulsive_radius = saved.small_repulsive_radius;
-    // The corpse-intersection observer is a Rust-only derived cache. None
-    // makes its first tick seed from the authoritative saved flag without
-    // generating an update.
-    human.last_is_lying_for_corpse_intersection = None;
-    human.killed_by_accident = saved.killed_by_accident;
-    human.parry_counter = saved.parry_counter;
-    human.invulnerable = saved.invulnerable;
-    human.last_motion_was_step_back_in_combat = saved.last_motion_was_step_back;
-    human.running_hulk = saved.running_hulk;
-    human.time_hulk = saved.time_hulk;
-    human.hulk_level = saved.hulk_level;
-    human.hulk_direction = saved.hulk_direction;
-    human.hulk_speed = saved.hulk_speed;
-    human.repulsive_point = saved.repulsive_point;
-    human.building_sector = saved.building_sector;
-    human.produced_noise_first_word = saved.produced_noise_first_word;
-    human.shield = saved.shield;
-    human.sword_sweep = saved.sword_sweep;
-    human.pending_shoots = saved.pending_shoots;
 }
 
 fn restore_saved_shield_obstacle(entity: &mut Entity) {
