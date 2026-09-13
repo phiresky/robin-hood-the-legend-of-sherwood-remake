@@ -1874,6 +1874,74 @@ fn expected_publication_topology_rejects_prelock_extras_everywhere() -> Result<(
 }
 
 #[test]
+fn expected_topology_positional_inventory_rejects_reordered_missing_duplicate_and_extra()
+-> Result<()> {
+    // `validate_inventory` compares the acquisition-sorted inventory to the
+    // `BTreeMap` topology positionally. Pin that it keeps the single original
+    // error for every mismatch shape and never accepts a non-canonical order.
+    const DIFFERS: &str = "PublicationV3 file/directory topology differs from its independently derived typed closure";
+    let root = tempfile::tempdir()?;
+    let mut expected = ExpectedPublicationTopologyV3::new();
+    for (path, bytes) in [
+        ("a/one", b"one".as_slice()),
+        ("a/two", b"two".as_slice()),
+        ("b", b"three".as_slice()),
+    ] {
+        expected.register_bytes(path.to_owned(), bytes)?;
+        let absolute = root.path().join(path);
+        fs::create_dir_all(absolute.parent().context("fixture file has no parent")?)?;
+        fs::write(absolute, bytes)?;
+    }
+    expected.seal_and_validate(root.path(), &open_publication_root_v3(root.path())?)?;
+    expected.validate_inventory(&publication_tree_inventory_v3(root.path())?)?;
+
+    let rejects = |inventory: PublicationTreeInventoryV3, label: &str| -> Result<()> {
+        let error = expected
+            .validate_inventory(&inventory)
+            .err()
+            .with_context(|| format!("positional topology accepted {label}"))?;
+        ensure!(
+            error.to_string() == DIFFERS,
+            "{label} produced unexpected error: {error}"
+        );
+        Ok(())
+    };
+    use super::inventory::PublicationFileInventoryV3;
+    let copy_file = |file: &PublicationFileInventoryV3, path: &str| -> Result<_> {
+        Ok(PublicationFileInventoryV3 {
+            path: path.to_owned(),
+            file: file.file.try_clone()?,
+            artifact: file.artifact.clone(),
+            unix_mode: file.unix_mode,
+            identity: file.identity.clone(),
+        })
+    };
+
+    let mut reordered = publication_tree_inventory_v3(root.path())?;
+    reordered.files.swap(0, 1);
+    rejects(reordered, "out-of-order files")?;
+    let mut reordered = publication_tree_inventory_v3(root.path())?;
+    reordered.directories.reverse();
+    rejects(reordered, "out-of-order directories")?;
+    let mut missing = publication_tree_inventory_v3(root.path())?;
+    missing.files.pop();
+    rejects(missing, "missing file")?;
+    let mut missing = publication_tree_inventory_v3(root.path())?;
+    missing.directories.pop();
+    rejects(missing, "missing directory")?;
+    let mut duplicate = publication_tree_inventory_v3(root.path())?;
+    duplicate.files[2] = copy_file(&duplicate.files[1], "a/two")?;
+    rejects(duplicate, "duplicate file in place of another")?;
+    let mut extra = publication_tree_inventory_v3(root.path())?;
+    let appended = copy_file(&extra.files[2], "c")?;
+    extra.files.push(appended);
+    rejects(extra, "extra file")?;
+
+    make_test_tree_writable(root.path())?;
+    Ok(())
+}
+
+#[test]
 fn publication_inventory_rejects_hardlinks_and_nested_mount_inventory() -> Result<()> {
     let root = tempfile::tempdir()?;
     fs::write(root.path().join("one"), b"shared inode")?;

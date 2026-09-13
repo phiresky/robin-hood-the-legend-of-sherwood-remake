@@ -244,6 +244,18 @@ pub(super) fn expected_publication_topology_from_loaded_v3(
     official_authority: &PublicationTreeAuthorityV3,
 ) -> Result<ExpectedPublicationTopologyV3> {
     let mut expected = ExpectedPublicationTopologyV3::new();
+    register_loaded_backend_topology_v3(&mut expected, loaded)?;
+    register_loaded_official_authority_topology_v3(&mut expected, loaded, official_authority)?;
+    register_loaded_private_topology_v3(&mut expected, loaded)?;
+    register_loaded_origin_topology_v3(&mut expected, loaded, manifest)?;
+    Ok(expected)
+}
+
+/// Fixed top-level directories, backend manifests and the backend summary.
+fn register_loaded_backend_topology_v3(
+    expected: &mut ExpectedPublicationTopologyV3,
+    loaded: &LoadedPublication,
+) -> Result<()> {
     for directory in [
         "backend/manifests/builds",
         "backend/manifests/content-manifests",
@@ -306,7 +318,16 @@ pub(super) fn expected_publication_topology_from_loaded_v3(
     }
     let backend = backend_publication(loaded)?;
     expected.register_canonical("backend/publication-v3.json".into(), &backend)?;
+    Ok(())
+}
 
+/// The copied Plan-V3 authority must equal its typed closure before its files
+/// and directories are registered below `private/official-content-authority`.
+fn register_loaded_official_authority_topology_v3(
+    expected: &mut ExpectedPublicationTopologyV3,
+    loaded: &LoadedPublication,
+    official_authority: &PublicationTreeAuthorityV3,
+) -> Result<()> {
     let typed_official = expected_official_authority_topology_v3(&loaded.authority)?;
     let copied_official_files = official_authority
         .files
@@ -355,6 +376,14 @@ pub(super) fn expected_publication_topology_from_loaded_v3(
         };
         expected.register_directory(&path)?;
     }
+    Ok(())
+}
+
+/// Viewer report, verifier program/config and deduplicated campaign states.
+fn register_loaded_private_topology_v3(
+    expected: &mut ExpectedPublicationTopologyV3,
+    loaded: &LoadedPublication,
+) -> Result<()> {
     expected.register_file(
         format!(
             "private/viewer-build-reports-v2/{}.json",
@@ -393,7 +422,15 @@ pub(super) fn expected_publication_topology_from_loaded_v3(
             )?,
         }
     }
+    Ok(())
+}
 
+/// Cloudflare origins, datadir pins, deployment exposure and the manifest.
+fn register_loaded_origin_topology_v3(
+    expected: &mut ExpectedPublicationTopologyV3,
+    loaded: &LoadedPublication,
+    manifest: &PublicationManifestV3,
+) -> Result<()> {
     expected.register_canonical(
         format!(
             "cloudflare-public/manifests/builds/{}.json",
@@ -444,7 +481,7 @@ pub(super) fn expected_publication_topology_from_loaded_v3(
         "publication-manifest-v3.sha256".into(),
         manifest.canonical_digest()?.to_string().as_bytes(),
     )?;
-    Ok(expected)
+    Ok(())
 }
 
 pub(super) fn publication_lock(
@@ -944,12 +981,60 @@ pub(super) fn expected_official_authority_topology_v3(
 pub(super) fn validate_embedded_official_content_v3(
     inventory: &mut PublicationTreeInventoryV3,
 ) -> Result<ValidatedOfficialContentV3> {
-    let mut expected_files = BTreeSet::new();
-    let digests: crate::OfficialContentDigestsV1 = load_authority_document_v3(
+    // Every phase records each authority path it addressed; the final phase
+    // proves that set equals the independently derived typed closure.
+    let mut addressed_files = BTreeSet::new();
+    let (digests, matrix) = load_embedded_digest_authorities_v3(inventory, &mut addressed_files)?;
+    let build = load_embedded_build_authority_v3(inventory, &matrix, &mut addressed_files)?;
+    let (projection_authority, rules, execution_policy, core_manifest) =
+        load_embedded_projection_authorities_v3(inventory, &matrix, &build, &mut addressed_files)?;
+    let receipts = validate_embedded_projection_lanes_v3(
         inventory,
-        "official-content-digests.json",
-        &mut expected_files,
+        &matrix,
+        &build,
+        &projection_authority,
+        &rules,
+        &core_manifest,
+        &mut addressed_files,
     )?;
+    let content =
+        load_embedded_content_manifests_v3(inventory, &digests, &receipts, &mut addressed_files)?;
+    let campaigns =
+        load_embedded_campaign_manifests_v3(inventory, &digests, &content, &mut addressed_files)?;
+    validate_embedded_verifier_bundles_v3(inventory, &matrix, &content, &mut addressed_files)?;
+    validate_embedded_public_demo_v3(
+        inventory,
+        &digests,
+        &content,
+        &campaigns,
+        &mut addressed_files,
+    )?;
+
+    let validated = ValidatedOfficialContentV3 {
+        digests,
+        matrix,
+        build,
+        projection_authority,
+        rules,
+        execution_policy,
+        core_manifest,
+        content,
+        campaigns,
+    };
+    validate_embedded_authority_topology_v3(inventory, &validated, &addressed_files)?;
+    Ok(validated)
+}
+
+/// Phase 1: the two sidecar-pinned root authorities.
+fn load_embedded_digest_authorities_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<(
+    crate::OfficialContentDigestsV1,
+    OfficialProjectionAuthorityMatrixV3,
+)> {
+    let digests: crate::OfficialContentDigestsV1 =
+        load_authority_document_v3(inventory, "official-content-digests.json", expected_files)?;
     expected_files.insert("official-content-digests.sha256".into());
     ensure!(
         read_inventory_file_v3(
@@ -962,7 +1047,7 @@ pub(super) fn validate_embedded_official_content_v3(
     let matrix: OfficialProjectionAuthorityMatrixV3 = load_authority_document_v3(
         inventory,
         "projection-authority-matrix-v3.json",
-        &mut expected_files,
+        expected_files,
     )?;
     expected_files.insert("projection-authority-matrix-v3.sha256".into());
     ensure!(
@@ -973,10 +1058,18 @@ pub(super) fn validate_embedded_official_content_v3(
         )? == matrix.canonical_digest()?.to_string().as_bytes(),
         "embedded projection matrix sidecar differs"
     );
+    Ok((digests, matrix))
+}
 
+/// Phase 2: the addressed BuildManifestV2 and its three wasm tool authorities.
+fn load_embedded_build_authority_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    matrix: &OfficialProjectionAuthorityMatrixV3,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<BuildManifestV2> {
     let build_relative = format!("manifests/builds-v2/{}.json", matrix.build_manifest_sha256);
     let build: BuildManifestV2 =
-        load_authority_document_v3(inventory, &build_relative, &mut expected_files)?;
+        load_authority_document_v3(inventory, &build_relative, expected_files)?;
     validate_current_official_ranked_build_v2(&build)?;
     ensure!(
         build.canonical_digest()? == matrix.build_manifest_sha256,
@@ -991,7 +1084,7 @@ pub(super) fn validate_embedded_official_content_v3(
     for digest in tool_digests {
         let relative = format!("manifests/build-tool-authorities/{digest}.json");
         let tool: BuildToolAuthorityDocumentV1 =
-            load_authority_document_v3(inventory, &relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &relative, expected_files)?;
         ensure!(
             tool.canonical_digest()? == digest,
             "embedded build-tool authority path digest mismatch"
@@ -999,13 +1092,28 @@ pub(super) fn validate_embedded_official_content_v3(
         tools.push(tool);
     }
     build.validate_wasm_tool_authorities(&tools[0], &tools[1], &tools[2])?;
+    Ok(build)
+}
 
+/// Phase 3: projection authority, rules, execution policy, core overlay and
+/// the pinned projection exporter.
+fn load_embedded_projection_authorities_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    matrix: &OfficialProjectionAuthorityMatrixV3,
+    build: &BuildManifestV2,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<(
+    OfficialProjectionAuthorityManifestV2,
+    RulesConfigIdentityV1,
+    OfficialProjectionExecutionPolicyV1,
+    OfficialBuiltInOverlaySourceManifestV2,
+)> {
     let projection_relative = format!(
         "private/projection-authority-manifests-v2/{}.json",
         matrix.projection_authority_manifest_sha256
     );
     let projection_authority: OfficialProjectionAuthorityManifestV2 =
-        load_authority_document_v3(inventory, &projection_relative, &mut expected_files)?;
+        load_authority_document_v3(inventory, &projection_relative, expected_files)?;
     ensure!(
         projection_authority.canonical_digest()? == matrix.projection_authority_manifest_sha256,
         "embedded projection authority path digest mismatch"
@@ -1016,7 +1124,7 @@ pub(super) fn validate_embedded_official_content_v3(
         matrix.rules_config_sha256
     );
     let rules: RulesConfigIdentityV1 =
-        load_authority_document_v3(inventory, &rules_relative, &mut expected_files)?;
+        load_authority_document_v3(inventory, &rules_relative, expected_files)?;
     ensure!(
         rules.canonical_digest()? == matrix.rules_config_sha256,
         "embedded projection rules path digest mismatch"
@@ -1027,7 +1135,7 @@ pub(super) fn validate_embedded_official_content_v3(
         matrix.execution_policy_sha256
     );
     let execution_policy: OfficialProjectionExecutionPolicyV1 =
-        load_authority_document_v3(inventory, &execution_relative, &mut expected_files)?;
+        load_authority_document_v3(inventory, &execution_relative, expected_files)?;
     ensure!(
         execution_policy.canonical_digest()? == matrix.execution_policy_sha256
             && execution_policy.rules_config == rules,
@@ -1038,7 +1146,7 @@ pub(super) fn validate_embedded_official_content_v3(
         matrix.core_overlay_manifest_sha256
     );
     let core_manifest: OfficialBuiltInOverlaySourceManifestV2 =
-        load_authority_document_v3(inventory, &core_relative, &mut expected_files)?;
+        load_authority_document_v3(inventory, &core_relative, expected_files)?;
     ensure!(
         core_manifest.canonical_digest()? == matrix.core_overlay_manifest_sha256,
         "embedded core overlay manifest is substituted"
@@ -1053,7 +1161,19 @@ pub(super) fn validate_embedded_official_content_v3(
         &authority_relative_v3(&exporter_relative),
         &projection_authority.projection_exporter.artifact,
     )?;
+    Ok((projection_authority, rules, execution_policy, core_manifest))
+}
 
+/// Phase 4: every matrix lane's source, receipt, execution record and logs.
+fn validate_embedded_projection_lanes_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    matrix: &OfficialProjectionAuthorityMatrixV3,
+    build: &BuildManifestV2,
+    projection_authority: &OfficialProjectionAuthorityManifestV2,
+    rules: &RulesConfigIdentityV1,
+    core_manifest: &OfficialBuiltInOverlaySourceManifestV2,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<Vec<OfficialSimulationProjectionReceiptV2>> {
     let mut receipts = Vec::with_capacity(4);
     for lane in &matrix.lanes {
         let source_relative = format!(
@@ -1061,7 +1181,7 @@ pub(super) fn validate_embedded_official_content_v3(
             lane.source_tree_manifest_sha256
         );
         let source: OfficialSourceTreeManifestV2 =
-            load_authority_document_v3(inventory, &source_relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &source_relative, expected_files)?;
         ensure!(
             source.canonical_digest()? == lane.source_tree_manifest_sha256
                 && source.edition == lane.edition
@@ -1073,38 +1193,32 @@ pub(super) fn validate_embedded_official_content_v3(
             lane.projection_receipt_sha256
         );
         let receipt: OfficialSimulationProjectionReceiptV2 =
-            load_authority_document_v3(inventory, &receipt_relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &receipt_relative, expected_files)?;
         ensure!(
             receipt.canonical_digest()? == lane.projection_receipt_sha256
                 && receipt.edition == lane.edition
                 && receipt.exporter.source_format == lane.source_format,
             "embedded projection receipt is substituted"
         );
-        receipt.validate_against(
-            &build,
-            &projection_authority,
-            &rules,
-            &source,
-            &core_manifest,
-        )?;
+        receipt.validate_against(build, projection_authority, rules, &source, core_manifest)?;
         let execution_root = format!(
             "private/projection-executions/{}",
             lane.projection_receipt_sha256
         );
         let record_relative = format!("{execution_root}/record.json");
         let record: OfficialProjectionExecutionRecordV3 =
-            load_authority_document_v3(inventory, &record_relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &record_relative, expected_files)?;
         ensure!(
             record.canonical_digest()? == lane.execution_record_sha256,
             "embedded projection execution record is substituted"
         );
         record.report.validate_against(
             &receipt,
-            &build,
-            &projection_authority,
-            &rules,
+            build,
+            projection_authority,
+            rules,
             &source,
-            &core_manifest,
+            core_manifest,
         )?;
         let stdout_relative = format!("{execution_root}/stdout.json");
         expected_files.insert(stdout_relative.clone());
@@ -1131,7 +1245,16 @@ pub(super) fn validate_embedded_official_content_v3(
         receipts.push(receipt);
     }
     validate_official_projection_receipt_matrix_v2(&receipts)?;
+    Ok(receipts)
+}
 
+/// Phase 5: content manifests, bound to the loose-native receipt subjects.
+fn load_embedded_content_manifests_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    digests: &crate::OfficialContentDigestsV1,
+    receipts: &[OfficialSimulationProjectionReceiptV2],
+    expected_files: &mut BTreeSet<String>,
+) -> Result<BTreeMap<Digest32, ContentManifestV1>> {
     let receipt_content = receipts
         .iter()
         .filter(|receipt| {
@@ -1159,7 +1282,7 @@ pub(super) fn validate_embedded_official_content_v3(
     for digest in expected_content_digests {
         let relative = format!("manifests/content-manifests/{digest}.json");
         let document: ContentManifestV1 =
-            load_authority_document_v3(inventory, &relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &relative, expected_files)?;
         ensure!(
             document.canonical_digest()? == digest
                 && receipt_content.get(&digest) == Some(&document),
@@ -1167,7 +1290,16 @@ pub(super) fn validate_embedded_official_content_v3(
         );
         content.insert(digest, document);
     }
+    Ok(content)
+}
 
+/// Phase 6: both edition campaign manifests, bound to the content catalog.
+fn load_embedded_campaign_manifests_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    digests: &crate::OfficialContentDigestsV1,
+    content: &BTreeMap<Digest32, ContentManifestV1>,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<BTreeMap<Digest32, CampaignContentManifestV1>> {
     let mut campaigns = BTreeMap::new();
     for (edition, digest) in [
         (
@@ -1181,7 +1313,7 @@ pub(super) fn validate_embedded_official_content_v3(
     ] {
         let relative = format!("manifests/campaign-content-manifests/{digest}.json");
         let campaign: CampaignContentManifestV1 =
-            load_authority_document_v3(inventory, &relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &relative, expected_files)?;
         let expected_entries = official_content_subjects_v1(edition)
             .into_iter()
             .map(|subject| {
@@ -1205,8 +1337,17 @@ pub(super) fn validate_embedded_official_content_v3(
         );
         campaigns.insert(digest, campaign);
     }
+    Ok(campaigns)
+}
 
-    for (digest, manifest) in &content {
+/// Phase 7: verifier source bindings and bundled components per content subject.
+fn validate_embedded_verifier_bundles_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    matrix: &OfficialProjectionAuthorityMatrixV3,
+    content: &BTreeMap<Digest32, ContentManifestV1>,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<()> {
+    for (digest, manifest) in content {
         let edition_lanes = matrix
             .lanes
             .iter()
@@ -1224,7 +1365,7 @@ pub(super) fn validate_embedded_official_content_v3(
             };
         let binding_relative = format!("private/verifier-source-bindings-v2/{digest}.json");
         let binding: VerifierSourceBindingV2 =
-            load_authority_document_v3(inventory, &binding_relative, &mut expected_files)?;
+            load_authority_document_v3(inventory, &binding_relative, expected_files)?;
         ensure!(
             binding.content_manifest_sha256 == *digest
                 && binding.edition == manifest.edition
@@ -1244,7 +1385,7 @@ pub(super) fn validate_embedded_official_content_v3(
         );
         let bundle_manifest = format!("verifier-bundles/{digest}/manifest.json");
         let bundled: ContentManifestV1 =
-            load_authority_document_v3(inventory, &bundle_manifest, &mut expected_files)?;
+            load_authority_document_v3(inventory, &bundle_manifest, expected_files)?;
         ensure!(
             &bundled == manifest,
             "embedded verifier bundle manifest is substituted"
@@ -1264,14 +1405,24 @@ pub(super) fn validate_embedded_official_content_v3(
             );
         }
     }
+    Ok(())
+}
 
+/// Phase 8: the public Demo campaign, manifests and content objects.
+fn validate_embedded_public_demo_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    digests: &crate::OfficialContentDigestsV1,
+    content: &BTreeMap<Digest32, ContentManifestV1>,
+    campaigns: &BTreeMap<Digest32, CampaignContentManifestV1>,
+    expected_files: &mut BTreeSet<String>,
+) -> Result<()> {
     let demo_campaign = &campaigns[&digests.demo_campaign_content_manifest_sha256];
     let public_campaign = format!(
         "public/manifests/campaign-content-manifests/{}.json",
         digests.demo_campaign_content_manifest_sha256
     );
     let published_demo: CampaignContentManifestV1 =
-        load_authority_document_v3(inventory, &public_campaign, &mut expected_files)?;
+        load_authority_document_v3(inventory, &public_campaign, expected_files)?;
     ensure!(
         &published_demo == demo_campaign,
         "embedded public Demo campaign is substituted"
@@ -1280,7 +1431,7 @@ pub(super) fn validate_embedded_official_content_v3(
         let manifest = &content[digest];
         let public_manifest = format!("public/manifests/content-manifests/{digest}.json");
         let published: ContentManifestV1 =
-            load_authority_document_v3(inventory, &public_manifest, &mut expected_files)?;
+            load_authority_document_v3(inventory, &public_manifest, expected_files)?;
         ensure!(
             &published == manifest,
             "embedded public Demo manifest is substituted"
@@ -1301,21 +1452,19 @@ pub(super) fn validate_embedded_official_content_v3(
             );
         }
     }
+    Ok(())
+}
 
-    let validated = ValidatedOfficialContentV3 {
-        digests,
-        matrix,
-        build,
-        projection_authority,
-        rules,
-        execution_policy,
-        core_manifest,
-        content,
-        campaigns,
-    };
-    let typed_topology = expected_official_authority_topology_v3(&validated)?;
+/// Phase 9: the addressed set, the physical authority subtree and verifier
+/// bundle modes must all equal the typed closure derived from `validated`.
+fn validate_embedded_authority_topology_v3(
+    inventory: &PublicationTreeInventoryV3,
+    validated: &ValidatedOfficialContentV3,
+    expected_files: &BTreeSet<String>,
+) -> Result<()> {
+    let typed_topology = expected_official_authority_topology_v3(validated)?;
     ensure!(
-        expected_files == typed_topology.files,
+        *expected_files == typed_topology.files,
         "embedded Plan-V3 validation did not address its complete typed file closure"
     );
     let actual_files = inventory_relative_files_v3(inventory, "private/official-content-authority");
@@ -1361,7 +1510,7 @@ pub(super) fn validate_embedded_official_content_v3(
             "embedded verifier bundle directory is writable"
         );
     }
-    Ok(validated)
+    Ok(())
 }
 
 pub(super) fn load_admitted_profile_managers_from_inventory_v3(
@@ -1467,6 +1616,26 @@ pub(super) fn validate_materialized_document_closure(
     inventory: &mut PublicationTreeInventoryV3,
     manifest: &PublicationManifestV3,
 ) -> Result<()> {
+    let (backend, authority) = load_materialized_root_authority_v3(inventory, manifest)?;
+    let build = validate_materialized_build_v3(inventory, manifest, &authority)?;
+    let rules_configs =
+        validate_materialized_catalogs_v3(inventory, manifest, &backend, &authority)?;
+    validate_materialized_private_artifacts_v3(
+        inventory,
+        &backend,
+        &build,
+        &authority,
+        &rules_configs,
+    )?;
+    validate_materialized_public_topology_v3(inventory, manifest, &backend, &build, &authority)
+}
+
+/// Phase 1: backend summary, then the complete Plan-V3 authority revalidation
+/// and its two sidecar digests.
+fn load_materialized_root_authority_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    manifest: &PublicationManifestV3,
+) -> Result<(BackendPublicationV3, ValidatedOfficialContentV3)> {
     let backend: BackendPublicationV3 =
         load_inventory_document_v3(inventory, "backend/publication-v3.json")?;
     ensure!(
@@ -1511,8 +1680,17 @@ pub(super) fn validate_materialized_document_closure(
                 .as_bytes(),
         "publication projection matrix authority is substituted"
     );
-    let projection_authority = &authority.projection_authority;
+    Ok((backend, authority))
+}
 
+/// Phase 2: backend BuildManifestV2, datadir binding, tool authorities and the
+/// viewer build report.
+fn validate_materialized_build_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    manifest: &PublicationManifestV3,
+    authority: &ValidatedOfficialContentV3,
+) -> Result<BuildManifestV2> {
+    let projection_authority = &authority.projection_authority;
     let build: BuildManifestV2 = load_one_inventory_addressed_document_v3(
         inventory,
         "backend/manifests/builds",
@@ -1559,6 +1737,18 @@ pub(super) fn validate_materialized_document_closure(
     let viewer_build_report: OfficialViewerBuildReportV2 =
         load_inventory_document_v3(inventory, &viewer_report_path)?;
     viewer_build_report.validate_against(&build)?;
+    Ok(build)
+}
+
+/// Phase 3: backend catalogs must equal the validated authority, then the
+/// complete document closure over rules, policies, rulesets and competitions.
+fn validate_materialized_catalogs_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    manifest: &PublicationManifestV3,
+    backend: &BackendPublicationV3,
+    authority: &ValidatedOfficialContentV3,
+) -> Result<BTreeMap<Digest32, RulesConfigIdentityV1>> {
+    let digests = &authority.digests;
     let mut expected_content = digests
         .demo_content_manifest_sha256
         .iter()
@@ -1645,11 +1835,20 @@ pub(super) fn validate_materialized_document_closure(
         &published,
         &competitions,
     )?;
+    Ok(rules_configs)
+}
 
+/// Phase 4: verifier program/config pins and every canonical campaign template.
+fn validate_materialized_private_artifacts_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    backend: &BackendPublicationV3,
+    build: &BuildManifestV2,
+    authority: &ValidatedOfficialContentV3,
+    rules_configs: &BTreeMap<Digest32, RulesConfigIdentityV1>,
+) -> Result<()> {
     // Recover each edition's exact typed ProfileManager from the completely
     // revalidated authority, then independently re-derive every template.
-    let admitted_profiles =
-        load_admitted_profile_managers_from_inventory_v3(inventory, &authority)?;
+    let admitted_profiles = load_admitted_profile_managers_from_inventory_v3(inventory, authority)?;
 
     ensure!(
         backend.verifier_program == build.verifier.artifact,
@@ -1698,6 +1897,21 @@ pub(super) fn validate_materialized_document_closure(
         actual_campaign_files == expected_campaign_files,
         "physical campaign template inventory differs from logical campaign pins"
     );
+    Ok(())
+}
+
+/// Phase 5: Cloudflare origin artifacts, public tree/privacy scans and the
+/// complete expected topology.
+fn validate_materialized_public_topology_v3(
+    inventory: &mut PublicationTreeInventoryV3,
+    manifest: &PublicationManifestV3,
+    backend: &BackendPublicationV3,
+    build: &BuildManifestV2,
+    authority: &ValidatedOfficialContentV3,
+) -> Result<()> {
+    let digests = &authority.digests;
+    let matrix = &authority.matrix;
+    let projection_authority = &authority.projection_authority;
     for file in &manifest.public_static_files {
         validate_inventory_artifact_v3(
             inventory,
@@ -1720,7 +1934,7 @@ pub(super) fn validate_materialized_document_closure(
         ),
     )?;
     ensure!(
-        public_build == build,
+        public_build == *build,
         "Cloudflare public build manifest is substituted"
     );
     for named in &build.viewer.engine.artifacts {

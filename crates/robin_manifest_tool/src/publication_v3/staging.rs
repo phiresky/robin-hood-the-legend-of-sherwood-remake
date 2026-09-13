@@ -6,7 +6,20 @@ pub(super) fn materialize_publication(
     loaded: &LoadedPublication,
 ) -> Result<PublicationTreeAuthorityV3> {
     let authority_root = &loaded.plan.official_content_authority;
-    // Backend immutable authorities.
+    materialize_backend_authorities_v3(root, loaded, authority_root)?;
+    let copied_official_authority =
+        materialize_private_authorities_v3(root, loaded, authority_root)?;
+    materialize_cloudflare_origins_v3(root, loaded)?;
+    materialize_datadir_and_summaries_v3(root, loaded)?;
+    Ok(copied_official_authority)
+}
+
+/// Backend immutable authorities.
+fn materialize_backend_authorities_v3(
+    root: &Path,
+    loaded: &LoadedPublication,
+    authority_root: &Path,
+) -> Result<()> {
     copy_directory_exact(
         &authority_root.join("manifests/content-manifests"),
         &root.join("backend/manifests/content-manifests"),
@@ -59,7 +72,16 @@ pub(super) fn materialize_publication(
             competition,
         )?;
     }
+    Ok(())
+}
 
+/// Private authorities: the Plan-V3 authority copy, viewer report, verifier
+/// program/config and the deduplicated campaign-state artifacts.
+fn materialize_private_authorities_v3(
+    root: &Path,
+    loaded: &LoadedPublication,
+    authority_root: &Path,
+) -> Result<PublicationTreeAuthorityV3> {
     // Preserve exactly one complete, independently validatable Plan-V3
     // authority below the publication. Downstream assemblers select their
     // operational inputs from this tree; publication files stay regular,
@@ -114,7 +136,11 @@ pub(super) fn materialize_publication(
         )?;
         copied_campaigns.insert(state.artifact.sha256, state.artifact.clone());
     }
+    Ok(copied_official_authority)
+}
 
+/// Public-static and identity-signer origins.
+fn materialize_cloudflare_origins_v3(root: &Path, loaded: &LoadedPublication) -> Result<()> {
     // The normal public-static origin contains the application closure only.
     // Demo datadir payload bytes are assembled and deployed independently by
     // robinhood-datadir-assets; this publication binds only its canonical
@@ -199,7 +225,11 @@ pub(super) fn materialize_publication(
             &file.artifact,
         )?;
     }
+    Ok(())
+}
 
+/// Datadir authority pins, backend summary and deployment exposure.
+fn materialize_datadir_and_summaries_v3(root: &Path, loaded: &LoadedPublication) -> Result<()> {
     copy_artifact_exact(
         &loaded.plan.datadir_release_authority.source,
         &root.join(DATADIR_AUTHORITY_PATH),
@@ -217,7 +247,7 @@ pub(super) fn materialize_publication(
         &root.join("deployment/exposure-v3.json"),
         &DeploymentExposureV3::official(),
     )?;
-    Ok(copied_official_authority)
+    Ok(())
 }
 
 pub(super) fn backend_publication(loaded: &LoadedPublication) -> Result<BackendPublicationV3> {
@@ -344,10 +374,37 @@ where
     let mut inventory = publication_tree_inventory_v3_from_fd(source, &source_root)?;
     let source_snapshot = inventory.snapshot();
     let expected_authority = inventory.authority();
-    {
-        use rustix::fs::{Mode, OFlags, ResolveFlags, fchmod, mkdirat, openat2};
+    let mut output = ModePreservingCopyV3::create_root(destination)?;
+    output.create_directories(&inventory)?;
+    output.copy_files(&mut inventory)?;
+    output.seal_directory_modes(&inventory)?;
+    before_acceptance();
+    output.accept(
+        source,
+        &source_root,
+        &source_snapshot,
+        destination,
+        &expected_authority,
+    )?;
+    Ok(expected_authority)
+}
+
+/// Destination descriptors retained from creation through final acceptance.
+/// Field order mirrors the former single block's reverse declaration order,
+/// so the descriptors still close in the same sequence.
+struct ModePreservingCopyV3 {
+    files: BTreeMap<String, fs::File>,
+    directories: BTreeMap<String, fs::File>,
+    _rebound_root: fs::File,
+    root: fs::File,
+    parent: fs::File,
+}
+
+impl ModePreservingCopyV3 {
+    /// Create and pin the owned, same-device destination root.
+    fn create_root(destination: &Path) -> Result<Self> {
+        use rustix::fs::{Mode, mkdirat};
         use std::os::fd::AsFd as _;
-        use std::os::unix::fs::PermissionsExt as _;
 
         let destination_parent_path = destination
             .parent()
@@ -381,7 +438,21 @@ where
         );
         let mut destination_directories = BTreeMap::<String, fs::File>::new();
         destination_directories.insert(".".into(), destination_root.try_clone()?);
-        let mut destination_files = BTreeMap::<String, fs::File>::new();
+        Ok(Self {
+            files: BTreeMap::new(),
+            directories: destination_directories,
+            _rebound_root: rebound_destination,
+            root: destination_root,
+            parent: destination_parent,
+        })
+    }
+
+    /// Recreate every source directory owner-only below the pinned root.
+    fn create_directories(&mut self, inventory: &PublicationTreeInventoryV3) -> Result<()> {
+        use rustix::fs::{Mode, mkdirat};
+        use std::os::fd::AsFd as _;
+
+        let destination_directories = &mut self.directories;
         for directory in inventory
             .directories
             .iter()
@@ -409,6 +480,17 @@ where
             let child = open_publication_child_v3(parent_descriptor, Path::new(name))?;
             destination_directories.insert(directory.path.clone(), child);
         }
+        Ok(())
+    }
+
+    /// Copy each pinned source file exclusively, preserving its mode.
+    fn copy_files(&mut self, inventory: &mut PublicationTreeInventoryV3) -> Result<()> {
+        use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+        use std::os::fd::AsFd as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let destination_root = &self.root;
+        let destination_files = &mut self.files;
         for source_file in &mut inventory.files {
             let output_descriptor = openat2(
                 destination_root.as_fd(),
@@ -464,6 +546,15 @@ where
                 "PublicationV3 destination file path repeats"
             );
         }
+        Ok(())
+    }
+
+    /// Apply the final directory modes deepest-first.
+    fn seal_directory_modes(&self, inventory: &PublicationTreeInventoryV3) -> Result<()> {
+        use rustix::fs::{Mode, fchmod};
+        use std::os::fd::AsFd as _;
+
+        let destination_directories = &self.directories;
         let mut directories_by_depth = inventory.directories.clone();
         directories_by_depth.sort_by_key(|directory| {
             std::cmp::Reverse(Path::new(&directory.path).components().count())
@@ -475,16 +566,32 @@ where
             fchmod(descriptor.as_fd(), Mode::from_raw_mode(directory.unix_mode))?;
             descriptor.sync_all()?;
         }
-        before_acceptance();
+        Ok(())
+    }
+
+    /// Prove the source is unchanged and the destination equals the expected
+    /// authority through the retained descriptors.
+    fn accept(
+        &self,
+        source: &Path,
+        source_root: &fs::File,
+        source_snapshot: &super::inventory::PublicationTreeSnapshotV3,
+        destination: &Path,
+        expected_authority: &PublicationTreeAuthorityV3,
+    ) -> Result<()> {
+        let destination_parent = &self.parent;
+        let destination_root = &self.root;
+        let destination_files = &self.files;
+        let destination_directories = &self.directories;
         ensure!(
-            publication_tree_inventory_v3_from_fd(source, &source_root)?.snapshot()
-                == source_snapshot,
+            publication_tree_inventory_v3_from_fd(source, source_root)?.snapshot()
+                == *source_snapshot,
             "PublicationV3 source changed before copy acceptance"
         );
         let destination_inventory =
             publication_tree_inventory_v3_from_fd(destination, &destination_root)?;
         ensure!(
-            destination_inventory.authority() == expected_authority,
+            destination_inventory.authority() == *expected_authority,
             "PublicationV3 mode-preserving copy changed its authority"
         );
         for file in &destination_inventory.files {
@@ -519,8 +626,8 @@ where
             accepted.snapshot() == destination_inventory.snapshot(),
             "PublicationV3 destination changed after its final identity rebind"
         );
+        Ok(())
     }
-    Ok(expected_authority)
 }
 
 pub(super) fn create_private_publication_root(root: &Path) -> Result<PathBuf> {
