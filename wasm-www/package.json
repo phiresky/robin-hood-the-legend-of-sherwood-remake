@@ -18,6 +18,7 @@
     "test": "node --experimental-strip-types --test src/*.test.ts",
     "preview": "vite preview",
     "smoke:cloudflare": "node scripts/smoke-cloudflare-deployment.mjs",
+    "deploy:cloudflare": "scripts/deploy-cloudflare.sh",
     "test:leaderboards": "node -e \"require('node:fs').rmSync('.leaderboard-test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.leaderboards-tests.json && node --test .leaderboard-test-dist/leaderboards/*.test.js .leaderboard-test-dist/identity-signer/*.test.js",
     "test:deployment": "node --test scripts/*.test.mjs",
     "test:identity": "node --test ../crates/robin_rs/js/browser_identity_modules.test.mjs",

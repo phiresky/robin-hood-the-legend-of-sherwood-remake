@@ -6,10 +6,6 @@ import { runtimeBuildPlan } from './build-runtime.mjs';
 
 const repository = resolve(import.meta.dirname, '../..');
 
-async function workflow(name) {
-    return readFile(resolve(repository, '.github/workflows', name), 'utf8');
-}
-
 async function repositoryFile(path) {
     return readFile(resolve(repository, path), 'utf8');
 }
@@ -18,35 +14,36 @@ function ordered(text, markers) {
     let previous = -1;
     for (const marker of markers) {
         const index = text.indexOf(marker);
-        assert(index >= 0, `workflow is missing ${marker}`);
-        assert(index > previous, `${marker} is out of release order`);
+        assert(index >= 0, `missing ${marker}`);
+        assert(index > previous, `${marker} is out of order`);
         previous = index;
     }
 }
 
-test('runtime deployment re-verifies the exact corpus before a route-free Worker deploy', async () => {
-    const text = await workflow('deploy-static-runtime.yml');
-    assert.match(text, /^\s*workflow_dispatch:/mu);
-    assert.match(text, /name: cloudflare-production/u);
-    ordered(text, [
-        'verify-static-origin-inventory.mjs',
-        'verify:runtime',
-        'verify:runtime-wrangler',
-        'wrangler deploy --config deploy/wrangler-runtime.json',
-        'extract-wrangler-deploy-version.mjs',
-        'sync-cloudflare-routes.mjs --prove-runtime',
+test('Cloudflare deploy verifies builds, deploys signer before public, then reconciles routes', async () => {
+    const script = await repositoryFile('wasm-www/scripts/deploy-cloudflare.sh');
+    ordered(script, [
+        'pnpm verify:public',
+        'pnpm verify:signer',
+        'deploy_worker signer robinhood-identity-signer',
+        'deploy_worker public robinhood-public-site',
+        'sync-cloudflare-routes.mjs --apply',
+        'sync-cloudflare-routes.mjs --check',
+        'pnpm smoke:cloudflare',
     ]);
-    assert.doesNotMatch(text, /sync-cloudflare-routes\.mjs --apply/u);
-    assert.doesNotMatch(text, /wrangler pages|github-pages|fullgame|fullgame_shipping/iu);
+    const workflow = await repositoryFile('.github/workflows/deploy-static-workers.yml');
+    assert.match(workflow, /^\s*workflow_dispatch:/mu);
+    assert.match(workflow, /run: wasm-www\/scripts\/deploy-cloudflare\.sh$/mu);
+    for (const text of [workflow, await repositoryFile('.github/workflows/build-static-runtime.yml')]) {
+        assert.match(text, /scripts\/install_pinned_wasm_bindgen\.sh/u);
+        assert.match(text, /wasm-bindgen 0\.2\.127/u);
+        assert.doesNotMatch(text, /cargo install wasm-bindgen-cli|wrangler pages|github-pages/iu);
+    }
 });
 
 test('runtime build prunes the private vault and authors the retained JavaScript closure', async () => {
-    const text = await workflow('build-static-runtime.yml');
-    ordered(text, [
-        'node wasm-www/scripts/stage-runtime-addition.mjs',
-        'write-static-origin-inventory.mjs',
-        'actions/upload-artifact@',
-    ]);
+    const text = await repositoryFile('.github/workflows/build-static-runtime.yml');
+    ordered(text, ['node wasm-www/scripts/stage-runtime-addition.mjs', 'actions/upload-artifact@']);
     const plan = runtimeBuildPlan();
     const nameIndex = plan.bindgenArgs.indexOf('--out-name');
     assert(nameIndex >= 0);
@@ -63,37 +60,6 @@ test('runtime build prunes the private vault and authors the retained JavaScript
     ]);
     assert(staging.includes("'engine', artifact, 'robin.js'"));
     assert(!staging.includes('browser_identity_vault.js'));
-});
-
-test('datadir deployment is separately approved, verified, deployed, and receipted', async () => {
-    const text = await workflow('deploy-static-datadir.yml');
-    assert.match(text, /^\s*workflow_dispatch:/mu);
-    assert.match(text, /name: cloudflare-production/u);
-    ordered(text, [
-        'datadir-release-authority.mjs verify',
-        'verify:datadir-wrangler',
-        'wrangler deploy --config deploy/wrangler-datadir.json',
-        'extract-wrangler-deploy-version.mjs',
-        'sync-cloudflare-routes.mjs --prove-datadir',
-        'datadir-release-authority.mjs receipt',
-    ]);
-    assert.doesNotMatch(text, /runtime-dist|wrangler-runtime|fullgame|fullgame_shipping/iu);
-});
-
-test('first static deployment proves API bypass and runtime existence before public routes', async () => {
-    const text = await workflow('deploy-static-workers.yml');
-    ordered(text, [
-        'sync-cloudflare-routes.mjs --prepare-api',
-        'sync-cloudflare-routes.mjs --prove-runtime',
-        'sync-cloudflare-routes.mjs --prove-datadir',
-        'wrangler deploy --config deploy/wrangler-signer.json',
-        'wrangler deploy --config deploy/wrangler-public.json',
-        'sync-cloudflare-routes.mjs --apply',
-        'smoke:cloudflare',
-    ]);
-    assert.match(text, /build_identity_signer\.sh/u);
-    assert.match(text, /wasm-bindgen 0\.2\.127/u);
-    assert.doesNotMatch(text, /wrangler pages|github-pages/iu);
 });
 
 test('shipping datadir wrapper selects the locked converter package and tools feature', async () => {
