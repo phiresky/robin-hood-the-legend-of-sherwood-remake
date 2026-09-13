@@ -1,7 +1,6 @@
 //! Shared positional primitives for the audited Original save grammar.
 
-use super::payload_base::{LegacyBoundingBox2, LegacyPoint2, LegacyPoint3};
-use crate::legacy_io::{LegacyContext, LegacyRead, LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyReader, LegacyResult};
 
 // Keep each section's independently configurable ceiling while naming the
 // two shared defaults. Deriving Default would silently replace these with zero.
@@ -27,27 +26,6 @@ pub(super) const fn hex_nibble(value: u8) -> u8 {
     }
 }
 
-pub(super) fn read_point2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<LegacyContext>,
-) -> LegacyResult<LegacyPoint2> {
-    LegacyPoint2::read_field(reader, field, &())
-}
-
-pub(super) fn read_point3(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<LegacyContext>,
-) -> LegacyResult<LegacyPoint3> {
-    LegacyPoint3::read_field(reader, field, &())
-}
-
-pub(super) fn read_box2(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<LegacyContext>,
-) -> LegacyResult<LegacyBoundingBox2> {
-    LegacyBoundingBox2::read_field(reader, field, &())
-}
-
 pub(super) fn reserve<T>(
     reader: &mut LegacyReader<'_>,
     values: &mut Vec<T>,
@@ -65,11 +43,11 @@ mod legacy_read_derive_tests {
     //! `#[derive(LegacyRead)]` must reproduce the hand-written reads it
     //! replaced exactly: byte order, error offsets and error field paths.
 
-    use super::super::payload_base::LegacyElementRef;
+    use super::super::payload_base::{LegacyElementRef, LegacyPoint2};
     use super::super::test_support::{push_f32, push_u16, push_u32, with_reader};
     use crate::legacy_io::{LegacyIoError, LegacyRead, LegacyReader, LegacyResult};
 
-    use super::{LegacyPoint2, hex16, read_count_u16};
+    use super::hex16;
 
     const FINGERPRINT: [u8; 16] = hex16("00112233445566778899aabbccddeeff");
 
@@ -123,7 +101,7 @@ mod legacy_read_derive_tests {
             refs.push(LegacyElementRef((raw != u32::MAX).then_some(raw)));
         }
         let inners = reader.scope("inners", |reader| {
-            let count = read_count_u16(reader, "count", maximum)?;
+            let count = reader.read_count_u16("count", maximum)?;
             let mut inners = Vec::new();
             super::reserve(reader, &mut inners, count, "items")?;
             for index in 0..count {
@@ -270,12 +248,4 @@ mod legacy_read_derive_tests {
         .unwrap_err();
         assert_eq!(error.field, "owned[1]");
     }
-}
-
-pub(super) fn read_count_u16(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display + Copy,
-    maximum: usize,
-) -> LegacyResult<usize> {
-    reader.read_count_u16(field, maximum)
 }

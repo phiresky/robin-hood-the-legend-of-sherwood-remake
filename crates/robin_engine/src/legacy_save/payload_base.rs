@@ -1145,13 +1145,6 @@ pub(super) fn read_signed_ref(
     Ok(LegacySignedIndexRef((raw != -1).then_some(raw)))
 }
 
-pub(super) fn read_line_ref(
-    reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
-) -> LegacyResult<LegacyLineRef> {
-    LegacyLineRef::read_field(reader, field.to_string(), &())
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -1223,7 +1216,9 @@ mod tests {
         bytes.push(0);
         with_reader(&bytes, |reader| {
             let error = reader
-                .scope("opponents[2]", |reader| read_line_ref(reader, "jump_line"))
+                .scope("opponents[2]", |reader| {
+                    LegacyLineRef::read_field(reader, "jump_line", &())
+                })
                 .unwrap_err();
             assert_eq!(error.offset, 2);
             assert_eq!(error.field, "opponents[2].jump_line.index");

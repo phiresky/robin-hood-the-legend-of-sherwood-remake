@@ -7,12 +7,12 @@
 //! sequence-element IDs. These are IDs, not phase-one element references.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::{hex16, reserve};
+use super::read_helpers::hex16;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{LegacySequenceElementRef, read_sequence_element_ref};
@@ -53,10 +53,14 @@ pub struct LegacySequenceStaticIds {
     pub sequence_element_next_id: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacySequencePayloadLimits)]
 pub struct LegacyManagedSequence {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(read = read_sequence_with_pre_serialization(reader, ctx))]
     pub body: LegacyInlineSequence,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -128,32 +132,15 @@ impl LegacySequenceManagerState {
             };
 
             let sequence_count = reader.read_count_u32("sequences.count", limits.sequences)?;
-            let mut sequences = Vec::new();
-            reserve(reader, &mut sequences, sequence_count, "sequences")?;
-            for index in 0..sequence_count {
-                sequences.push(reader.scope_indexed("sequences", index, |reader| {
-                    Ok(LegacyManagedSequence {
-                        start_offset: reader.offset(),
-                        body: read_sequence_with_pre_serialization(reader, &limits.payload)?,
-                        end_offset: reader.offset(),
-                    })
-                })?);
-            }
+            let sequences = reader.read_list("sequences", sequence_count, |reader, item| {
+                LegacyManagedSequence::read_field(reader, item, &limits.payload)
+            })?;
 
             let deferred_count =
                 reader.read_count_u32("deferred_elements.count", limits.deferred_elements)?;
-            let mut deferred_elements = Vec::new();
-            reserve(
-                reader,
-                &mut deferred_elements,
-                deferred_count,
-                "deferred_elements",
-            )?;
-            for index in 0..deferred_count {
-                deferred_elements.push(reader.scope_indexed(
-                    "deferred_elements",
-                    index,
-                    |reader| {
+            let deferred_elements =
+                reader.read_list("deferred_elements", deferred_count, |reader, item| {
+                    reader.scope(item, |reader| {
                         let offset = reader.offset();
                         let element = read_sequence_element_ref(reader, "element")?;
                         if element.0.is_none() {
@@ -165,9 +152,8 @@ impl LegacySequenceManagerState {
                             ));
                         }
                         Ok(LegacyDeferredSequenceElement { offset, element })
-                    },
-                )?);
-            }
+                    })
+                })?;
 
             validate_ids(reader, &static_ids, &sequences, &deferred_elements)?;
             let end_offset = reader.offset();

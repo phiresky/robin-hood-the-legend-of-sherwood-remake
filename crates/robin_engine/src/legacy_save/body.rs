@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::campaign::{LegacyCampaignLimits, LegacySaveCampaigns};
 use super::elements::{LegacyElementEnvelope, LegacyElementReadConfig};
@@ -118,24 +118,18 @@ impl<'a, E: LegacyElementPayloadDecodeContext> LegacySaveBodyDecodeContext<'a, E
 }
 
 /// The single v48 lock-user byte between spatial-grid and hiking-guide data.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyUserLockState {
+    #[legacy(offset)]
     pub start_offset: u64,
     pub locked: bool,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
 impl LegacyUserLockState {
     fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("user_lock", |reader| {
-            let start_offset = reader.offset();
-            let locked = reader.read_bool("locked")?;
-            Ok(Self {
-                start_offset,
-                locked,
-                end_offset: reader.offset(),
-            })
-        })
+        Self::read_field(reader, "user_lock", &())
     }
 }
 

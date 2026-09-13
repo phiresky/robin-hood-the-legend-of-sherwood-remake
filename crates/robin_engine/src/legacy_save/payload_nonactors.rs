@@ -3,19 +3,20 @@
 //! These readers deliberately mirror the call order in each Original
 //! `Serialize` method. In particular, Scroll writes its leaf state and script
 //! members before calling Object, while Target writes its leaf state, script
-//! members, and linked FX list before calling FX.
+//! members, and linked FX list before calling FX. Field declaration order is
+//! wire order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
 use super::read_helpers::hex16;
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_base::{
-    LegacyElementPayloadBase, LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2,
-    read_element_ref,
+    LegacyElementBaseDecode, LegacyElementPayloadBase, LegacyElementRef, LegacyFxPayload,
+    LegacyPayloadLimits, LegacyPoint2,
 };
 use super::payload_vm::LegacyVmMemberSection;
 
@@ -51,11 +52,16 @@ impl Default for LegacyNonActorPayloadLimits {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// Context: the producer ABI, which decides the geometry width.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacySaveAbiProfile)]
 pub struct LegacyRepulsivePointPayload {
+    #[legacy(read = read_abi_point2(reader, "position", *ctx))]
     pub position: LegacyPoint2,
     pub concave: bool,
+    #[legacy(read = read_abi_point2(reader, "limit_left", *ctx))]
     pub limit_left: LegacyPoint2,
+    #[legacy(read = read_abi_point2(reader, "limit_right", *ctx))]
     pub limit_right: LegacyPoint2,
     pub action_radius: f32,
     pub force_a: f32,
@@ -78,61 +84,71 @@ impl LegacyRepulsivePointPayload {
         reader: &mut LegacyReader<'_>,
         abi_profile: LegacySaveAbiProfile,
     ) -> LegacyResult<Self> {
-        let position = match abi_profile {
-            LegacySaveAbiProfile::RetailWindowsX86V48 => read_point2_f64(reader, "position")?,
-            LegacySaveAbiProfile::PortLinuxI386V48 => read_point2_f32(reader, "position")?,
-        };
-        let concave = reader.read_bool("concave")?;
-        let limit_left = match abi_profile {
-            LegacySaveAbiProfile::RetailWindowsX86V48 => read_point2_f64(reader, "limit_left")?,
-            LegacySaveAbiProfile::PortLinuxI386V48 => read_point2_f32(reader, "limit_left")?,
-        };
-        let limit_right = match abi_profile {
-            LegacySaveAbiProfile::RetailWindowsX86V48 => read_point2_f64(reader, "limit_right")?,
-            LegacySaveAbiProfile::PortLinuxI386V48 => read_point2_f32(reader, "limit_right")?,
-        };
-        Self::read_tail(reader, position, concave, limit_left, limit_right)
-    }
-
-    fn read_tail(
-        reader: &mut LegacyReader<'_>,
-        position: LegacyPoint2,
-        concave: bool,
-        limit_left: LegacyPoint2,
-        limit_right: LegacyPoint2,
-    ) -> LegacyResult<Self> {
-        Ok(Self {
-            position,
-            concave,
-            limit_left,
-            limit_right,
-            action_radius: reader.read_f32("action_radius")?,
-            force_a: reader.read_f32("force_a")?,
-            force_b: reader.read_f32("force_b")?,
-            radius: reader.read_f32("radius")?,
-            id: reader.read_u32("id")?,
-            affects_pcs: reader.read_bool("affects_pcs")?,
-            affects_soldiers: reader.read_bool("affects_soldiers")?,
-            affects_civilians: reader.read_bool("affects_civilians")?,
-            affects_animals: reader.read_bool("affects_animals")?,
-        })
+        <Self as LegacyRead<_>>::read(reader, &abi_profile)
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LegacyObjectPayload {
+fn read_abi_point2(
+    reader: &mut LegacyReader<'_>,
+    field: &'static str,
+    abi_profile: LegacySaveAbiProfile,
+) -> LegacyResult<LegacyPoint2> {
+    match abi_profile {
+        LegacySaveAbiProfile::RetailWindowsX86V48 => reader.scope(field, |reader| {
+            Ok(LegacyPoint2 {
+                x: reader.read_f64("x")? as f32,
+                y: reader.read_f64("y")? as f32,
+            })
+        }),
+        LegacySaveAbiProfile::PortLinuxI386V48 => LegacyPoint2::read_field(reader, field, &()),
+    }
+}
+
+/// Decode context for the Object payload and the leaves that embed it.
+#[derive(Clone, Copy)]
+pub struct LegacyObjectDecode<'a> {
     pub abi_profile: LegacySaveAbiProfile,
+    pub limits: &'a LegacyPayloadLimits,
+    pub creation_order: u32,
+    pub class: LegacyElementClass,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyObjectDecode<'_>)]
+pub struct LegacyObjectPayload {
+    #[legacy(value = ctx.abi_profile)]
+    pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(fingerprint = FINGERPRINT_OBJECT, expected = "object-element fingerprint")]
     pub terminate: bool,
     pub register_number: u16,
     pub quantity: u16,
     pub animation: u32,
     pub object_type: u32,
     pub associated_action: u32,
+    // Retail object payloads use the narrow geometry layout here.
+    // The wide Windows compatibility form is specific to the Human
+    // serializer; object elements use the ordinary serializer.
+    #[legacy(read = LegacyRepulsivePointPayload::read_field(
+        reader,
+        "repulsive_point",
+        &LegacySaveAbiProfile::PortLinuxI386V48,
+    ))]
     pub repulsive_point: LegacyRepulsivePointPayload,
     pub belongs_to_beggar: bool,
     pub taken: bool,
+    #[legacy(read = LegacyElementPayloadBase::read_field(
+        reader,
+        "element",
+        &LegacyElementBaseDecode {
+            limits: ctx.limits,
+            expected_creation_order: Some(ctx.creation_order),
+            expected_class: Some(ctx.class),
+        },
+    ))]
     pub element: LegacyElementPayloadBase,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -143,52 +159,16 @@ pub fn read_object_payload(
     expected_creation_order: u32,
     expected_class: LegacyElementClass,
 ) -> LegacyResult<LegacyObjectPayload> {
-    reader.scope("object", |reader| {
-        let start_offset = reader.offset();
-        reader.read_signature(
-            "fingerprint",
-            FINGERPRINT_OBJECT,
-            "object-element fingerprint",
-        )?;
-        let terminate = reader.read_bool("terminate")?;
-        let register_number = reader.read_u16("register_number")?;
-        let quantity = reader.read_u16("quantity")?;
-        let animation = reader.read_u32("animation")?;
-        let object_type = reader.read_u32("object_type")?;
-        let associated_action = reader.read_u32("associated_action")?;
-        let repulsive_point = reader.scope("repulsive_point", |reader| {
-            // Retail object payloads use the narrow geometry layout here.
-            // The wide Windows compatibility form is specific to the Human
-            // serializer; object elements use the ordinary serializer.
-            LegacyRepulsivePointPayload::read(reader, LegacySaveAbiProfile::PortLinuxI386V48)
-        })?;
-        let belongs_to_beggar = reader.read_bool("belongs_to_beggar")?;
-        let taken = reader.read_bool("taken")?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(
-                reader,
-                limits,
-                Some(expected_creation_order),
-                Some(expected_class),
-            )
-        })?;
-        let end_offset = reader.offset();
-        Ok(LegacyObjectPayload {
+    LegacyObjectPayload::read_field(
+        reader,
+        "object",
+        &LegacyObjectDecode {
             abi_profile,
-            start_offset,
-            terminate,
-            register_number,
-            quantity,
-            animation,
-            object_type,
-            associated_action,
-            repulsive_point,
-            belongs_to_beggar,
-            taken,
-            element,
-            end_offset,
-        })
-    })
+            limits,
+            creation_order: expected_creation_order,
+            class: expected_class,
+        },
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -237,6 +217,7 @@ pub struct LegacyScrollPayload {
     pub end_offset: u64,
 }
 
+// Hand-written: script members are decoded through the mission context.
 pub fn read_scroll_payload(
     reader: &mut LegacyReader<'_>,
     abi_profile: LegacySaveAbiProfile,
@@ -286,6 +267,7 @@ pub struct LegacyTargetPayload {
     pub end_offset: u64,
 }
 
+// Hand-written: script members are decoded through the mission context.
 pub fn read_target_payload(
     reader: &mut LegacyReader<'_>,
     limits: &LegacyPayloadLimits,
@@ -307,22 +289,18 @@ pub fn read_target_payload(
         })?;
         let linked_count =
             reader.read_count_u32("linked_fxs.count", leaf_limits.target_linked_fxs)?;
-        let mut linked_fxs = Vec::new();
-        let allocation_offset = reader.offset();
-        linked_fxs
-            .try_reserve_exact(linked_count)
-            .map_err(|_| reader.allocation_error(allocation_offset, "linked_fxs", linked_count))?;
-        for index in 0..linked_count {
-            linked_fxs.push(read_element_ref(reader, format!("linked_fxs[{index}]"))?);
-        }
-        let fx = reader.scope("fx", |reader| {
-            LegacyFxPayload::read(
-                reader,
-                limits,
-                Some(expected_creation_order),
-                Some(LegacyElementClass::Target),
-            )
+        let linked_fxs = reader.read_list("linked_fxs", linked_count, |reader, item| {
+            LegacyElementRef::read_field(reader, item, &())
         })?;
+        let fx = LegacyFxPayload::read_field(
+            reader,
+            "fx",
+            &LegacyElementBaseDecode {
+                limits,
+                expected_creation_order: Some(expected_creation_order),
+                expected_class: Some(LegacyElementClass::Target),
+            },
+        )?;
         let end_offset = reader.offset();
         Ok(LegacyTargetPayload {
             start_offset,
@@ -336,10 +314,14 @@ pub fn read_target_payload(
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyElementBaseDecode<'_>)]
 pub struct LegacyStandaloneFxPayload {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(flatten)]
     pub fx: LegacyFxPayload,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -348,25 +330,29 @@ pub fn read_fx_payload(
     limits: &LegacyPayloadLimits,
     expected_creation_order: u32,
 ) -> LegacyResult<LegacyStandaloneFxPayload> {
-    reader.scope("fx_leaf", |reader| {
-        Ok(LegacyStandaloneFxPayload {
-            start_offset: reader.offset(),
-            fx: LegacyFxPayload::read(
-                reader,
-                limits,
-                Some(expected_creation_order),
-                Some(LegacyElementClass::Fx),
-            )?,
-            end_offset: reader.offset(),
-        })
-    })
+    LegacyStandaloneFxPayload::read_field(
+        reader,
+        "fx_leaf",
+        &LegacyElementBaseDecode {
+            limits,
+            expected_creation_order: Some(expected_creation_order),
+            expected_class: Some(LegacyElementClass::Fx),
+        },
+    )
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyElementBaseDecode<'_>)]
 pub struct LegacyStandaloneFxMaskedPayload {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = FINGERPRINT_FX_MASKED,
+        expected = "masked-effect-element fingerprint"
+    )]
     pub animation_speed: f32,
     pub element: LegacyElementPayloadBase,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -375,60 +361,15 @@ pub fn read_fx_masked_payload(
     limits: &LegacyPayloadLimits,
     expected_creation_order: u32,
 ) -> LegacyResult<LegacyStandaloneFxMaskedPayload> {
-    reader.scope("fx_masked_leaf", |reader| {
-        let start_offset = reader.offset();
-        reader.read_signature(
-            "fingerprint",
-            FINGERPRINT_FX_MASKED,
-            "masked-effect-element fingerprint",
-        )?;
-        let animation_speed = reader.read_f32("animation_speed")?;
-        let element = reader.scope("element", |reader| {
-            LegacyElementPayloadBase::read(
-                reader,
-                limits,
-                Some(expected_creation_order),
-                Some(LegacyElementClass::FxMasked),
-            )
-        })?;
-        let end_offset = reader.offset();
-        Ok(LegacyStandaloneFxMaskedPayload {
-            start_offset,
-            animation_speed,
-            element,
-            end_offset,
-        })
-    })
-}
-
-fn read_point2_f32(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<crate::legacy_io::LegacyContext>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: reader.read_f32("x")?,
-            y: reader.read_f32("y")?,
-        })
-    })
-}
-
-fn read_point2_f64(
-    reader: &mut LegacyReader<'_>,
-    field: impl Into<crate::legacy_io::LegacyContext>,
-) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field, |reader| {
-        Ok(LegacyPoint2 {
-            x: read_f64(reader, "x")? as f32,
-            y: read_f64(reader, "y")? as f32,
-        })
-    })
-}
-
-fn read_f64(reader: &mut LegacyReader<'_>, field: impl std::fmt::Display) -> LegacyResult<f64> {
-    let mut bytes = [0; 8];
-    reader.read_bytes(field, &mut bytes)?;
-    Ok(f64::from_le_bytes(bytes))
+    LegacyStandaloneFxMaskedPayload::read_field(
+        reader,
+        "fx_masked_leaf",
+        &LegacyElementBaseDecode {
+            limits,
+            expected_creation_order: Some(expected_creation_order),
+            expected_class: Some(LegacyElementClass::FxMasked),
+        },
+    )
 }
 
 fn is_bonus_class(class: LegacyElementClass) -> bool {
@@ -526,6 +467,20 @@ mod tests {
             });
         }
         assert_eq!(windows.len() - linux.len(), 24);
+    }
+
+    #[test]
+    fn windows_repulsive_point_truncation_reports_the_scoped_component() {
+        let bytes = [0; 12];
+        with_reader(&bytes, |reader| {
+            let error = LegacyRepulsivePointPayload::read(
+                reader,
+                LegacySaveAbiProfile::RetailWindowsX86V48,
+            )
+            .unwrap_err();
+            assert_eq!(error.offset, 8);
+            assert_eq!(error.field, "position.y");
+        });
     }
 
     #[test]

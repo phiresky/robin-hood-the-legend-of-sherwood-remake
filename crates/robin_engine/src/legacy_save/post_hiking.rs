@@ -8,19 +8,19 @@
 //! The following projectile element is an engine-owned helper, not an
 //! element from the phase-one envelope. Historical Original builds left its
 //! inherited class ID uninitialized. Its reader therefore preserves the raw
-//! ID and deliberately does not use normal class dispatch.
+//! ID and deliberately does not use normal class dispatch. Field declaration
+//! order is wire order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
+use super::read_helpers::{hex16, reserve};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{
     LegacyElementRef, LegacyOpaquePointer32, LegacyPayloadLimits, LegacyPoint2, LegacyPoint3,
-    LegacyPositionPayload, LegacySectorRef, LegacySpritePayload, read_element_ref, read_sector_ref,
-    read_signed_ref,
+    LegacySectorRef, LegacySpriteDecode, LegacySpritePayload, read_element_ref,
 };
 use super::payload_nonactors::LegacyRepulsivePointPayload;
 use super::payload_objects::LegacyTrajectoryPoint;
@@ -31,7 +31,11 @@ const FINGERPRINT_WAYPOINT: [u8; 16] = hex16("fdf47609dbe10dab3ebc801e5ca5286a")
 const FINGERPRINT_PROJECTILE: [u8; 16] = hex16("6933dbbc6be435f3249e7cf1c994fb2d");
 const FINGERPRINT_OBJECT: [u8; 16] = hex16("90062155c12beef1e93d3c32cb21776f");
 const FINGERPRINT_ELEMENT: [u8; 16] = hex16("7730a5b25924f7a72c4926ef69f7700f");
+// Sprite and position-interface signatures are verified by the shared
+// payload_base readers; the byte fixtures below still need them.
+#[cfg(test)]
 const FINGERPRINT_SPRITE: [u8; 16] = hex16("ef8f9051c70a8eb993b6101ac4210ca5");
+#[cfg(test)]
 const FINGERPRINT_POSITION: [u8; 16] = hex16("f41fe85b168584aa52b8bb352f8b593a");
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +117,8 @@ pub struct LegacyWaypointState {
     pub end_offset: u64,
 }
 
+// Hand-written: the shape comes from mission topology and script members are
+// decoded through the mission context.
 impl LegacyHikingGuideState {
     pub fn read(
         reader: &mut LegacyReader<'_>,
@@ -200,7 +206,11 @@ impl LegacyProjectileTrajectorySection {
             Ok(Self {
                 abi_profile,
                 start_offset: reader.offset(),
-                projectile: LegacyStandaloneProjectilePayload::read(reader, abi_profile, limits)?,
+                projectile: LegacyStandaloneProjectilePayload::read_field(
+                    reader,
+                    "projectile",
+                    limits,
+                )?,
                 jumper: read_element_ref(reader, "jumper")?,
                 jumped: read_element_ref(reader, "jumped")?,
                 end_offset: reader.offset(),
@@ -209,7 +219,12 @@ impl LegacyProjectileTrajectorySection {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyPostHikingLimits,
+    fingerprint = FINGERPRINT_PROJECTILE,
+    expected = "projectile-element fingerprint"
+)]
 pub struct LegacyStandaloneProjectilePayload {
     pub flying: bool,
     pub dive: bool,
@@ -218,143 +233,52 @@ pub struct LegacyStandaloneProjectilePayload {
     pub trajectory_origin_map: LegacyPoint2,
     pub trajectory_origin_sector_pointer: LegacyOpaquePointer32,
     pub trajectory_origin_level: u16,
+    #[legacy(bytes)]
     pub trajectory_origin_padding: [u8; 2],
     pub trajectory_origin_sector: LegacySectorRef,
     pub flight_direction: u16,
     pub start: LegacyPoint3,
     pub end: LegacyPoint3,
     pub shooter: LegacyElementRef,
+    #[legacy(count_u32 = ctx.trajectory_points)]
     pub trajectory: Vec<LegacyTrajectoryPoint>,
     pub object: LegacyStandaloneObjectPayload,
 }
 
-impl LegacyStandaloneProjectilePayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyPostHikingLimits,
-    ) -> LegacyResult<Self> {
-        reader.scope("projectile", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_PROJECTILE,
-                "projectile-element fingerprint",
-            )?;
-            let flying = reader.read_bool("flying")?;
-            let dive = reader.read_bool("dive")?;
-            let magic_bullet = reader.read_bool("magic_bullet")?;
-            let frame_count = reader.read_u16("frame_count")?;
-            let trajectory_origin_map = read_point2(reader, "trajectory_origin_map")?;
-            let trajectory_origin_sector_pointer =
-                LegacyOpaquePointer32(reader.read_u32("trajectory_origin_sector_pointer")?);
-            let trajectory_origin_level = reader.read_u16("trajectory_origin_level")?;
-            let mut trajectory_origin_padding = [0; 2];
-            reader.read_bytes("trajectory_origin_padding", &mut trajectory_origin_padding)?;
-            let trajectory_origin_sector = read_sector_ref(reader, "trajectory_origin_sector")?;
-            let flight_direction = reader.read_u16("flight_direction")?;
-            let start = read_point3(reader, "start")?;
-            let end = read_point3(reader, "end")?;
-            let shooter = read_element_ref(reader, "shooter")?;
-            let count = reader.read_count_u32("trajectory.count", limits.trajectory_points)?;
-            let mut trajectory = Vec::new();
-            reserve(reader, &mut trajectory, count, "trajectory")?;
-            for index in 0..count {
-                trajectory.push(reader.scope_indexed("trajectory", index, |reader| {
-                    Ok(LegacyTrajectoryPoint {
-                        time: reader.read_u16("time")?,
-                        bounce: reader.read_bool("bounce")?,
-                        material: reader.read_u32("material")?,
-                        position: read_point3(reader, "position")?,
-                    })
-                })?);
-            }
-            let object = LegacyStandaloneObjectPayload::read(reader, abi_profile, limits)?;
-            Ok(Self {
-                flying,
-                dive,
-                magic_bullet,
-                frame_count,
-                trajectory_origin_map,
-                trajectory_origin_sector_pointer,
-                trajectory_origin_level,
-                trajectory_origin_padding,
-                trajectory_origin_sector,
-                flight_direction,
-                start,
-                end,
-                shooter,
-                trajectory,
-                object,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostHikingLimits)]
 pub struct LegacyStandaloneObjectPayload {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(fingerprint = FINGERPRINT_OBJECT, expected = "object-element fingerprint")]
     pub terminate: bool,
     pub register_number: u16,
     pub quantity: u16,
     pub animation: u32,
     pub object_type: u32,
     pub associated_action: u32,
+    // This standalone trajectory helper is still serialized by
+    // object element, whose retail stream uses narrow geometry.
+    #[legacy(read = LegacyRepulsivePointPayload::read_field(
+        reader,
+        "repulsive_point",
+        &LegacySaveAbiProfile::PortLinuxI386V48,
+    ))]
     pub repulsive_point: LegacyRepulsivePointPayload,
     pub belongs_to_beggar: bool,
     pub taken: bool,
     pub element: LegacyStandaloneElementPayload,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyStandaloneObjectPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        _abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyPostHikingLimits,
-    ) -> LegacyResult<Self> {
-        reader.scope("object", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_OBJECT,
-                "object-element fingerprint",
-            )?;
-            let terminate = reader.read_bool("terminate")?;
-            let register_number = reader.read_u16("register_number")?;
-            let quantity = reader.read_u16("quantity")?;
-            let animation = reader.read_u32("animation")?;
-            let object_type = reader.read_u32("object_type")?;
-            let associated_action = reader.read_u32("associated_action")?;
-            let repulsive_point = reader.scope("repulsive_point", |reader| {
-                // This standalone trajectory helper is still serialized by
-                // object element, whose retail stream uses narrow geometry.
-                LegacyRepulsivePointPayload::read(reader, LegacySaveAbiProfile::PortLinuxI386V48)
-            })?;
-            let belongs_to_beggar = reader.read_bool("belongs_to_beggar")?;
-            let taken = reader.read_bool("taken")?;
-            let element = reader.scope("element", |reader| {
-                LegacyStandaloneElementPayload::read(reader, limits)
-            })?;
-            Ok(Self {
-                start_offset,
-                terminate,
-                register_number,
-                quantity,
-                animation,
-                object_type,
-                associated_action,
-                repulsive_point,
-                belongs_to_beggar,
-                taken,
-                element,
-                end_offset: reader.offset(),
-            })
-        })
-    }
-}
-
 /// Inherited element data for the engine-owned helper.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyPostHikingLimits,
+    fingerprint = FINGERPRINT_ELEMENT,
+    expected = "element fingerprint"
+)]
 pub struct LegacyStandaloneElementPayload {
     pub creation_order: u32,
     pub outline_colors: [u16; 5],
@@ -365,6 +289,7 @@ pub struct LegacyStandaloneElementPayload {
     pub position_map_delayed: bool,
     pub position_delayed: bool,
     /// Opaque because older original-game initialization did not initialize it.
+    #[legacy(name = "class_id")]
     pub raw_class_id: u16,
     pub delayed_map_position: LegacyPoint2,
     pub delayed_position: LegacyPoint3,
@@ -372,156 +297,16 @@ pub struct LegacyStandaloneElementPayload {
     pub index_in_elements_list: u16,
     pub blipped: bool,
     pub unreachable: bool,
-    pub sprite: LegacySpritePayload,
-}
-
-impl LegacyStandaloneElementPayload {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPostHikingLimits) -> LegacyResult<Self> {
-        reader.read_signature("fingerprint", FINGERPRINT_ELEMENT, "element fingerprint")?;
-        let creation_order = reader.read_u32("creation_order")?;
-        let mut outline_colors = [0; 5];
-        for (index, color) in outline_colors.iter_mut().enumerate() {
-            *color = reader.read_u16(format_args!("outline_colors[{index}]"))?;
-        }
-        Ok(Self {
-            creation_order,
-            outline_colors,
-            current_outline: reader.read_u32("current_outline")?,
-            outline_width: reader.read_u16("outline_width")?,
-            custom_minimap_dot: reader.read_u16("custom_minimap_dot")?,
-            active: reader.read_bool("active")?,
-            position_map_delayed: reader.read_bool("position_map_delayed")?,
-            position_delayed: reader.read_bool("position_delayed")?,
-            raw_class_id: reader.read_u16("class_id")?,
-            delayed_map_position: read_point2(reader, "delayed_map_position")?,
-            delayed_position: read_point3(reader, "delayed_position")?,
-            in_honolulu: reader.read_bool("in_honolulu")?,
-            index_in_elements_list: reader.read_u16("index_in_elements_list")?,
-            blipped: reader.read_bool("blipped")?,
-            unreachable: reader.read_bool("unreachable")?,
-            sprite: reader.scope("sprite", |reader| read_sprite(reader, limits))?,
-        })
-    }
-}
-
-fn read_sprite(
-    reader: &mut LegacyReader<'_>,
-    limits: &LegacyPostHikingLimits,
-) -> LegacyResult<LegacySpritePayload> {
-    reader.read_signature("fingerprint", FINGERPRINT_SPRITE, "sprite fingerprint")?;
-    let current_row = reader.read_u16("current_row")?;
-    let current_frame = reader.read_u16("current_frame")?;
-    let frame_count = reader.read_u16("frame_count")?;
-    let current_height = reader.read_u16("current_height")?;
-    let current_width = reader.read_u16("current_width")?;
-    let last_action = reader.read_u32("last_action")?;
-    let already_decompressed = reader.read_bool("already_decompressed")?;
-    let alternate_profile = reader.read_bool("alternate_profile")?;
-    let masked = reader.read_bool("masked")?;
-    let display_order = reader.read_f32("display_order")?;
-    let legacy_display_order_dummy = reader.read_i32("legacy_display_order_dummy")?;
-    let behind_display_order_reference = reader.read_bool("behind_display_order_reference")?;
-    let display_order_reference = read_element_ref(reader, "display_order_reference")?;
-    let action_done_frame = reader.read_u16("action_done_frame")?;
-    let action_done_counter = reader.read_u16("action_done_counter")?;
-    let frame_count_down = reader.read_u16("frame_count_down")?;
-    let last_sound_id = reader.read_u16("last_sound_id")?;
-    let last_processed_order_id = reader.read_u32("last_processed_order_id")?;
-    let bounding_box = read_box2(reader, "bounding_box")?;
-    let count = reader.read_count_u32(
-        "animation_replacements.count",
-        limits.sprite_animation_replacements,
-    )?;
-    let mut animation_replacements = Vec::new();
-    reserve(
+    #[legacy(read = LegacySpritePayload::read_field(
         reader,
-        &mut animation_replacements,
-        count,
-        "animation_replacements",
-    )?;
-    for index in 0..count {
-        animation_replacements.push(reader.scope_indexed(
-            "animation_replacements",
-            index,
-            |reader| Ok((reader.read_u32("from")?, reader.read_u32("to")?)),
-        )?);
-    }
-    let position = reader.scope("position", read_position)?;
-    Ok(LegacySpritePayload {
-        current_row,
-        current_frame,
-        frame_count,
-        current_height,
-        current_width,
-        last_action,
-        already_decompressed,
-        alternate_profile,
-        masked,
-        display_order,
-        legacy_display_order_dummy,
-        behind_display_order_reference,
-        display_order_reference,
-        action_done_frame,
-        action_done_counter,
-        frame_count_down,
-        last_sound_id,
-        last_processed_order_id,
-        bounding_box,
-        animation_replacements,
-        position,
-    })
-}
-
-fn read_position(reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyPositionPayload> {
-    reader.read_signature(
-        "fingerprint",
-        FINGERPRINT_POSITION,
-        "position-interface fingerprint",
-    )?;
-    Ok(LegacyPositionPayload {
-        computed_position: reader.read_u32("computed_position")?,
-        computed_increment: reader.read_u32("computed_increment")?,
-        material: reader.read_u32("material")?,
-        posture: reader.read_u32("posture")?,
-        old_posture: reader.read_u32("old_posture")?,
-        direction: reader.read_i16("direction")?,
-        direction_goal: reader.read_i16("direction_goal")?,
-        slow_turn_count: reader.read_u8("slow_turn_count")?,
-        layer: reader.read_u16("layer")?,
-        layer_goal: reader.read_u16("layer_goal")?,
-        tolerance: reader.read_f32("tolerance")?,
-        directional_tolerance: reader.read_bool("directional_tolerance")?,
-        accumulate_movement_map: reader.read_bool("accumulate_movement_map")?,
-        anti_collision_on: reader.read_bool("anti_collision_on")?,
-        goal_next_valid: reader.read_bool("goal_next_valid")?,
-        deviated: reader.read_bool("deviated")?,
-        direction_count: reader.read_i8("direction_count")?,
-        door_direction: reader.read_bool("door_direction")?,
-        reversed_movement: reader.read_bool("reversed_movement")?,
-        blocked_count: reader.read_u16("blocked_count")?,
-        radius: reader.read_f32("radius")?,
-        use_emergency_lying_box: reader.read_bool("use_emergency_lying_box")?,
-        sector: read_sector_ref(reader, "sector")?,
-        sector_goal: read_sector_ref(reader, "sector_goal")?,
-        door: read_signed_ref(reader, "door")?,
-        obstacle: read_signed_ref(reader, "obstacle")?,
-        target_element: read_element_ref(reader, "target_element")?,
-        position: read_point3(reader, "position")?,
-        map: read_point2(reader, "map")?,
-        sprite: read_point2(reader, "sprite")?,
-        old_position: read_point3(reader, "old_position")?,
-        old_map: read_point2(reader, "old_map")?,
-        old_sprite: read_point2(reader, "old_sprite")?,
-        goal_map: read_point2(reader, "goal_map")?,
-        goal_next_map: read_point2(reader, "goal_next_map")?,
-        goal: read_point3(reader, "goal")?,
-        increment: read_point3(reader, "increment")?,
-        increment_map: read_point2(reader, "increment_map")?,
-        accumulated_movement_map: read_point2(reader, "accumulated_movement_map")?,
-        forecasted_movement: read_point3(reader, "forecasted_movement")?,
-        move_box_map: read_box2(reader, "move_box_map")?,
-        blocked_box: read_box2(reader, "blocked_box")?,
-    })
+        "sprite",
+        &LegacySpriteDecode {
+            animation_replacements: ctx.sprite_animation_replacements,
+            sprite_fingerprint: "sprite fingerprint",
+            position_fingerprint: "position-interface fingerprint",
+        },
+    ))]
+    pub sprite: LegacySpritePayload,
 }
 
 fn validate_hiking_topology(
