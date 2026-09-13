@@ -47,10 +47,22 @@ struct VerificationFixture {
     _campaign_store: CampaignStore,
 }
 
+// Capabilities and the verified tree carried from the tombstone-rename phase
+// into the terminal cleanup-root phase, keeping them alive exactly as long as
+// the original single scenario did. Process-local, not serialized.
+struct CleanupTree {
+    backup_parent: cap_std::fs::Dir,
+    backup_directory: cap_std::fs::Dir,
+    verified_tree: BackupTreePaths,
+}
+
 #[tokio::test]
 async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
     let fixture = VerificationFixture::new().await;
-    fixture.assert_interrupted_cleanup_recovery().await;
+    let cleanup_tree = fixture.assert_interrupted_cleanup_recovery().await;
+    fixture
+        .assert_terminal_cleanup_root_recovery(cleanup_tree)
+        .await;
     fixture.assert_historical_release_authority().await;
     fixture.assert_database_and_object_closure().await;
 }
@@ -164,7 +176,7 @@ impl VerificationFixture {
             _campaign_store: campaign_store,
         }
     }
-    async fn assert_interrupted_cleanup_recovery(&self) {
+    async fn assert_interrupted_cleanup_recovery(&self) -> CleanupTree {
         let directory = &self.directory;
         let release_identity = self.release_identity.clone();
         let config = self.config.clone();
@@ -412,6 +424,26 @@ impl VerificationFixture {
             backup_tree_paths_cap(&backup_directory).unwrap(),
             verified_tree
         );
+        CleanupTree {
+            backup_parent,
+            backup_directory,
+            verified_tree,
+        }
+    }
+
+    async fn assert_terminal_cleanup_root_recovery(&self, tree: CleanupTree) {
+        let directory = &self.directory;
+        let release_identity = self.release_identity.clone();
+        let config = self.config.clone();
+        let restore_sources = self.restore_sources.clone();
+        let created_at_unix_ms = self.created_at_unix_ms;
+        let destination = self.destination.clone();
+        let backup_id = destination.file_name().unwrap().to_str().unwrap();
+        let CleanupTree {
+            backup_parent,
+            backup_directory,
+            verified_tree,
+        } = tree;
         let (cleanup_journal, cleanup_journal_bytes, cleanup_name, journal_name, partial_name) =
             cleanup_journal_for_verified_tree(
                 &backup_parent,
