@@ -188,3 +188,59 @@ detection time. Exact wall-time gains remain sensitive to shared-machine load.
 TODO: Profile remaining detection-context collection and diplomacy work before
 changing its lifetime. Cache import still scans the obstacle array; a sparse
 index would need correct invalidation across writes, restores, and owner changes.
+
+## Four parallel optimization experiments
+
+Starting from `c0d9462d7`, four independent investigations produced:
+
+- Lazy Enemy detection context construction: build only for a nonempty
+  VIEW/OUTOFVIEW block, after final latch updates and before queued Think calls.
+  Retain the same owner snapshot for combat metadata. This also avoids an
+  unused primary-target multiplicity map clone and duplicate latch collection.
+- Bulk byte hashing: a slice hook keeps the general element encoding but lets
+  `u8` write its payload in one call. Arrays still omit the length prefix;
+  slices/vectors retain their canonical 64-bit length prefix. No state fields,
+  hash calls, or schema versions are removed or changed.
+- PC optical snapshots resolve the selected sequence element once for both
+  current order and PassDoor, preserving PassDoor with an empty order queue.
+- Fighter registry sorting caches creation-order keys for one sort, retaining
+  stable tie order and avoiding repeated tree lookups. No persistent cache is
+  introduced; unrelated actor registry sorting remains unchanged.
+
+`cargo test -p robin_util -p robin_engine` passed 39 utility tests, 4,751 engine
+unit tests, 15 integration checks, and 38 doctests; existing ignores unchanged.
+New tests compare byte encodings with independently constructed XXH3 inputs
+across buffer boundaries and verify fighter ordering across ties, insertion,
+deletion, and missing creation identities. Existing detection FIFO and live
+snapshot tests passed. Idle detection no longer validates unused combat context;
+eventful scans retain the required validation.
+
+The combined parity build passed. Linux `perf stat` measured complete headless
+replays before and after; the initial pre-build baseline had substantially
+higher CPU/wall time, so a saved-binary baseline was repeated after the modified
+run. Both baseline instruction counts agreed within 0.001%. Use the later pair
+for wall-time comparison, retaining the shared-machine caveat:
+
+| Measurement | Before (repeat) | Combined changes |
+| --- | ---: | ---: |
+| User-space instructions, billions | 85.47 | 70.74 |
+| CPU task time, seconds | 14.74 | 10.93 |
+| Whole-process elapsed seconds | 14.90 | 11.19 |
+| Detection, ms/tick over first 1,400 ticks | 2.352 | 1.292 |
+| Simulation, ms/frame over first 1,440 frames | 6.110 | 4.236 |
+| Total headless frame, ms/frame over first 1,440 frames | 8.325 | 5.961 |
+
+The combined changes measured 17.2% fewer instructions, 25.9% less CPU time,
+and 28.4% lower headless frame time. This experiment does not isolate the
+contribution of each individual change. Artifacts:
+`target/nottingham-four-before-headless-repeat.{log,stat}` and
+`target/nottingham-four-after-headless.{log,stat}`; the earlier baseline is
+`target/nottingham-four-before-headless.{log,stat}`.
+
+The graphical modified capture (`target/nottingham-four-after.{log,data}`)
+also matched all 61 checkpoints, byte-for-byte with the complete headless runs.
+It averaged 12.874 ms/frame in its first 1,440 frames. This was measured under
+different host load from the earlier graphical runs and is not a controlled
+graphical speedup comparison. Linux perf recorded approximately 4,000 samples
+with none lost; sample shares include idle rendering after replay EOF.
+The graphical timeout ended the process after the full replay completed.

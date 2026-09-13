@@ -2477,8 +2477,6 @@ impl EngineInner {
     ) -> Option<(Vec<crate::ai::Stimulus>, AiPerTickData)> {
         use crate::ai::AiState;
 
-        let primary_target_multiplicity =
-            self.ai.global.primary_target_multiplicity_scratch.clone();
         let detection_target_multiplicity = &world.detection_target_multiplicity;
 
         // -- Read NPC state in a scoped borrow --
@@ -2563,7 +2561,7 @@ impl EngineInner {
         // `&self.sight_obstacles` and `self.world.entities.get_mut(...)`
         // are disjoint fields on `self`, so the split borrow is
         // valid.
-        let mut think_tick_data: Option<AiPerTickData> = Some(AiPerTickData::stub());
+        let mut think_tick_data: Option<AiPerTickData> = None;
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         let mut reveal_targets: Vec<EntityId> = Vec::new();
         let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
@@ -2578,14 +2576,6 @@ impl EngineInner {
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
-            // Split-borrow `ai_global` so we can pass it into
-            // `EnemyAi::think` alongside the mut borrow on
-            // `self.world.entities`.  Rust field-level borrow checking
-            // allows this because they're disjoint fields.  The
-            // outer `ai_global` split-borrow is only read by a
-            // nested scope below; the now-deferred stimulus pushes
-            // at this level don't need it.
-            let _ai_global = &mut self.ai.global;
             let npc = self.world.entities.expect_ai_actor_data_mut(
                 npc_id,
                 format_args!("Enemy optical observer during its Enemy optical scan"),
@@ -2862,20 +2852,6 @@ impl EngineInner {
                 ai.max_visibility = max_sharpness;
             }
 
-            if npc.ai_brain.enemy().is_some() {
-                think_tick_data = Some(build_enemy_detection_tick_data(
-                    world,
-                    assets,
-                    &viewer,
-                    npc_id,
-                    enemy_targets,
-                    npc,
-                    &primary_target_multiplicity,
-                    &diplomacy,
-                    self.control.sim_config.fix_hard_reaction_times,
-                ));
-            }
-
             // Running worst-detected-type (smallest enum value
             // wins).  We only drive Enemy detection here right now,
             // so the guard collapses to "promote from None / higher
@@ -3093,18 +3069,33 @@ impl EngineInner {
                 );
             }
 
-            // The detection-built tick input is assembled before the latch
-            // walk to avoid conflicting AI/list borrows. Refresh its latch
-            // snapshot now so every queued Think observes the final state
-            // produced by detection, including every rising VIEW.
-            if let Some(tick_data) = think_tick_data.as_mut() {
-                tick_data.seen_last_frame_enemies.clear();
-                tick_data.seen_last_frame_enemies.extend(
-                    npc.detectable_lists[enemy_idx]
-                        .iter()
-                        .filter(|det| det.seen_last_frame)
-                        .filter_map(|det| det.element.map(EntityId::index)),
-                );
+            // Only VIEW / OUTOFVIEW dispatch consumes this context. No Think
+            // has run during the scan: target and combat metadata still use
+            // the same owner snapshot, while perception must include every
+            // final latch update. Shadow-only scans use their separate input.
+            if !enemy_stimuli.is_empty() {
+                think_tick_data = Some(if npc.ai_brain.enemy().is_some() {
+                    build_enemy_detection_tick_data(
+                        world,
+                        assets,
+                        &viewer,
+                        npc_id,
+                        enemy_targets,
+                        npc,
+                        &self.ai.global.primary_target_multiplicity_scratch,
+                        &diplomacy,
+                        self.control.sim_config.fix_hard_reaction_times,
+                    )
+                } else {
+                    let mut tick_data = AiPerTickData::stub();
+                    tick_data.seen_last_frame_enemies.extend(
+                        npc.detectable_lists[enemy_idx]
+                            .iter()
+                            .filter(|det| det.seen_last_frame)
+                            .filter_map(|det| det.element.map(EntityId::index)),
+                    );
+                    tick_data
+                });
             }
         }
 
@@ -3219,11 +3210,18 @@ impl EngineInner {
                             self.boundary_position(entity_id, owner, positions, crate::engine::ai::OwnerActorPhase::AfterActor)
                         })
                         .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&pc.element));
-                    let order_type = self
+                    // Both fields describe the same selected element in this
+                    // immutable snapshot. A command may have no queued order.
+                    let selected_element = self
                         .orders
                         .sequence_manager
-                        .current_order_for_actor(entity_id)
-                        .map(|(_, _, order)| order.order_type)
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders.sequence_manager.get_element(sequence_id, element_index)
+                        });
+                    let order_type = selected_element
+                        .and_then(|element| element.current_order())
+                        .map(|order| order.order_type)
                         .unwrap_or(crate::order::OrderType::Invalid);
                     Some(EnemyOpticalTarget {
                         id: entity_id,
@@ -3256,10 +3254,8 @@ impl EngineInner {
                         // sequence element is PassDoor.  The sprite-side
                         // active door pointer can already be null while that
                         // command is still selected.
-                        passing_door: optical_target_is_passing_door(
-                            &self.orders.sequence_manager,
-                            entity_id,
-                        ),
+                        passing_door: selected_element
+                            .is_some_and(|element| element.command == crate::element::Command::PassDoor),
                         obstacle_idx: pc.element.obstacle_index(),
                         is_pc: true,
                         is_soldier: false,
