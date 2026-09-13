@@ -3526,6 +3526,29 @@ impl EngineInner {
         handle: i32,
         stimulus: &crate::ai::Stimulus,
     ) -> bool {
+        // Original-game think startup assigns -2 in the
+        // default switch arm and still calls FilterAIEvent for scripted NPCs.
+        let code = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2);
+
+        let source = match stimulus.info {
+            crate::ai::StimulusInfo::Human(h) => crate::natives::ScriptHandleCodec::actor_handle(
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h.get())),
+            ),
+            _ => 0,
+        };
+
+        self.call_ai_event_filter(sim, assets, handle, source, code)
+    }
+
+    /// Execute one AI filter at the call site, without retaining an actor borrow.
+    pub(super) fn call_ai_event_filter(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        handle: i32,
+        source: i32,
+        code: i32,
+    ) -> bool {
         if !sim.config().script_enabled {
             return true;
         }
@@ -3537,17 +3560,6 @@ impl EngineInner {
         if !is_scripted {
             return true;
         }
-
-        // Original-game think startup assigns -2 in the
-        // default switch arm and still calls FilterAIEvent for scripted NPCs.
-        let code = crate::ai::stimulus_to_ai_event_code(stimulus.stimulus_type).unwrap_or(-2);
-
-        let source = match stimulus.info {
-            crate::ai::StimulusInfo::Human(h) => crate::natives::ScriptHandleCodec::actor_handle(
-                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h.get())),
-            ),
-            _ => 0,
-        };
 
         // Fast paths that skip script dispatch.
         let has_override = match self.scripts.mission.as_ref() {
@@ -3844,7 +3856,24 @@ impl EngineInner {
                 .unwrap_or_else(|| panic!("AfterScript owner {} lost its AI", entity_id.index()));
             ai.outbox.reentrant.engine_drains_after_script_go_on = true;
         }
-        let handled = {
+        let route_arrival = stimulus.stimulus_type == crate::ai::StimulusType::EventReachPoint
+            && self
+                .world
+                .entities
+                .get(entity_id)
+                .and_then(Entity::ai_controller)
+                .is_some_and(|ai| ai.current_substate == crate::ai::Substate::DefaultGotoRoute);
+        let handled = if route_arrival {
+            self.think_patrol_arrival(
+                sim,
+                assets,
+                entity_id,
+                stimulus,
+                &live_ctx,
+                live_enemy_tick.as_ref(),
+                policy,
+            )
+        } else {
             let ai_global = &mut self.ai.global;
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 return false;
@@ -4257,16 +4286,10 @@ impl EngineInner {
                     self.owner_work_consider_to_begin_parade(sim, assets, owner, attacker);
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint {
-                    owner_boundary_positions,
-                } => {
-                    self.resume_goto_route_reach_point_for_npc(
-                        sim,
-                        owner,
-                        assets,
-                        &owner_boundary_positions,
-                    );
-                    continue;
+                crate::ai::AiOwnerWork::ResumeGotoRouteReachPoint { .. } => {
+                    panic!(
+                        "obsolete patrol-arrival continuation reached the synchronous engine; migrate the legacy snapshot"
+                    )
                 }
                 crate::ai::AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
                     assignment_callback,

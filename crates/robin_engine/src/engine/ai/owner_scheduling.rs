@@ -487,53 +487,160 @@ impl EngineInner {
         );
     }
 
-    /// Continue common route-arrival code after its state-change barrier.
-    ///
-    /// This is a fresh engine-facing context because `FilterAIEvent` may have
-    /// synchronously reassigned the patrol path or otherwise mutated the
-    /// actor before the original game resumes the caller after the state change.
-    pub(in crate::engine) fn resume_goto_route_reach_point_for_npc(
+    /// Execute Original's route-arrival call stack without detaching the handler.
+    /// Actor borrows end before callbacks; post-callback path reads use the
+    /// authoritative actor. Actual Turn execution remains owned by SequenceManager.
+    pub(in crate::engine) fn think_patrol_arrival(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
         assets: &LevelAssets,
-        owner_boundary_positions: &[(u32, crate::ai::Position)],
-    ) {
+        owner: EntityId,
+        stimulus: &crate::ai::Stimulus,
+        ctx: &crate::ai::AiContext,
+        enemy_tick: Option<&crate::ai::AiPerTickData>,
+        policy: OwnerBoundaryPolicy,
+    ) -> bool {
+        let admitted = {
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("patrol arrival"));
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.begin_think(
+                    crate::ai_enemy::ThinkEnv::new(
+                        sim,
+                        ctx,
+                        enemy_tick.expect("enemy patrol tick"),
+                        Some(&self.world.fast_grid),
+                    ),
+                    stimulus,
+                    &mut self.ai.global,
+                )
+            } else {
+                entity
+                    .friendly_ai_mut()
+                    .expect("patrol arrival requires an AI role")
+                    .begin_think(sim, stimulus, &mut self.ai.global, ctx)
+            }
+        };
+        if !admitted {
+            return true;
+        }
+
+        // A ReachPoint admitted by the role gates retains the selected arm.
+        assert_eq!(
+            self.world
+                .entities
+                .expect_ai_controller(owner, format_args!("admitted patrol arrival"))
+                .current_substate,
+            crate::ai::Substate::DefaultGotoRoute
+        );
+        // Queued siblings and deferred ancestor completions belong to the
+        // caller. Nested synchronous Think calls must not consume either.
+        let (later_stimuli, ancestor_frames) = {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("patrol arrival caller scope"));
+            (
+                std::mem::take(&mut ai.outbox.reentrant.self_stimuli),
+                std::mem::take(&mut ai.open_end_think_frames),
+            )
+        };
+        self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
+        let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
+        // State-change notifications ignore the callback's return value.
+        self.call_ai_event_filter(
+            sim,
+            assets,
+            handle,
+            handle,
+            crate::ai::AiState::Default.state_change_event_code(),
+        );
+        self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+        {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(owner, format_args!("patrol state after callback"));
+            ai.set_ai_state(crate::ai::AiState::Default);
+            ai.current_substate = crate::ai::Substate::DefaultGotoRouteTurn;
+        }
+        self.initialize_patrol_for_npc(assets, owner);
+        // TODO(scheduling): remove broad observation rebuilding together with
+        // the owner-phase snapshot API. Keep its geometry contract in this slice.
         let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
-        for &(handle, position) in owner_boundary_positions {
-            if let Some(view) = views.get_mut(&handle) {
-                view.position = position;
+        for (&handle, before) in ctx.entity_views.iter() {
+            if let Some(view) =
+                std::sync::Arc::make_mut(&mut scratch.ai_entity_views).get_mut(&handle)
+            {
+                view.position = before.position;
             }
         }
-        let frame = self.control.frame_counter;
-        let in_uninterruptible_command = self.is_very_very_busy(npc_id);
-        let mut ctx = {
-            let entity = self.expect_entity(npc_id, "route-arrival continuation owner");
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let mut ctx =
-                self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            ctx
-        };
-        self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        self.world
+        let entity = self.expect_entity(owner, "patrol after callback");
+        let mut fresh_ctx = self.ai_context_from_entity(
+            entity,
+            self.control.frame_counter,
+            self.entity_building_sector(entity.element_data().sector()),
+            &scratch,
+            assets,
+        );
+        fresh_ctx.in_uninterruptible_command = self.is_very_very_busy(owner);
+        self.refresh_selected_default_wait_identity(owner, &mut fresh_ctx);
+        let direction = self
+            .world
             .entities
-            .expect_ai_controller_mut(
-                npc_id,
-                format_args!(
-                    "route-arrival continuation owner {} lost its AI",
-                    npc_id.index()
-                ),
-            )
-            .resume_goto_route_reach_point(sim, &ctx);
-
-        // The original game initializes patrol inline, immediately after the
-        // state-change callback returns. Delaying this to the next
-        // Original-game AI updates change which side of the
-        // formation equally-close members occupy because later legacy slots
-        // have moved by then.
-        self.initialize_patrol_for_npc(assets, npc_id);
+            .expect_ai_controller_mut(owner, format_args!("patrol path"))
+            .route_arrival_turn_direction(fresh_ctx.position, &fresh_ctx.hiking_paths);
+        if let Some(direction) = direction {
+            let mut turn = crate::sequence::SequenceElement::new_generic(
+                1,
+                crate::element::Command::Turn,
+                Some(owner),
+            );
+            turn.set_property(
+                crate::sequence::Field::Direction,
+                crate::sequence::FieldValue::Integer(u32::from(direction)),
+            );
+            self.launch_element(turn);
+        } else {
+            self.dispatch_filtered_stimulus_with_owner_mode(
+                sim,
+                assets,
+                owner,
+                &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
+                &fresh_ctx,
+                enemy_tick,
+                OwnerBoundaryPolicy::WithoutForecast,
+            );
+            self.drain_direct_ai_owner_boundary_mode(
+                sim,
+                owner,
+                assets,
+                OwnerBoundaryPolicy::WithoutForecast,
+            );
+        }
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(owner, format_args!("patrol Think completion"));
+        let ai = entity.ai_controller_mut().expect("patrol completion AI");
+        ai.outbox.reentrant.self_stimuli.extend(later_stimuli);
+        ai.open_end_think_frames = ai.open_end_think_frames.saturating_add(ancestor_frames);
+        if let Some(enemy) = entity.enemy_ai_mut() {
+            enemy.end_think(crate::ai_enemy::ThinkEnv::new(
+                sim,
+                ctx,
+                enemy_tick.expect("enemy patrol completion tick"),
+                Some(&self.world.fast_grid),
+            ));
+        } else {
+            entity
+                .friendly_ai_mut()
+                .expect("friendly patrol completion")
+                .end_think(sim, ctx);
+        }
+        false
     }
 
     /// Invoke the enemy/friendly return-to-duty behavior requested

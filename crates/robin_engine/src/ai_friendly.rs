@@ -306,16 +306,14 @@ impl FriendlyAi {
     // Think — main stimulus dispatcher
     // -----------------------------------------------------------------------
 
-    /// Main entry point for civilian stimulus processing.
-    pub(crate) fn think(
+    /// Admit a civilian Think without retaining its borrow across callbacks.
+    /// Rejection completes the call here; an admitted caller must run end_think.
+    pub(crate) fn begin_think(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         stimulus: &Stimulus,
         global: &mut AiGlobalState,
         ctx: &AiContext,
-        tick: &FriendlyPerTickData,
-        grid: Option<&crate::fast_find_grid::FastFindGrid>,
-        doors: Option<&[crate::gate::Door]>,
     ) -> bool {
         self.base.cached_frame = ctx.frame;
         self.base.cached_in_building = ctx.in_building;
@@ -331,12 +329,30 @@ impl FriendlyAi {
                 self.base.outbox.reentrant.engine_drains_after_script_go_on = false;
             }
             self.end_think(sim, ctx);
-            return true;
+            return false;
         }
 
         // Script filter gate applied by the engine before this call —
         // see `Engine::filter_stimulus` and the matching note in
         // ai_enemy::think.
+
+        true
+    }
+
+    pub(crate) fn think(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &FriendlyPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        doors: Option<&[crate::gate::Door]>,
+    ) -> bool {
+        if !self.begin_think(sim, stimulus, global, ctx) {
+            return true;
+        }
+        let stimulus_type = stimulus.stimulus_type;
 
         let return_value = match stimulus_type {
             // Expected events
