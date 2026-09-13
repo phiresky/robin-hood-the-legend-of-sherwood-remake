@@ -31,14 +31,19 @@ pub fn project_vps_publication_lock_v2(
             initial.st_mode,
             initial.st_uid,
             initial.st_nlink as u64,
-            &format!("release-manifest descriptor has unsafe type, owner, links, mode, or size"),
+            "release-manifest descriptor has unsafe type, owner, links, mode, or size",
         )?;
-        ensure!(
-            initial.st_mode & 0o777 == 0o440
-                && initial.st_size > 0
-                && u64::try_from(initial.st_size)? <= MAX_DOCUMENT_BYTES,
-            "release-manifest descriptor has unsafe type, owner, links, mode, or size"
-        );
+        fd_policy::ensure_mode(
+            initial.st_mode,
+            &[0o440],
+            "release-manifest descriptor has unsafe mode",
+        )?;
+        fd_policy::ensure_size(
+            initial.st_size,
+            1,
+            MAX_DOCUMENT_BYTES,
+            "release-manifest descriptor has unsafe size",
+        )?;
         let descriptor = PathBuf::from(format!("/proc/self/fd/{}", duplicate.0));
         let mut reader = File::open(&descriptor)?;
         let reader_initial = rustix::fs::fstat(&reader)?;
@@ -115,12 +120,13 @@ pub(super) fn load_pinned_vps_plan(
         metadata.st_mode,
         metadata.st_uid,
         metadata.st_nlink as u64,
-        &format!("VPS release plan descriptor must be an owner-only regular nlink-1 file"),
+        "VPS release plan descriptor must be an owner-only regular nlink-1 file",
     )?;
-    ensure!(
-        metadata.st_mode & 0o777 == 0o400,
-        "VPS release plan descriptor must be an owner-only regular nlink-1 file"
-    );
+    fd_policy::ensure_mode(
+        metadata.st_mode,
+        &[0o400],
+        "VPS release plan descriptor must have owner-only mode 0400",
+    )?;
     let expected_plan_sha256 = expected_plan_sha256
         .parse::<Digest32>()
         .context("expected VPS release plan digest is not canonical lowercase hexadecimal")?;
@@ -376,10 +382,12 @@ pub(super) fn read_pinned_descriptor_bounded(
         initial.st_nlink as u64,
         &format!("{label} descriptor has unsafe type, owner, links, or size"),
     )?;
-    ensure!(
-        initial.st_size >= 0 && u64::try_from(initial.st_size)? <= maximum_bytes,
-        "{label} descriptor has unsafe type, owner, links, or size"
-    );
+    fd_policy::ensure_size(
+        initial.st_size,
+        0,
+        maximum_bytes,
+        &format!("{label} descriptor has unsafe size"),
+    )?;
     // Reading can legitimately update atime on relatime/strictatime mounts.
     // Continue checking inode, permissions, size, mtime and ctime for mutation.
     let unchanged = |mut observed: fd_policy::RawStat| {
@@ -444,10 +452,11 @@ pub(super) fn pin_vps_activation_exec_authorities(
             metadata.st_nlink as u64,
             &format!("{label} descriptor has unsafe type, owner, links, or mode"),
         )?;
-        ensure!(
-            metadata.st_mode & 0o777 == mode,
-            "{label} descriptor has unsafe type, owner, links, or mode"
-        );
+        fd_policy::ensure_mode(
+            metadata.st_mode,
+            &[mode],
+            &format!("{label} descriptor has unsafe mode"),
+        )?;
         raw.push(descriptor);
     }
     if let Some(plan_fd) = plan_fd {
@@ -457,12 +466,13 @@ pub(super) fn pin_vps_activation_exec_authorities(
             metadata.st_mode,
             metadata.st_uid,
             metadata.st_nlink as u64,
-            &format!("VPS release plan descriptor has unsafe type, owner, links, or mode"),
+            "VPS release plan descriptor has unsafe type, owner, links, or mode",
         )?;
-        ensure!(
-            metadata.st_mode & 0o777 == 0o400,
-            "VPS release plan descriptor has unsafe type, owner, links, or mode"
-        );
+        fd_policy::ensure_mode(
+            metadata.st_mode,
+            &[0o400],
+            "VPS release plan descriptor has unsafe mode",
+        )?;
         raw.push(descriptor);
     }
     ensure!(
@@ -587,12 +597,12 @@ pub(super) fn pin_vps_activation_candidate_at(
         basename,
         AtFlags::SYMLINK_NOFOLLOW,
     )?;
-    ensure!(
-        FileType::from_raw_mode(path_metadata.st_mode).is_dir()
-            && path_metadata.st_uid == rustix::process::geteuid().as_raw()
-            && path_metadata.st_mode & 0o777 == 0o550,
-        "VPS activation candidate has unsafe type, owner, or mode"
-    );
+    fd_policy::ensure_private_directory(
+        path_metadata.st_mode,
+        path_metadata.st_uid,
+        0o550,
+        "VPS activation candidate has unsafe type, owner, or mode",
+    )?;
     let fd = openat2(
         parents.installed_parent_fd.as_fd(),
         basename,

@@ -535,7 +535,6 @@ pub(super) fn pin_inherited_vps_candidate_root_at_with<V>(
 where
     V: Fn(&Path) -> Result<(Digest32, String)>,
 {
-    use rustix::fs::FileType;
     use std::os::fd::{AsRawFd as _, OwnedFd};
 
     let parents = pin_vps_candidate_parents_at(incoming_root, releases_root)?;
@@ -545,12 +544,12 @@ where
         "inherited VPS candidate descriptor must be at least 3"
     );
     let inherited = fd_policy::stat(candidate_root_fd)?;
-    ensure!(
-        FileType::from_raw_mode(inherited.st_mode).is_dir()
-            && inherited.st_uid == rustix::process::geteuid().as_raw()
-            && inherited.st_mode & 0o777 == 0o550,
-        "inherited VPS candidate descriptor has unsafe type, owner, or mode"
-    );
+    fd_policy::ensure_private_directory(
+        inherited.st_mode,
+        inherited.st_uid,
+        0o550,
+        "inherited VPS candidate descriptor has unsafe type, owner, or mode",
+    )?;
     let descriptor_path = PathBuf::from(format!("/proc/self/fd/{candidate_root_fd}"));
     let fd = OwnedFd::from(File::open(&descriptor_path)?);
     let pinned = rustix::fs::fstat(&fd)?;
@@ -1424,10 +1423,10 @@ pub(super) fn inventory_pinned_vps_source_directory(
                 entries,
             )?;
         } else if file_type.is_file() {
-            ensure!(
-                metadata.st_nlink == 1,
-                "VPS source contains a hard-linked file"
-            );
+            fd_policy::ensure_single_link(
+                metadata.st_nlink,
+                "VPS source contains a hard-linked file",
+            )?;
             let file_fd = openat2(
                 directory_fd.as_fd(),
                 &name,
@@ -1601,7 +1600,7 @@ where
                 "VPS source cleanup directory remains linked after unlink"
             );
         } else if kind.is_file() {
-            ensure!(named.st_nlink == 1, "VPS source cleanup found a hard link");
+            fd_policy::ensure_single_link(named.st_nlink, "VPS source cleanup found a hard link")?;
             let child = openat2(
                 directory_fd.as_fd(),
                 &name,
@@ -1618,10 +1617,13 @@ where
                     && pinned.st_ino == named.st_ino
                     && pinned.st_uid == named.st_uid
                     && pinned.st_mode == named.st_mode
-                    && pinned.st_nlink == 1
                     && pinned.st_size == named.st_size,
                 "VPS source cleanup file changed while it was pinned"
             );
+            fd_policy::ensure_single_link(
+                pinned.st_nlink,
+                "VPS source cleanup file links changed while it was pinned",
+            )?;
             ensure!(
                 expected_entry.kind == VpsSourceEntryKindV1::File
                     && expected_entry.byte_length == Some(pinned.st_size as u64),
@@ -1653,7 +1655,6 @@ where
                     && rebound.st_ino == pinned.st_ino
                     && rebound.st_uid == pinned.st_uid
                     && rebound.st_mode == pinned.st_mode
-                    && rebound.st_nlink == 1
                     && rebound.st_size == pinned.st_size
                     && rebound.st_mtime == pinned.st_mtime
                     && rebound.st_mtime_nsec == pinned.st_mtime_nsec
@@ -1661,6 +1662,10 @@ where
                     && rebound.st_ctime_nsec == pinned.st_ctime_nsec,
                 "VPS source cleanup file basename was substituted"
             );
+            fd_policy::ensure_single_link(
+                rebound.st_nlink,
+                "VPS source cleanup file basename gained a hard link",
+            )?;
             ensure_authority()?;
             child.seek(SeekFrom::Start(0))?;
             ensure!(
@@ -1674,7 +1679,6 @@ where
                     && final_pinned.st_ino == pinned.st_ino
                     && final_pinned.st_uid == pinned.st_uid
                     && final_pinned.st_mode == pinned.st_mode
-                    && final_pinned.st_nlink == 1
                     && final_pinned.st_size == pinned.st_size
                     && final_pinned.st_mtime == pinned.st_mtime
                     && final_pinned.st_mtime_nsec == pinned.st_mtime_nsec
@@ -1691,6 +1695,10 @@ where
                     && final_named.st_ctime_nsec == final_pinned.st_ctime_nsec,
                 "VPS source cleanup file identity changed at its unlink boundary"
             );
+            fd_policy::ensure_single_link(
+                final_pinned.st_nlink,
+                "VPS source cleanup file links changed at its unlink boundary",
+            )?;
             unlinkat(directory_fd.as_fd(), &name, AtFlags::empty())?;
             ensure!(
                 rustix::fs::fstat(&child)?.st_nlink == 0,
@@ -1801,15 +1809,24 @@ pub(super) fn pin_vps_source_document(
         metadata.st_mode,
         metadata.st_uid,
         metadata.st_nlink as u64,
-        &format!("VPS source consume journal metadata is unsafe"),
+        "VPS source consume journal metadata is unsafe",
     )?;
-    ensure!(
-        metadata.st_dev == parent.st_dev
-            && allowed_modes.contains(&(metadata.st_mode & 0o777))
-            && metadata.st_size >= 0
-            && metadata.st_size as u64 <= limit,
-        "VPS source consume journal metadata is unsafe"
-    );
+    fd_policy::ensure_device(
+        metadata.st_dev,
+        parent.st_dev,
+        "VPS source consume journal device is unsafe",
+    )?;
+    fd_policy::ensure_mode(
+        metadata.st_mode,
+        allowed_modes,
+        "VPS source consume journal mode is unsafe",
+    )?;
+    fd_policy::ensure_size(
+        metadata.st_size,
+        0,
+        limit,
+        "VPS source consume journal size is unsafe",
+    )?;
     let mut file = File::from(fd);
     let bytes = crate::fs_util::read_bounded(&mut file, limit, metadata.st_size as u64)?;
     let observed = rustix::fs::fstat(&file)?;
@@ -2021,7 +2038,7 @@ where
         temporary.st_mode,
         temporary.st_uid,
         temporary.st_nlink as u64,
-        &format!("VPS source consume journal temporary is unsafe"),
+        "VPS source consume journal temporary is unsafe",
     )?;
     let temporary_journal = load_vps_source_consume_journal(parent_fd, temporary_name);
     if let Ok(temporary_journal) = temporary_journal {
