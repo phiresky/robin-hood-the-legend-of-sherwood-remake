@@ -165,7 +165,18 @@ pub(crate) struct GotoActionStateTeardown {
 
 /// The per-NPC AI controller state. Enemy and friendly AI extend this
 /// with additional fields.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+///
+/// Serde persists every field except the `#[serde(skip)]` runtime scratch,
+/// which decodes to its default; see [`crate::ai::persisted`].
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct AiController {
     // -- Owner --
     /// The NPC that owns this brain (legacy u32 handle).
@@ -252,6 +263,7 @@ pub struct AiController {
     /// path closes any frames still open when a cascade is force-terminated,
     /// so a cascade never survives a frame boundary and this stays transient
     /// bookkeeping.
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub open_end_think_frames: u8,
@@ -260,6 +272,7 @@ pub struct AiController {
     /// inside movement, before decision-tick completion; Rust releases the AI borrow first,
     /// so an immediately rejected path otherwise makes tick completion unwind
     /// before the matching recursive EVENT_COULDNT_REACHPOINT is known.
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub engine_deferred_end_think_frames: u8,
@@ -272,6 +285,7 @@ pub struct AiController {
     /// path verdict: the original game has not returned from appending movement yet.
     /// Keep this explicit transient handshake so only the engine operation
     /// that consumed the order may close the deferred decision frames.
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub engine_completion_verdict_resolved: bool,
@@ -291,11 +305,18 @@ pub struct AiController {
     pub macro_started_in_this_frame: bool,
 
     // -- Targets & relationships --
+    #[serde(with = "optional_ai_handle")]
     pub primary_target: Option<AiEntityHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub friend_in_trouble: Option<AiEntityHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub detected_body: Option<AiEntityHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub interesting_object: Option<AiEntityHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub antagonist: Option<AiEntityHandle>,
+    // TODO: historically persisted untagged (bare handle), unlike its
+    // neighbours; kept for save compatibility.
     pub last_stimulus_actor: Option<AiEntityHandle>,
 
     // -- Timers --
@@ -314,6 +335,7 @@ pub struct AiController {
 
     // -- Group behaviour --
     pub is_master: bool,
+    #[serde(with = "optional_ai_handle")]
     pub master: Option<AiEntityHandle>,
 
     // -- Seek & alert --
@@ -376,10 +398,13 @@ pub struct AiController {
 
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub object_of_desire: Option<AiEntityHandle>,
 
     // -- Charly (friend-check) --
+    #[serde(with = "optional_ai_handle")]
     pub checkpoint_charly: Option<AiEntityHandle>,
+    #[serde(with = "optional_ai_handle")]
     pub synchronize_charly: Option<AiEntityHandle>,
     /// Synchronization waypoint index for the partner. Lives on
     /// the AI controller because the macro VM's friend-check initialization needs to

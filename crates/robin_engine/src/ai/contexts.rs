@@ -1474,6 +1474,8 @@ pub const AI_DOOR_RALLY_POINT_DISTANCE: f32 = 100.0;
 #[derive(
     Debug,
     Clone,
+    Serialize,
+    Deserialize,
     smart_default::SmartDefault,
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
@@ -1567,9 +1569,11 @@ pub struct AiGlobalState {
     /// exact serial mutation history. Original explicitly does not serialize
     /// this scratch field, so a loaded session starts it empty and then
     /// preserves owner-ordered mutations.
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub primary_target_multiplicity_scratch: std::collections::BTreeMap<HumanHandle, u32>,
+    #[serde(skip)]
     #[state_hash(skip)]
     #[bitcode(skip)]
     pub primary_target_multiplicity_initialized: bool,

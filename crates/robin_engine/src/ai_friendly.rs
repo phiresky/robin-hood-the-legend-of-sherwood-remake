@@ -107,7 +107,15 @@ impl FriendlyPerTickData {
 // ---------------------------------------------------------------------------
 
 /// Civilian AI state. Extends [`AiController`] with civilian-specific fields.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 pub struct FriendlyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,
@@ -119,6 +127,8 @@ pub struct FriendlyAi {
     pub wants_to_talk: bool,
     /// Last NPC this civilian talked to. The original game initializes this reference to
     /// null and preserves that nullability in saved games.
+    // TODO: historically persisted untagged (bare handle), unlike the tagged
+    // `optional_ai_handle` fields; kept for save compatibility.
     pub last_talk_partner: Option<AiEntityHandle>,
     /// Script-controlled permission to leave after the current interaction.
     pub can_go_away: bool,

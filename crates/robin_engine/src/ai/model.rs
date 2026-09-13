@@ -2365,9 +2365,13 @@ pub(crate) enum SelfStimulusOrigin {
 /// A queued self-stimulus. The transparent representation preserves the
 /// existing serialized `Vec<StimulusType>` shape; provenance exists only
 /// while the live engine is closing the same-frame callback stack.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode,
+)]
+#[serde(transparent)]
 pub struct QueuedSelfStimulus {
     pub stimulus_type: StimulusType,
+    #[serde(skip)]
     #[bitcode(skip)]
     pub(crate) origin: SelfStimulusOrigin,
 }
@@ -2412,14 +2416,16 @@ impl PartialEq<QueuedSelfStimulus> for StimulusType {
 // ---------------------------------------------------------------------------
 
 /// An event or call that is dispatched to an NPC's AI for processing.
-#[derive(Debug, Clone, Copy, bitcode::Encode, bitcode::Decode)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct Stimulus {
     pub stimulus_type: StimulusType,
     pub info: StimulusInfo,
     /// Optional original-game stimulus-owner reference. This is independent of the
     /// actor currently processing the stimulus and is initialized empty.
+    #[serde(with = "optional_ai_handle")]
     pub owner: Option<AiEntityHandle>,
     pub to_whole_patrol: bool,
+    #[serde(skip)]
     #[bitcode(skip)]
     pub(crate) self_origin: SelfStimulusOrigin,
 }

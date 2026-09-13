@@ -154,8 +154,18 @@ use util::soldier_detects_position_180;
 
 /// Enemy/soldier AI state. Extends [`AiController`] with villain-specific
 /// fields.
+///
+/// Serde persists every field; `#[serde(default)]` fields may be absent
+/// from older saves. See [`crate::ai::persisted`].
 #[derive(
-    Debug, Clone, Default, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+    Debug,
+    Clone,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
 )]
 pub struct EnemyAi {
     /// Base AI controller (contains all common state).
@@ -175,6 +185,7 @@ pub struct EnemyAi {
     /// strike proposer. The original game only proposes a good sword strike
     /// when that event-driven reconsideration reaches its decision tail;
     /// merely entering the swordfight substate must not authorize a draw.
+    #[serde(default)]
     pub pending_sword_strike_consideration: bool,
 
     /// AI decisions reached the combat-insult step after swordfight reconsideration,
@@ -184,9 +195,11 @@ pub struct EnemyAi {
     /// rejected proposal leaves `...SWORDFIGHT` and says it. The Rust port
     /// settles this latch immediately after `Think`, at the same owner
     /// boundary as `pending_sword_strike_consideration`.
+    #[serde(default)]
     pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub missed_pc: Option<AiEntityHandle>,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
@@ -200,9 +213,11 @@ pub struct EnemyAi {
     /// distraction and therefore uses a running approach. This is explicit
     /// serialized AI memory: save/load and rollback must not infer it from a
     /// transient sound side effect.
+    #[serde(default)]
     pub investigating_distraction: bool,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub beggar_to_examine: Option<AiEntityHandle>,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
@@ -273,7 +288,9 @@ pub struct EnemyAi {
     pub money_fight_victims: Vec<NpcHandle>,
 
     // Archer / shield bearer (serialized by semantic entity reference)
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub archer_behind_me: Option<AiEntityHandle>,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub shield_bearer_before_me: Option<AiEntityHandle>,
 
     pub shield_bearer_direction: u16,
@@ -296,12 +313,15 @@ pub struct EnemyAi {
     /// list and retries the same list index before deciding whether to clear
     /// `SEEK_LOCATION_FIRST`; keeping this as a continuation queue preserves
     /// that source order.
+    #[serde(default)]
     pub pending_group_instruction_candidates: Vec<(HumanHandle, Position)>,
     /// Flags for the next group instruction. Stored as bits so old serialized
     /// AI snapshots default cleanly and unknown bits cannot be invented.
+    #[serde(default)]
     pub pending_group_instruction_seek_flags: u16,
     /// Whether the first accepted member consumes `SEEK_LOCATION_FIRST`.
     /// Charly-path distribution keeps the flag for every member instead.
+    #[serde(default)]
     pub pending_group_instruction_clear_location_after_accept: bool,
 
     // Archery
@@ -377,6 +397,7 @@ pub struct EnemyAi {
     /// Cached eligibility for the optional zero-beer reliability rule. This
     /// is true only for a non-VIP soldier while the authoritative setting is
     /// enabled, so live menu commands affect spawned AI on the same frame.
+    #[serde(default)]
     pub ale_reliable_distraction: bool,
     /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
     /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
@@ -414,7 +435,9 @@ pub struct EnemyAi {
     pub next_sword_strike_frame: u32,
 
     pub company_number: u16,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub left_combat_neighbour: Option<AiEntityHandle>,
+    #[serde(default, with = "crate::ai::optional_ai_handle")]
     pub right_combat_neighbour: Option<AiEntityHandle>,
 
     pub attentive: bool,
