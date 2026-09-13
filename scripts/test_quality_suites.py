@@ -123,7 +123,7 @@ class QualitySuitesTests(unittest.TestCase):
             if package in visited:
                 return
             visited.add(package)
-            self.assertIn(package, {"robin_identity_signer", "robin_run_protocol"})
+            self.assertIn(package, {"robin_identity_signer", "robin_run_protocol", "robin_display_text"})
             manifest = manifests[package]
             tables = [manifest, *manifest.get("target", {}).values()]
             for table in tables:
@@ -137,7 +137,7 @@ class QualitySuitesTests(unittest.TestCase):
                             visit(dependency)
 
         visit("robin_identity_signer")
-        self.assertEqual(visited, {"robin_identity_signer", "robin_run_protocol"})
+        self.assertEqual(visited, {"robin_identity_signer", "robin_run_protocol", "robin_display_text"})
 
     def test_gpu_gate_explicitly_selects_ignored_execution_test(self):
         self.run_suite("gpu")

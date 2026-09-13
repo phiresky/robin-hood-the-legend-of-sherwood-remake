@@ -18,7 +18,7 @@ enum-map.workspace = true
 indexmap.workspace = true
 serde_json.workspace = true
 serde-value.workspace = true
-unicode-security.workspace = true
+robin_display_text.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

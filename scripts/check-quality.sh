@@ -16,7 +16,7 @@ case "$1" in
         cargo fmt --all -- --check
         ;;
     core)
-        cargo test --locked -p robin_util -p robin_state_hash_derive -p robin_spellforge -p robin_lua -p robin_test_support
+        cargo test --locked -p robin_util -p robin_display_text -p robin_state_hash_derive -p robin_spellforge -p robin_lua -p robin_test_support
         ;;
     scripting-llvm)
         # LLVM verifies unwind/destructor semantics, not just panic detection.
