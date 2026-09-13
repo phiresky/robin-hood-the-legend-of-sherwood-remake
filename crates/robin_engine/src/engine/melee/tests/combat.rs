@@ -123,22 +123,20 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
     }
     let assets = assets_with_sword_profile(0, base_max_distance);
     let collect = |engine: &EngineInner, max_distance| {
-        collect_circle_warn_victims(
-            &engine.world.entities,
-            attacker,
-            (0.0, 0.0),
-            0,
-            max_distance,
-            180,
-            |target_id| engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword),
-            &assets.profile_manager,
-            &engine.world.fast_grid,
-            crate::sight_obstacle::ObstacleList {
+        StrikeVictimQuery {
+            entities: &engine.world.entities,
+            attacker_id: attacker,
+            profile_manager: &assets.profile_manager,
+            fast_grid: &engine.world.fast_grid,
+            obstacles: crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &engine.world.dynamic_sight_obstacles,
                 static_active: &engine.world.static_sight_obstacle_active,
             },
-        )
+        }
+        .circle_warn_victims((0.0, 0.0), 0, max_distance, 180, |target_id| {
+            engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword)
+        })
     };
     assert_eq!(collect(&engine, base_max_distance), vec![target]);
 

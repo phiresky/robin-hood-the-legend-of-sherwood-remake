@@ -2067,153 +2067,162 @@ pub(crate) fn is_possible_sword_strike_victim(
     true
 }
 
-/// Collect possible victims for a lateral/circle sword strike within an angular arc.
-///
-/// Returns EntityIds of all valid targets within `[min_distance, max_distance]`
-/// whose direction from the attacker falls between `begin_sector` and `end_sector`.
-fn collect_arc_victims(
-    entities: &Entities,
+/// Shared plumbing of the sword-strike victim collectors: the live entity
+/// table, the attacker, and the inputs of sword-strike victim eligibility.
+/// Each collector walks the humans in entity-table order, exactly as before.
+#[derive(Clone, Copy)]
+struct StrikeVictimQuery<'a> {
+    entities: &'a Entities,
     attacker_id: EntityId,
-    attacker_pos: (f32, f32),
-    min_distance: f32,
-    max_distance: f32,
-    begin_sector: u8,
-    end_sector: u8,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        // The original game computes strike geometry from the map position; elevation
-        // is handled independently by sword-strike victim eligibility checks.
-        let pos = entity.element_data().position_map();
-        let dx = pos.x - attacker_pos.0;
-        let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        // Quick reject
-        if dx.abs().max(dy.abs()) >= 150.0 {
-            continue;
-        }
-        let distance = (dx * dx + dy * dy).sqrt();
-        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
-            continue;
-        }
-        // Check if direction is within the arc
-        let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-        if is_sector_between(sector, begin_sector, end_sector) {
-            victims.push(target_id.into());
-        }
-    }
-    victims
+    profile_manager: &'a crate::profiles::ProfileManager,
+    fast_grid: &'a crate::fast_find_grid::FastFindGrid,
+    obstacles: crate::sight_obstacle::ObstacleList<'a>,
 }
 
-/// Collect the seed list for lateral sword-strike execution.
-///
-/// The Original deliberately mixes coordinate spaces here: admission uses
-/// ground position for the angular sector and the full 3D world position
-/// norm for weapon range.  Once seeded, the per-frame sweep tests the moving
-/// victim in map space.  Using map space for this initial test can admit an
-/// actor on a different elevation whose ground-space direction lies outside
-/// the strike arc.
-fn collect_lateral_strike_victims(
-    entities: &Entities,
-    attacker_id: EntityId,
-    attacker_position: crate::coordinates::WorldPoint3D,
-    min_distance: f32,
-    max_distance: f32,
-    begin_sector: u8,
-    end_sector: u8,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        let target_position = entity.element_data().position();
-        let dx = target_position.x - attacker_position.x;
-        let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        let dz = target_position.z - attacker_position.z;
-        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
-            continue;
-        }
-
-        let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-        if is_sector_between(sector, begin_sector, end_sector) {
-            victims.push(target_id.into());
-        }
+impl<'a> StrikeVictimQuery<'a> {
+    /// Humans that pass sword-strike victim eligibility against the attacker.
+    fn candidates(self) -> impl Iterator<Item = (crate::entity_id::HumanId, &'a Entity)> + 'a {
+        sword_strike_candidates(
+            self.entities,
+            self.attacker_id,
+            self.profile_manager,
+            self.fast_grid,
+            self.obstacles,
+        )
     }
-    victims
 }
 
-/// Original full-circle DONE-time victim admission in unprojected 3D space.
-///
-/// This is deliberately separate from the circle warning collector: warning
-/// admission uses map-space distance and different range rules, while
-/// The full-circle sword-strike effect seeds its retained victim list from
-/// world position and the inclusive authored strike range.
-fn collect_full_circle_strike_victims(
-    entities: &Entities,
-    attacker_id: EntityId,
-    attacker_position: crate::coordinates::WorldPoint3D,
-    min_distance: f32,
-    max_distance: f32,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        let target_position = entity.element_data().position();
-        if full_circle_strike_distance_is_in_range(
-            attacker_position,
-            target_position,
-            min_distance,
-            max_distance,
-        ) {
-            victims.push(target_id.into());
+impl StrikeVictimQuery<'_> {
+    /// Collect possible victims for a lateral/circle sword strike within an angular arc.
+    ///
+    /// Returns EntityIds of all valid targets within `[min_distance, max_distance]`
+    /// whose direction from the attacker falls between `begin_sector` and `end_sector`.
+    fn arc_victims(
+        self,
+        attacker_pos: (f32, f32),
+        min_distance: f32,
+        max_distance: f32,
+        begin_sector: u8,
+        end_sector: u8,
+    ) -> Vec<EntityId> {
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            // The original game computes strike geometry from the map position; elevation
+            // is handled independently by sword-strike victim eligibility checks.
+            let pos = entity.element_data().position_map();
+            let dx = pos.x - attacker_pos.0;
+            let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+            // Quick reject
+            if dx.abs().max(dy.abs()) >= 150.0 {
+                continue;
+            }
+            let distance = (dx * dx + dy * dy).sqrt();
+            if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
+                continue;
+            }
+            // Check if direction is within the arc
+            let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+            if is_sector_between(sector, begin_sector, end_sector) {
+                victims.push(target_id.into());
+            }
         }
+        victims
     }
-    victims
 }
 
-/// Original half-circle DONE-time victim admission: 3D range combined with
-/// an unprojected ground-space angular sector.
-fn collect_half_circle_strike_victims(
-    entities: &Entities,
-    attacker_id: EntityId,
-    attacker_position: crate::coordinates::WorldPoint3D,
-    min_distance: f32,
-    max_distance: f32,
-    begin_sector: u8,
-    end_sector: u8,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        let target_position = entity.element_data().position();
-        if half_circle_strike_seed_allows(
-            attacker_position,
-            target_position,
-            min_distance,
-            max_distance,
-            begin_sector,
-            end_sector,
-        ) {
-            victims.push(target_id.into());
+impl StrikeVictimQuery<'_> {
+    /// Collect the seed list for lateral sword-strike execution.
+    ///
+    /// The Original deliberately mixes coordinate spaces here: admission uses
+    /// ground position for the angular sector and the full 3D world position
+    /// norm for weapon range.  Once seeded, the per-frame sweep tests the moving
+    /// victim in map space.  Using map space for this initial test can admit an
+    /// actor on a different elevation whose ground-space direction lies outside
+    /// the strike arc.
+    fn lateral_strike_victims(
+        self,
+        attacker_position: crate::coordinates::WorldPoint3D,
+        min_distance: f32,
+        max_distance: f32,
+        begin_sector: u8,
+        end_sector: u8,
+    ) -> Vec<EntityId> {
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            let target_position = entity.element_data().position();
+            let dx = target_position.x - attacker_position.x;
+            let dy = (target_position.y - attacker_position.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+            let dz = target_position.z - attacker_position.z;
+            let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+            if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
+                continue;
+            }
+
+            let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+            if is_sector_between(sector, begin_sector, end_sector) {
+                victims.push(target_id.into());
+            }
         }
+        victims
     }
-    victims
+}
+
+impl StrikeVictimQuery<'_> {
+    /// Original full-circle DONE-time victim admission in unprojected 3D space.
+    ///
+    /// This is deliberately separate from the circle warning collector: warning
+    /// admission uses map-space distance and different range rules, while
+    /// The full-circle sword-strike effect seeds its retained victim list from
+    /// world position and the inclusive authored strike range.
+    fn full_circle_strike_victims(
+        self,
+        attacker_position: crate::coordinates::WorldPoint3D,
+        min_distance: f32,
+        max_distance: f32,
+    ) -> Vec<EntityId> {
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            let target_position = entity.element_data().position();
+            if full_circle_strike_distance_is_in_range(
+                attacker_position,
+                target_position,
+                min_distance,
+                max_distance,
+            ) {
+                victims.push(target_id.into());
+            }
+        }
+        victims
+    }
+}
+
+impl StrikeVictimQuery<'_> {
+    /// Original half-circle DONE-time victim admission: 3D range combined with
+    /// an unprojected ground-space angular sector.
+    fn half_circle_strike_victims(
+        self,
+        attacker_position: crate::coordinates::WorldPoint3D,
+        min_distance: f32,
+        max_distance: f32,
+        begin_sector: u8,
+        end_sector: u8,
+    ) -> Vec<EntityId> {
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            let target_position = entity.element_data().position();
+            if half_circle_strike_seed_allows(
+                attacker_position,
+                target_position,
+                min_distance,
+                max_distance,
+                begin_sector,
+                end_sector,
+            ) {
+                victims.push(target_id.into());
+            }
+        }
+        victims
+    }
 }
 
 /// Original-game 3D vector norm: products and additions, followed by the
@@ -2265,39 +2274,45 @@ fn half_circle_strike_seed_allows(
     is_sector_between(sector, begin_sector, end_sector)
 }
 
-/// Original lateral warning admission is intentionally looser than the hit
-/// collector: active human, not self, geometry only.
-fn collect_lateral_warning_victims(
-    entities: &Entities,
-    attacker_id: EntityId,
-    attacker_pos: (f32, f32),
-    min_distance: f32,
-    max_distance: f32,
-    begin_sector: u8,
-    end_sector: u8,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in entities.humans() {
-        let target_id: EntityId = target_id.into();
-        if target_id == attacker_id || !entity.element_data().active {
-            continue;
+impl StrikeVictimQuery<'_> {
+    /// Original lateral warning admission is intentionally looser than the hit
+    /// collector: active human, not self, geometry only (no victim eligibility).
+    fn lateral_warning_victims(
+        self,
+        attacker_pos: (f32, f32),
+        min_distance: f32,
+        max_distance: f32,
+        begin_sector: u8,
+        end_sector: u8,
+    ) -> Vec<EntityId> {
+        let Self {
+            entities,
+            attacker_id,
+            ..
+        } = self;
+        let mut victims = Vec::new();
+        for (target_id, entity) in entities.humans() {
+            let target_id: EntityId = target_id.into();
+            if target_id == attacker_id || !entity.element_data().active {
+                continue;
+            }
+            let pos = entity.element_data().position_map();
+            let dx = pos.x - attacker_pos.0;
+            let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+            if dx.abs().max(dy.abs()) >= 150.0 {
+                continue;
+            }
+            let distance = (dx * dx + dy * dy).sqrt();
+            if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
+                continue;
+            }
+            let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
+            if is_sector_between(sector, begin_sector, end_sector) {
+                victims.push(target_id);
+            }
         }
-        let pos = entity.element_data().position_map();
-        let dx = pos.x - attacker_pos.0;
-        let dy = (pos.y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) >= 150.0 {
-            continue;
-        }
-        let distance = (dx * dx + dy * dy).sqrt();
-        if !sword_strike_distance_is_in_range(distance, min_distance, max_distance) {
-            continue;
-        }
-        let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy) as u8;
-        if is_sector_between(sector, begin_sector, end_sector) {
-            victims.push(target_id);
-        }
+        victims
     }
-    victims
 }
 
 /// Extra circle-strike warning range for an actor walking with a sword.
@@ -2313,61 +2328,56 @@ fn circle_warning_walking_tolerance(relative_sector: u16, rotation_angle_deg: u1
         as u16
 }
 
-/// Collect possible victims for a circle sword strike in the
-/// strike-warning phase, with the per-victim distance extension for
-/// walking-with-sword enemies.
-fn collect_circle_warn_victims(
-    entities: &Entities,
-    attacker_id: EntityId,
-    attacker_pos: (f32, f32),
-    attacker_direction: i16,
-    base_max_distance: u16,
-    rotation_angle_deg: u16,
-    is_walking_with_sword: impl Fn(EntityId) -> bool,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        let pos = entity.element_data().position_map();
-        // Circle sword-strike victim collection forms this vector as
-        // attacker - victim. Distance is symmetric, but the same vector's
-        // sector drives the walking-with-sword warning tolerance below.
-        let dx = attacker_pos.0 - pos.x;
-        let dy = (attacker_pos.1 - pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if dx.abs().max(dy.abs()) >= 150.0 {
-            continue;
-        }
-        let distance = (dx * dx + dy * dy).sqrt();
+impl StrikeVictimQuery<'_> {
+    /// Collect possible victims for a circle sword strike in the
+    /// strike-warning phase, with the per-victim distance extension for
+    /// walking-with-sword enemies.
+    fn circle_warn_victims(
+        self,
+        attacker_pos: (f32, f32),
+        attacker_direction: i16,
+        base_max_distance: u16,
+        rotation_angle_deg: u16,
+        is_walking_with_sword: impl Fn(EntityId) -> bool,
+    ) -> Vec<EntityId> {
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            let pos = entity.element_data().position_map();
+            // Circle sword-strike victim collection forms this vector as
+            // attacker - victim. Distance is symmetric, but the same vector's
+            // sector drives the walking-with-sword warning tolerance below.
+            let dx = attacker_pos.0 - pos.x;
+            let dy = (attacker_pos.1 - pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+            if dx.abs().max(dy.abs()) >= 150.0 {
+                continue;
+            }
+            let distance = (dx * dx + dy * dy).sqrt();
 
-        // For walking-with-sword enemies, add a per-victim tolerance
-        // so the warn covers actors about to enter the arc during the
-        // strike's rotation.
-        let mut max_dist = base_max_distance;
-        if is_walking_with_sword(target_id.into()) {
-            let enemy_sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-            let relative = ((enemy_sector + 16 - attacker_direction) % 16) as u16;
-            // Original stores both the authored range and this tolerance in
-            // 16 bits, so the compound assignment wraps before promotion for
-            // the floating-point distance comparison.
-            max_dist = max_dist.wrapping_add(circle_warning_walking_tolerance(
-                relative,
-                rotation_angle_deg,
-            ));
+            // For walking-with-sword enemies, add a per-victim tolerance
+            // so the warn covers actors about to enter the arc during the
+            // strike's rotation.
+            let mut max_dist = base_max_distance;
+            if is_walking_with_sword(target_id.into()) {
+                let enemy_sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
+                let relative = ((enemy_sector + 16 - attacker_direction) % 16) as u16;
+                // Original stores both the authored range and this tolerance in
+                // 16 bits, so the compound assignment wraps before promotion for
+                // the floating-point distance comparison.
+                max_dist = max_dist.wrapping_add(circle_warning_walking_tolerance(
+                    relative,
+                    rotation_angle_deg,
+                ));
+            }
+            if distance <= f32::from(max_dist) {
+                victims.push(target_id.into());
+            }
         }
-        if distance <= f32::from(max_dist) {
-            victims.push(target_id.into());
-        }
+        victims
     }
-    victims
 }
 
 /// Parameters for push-strike victim collection.
 struct PushStrikeParams {
-    attacker_id: EntityId,
     attacker_pos: (f32, f32),
     attacker_elevation: f32,
     position_space: PushStrikePositionSpace,
@@ -2412,62 +2422,55 @@ fn push_strike_max_norm_allows(position_space: PushStrikePositionSpace, dx: f32,
     }
 }
 
-/// Collect possible victims for a push (rectangle) sword strike.
-///
-/// The hit area is a rectangle in front of the attacker: `[min_dist, max_dist]` deep
-/// and `[-width/2, +width/2]` wide, measured along the attacker's facing direction.
-fn collect_push_victims(
-    entities: &Entities,
-    params: &PushStrikeParams,
-    profile_manager: &crate::profiles::ProfileManager,
-    fast_grid: &crate::fast_find_grid::FastFindGrid,
-    obstacles: crate::sight_obstacle::ObstacleList<'_>,
-) -> Vec<EntityId> {
-    let PushStrikeParams {
-        attacker_id,
-        attacker_pos,
-        attacker_elevation,
-        position_space,
-        attacker_direction,
-        min_distance,
-        max_distance,
-        half_width,
-    } = *params;
-    let ((fx, fy), (sx, sy)) = crate::combat::push_strike_basis(attacker_direction);
+impl StrikeVictimQuery<'_> {
+    /// Collect possible victims for a push (rectangle) sword strike.
+    ///
+    /// The hit area is a rectangle in front of the attacker: `[min_dist, max_dist]` deep
+    /// and `[-width/2, +width/2]` wide, measured along the attacker's facing direction.
+    fn push_victims(self, params: &PushStrikeParams) -> Vec<EntityId> {
+        let PushStrikeParams {
+            attacker_pos,
+            attacker_elevation,
+            position_space,
+            attacker_direction,
+            min_distance,
+            max_distance,
+            half_width,
+        } = *params;
+        let ((fx, fy), (sx, sy)) = crate::combat::push_strike_basis(attacker_direction);
 
-    let mut victims = Vec::new();
-    for (target_id, entity) in
-        sword_strike_candidates(entities, attacker_id, profile_manager, fast_grid, obstacles)
-    {
-        let victim_elev = entity.position_iface().get_elevation();
-        if !push_strike_elevation_allows(position_space, attacker_elevation, victim_elev) {
-            continue;
-        }
-        let (pos_x, pos_y) = match position_space {
-            // Push sword-strike victim collection, used by strike warnings,
-            // projects from map position. The push strike's DONE
-            // effect instead projects from ground position.
-            PushStrikePositionSpace::Map => {
-                let map = entity.element_data().position_map();
-                (map.x, map.y)
+        let mut victims = Vec::new();
+        for (target_id, entity) in self.candidates() {
+            let victim_elev = entity.position_iface().get_elevation();
+            if !push_strike_elevation_allows(position_space, attacker_elevation, victim_elev) {
+                continue;
             }
-            PushStrikePositionSpace::Ground => {
-                let ground = entity.ground_position();
-                (ground.x, ground.y)
+            let (pos_x, pos_y) = match position_space {
+                // Push sword-strike victim collection, used by strike warnings,
+                // projects from map position. The push strike's DONE
+                // effect instead projects from ground position.
+                PushStrikePositionSpace::Map => {
+                    let map = entity.element_data().position_map();
+                    (map.x, map.y)
+                }
+                PushStrikePositionSpace::Ground => {
+                    let ground = entity.ground_position();
+                    (ground.x, ground.y)
+                }
+            };
+            let dx = pos_x - attacker_pos.0;
+            let dy = (pos_y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
+            if !push_strike_max_norm_allows(position_space, dx, dy) {
+                continue;
             }
-        };
-        let dx = pos_x - attacker_pos.0;
-        let dy = (pos_y - attacker_pos.1) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
-        if !push_strike_max_norm_allows(position_space, dx, dy) {
-            continue;
+            let front_dist = dx * fx + dy * fy;
+            let side_dist = (dx * sx + dy * sy).abs();
+            if front_dist >= min_distance && front_dist <= max_distance && side_dist <= half_width {
+                victims.push(target_id.into());
+            }
         }
-        let front_dist = dx * fx + dy * fy;
-        let side_dist = (dx * sx + dy * sy).abs();
-        if front_dist >= min_distance && front_dist <= max_distance && side_dist <= half_width {
-            victims.push(target_id.into());
-        }
+        victims
     }
-    victims
 }
 
 /// Map a SwordStrike to its animation OrderType.
