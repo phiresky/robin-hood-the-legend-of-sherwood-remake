@@ -260,7 +260,7 @@ class LifecycleGateTests(unittest.TestCase):
         artifact.write_bytes(b"fixture wasm")
         event = {"reason": "compiler-artifact", "target": {"name": "robin_rs"},
                  "profile": {"test": True}, "executable": str(artifact)}
-        cases = ["web_audio_backend::ownership", "multiplayer::client_protocol::tests::admission",
+        cases = ["web_audio_backend::ownership", "multiplayer::transport::client_protocol::tests::admission",
                  *sorted(gate.BROWSER_IDENTITY_CASES)]
         for count in (0, len(cases)):
             def fake_run(argv, **kwargs):
@@ -303,7 +303,7 @@ class LifecycleGateTests(unittest.TestCase):
                 self.assertNotIn("--target-dir", command)
 
     def test_browser_requires_passed_cases_from_every_group_and_both_identity_cases(self):
-        cases = {"web_audio_backend::ownership", "multiplayer::client_protocol::tests::admission",
+        cases = {"web_audio_backend::ownership", "multiplayer::transport::client_protocol::tests::admission",
                  *gate.BROWSER_IDENTITY_CASES}
         for missing in [{name for name in cases if name.startswith(prefix)}
                         for prefix in gate.BROWSER_GROUPS.values()] + [
@@ -318,7 +318,7 @@ class LifecycleGateTests(unittest.TestCase):
     def test_browser_rejects_fabricated_count_and_non_result_mentions(self):
         output = "\n".join(f"test {name} ... ok" for name in gate.BROWSER_IDENTITY_CASES)
         output += "\nconsole: test web_audio_backend::ownership ... ok"
-        output += "\nconsole: test multiplayer::client_protocol::tests::admission ... ok"
+        output += "\nconsole: test multiplayer::transport::client_protocol::tests::admission ... ok"
         with self.assertRaisesRegex(RuntimeError, "count does not match"):
             gate.verify_browser_tests(output + "\ntest result: ok. 99 passed; 0 failed")
         with self.assertRaisesRegex(RuntimeError, "did not execute audio"):
