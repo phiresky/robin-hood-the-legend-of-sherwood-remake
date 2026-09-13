@@ -59,11 +59,11 @@ impl InteractiveMission {
     pub(super) async fn run(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<GameCode, String> {
+    ) -> Result<GameCode, MissionError> {
         #[cfg(target_arch = "wasm32")]
         crate::replay_archive::flush_browser_storage()
             .await
-            .map_err(|error| format!("persist initial replay: {error:#}"))?;
+            .map_err(|error| MissionError::replay(format!("persist initial replay: {error:#}")))?;
         if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
             return Ok(code);
         }
@@ -72,7 +72,9 @@ impl InteractiveMission {
             #[cfg(target_arch = "wasm32")]
             crate::replay_archive::flush_browser_storage()
                 .await
-                .map_err(|error| format!("persist replay frame: {error:#}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("persist replay frame: {error:#}"))
+                })?;
             let control = control?;
             if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
                 return Ok(code);
@@ -81,12 +83,12 @@ impl InteractiveMission {
                 FrameControl::Continue | FrameControl::RestartIteration => {}
                 FrameControl::Exit(exit) => {
                     if let Some(output) = services.args.mission_start_map_output.as_deref() {
-                        return Err(format!(
+                        return Err(MissionError::render(format!(
                             "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
                             self.runtime.timeline.frame_number(),
                             services.args.mission_start_map_frame,
                             output.display()
-                        ));
+                        )));
                     }
                     return Ok(exit.into_game_code());
                 }
@@ -99,7 +101,7 @@ impl InteractiveMission {
     async fn capture_requested_screenshot_if_ready(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<Option<GameCode>, String> {
+    ) -> Result<Option<GameCode>, MissionError> {
         let args = services.args;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
@@ -219,10 +221,10 @@ impl InteractiveMission {
             };
 
             capture_result.await.map_err(|err| {
-                format!(
-                    "failed to render mission-start map to {}: {err}",
+                err.context(format!(
+                    "failed to render mission-start map to {}",
                     output_path.display()
-                )
+                ))
             })?;
             tracing::info!(
                 frame = timeline_frame,
@@ -662,7 +664,7 @@ impl InteractiveMission {
     async fn run_frame(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<FrameControl, String> {
+    ) -> Result<FrameControl, MissionError> {
         let first_frame = self.runtime.timeline.frame_number() == 0;
         let mut startup_timer =
             first_frame.then(|| super::setup::PhaseTimer::new("first mission frame"));

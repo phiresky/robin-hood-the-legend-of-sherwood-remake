@@ -2,6 +2,7 @@
 //! Houses `RenderContext` (the bundle of GPU + tooltip resources passed
 //! into `render_frame`) and the rewind-icon HUD glyph.
 
+use super::MissionError;
 use super::selected_pc_profile_indices;
 use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerTooltipTracker};
 use crate::game::Game;
@@ -512,7 +513,7 @@ pub(super) fn drain_screenshot_requests(
     for ss in pending {
         match begin_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
             Ok(capture) => http.submit_screenshot(ss, capture),
-            Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err)),
+            Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err.to_string())),
         }
     }
 }
@@ -543,7 +544,7 @@ fn begin_screenshot_rgba(
     dev: &engine_api::DevState,
     request: &crate::http_server::ScreenshotRequest,
     ctx: &mut RenderContext<'_>,
-) -> Result<crate::renderer::PendingCapture, String> {
+) -> Result<crate::renderer::PendingCapture, MissionError> {
     let scratch_dev = crate::http_server::screenshot::screenshot_dev_state(dev, &request.flags);
 
     if request.full_map {
@@ -678,25 +679,28 @@ fn write_print_screen_png(w: u32, h: u32, rgba: Vec<u8>) {
     }
 }
 
-fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
+fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), MissionError> {
     if rgba_byte_len(w, h) != Some(rgba.len()) {
-        return Err(format!(
+        return Err(MissionError::render(format!(
             "invalid RGBA buffer for {}x{} PNG: got {} bytes",
             w,
             h,
             rgba.len()
-        ));
+        )));
     }
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {err:#}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|err| {
+            MissionError::render(format!("failed to create {}: {err:#}", parent.display()))
+        })?;
     }
-    let file = std::fs::File::create(path)
-        .map_err(|err| format!("failed to create {}: {err:#}", path.display()))?;
-    encode_rgba_png(std::io::BufWriter::new(file), w, h, rgba)
-        .map_err(|err| format!("failed to encode {}: {err:#}", path.display()))
+    let file = std::fs::File::create(path).map_err(|err| {
+        MissionError::render(format!("failed to create {}: {err:#}", path.display()))
+    })?;
+    encode_rgba_png(std::io::BufWriter::new(file), w, h, rgba).map_err(|err| {
+        MissionError::render(format!("failed to encode {}: {err:#}", path.display()))
+    })
 }
 
 fn encode_rgba_png(
@@ -725,7 +729,7 @@ pub(super) fn drain_wide_print_screen(
     let capture = begin_wide_map_rgba(engine, display, host, assets, dev, ctx.draw_hud, ctx);
     Box::pin(async move {
         let captured = match capture {
-            Ok(capture) => capture.await.map_err(|error| error.to_string()),
+            Ok(capture) => capture.await.map_err(MissionError::from),
             Err(error) => Err(error),
         };
         match captured {
@@ -755,11 +759,11 @@ pub(super) fn capture_screenshot_to_path(
     ctx: &mut RenderContext<'_>,
     request: &crate::http_server::ScreenshotRequest,
     path: &std::path::Path,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>>>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MissionError>>>> {
     let capture = begin_screenshot_rgba(engine, display, host, assets, dev, request, ctx);
     let path = path.to_owned();
     Box::pin(async move {
-        let (w, h, rgba) = capture?.await.map_err(|error| error.to_string())?;
+        let (w, h, rgba) = capture?.await?;
         write_rgba_png(&path, w, h, &rgba)
     })
 }
@@ -772,14 +776,14 @@ fn begin_wide_map_rgba(
     dev: &engine_api::DevState,
     draw_hud: bool,
     ctx: &mut RenderContext<'_>,
-) -> Result<crate::renderer::PendingCapture, String> {
+) -> Result<crate::renderer::PendingCapture, MissionError> {
     let (viewport, level_w, level_h) = wide_map_viewport(&host.frontend.viewport)?;
     let render_h = viewport.screen_size.y as u32;
     let gpu_limit = ctx.renderer.gpu.device.limits().max_texture_dimension_2d;
     if level_w > gpu_limit || render_h > gpu_limit {
-        return Err(format!(
+        return Err(MissionError::render(format!(
             "capture {level_w}x{render_h} exceeds GPU texture limit {gpu_limit}"
-        ));
+        )));
     }
     let draw = host.draw();
     let capture_view = draw.with_viewport(&viewport);
@@ -858,15 +862,17 @@ fn crop_wide_capture(
 
 fn wide_map_viewport(
     live: &crate::host::ViewportState,
-) -> Result<(crate::host::ViewportState, u32, u32), String> {
+) -> Result<(crate::host::ViewportState, u32, u32), MissionError> {
     let level_w = live.level_size.x.ceil() as u32;
     let level_h = live.level_size.y.ceil() as u32;
     if level_w == 0 || level_h == 0 {
-        return Err("level size is empty".to_owned());
+        return Err(MissionError::render("level size is empty"));
     }
     let render_h = level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32);
     if level_w > u16::MAX as u32 || render_h > u16::MAX as u32 {
-        return Err(format!("level {level_w}x{level_h} exceeds renderer limits"));
+        return Err(MissionError::render(format!(
+            "level {level_w}x{level_h} exceeds renderer limits"
+        )));
     }
     let mut viewport = live.clone();
     viewport.view_position = engine_coordinates::MapPoint::ZERO;

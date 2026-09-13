@@ -601,7 +601,7 @@ impl InteractiveFrameSimulation {
         self,
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-    ) -> Result<FrameSimulationOutcome, String> {
+    ) -> Result<FrameSimulationOutcome, MissionError> {
         let state = Self::advance_simulation(self, mission, services);
         Self::drive_modals(mission, services, state).await
     }
@@ -1147,7 +1147,7 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
         state: SimulationModalState,
-    ) -> Result<FrameSimulationOutcome, String> {
+    ) -> Result<FrameSimulationOutcome, MissionError> {
         services.callbacks.poll_leaderboard_submissions();
         let mut state = state;
         let ui_task_exit_requested = Self::drive_pause_ui_tasks(mission, services, &mut state);

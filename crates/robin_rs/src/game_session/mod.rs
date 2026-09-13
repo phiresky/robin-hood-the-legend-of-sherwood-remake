@@ -5,6 +5,8 @@ mod bootstrap;
 pub(crate) use bootstrap::export_official_mission_headless;
 mod debriefing;
 mod dispatch;
+mod error;
+pub(crate) use error::MissionError;
 mod event_hud;
 mod flow;
 mod frame_perf;
@@ -161,7 +163,7 @@ pub(crate) struct MissionOutcome {
     pub(crate) campaign: Campaign,
     pub(crate) rng_seed: u64,
     pub(crate) sim_config: engine_api::SimConfig,
-    pub(crate) result: Result<GameCode, String>,
+    pub(crate) result: Result<GameCode, MissionError>,
     pub(crate) transition: Option<crate::main_entry::PendingLevelLoad>,
 }
 
@@ -188,7 +190,7 @@ impl MissionOutcome {
         campaign: Campaign,
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
-        result: Result<GameCode, String>,
+        result: Result<GameCode, MissionError>,
     ) -> Self {
         Self {
             campaign,
@@ -203,6 +205,8 @@ impl MissionOutcome {
 /// Consuming result of the outer mission-selection loop.
 pub(crate) struct SessionOutcome {
     pub(crate) campaign: Campaign,
+    /// The menu-facing boundary: mission errors are rendered to text here,
+    /// exactly once.
     pub(crate) result: Result<SessionResult, String>,
 }
 
@@ -362,7 +366,7 @@ pub(crate) async fn run_session(
             Err(error) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err(error),
+                    result: Err(error.to_string()),
                 };
             }
         };
@@ -496,7 +500,7 @@ async fn run_session_body(
                 Err(error) => {
                     return SessionOutcome {
                         campaign,
-                        result: Err(error),
+                        result: Err(error.to_string()),
                     };
                 }
             };
@@ -574,7 +578,7 @@ async fn run_session_body(
             Err(error) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err(error),
+                    result: Err(error.to_string()),
                 };
             }
         };
@@ -850,7 +854,9 @@ async fn run_mission_with_seed(
     let outcome = {
         let mut outcome = outcome;
         if let Err(error) = crate::replay_archive::retire_browser_mission().await {
-            outcome.result = Err(format!("retire browser replay: {error:#}"));
+            outcome.result = Err(MissionError::replay(format!(
+                "retire browser replay: {error:#}"
+            )));
             outcome.transition = None;
         }
         outcome
@@ -987,7 +993,9 @@ mod required_state_tests {
         );
         let expected = context.active_profile_snapshot().unwrap_err();
         assert_eq!(
-            validate_cold_save_spellforge_preference(&context, "NestedMission", true).unwrap_err(),
+            validate_cold_save_spellforge_preference(&context, "NestedMission", true)
+                .unwrap_err()
+                .to_string(),
             format!("read Spellforge gameplay preference: {expected}")
         );
     }
@@ -1016,8 +1024,9 @@ mod required_state_tests {
         )
         .unwrap();
 
-        let error =
-            validate_cold_save_spellforge_preference(&context, "NestedMission", true).unwrap_err();
+        let error = validate_cold_save_spellforge_preference(&context, "NestedMission", true)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("disabled in Gameplay settings"));
         assert!(
             !context
@@ -1303,10 +1312,16 @@ mod required_state_tests {
                 engine_campaign,
                 index as u64,
                 robin_engine::engine::SimConfig::default(),
-                outcome.clone(),
+                outcome
+                    .clone()
+                    .map_err(crate::game_session::MissionError::launch),
             );
 
-            assert_eq!(actual.result, outcome, "{path}");
+            assert_eq!(
+                actual.result.as_ref().map_err(ToString::to_string),
+                outcome.as_ref().map_err(Clone::clone),
+                "{path}"
+            );
             assert_eq!(
                 actual.campaign.values[CampaignValue::Custom20],
                 marker,
@@ -1464,7 +1479,8 @@ mod required_state_tests {
             &mut profiles,
             &mut args,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("pending direct-mission replay launch failed"));
         assert!(error.contains("has no current mission"));
         assert!(pending.is_none());
@@ -1502,6 +1518,7 @@ mod required_state_tests {
             assert!(
                 super::unprepared_replay_launch_error(&args)
                     .unwrap()
+                    .to_string()
                     .contains("before canonical decode")
             );
         }
@@ -1553,7 +1570,8 @@ mod required_state_tests {
             data,
             false,
         )
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("has no current mission"));
     }
 
@@ -1706,7 +1724,8 @@ mod required_state_tests {
             data,
             false,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("disabled in Gameplay settings"), "{error}");
         assert!(
@@ -1734,7 +1753,8 @@ mod required_state_tests {
             data,
             false,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("Original parity"), "{error}");
     }

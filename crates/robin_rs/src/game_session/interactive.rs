@@ -588,7 +588,8 @@ impl InteractiveRendererAssembly {
         args: &crate::main_entry::MissionLaunch,
         mission_idx: usize,
         location: MissionLocation,
-    ) -> Result<InteractiveFrontendAssembly, String> {
+    ) -> Result<InteractiveFrontendAssembly, super::MissionError> {
+        use super::MissionError;
         window.gamepad_input.begin_mission();
         let sprites = load_mission_sprites(
             engine,
@@ -601,7 +602,9 @@ impl InteractiveRendererAssembly {
         let mut timer = super::setup::PhaseTimer::new("process frontend");
         let sample_loader = crate::audio_backend::create_sample_loader_with_files(
             std::path::PathBuf::from(&game.global_options.sound_directory),
-            host.preparation_files()?.clone(),
+            host.preparation_files()
+                .map_err(MissionError::application)?
+                .clone(),
             host.frontend.resources.shipping.clone(),
         );
         let sound_rng = fastrand::Rng::new();
@@ -621,7 +624,9 @@ impl InteractiveRendererAssembly {
             &mut self.renderer,
             host.frontend.resources.shipping.as_deref(),
             menu_res,
-            host.preparation_files()?.clone(),
+            host.preparation_files()
+                .map_err(MissionError::application)?
+                .clone(),
         );
         if menu.is_none() {
             tracing::error!(

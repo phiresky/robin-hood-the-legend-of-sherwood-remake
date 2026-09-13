@@ -29,12 +29,11 @@ pub fn prepare_direct_custom_mission_args(
     args: &MissionLaunch,
     _profiles: &engine_profiles::ProfileManager,
     _application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, String> {
+) -> Result<Option<MissionLaunch>, crate::main_entry::LaunchError> {
     if args.custom_mission.is_some() {
-        return Err(
-            "--custom-mission filesystem paths are unavailable in browser builds; use canonical host-distributed content"
-                .to_owned(),
-        );
+        return Err(crate::main_entry::LaunchError::arguments(
+            "--custom-mission filesystem paths are unavailable in browser builds; use canonical host-distributed content",
+        ));
     }
     Ok(None)
 }

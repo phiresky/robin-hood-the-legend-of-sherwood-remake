@@ -2087,7 +2087,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
     sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     menu_resources: &mut Option<IngameMenuResources>,
     sherwood_enable: &mut SherwoodButtonEnable,
-) -> Result<HandlerAction, String> {
+) -> Result<HandlerAction, super::MissionError> {
     let engine = &mut manager.engine;
     if host.transport.net().is_some()
         && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST

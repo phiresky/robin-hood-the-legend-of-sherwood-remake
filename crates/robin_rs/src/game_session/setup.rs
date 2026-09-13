@@ -4,7 +4,7 @@
 //! bootstrap.
 
 mod custom_sprites;
-mod error;
+pub(super) mod error;
 mod localization;
 mod preparation;
 mod resources;
@@ -16,6 +16,7 @@ pub(super) use resources::{
     DecodingInterfaceResources, MissionEngineResources, MissionProcessResources,
 };
 
+use super::MissionError;
 use crate::audio_backend::KiraAudioBackend;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
@@ -120,11 +121,13 @@ pub(super) fn setup_mission_audio(
     profiles: &engine_profiles::ProfileManager,
     location: MissionLocation,
     sound_dir: &str,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     let mut timer = PhaseTimer::new("mission audio setup");
     let loader = crate::audio_backend::create_sample_loader_with_files(
         std::path::PathBuf::from(sound_dir),
-        host.preparation_files()?.clone(),
+        host.preparation_files()
+            .map_err(MissionError::application)?
+            .clone(),
         host.frontend.resources.shipping.clone(),
     );
 
@@ -182,15 +185,15 @@ fn initialize_mission_sound_caches(
     profiles: &engine_profiles::ProfileManager,
     required_source_ids: &std::collections::BTreeSet<u32>,
     files: std::sync::Arc<engine_sbfile::SbFileSystem>,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     // Mission transitions must not retain any preceding mission's group or
     // source closure: IndexedCache correctly rejects duplicate group IDs.
     host.audio.sound.sound_cache_mut().flush(true);
-    let asset_cache = host.application_context().asset_cache()?.get_or_build(
-        host.frontend.resources.shipping.as_deref(),
-        profiles,
-        files,
-    );
+    let asset_cache = host
+        .application_context()
+        .asset_cache()
+        .map_err(MissionError::application)?
+        .get_or_build(host.frontend.resources.shipping.as_deref(), profiles, files);
     if let Some(elements) = asset_cache.fx_bank.as_ref() {
         host.audio
             .sound
@@ -222,7 +225,7 @@ fn required_mission_exclamation_ids(
     loaded: &robin_engine::level_data::LoadedLevel,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
-) -> Result<std::collections::BTreeSet<u32>, String> {
+) -> Result<std::collections::BTreeSet<u32>, MissionError> {
     use std::collections::BTreeSet;
 
     let forest_level = loaded
@@ -230,11 +233,12 @@ fn required_mission_exclamation_ids(
         .misc
         .as_ref()
         .is_some_and(|misc| misc.forest_level);
-    let normalize_character = |index: u32| -> Result<usize, String> {
-        let profile = profiles
-            .characters
-            .get(index as usize)
-            .ok_or_else(|| format!("required speech character profile {index} does not exist"))?;
+    let normalize_character = |index: u32| -> Result<usize, MissionError> {
+        let profile = profiles.characters.get(index as usize).ok_or_else(|| {
+            MissionError::asset(format!(
+                "required speech character profile {index} does not exist"
+            ))
+        })?;
         if !matches!(profile.filename.as_str(), "RobinHood" | "RobinTown") {
             return Ok(index as usize);
         }
@@ -247,10 +251,14 @@ fn required_mission_exclamation_ids(
             .characters
             .iter()
             .position(|candidate| candidate.filename == wanted)
-            .ok_or_else(|| format!("required normalized speech profile {wanted} is absent"))
+            .ok_or_else(|| {
+                MissionError::asset(format!(
+                    "required normalized speech profile {wanted} is absent"
+                ))
+            })
     };
     let mut ids = BTreeSet::new();
-    let add_character = |ids: &mut BTreeSet<u32>, index: u32| -> Result<(), String> {
+    let add_character = |ids: &mut BTreeSet<u32>, index: u32| -> Result<(), MissionError> {
         let index = normalize_character(index)?;
         let id = profiles.characters[index].exclamation_id;
         if id != 0 {
@@ -261,17 +269,21 @@ fn required_mission_exclamation_ids(
 
     let mission_index = campaign
         .current_mission_idx
-        .ok_or_else(|| "speech closure requires a current campaign mission".to_owned())?;
-    let mission = campaign
-        .missions
-        .get(mission_index)
-        .ok_or_else(|| format!("current campaign mission {mission_index} does not exist"))?;
+        .ok_or_else(|| MissionError::asset("speech closure requires a current campaign mission"))?;
+    let mission = campaign.missions.get(mission_index).ok_or_else(|| {
+        MissionError::asset(format!(
+            "current campaign mission {mission_index} does not exist"
+        ))
+    })?;
     let mission_profile = mission.profile(profiles);
     for &index in &mission_profile.required_character_indices {
         add_character(&mut ids, index)?;
     }
     for soldier in &loaded.mission.soldiers {
-        let index = soldier.profile_index(profiles)?;
+        // TODO(10/F11): leaf returns String (engine level data).
+        let index = soldier
+            .profile_index(profiles)
+            .map_err(MissionError::asset)?;
         let profile = profiles
             .get_soldier(index)
             .expect("resolved soldier profile");
@@ -284,10 +296,10 @@ fn required_mission_exclamation_ids(
             .civilians
             .get(civilian.profile_number as usize)
             .ok_or_else(|| {
-                format!(
+                MissionError::asset(format!(
                     "mission civilian references missing speech profile {}",
                     civilian.profile_number
-                )
+                ))
             })?;
         if profile.exclamation_id != 0 {
             ids.insert(profile.exclamation_id);
@@ -298,29 +310,34 @@ fn required_mission_exclamation_ids(
     }
     for &character_index in &campaign.mission_team_indices {
         let description = campaign.characters.get(character_index).ok_or_else(|| {
-            format!("mission team references missing character {character_index}")
+            MissionError::asset(format!(
+                "mission team references missing character {character_index}"
+            ))
         })?;
-        let profile = description
-            .character_profile_idx
-            .ok_or_else(|| format!("mission-team character {character_index} has no profile"))?;
+        let profile = description.character_profile_idx.ok_or_else(|| {
+            MissionError::asset(format!(
+                "mission-team character {character_index} has no profile"
+            ))
+        })?;
         add_character(&mut ids, profile.0)?;
     }
     for &character_index in &campaign.gang_indices {
-        let description = campaign
-            .characters
-            .get(character_index)
-            .ok_or_else(|| format!("gang references missing character {character_index}"))?;
+        let description = campaign.characters.get(character_index).ok_or_else(|| {
+            MissionError::asset(format!(
+                "gang references missing character {character_index}"
+            ))
+        })?;
         if description.instanced {
             continue;
         }
-        let profile_index = description
-            .character_profile_idx
-            .ok_or_else(|| format!("gang character {character_index} has no profile"))?;
+        let profile_index = description.character_profile_idx.ok_or_else(|| {
+            MissionError::asset(format!("gang character {character_index} has no profile"))
+        })?;
         let profile = profiles.get_character(profile_index).ok_or_else(|| {
-            format!(
+            MissionError::asset(format!(
                 "gang character references missing profile {}",
                 profile_index.0
-            )
+            ))
         })?;
         if !profile.vip {
             add_character(&mut ids, profile_index.0)?;
@@ -363,8 +380,10 @@ pub(super) fn pre_decode_maps_and_resources(
     profiles: &engine_profiles::ProfileManager,
     host: &Host,
     game: &Game,
-) -> Result<LoadedInteractiveResources, String> {
-    let files = host.preparation_files()?;
+) -> Result<LoadedInteractiveResources, MissionError> {
+    let files = host
+        .preparation_files()
+        .map_err(MissionError::application)?;
     let mut timer = PhaseTimer::new("descriptor+font setup");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -388,8 +407,7 @@ pub(super) fn pre_decode_maps_and_resources(
         )
     };
     if let Some(descriptors) = level_descriptors.as_mut() {
-        apply_mission_descriptor_patch(engine.campaign(), profiles, descriptors, files)
-            .map_err(|error| error.to_string())?;
+        apply_mission_descriptor_patch(engine.campaign(), profiles, descriptors, files)?;
     }
     timer.step("level descriptors");
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
@@ -892,13 +910,16 @@ pub(super) struct LoadedMissionCore {
 }
 
 pub(super) struct MissionLoadError {
-    pub(super) message: String,
+    pub(super) message: MissionError,
     pub(super) campaign: Campaign,
 }
 
 impl MissionLoadError {
-    fn new(campaign: Campaign, message: String) -> Self {
-        Self { message, campaign }
+    fn new(campaign: Campaign, message: impl Into<MissionError>) -> Self {
+        Self {
+            message: message.into(),
+            campaign,
+        }
     }
 }
 
@@ -1047,7 +1068,12 @@ pub(super) fn prepare_mission(
     } = launch;
     let files = match host.preparation_files() {
         Ok(files) => std::sync::Arc::new(files.snapshot()),
-        Err(message) => return Err(MissionLoadError::new(campaign, message)),
+        Err(message) => {
+            return Err(MissionLoadError::new(
+                campaign,
+                MissionError::application(message),
+            ));
+        }
     };
     let mut assets = engine_api::LevelAssets::new();
     let mission_name = campaign.current_mission_idx.map(|i| {
@@ -1138,7 +1164,7 @@ pub(super) fn prepare_mission(
             Err(error) => {
                 return Err(MissionLoadError::new(
                     campaign,
-                    format!("prepare shipping mission resources: {error:#}"),
+                    MissionError::asset(format!("prepare shipping mission resources: {error:#}")),
                 ));
             }
         },
@@ -1163,7 +1189,12 @@ pub(super) fn prepare_mission(
     {
         let cache_owner = match host.application_context().asset_cache() {
             Ok(cache) => cache,
-            Err(message) => return Err(MissionLoadError::new(campaign, message)),
+            Err(message) => {
+                return Err(MissionLoadError::new(
+                    campaign,
+                    MissionError::application(message),
+                ));
+            }
         };
         let asset_cache = cache_owner.get_or_build(
             host.frontend.resources.shipping.as_deref(),
@@ -1183,7 +1214,7 @@ pub(super) fn prepare_mission(
     let custom_sprites =
         match prepare_custom_character_dirs(&campaign, &assets.profile_manager, &files) {
             Ok(prepared) => prepared,
-            Err(error) => return Err(MissionLoadError::new(campaign, error.to_string())),
+            Err(error) => return Err(MissionLoadError::new(campaign, error)),
         };
     if let Err(error) = custom_sprites.install(
         host.frontend
@@ -1191,7 +1222,7 @@ pub(super) fn prepare_mission(
             .frame_holder_before_publication_mut(),
         assets.sprite_scriptor_mut(),
     ) {
-        return Err(MissionLoadError::new(campaign, error.to_string()));
+        return Err(MissionLoadError::new(campaign, error));
     }
     timer.step("hackable character preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
@@ -1268,8 +1299,9 @@ pub(super) fn prepare_mission(
         |decoded: crate::level_loading_host::DecodedTerrainBitmaps,
          bg: &mut Option<engine_api::level_loading::PreDecodedBackground>,
          mm: &mut Option<engine_api::level_loading::PreDecodedMinimap>|
-         -> Result<(f32, f32), String> {
-            let background = decoded.background?;
+         -> Result<(f32, f32), MissionError> {
+            // TODO(10/F11): leaf returns String (terrain decode worker).
+            let background = decoded.background.map_err(MissionError::asset)?;
             let dims = background
                 .as_ref()
                 .map(|b| (b.width as f32, b.height as f32))
@@ -1512,7 +1544,10 @@ impl PreparedMission {
                 };
                 let engine =
                     Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
-                        MissionLoadError::new(campaign, format!("Level init failed: {error}"))
+                        MissionLoadError::new(
+                            campaign,
+                            MissionError::asset(format!("Level init failed: {error}")),
+                        )
                     })?;
                 (
                     engine,
@@ -1529,8 +1564,9 @@ impl PreparedMission {
                                     let campaign = Engine::from_prepared(prepared).into_campaign();
                                     return Err(MissionLoadError::new(
                                         campaign,
-                                        "simulation-content export has no prepared mission identity"
-                                            .to_owned(),
+                                        MissionError::launch(
+                                            "simulation-content export has no prepared mission identity",
+                                        ),
                                     ));
                                 }
                             };
@@ -1557,7 +1593,9 @@ impl PreparedMission {
                             let campaign = Engine::from_prepared(prepared).into_campaign();
                             return Err(MissionLoadError::new(
                                 campaign,
-                                format!("simulation-content export failed: {error:#}"),
+                                MissionError::asset(format!(
+                                    "simulation-content export failed: {error:#}"
+                                )),
                             ));
                         }
                         }
@@ -1566,7 +1604,7 @@ impl PreparedMission {
                     Err((error, campaign)) => {
                         return Err(MissionLoadError::new(
                             campaign,
-                            format!("Level init failed: {error}"),
+                            MissionError::asset(format!("Level init failed: {error}")),
                         ));
                     }
                 }
@@ -1634,7 +1672,13 @@ impl ConstructedMission {
                 let decoded = pending.join_blocking();
                 let background = match decoded.background {
                     Ok(background) => background,
-                    Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
+                    // TODO(10/F11): leaf returns String (terrain decode worker).
+                    Err(message) => {
+                        return Err(MissionLoadError::new(
+                            replay_campaign,
+                            MissionError::asset(message),
+                        ));
+                    }
                 };
                 if let Some(bg) = background.as_ref() {
                     assert_eq!(
@@ -1664,7 +1708,7 @@ impl ConstructedMission {
             .map_err(|error| {
                 MissionLoadError::new(
                     replay_campaign.clone(),
-                    format!("decode frame-zero Original save: {error}"),
+                    MissionError::save(format!("decode frame-zero Original save: {error}")),
                 )
             })?;
             let loaded_host =
@@ -1676,7 +1720,7 @@ impl ConstructedMission {
                 .map_err(|error| {
                     MissionLoadError::new(
                         replay_campaign.clone(),
-                        format!("adopt frame-zero Original save: {error}"),
+                        MissionError::save(format!("adopt frame-zero Original save: {error}")),
                     )
                 })?;
             loaded_host.apply_display_to(&mut host.frontend.presentation.engine_display);
@@ -2134,7 +2178,7 @@ mod tests {
             Err(error) => error,
         };
         assert!(
-            error.message.contains("Level init failed"),
+            error.message.to_string().contains("Level init failed"),
             "{}",
             error.message
         );
@@ -2171,7 +2215,7 @@ mod tests {
             Ok(_) => panic!("terrain failure must reject attachment"),
             Err(error) => error,
         };
-        assert_eq!(error.message, "terrain fixture failed");
+        assert_eq!(error.message.to_string(), "terrain fixture failed");
         assert_eq!(
             serde_json::to_value(&error.campaign).unwrap(),
             campaign_before

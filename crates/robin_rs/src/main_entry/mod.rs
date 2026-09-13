@@ -18,9 +18,12 @@
 
 mod callbacks;
 mod cli;
+mod error;
 mod init;
 mod platform;
 mod run;
+
+pub use error::LaunchError;
 
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
 pub use crate::official_projection_export::SimulationContentExportRequest;

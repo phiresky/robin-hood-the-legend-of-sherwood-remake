@@ -17,7 +17,7 @@ fn begin_interactive_frame(
     runtime: &mut TimelineRuntime,
     hud: &mut MissionHud,
     presentation: &MissionPresentation,
-) -> Result<FrameStart, String> {
+) -> Result<FrameStart, MissionError> {
     let MissionIngress {
         host,
         manager,
@@ -40,8 +40,8 @@ fn begin_interactive_frame(
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
     // fresh cursor.
-    let net_drain = drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())
-        .map_err(|error| error.to_string())?;
+    let net_drain =
+        drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())?;
     let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
 
@@ -244,7 +244,7 @@ pub(super) async fn collect_input_and_menus(
     window: &mut GameWindow,
     callbacks: &mut RustCallbacks,
     profiles: &engine_profiles::ProfileManager,
-) -> Result<ControlFlow<FrameControl, InputPrepared>, String> {
+) -> Result<ControlFlow<FrameControl, InputPrepared>, MissionError> {
     let FrameStart {
         mut frame,
         mp_clock_pause,

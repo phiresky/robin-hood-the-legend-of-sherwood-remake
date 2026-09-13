@@ -262,11 +262,14 @@ mod tests {
             robin_engine::campaign::Campaign::default(),
             4,
             robin_engine::engine::SimConfig::default(),
-            Err("exit failed".into()),
+            Err(crate::game_session::MissionError::save("exit failed")),
         )
         .with_transition(Some(transition.clone()));
         assert!(failed.transition.is_none());
-        assert_eq!(failed.result, Err("exit failed".into()));
+        assert_eq!(
+            failed.result.map_err(|error| error.to_string()),
+            Err("exit failed".to_owned())
+        );
         let request = SaveLoadRequest::ApplyLoad(transition.into_load());
         callbacks.queue_operation(request);
         let Some(SaveLoadRequest::ApplyLoad(load)) = callbacks.pending_request() else {

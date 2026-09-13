@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// it in `TimelineRuntime` also keeps snapshot adoption ahead of replay and
 /// rollback frame capture for both graphical and true-headless drivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::game_session) enum MultiplayerAdmission {
+pub(crate) enum MultiplayerAdmission {
     NotRequired,
     HostWaitingForBegin,
     HostWaitingForResyncBegin { snapshot_frame: u32 },

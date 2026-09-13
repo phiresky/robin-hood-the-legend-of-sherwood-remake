@@ -77,20 +77,20 @@ pub(crate) fn install_pending_lua_session(
 pub(crate) fn pending_cold_save_lua_launch(
     callbacks: &RustCallbacks,
     args: &crate::main_entry::MissionLaunch,
-) -> Result<Option<(String, robin_engine::spellforge::SpellforgePackage)>, String> {
+) -> Result<Option<(String, robin_engine::spellforge::SpellforgePackage)>, MissionError> {
     let Some(SaveLoadRequest::ApplyLoad(load)) = callbacks.pending_request() else {
         return Ok(None);
     };
     let save = load.save();
     let resolved = args.resolved_mission_assets.as_ref().ok_or_else(|| {
-        "preflighted save reached engine construction without a resolved mission asset lifetime"
-            .to_owned()
+        MissionError::save(
+            "preflighted save reached engine construction without a resolved mission asset lifetime",
+        )
     })?;
     if resolved.descriptor() != &save.header.mission_assets {
-        return Err(
-            "preflighted save descriptor differs from its resolved mission asset lifetime"
-                .to_owned(),
-        );
+        return Err(MissionError::save(
+            "preflighted save descriptor differs from its resolved mission asset lifetime",
+        ));
     }
     Ok(save.engine.spellforge_package().map(|package| {
         (
@@ -204,10 +204,10 @@ pub(super) async fn prepare_cold_save_mission(
         MissionLocation,
         Arc<crate::mission_asset_restore::ResolvedMissionAssets>,
     ),
-    String,
+    MissionError,
 > {
     save.validate_current_schema()
-        .map_err(|error| format!("invalid current save schema: {error:#}"))?;
+        .map_err(|error| MissionError::save(format!("invalid current save schema: {error:#}")))?;
     #[cfg(target_arch = "wasm32")]
     if let Some(link) = &save.header.replay
         && let Err(error) = crate::replay_archive::prepare_browser_directory(std::path::Path::new(
@@ -240,7 +240,7 @@ pub(super) async fn prepare_cold_save_mission(
 pub(super) fn validate_cold_save_spellforge_enabled(
     application_context: &ApplicationContext,
     save: &crate::save_file::GameSaveFile,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     validate_cold_save_spellforge_preference(
         application_context,
         &save.header.mission_assets.mission_basename,
@@ -252,17 +252,20 @@ pub(super) fn validate_cold_save_spellforge_preference(
     application_context: &ApplicationContext,
     mission_basename: &str,
     requires_spellforge: bool,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     if !requires_spellforge {
         return Ok(());
     }
+    // TODO(10/F11): leaf returns String (`with_active_profile` must stay text).
     let enabled = application_context
         .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)
-        .map_err(|error| format!("read Spellforge gameplay preference: {error}"))?;
+        .map_err(|error| {
+            MissionError::application(format!("read Spellforge gameplay preference: {error}"))
+        })?;
     if !enabled {
-        return Err(format!(
+        return Err(MissionError::launch(format!(
             "Spellforge mission `{mission_basename}` is disabled in Gameplay settings"
-        ));
+        )));
     }
     Ok(())
 }
@@ -270,7 +273,7 @@ pub(super) fn validate_cold_save_spellforge_preference(
 pub(super) async fn resolve_cold_save_mission_assets(
     application_context: &ApplicationContext,
     save: &crate::save_file::GameSaveFile,
-) -> Result<crate::mission_asset_restore::ResolvedMissionAssets, String> {
+) -> Result<crate::mission_asset_restore::ResolvedMissionAssets, MissionError> {
     let descriptor = &save.header.mission_assets;
     let package = save.engine.spellforge_package();
     if matches!(
@@ -281,7 +284,9 @@ pub(super) async fn resolve_cold_save_mission_assets(
             descriptor,
             package.as_deref(),
         )
-        .map_err(|error| format!("restore built-in save mission assets: {error}"));
+        .map_err(|error| {
+            MissionError::from(error).context("restore built-in save mission assets")
+        });
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -304,12 +309,17 @@ pub(super) async fn resolve_cold_save_mission_assets(
                 package.as_deref(),
                 &roots,
                 None,
-                application_context.preparation_files()?.clone(),
+                application_context
+                    .preparation_files()
+                    .map_err(MissionError::application)?
+                    .clone(),
             )
             .map_err(|without_cache| {
-                format!(
+                // TODO(10/F11): leaf returns String (the cache attempt crosses
+                // `with_distributed_mod_cache_mut`, whose closure reports text).
+                MissionError::asset(format!(
                     "restore save mission assets without cache: {without_cache}; cache attempt: {cache_error}"
-                )
+                ))
             }),
         }
     }
@@ -320,52 +330,63 @@ pub(super) async fn resolve_cold_save_mission_assets(
             .archive_assets()
             .and_then(|archive| archive.distributed_cache.as_ref())
             .ok_or_else(|| {
-                "browser cold save has no exact durable-cache identity; installed filesystem locators are unavailable"
-                    .to_owned()
+                MissionError::asset(
+                    "browser cold save has no exact durable-cache identity; installed filesystem locators are unavailable",
+                )
             })?;
+        // TODO(10/F11): leaf returns String (browser durable cache).
         let lease = crate::distributed_mod_cache::acquire(cache_identity.full_mod_sha256)
-            .await?
+            .await
+            .map_err(MissionError::asset)?
             .ok_or_else(|| {
-                format!(
+                MissionError::asset(format!(
                     "browser durable cache has no exact save mission object {}",
                     robin_engine::spellforge::hex_hash(&cache_identity.full_mod_sha256)
-                )
+                ))
             })?;
         crate::mission_asset_restore::resolve_cached_mission_assets(
             descriptor,
             package.as_deref(),
             lease,
-            application_context.preparation_files()?.clone(),
+            application_context
+                .preparation_files()
+                .map_err(MissionError::application)?
+                .clone(),
         )
-        .map_err(|error| format!("restore exact browser save mission assets: {error}"))
+        .map_err(|error| {
+            MissionError::from(error).context("restore exact browser save mission assets")
+        })
     }
 }
 
 pub(crate) fn install_and_validate_saved_profile(
     profiles: &mut engine_profiles::ProfileManager,
     save: &crate::save_file::GameSaveFile,
-) -> Result<usize, String> {
+) -> Result<usize, MissionError> {
     let descriptor = &save.header.mission_assets;
     let campaign = save.engine.campaign();
     let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
-        format!(
+        MissionError::save(format!(
             "save campaign has no current mission for descriptor `{}`",
             descriptor.mission_basename
-        )
+        ))
     })?;
     let mission = campaign.missions.get(mission_idx).ok_or_else(|| {
-        format!("save current mission index {mission_idx} is outside its campaign")
+        MissionError::save(format!(
+            "save current mission index {mission_idx} is outside its campaign"
+        ))
     })?;
-    let profile_idx = mission
-        .profile_idx
-        .ok_or_else(|| format!("save campaign mission at index {mission_idx} has no profile_idx"))?
-        as usize;
+    let profile_idx = mission.profile_idx.ok_or_else(|| {
+        MissionError::save(format!(
+            "save campaign mission at index {mission_idx} has no profile_idx"
+        ))
+    })? as usize;
     if profile_idx == profiles.missions.len() {
         if descriptor.archive_assets().is_none() {
-            return Err(format!(
+            return Err(MissionError::save(format!(
                 "built-in save mission `{}` references missing static profile {profile_idx}",
                 descriptor.mission_basename
-            ));
+            )));
         }
         let restored = profiles.add_forced_mission(
             descriptor.proto_level_filename.clone(),
@@ -373,36 +394,38 @@ pub(crate) fn install_and_validate_saved_profile(
             descriptor.mission_basename.clone(),
         ) as usize;
         if restored != profile_idx {
-            return Err(format!(
+            return Err(MissionError::save(format!(
                 "forced save profile restored at {restored}, expected serialized index {profile_idx}"
-            ));
+            )));
         }
     } else if profile_idx > profiles.missions.len() {
-        return Err(format!(
+        return Err(MissionError::save(format!(
             "save mission `{}` references missing profile {profile_idx}, but only {} static profiles are installed",
             descriptor.mission_basename,
             profiles.missions.len()
-        ));
+        )));
     }
     let profile = profiles.missions.get(profile_idx).ok_or_else(|| {
-        format!("save mission profile {profile_idx} disappeared during reconstruction")
+        MissionError::save(format!(
+            "save mission profile {profile_idx} disappeared during reconstruction"
+        ))
     })?;
     if profile.id != save.header.mission_id {
-        return Err(format!(
+        return Err(MissionError::save(format!(
             "save header mission id {} does not match exact profile id {}",
             save.header.mission_id, profile.id
-        ));
+        )));
     }
     if profile.mission_filename != descriptor.mission_basename
         || profile.proto_level_filename != descriptor.proto_level_filename
     {
-        return Err(format!(
+        return Err(MissionError::save(format!(
             "save mission descriptor {}/{} does not match exact profile {}/{}",
             descriptor.mission_basename,
             descriptor.proto_level_filename,
             profile.mission_filename,
             profile.proto_level_filename
-        ));
+        )));
     }
     crate::main_entry::validate_save_mission(save, profiles)?;
     Ok(mission_idx)
@@ -506,7 +529,7 @@ pub(super) fn prepare_direct_restart(
     args: &mut crate::main_entry::MissionLaunch,
     replay_restart: Option<&(Campaign, u64, engine_api::SimConfig)>,
     outcome_sim_config: engine_api::SimConfig,
-) -> Result<(u64, engine_api::SimConfig), String> {
+) -> Result<(u64, engine_api::SimConfig), MissionError> {
     if let Some((replay_campaign, seed, config)) = replay_restart {
         *campaign = replay_campaign.clone();
         return Ok((
@@ -515,7 +538,9 @@ pub(super) fn prepare_direct_restart(
         ));
     }
     if !restore_direct_restart_boundary(campaign, args) {
-        return Err("direct LevelRestart is missing its preselected mission checkpoint".to_owned());
+        return Err(MissionError::launch(
+            "direct LevelRestart is missing its preselected mission checkpoint",
+        ));
     }
     let (seed, config) = campaign.restart_simulation_checkpoint();
     Ok((
@@ -552,7 +577,7 @@ pub(super) async fn prepare_pending_direct_replay(
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
     args: &mut crate::main_entry::MissionLaunch,
-) -> Result<Option<(Campaign, usize, MissionLocation, u64, engine_api::SimConfig)>, String> {
+) -> Result<Option<(Campaign, usize, MissionLocation, u64, engine_api::SimConfig)>, MissionError> {
     let Some(pending) = pending.take() else {
         return Ok(None);
     };
@@ -569,7 +594,7 @@ pub(super) async fn prepare_pending_direct_replay(
         pending.paused,
     )
     .await
-    .map_err(|error| format!("pending direct-mission replay launch failed: {error}"))?;
+    .map_err(|error| error.context("pending direct-mission replay launch failed"))?;
     *args = prepared.launch;
     Ok(Some((
         prepared.campaign,
@@ -582,18 +607,16 @@ pub(super) async fn prepare_pending_direct_replay(
 
 pub(super) fn unprepared_replay_launch_error(
     args: &crate::main_entry::MissionLaunch,
-) -> Option<String> {
+) -> Option<MissionError> {
     if args.replay.is_some() {
-        return Some(
-            "replay path/compact input reached mission construction before canonical decode and cold asset resolution"
-                .to_owned(),
-        );
+        return Some(MissionError::launch(
+            "replay path/compact input reached mission construction before canonical decode and cold asset resolution",
+        ));
     }
     if args.replay_data.is_some() && args.resolved_mission_assets.is_none() {
-        return Some(
-            "decoded replay reached mission construction before exact cold asset resolution"
-                .to_owned(),
-        );
+        return Some(MissionError::launch(
+            "decoded replay reached mission construction before exact cold asset resolution",
+        ));
     }
     None
 }
@@ -605,11 +628,14 @@ pub(super) async fn ensure_shipping_mission<F>(
     profiles: &engine_profiles::ProfileManager,
     has_decoded_saved_world: bool,
     progress: F,
-) -> Result<(), String>
+) -> Result<(), MissionError>
 where
     F: FnMut(crate::shipping_mission::MissionLoadProgress<'_>),
 {
-    let shipping = args.global_options.shipping_arc()?;
+    let shipping = args
+        .global_options
+        .shipping_arc()
+        .map_err(MissionError::application)?;
     let Some(datadir) = shipping.as_ref() else {
         return Ok(());
     };
@@ -617,9 +643,9 @@ where
         && !datadir.has_mission(mission)
         && !robin_engine::level_data::hackable_level_exists(mission)
     {
-        return Err(format!(
+        return Err(MissionError::asset(format!(
             "shipping manifest has no payload for required mission {mission}"
-        ));
+        )));
     }
     if !datadir.has_mission(mission) {
         return Ok(());
@@ -635,7 +661,7 @@ where
         progress,
     )
     .await
-    .map_err(|error| format!("load mission assets for {mission}: {error:#}"))
+    .map_err(|error| MissionError::asset(format!("load mission assets for {mission}: {error:#}")))
 }
 
 pub(super) fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {

@@ -17,7 +17,7 @@ use super::setup::{
     prepare_mission, setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{
-    MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
+    MissionError, MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
     pending_cold_save_lua_launch, setup_multiplayer_session,
 };
 use crate::game::Game;
@@ -190,7 +190,7 @@ impl MissionBootstrap {
         mut self: Box<Self>,
         backend: Option<&mut crate::audio_backend::KiraAudioBackend>,
         profiles: &ProfileManager,
-    ) -> Result<AudioPreparedBootstrap, (Box<Self>, String)> {
+    ) -> Result<AudioPreparedBootstrap, (Box<Self>, MissionError)> {
         if let Err(error) = setup_mission_audio(
             &mut self.host,
             backend,
@@ -217,7 +217,7 @@ impl MissionBootstrap {
         &mut self,
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::MissionLaunch,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         // A lost Sherwood campaign still needs a runtime for debriefing and
         // network/HTTP draining, but must not start play time or restart state.
         if !(self.game.is_sherwood && self.loaded.engine.campaign().get_ares() == 0) {
@@ -239,7 +239,7 @@ impl MissionBootstrap {
         &mut self,
         callbacks: &mut RustCallbacks,
         args: &crate::main_entry::MissionLaunch,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         let descriptor = self
             .game
             .mission_assets()
@@ -567,8 +567,10 @@ impl AudioPreparedBootstrap {
     /// must remain available for the caller's campaign recovery path.
     async fn retain_during_frontend_assembly(
         mut self,
-        assemble: impl AsyncFnOnce(&mut MissionBootstrap) -> Result<InteractiveFrontendAssembly, String>,
-    ) -> (Self, Result<InteractiveFrontendAssembly, String>) {
+        assemble: impl AsyncFnOnce(
+            &mut MissionBootstrap,
+        ) -> Result<InteractiveFrontendAssembly, MissionError>,
+    ) -> (Self, Result<InteractiveFrontendAssembly, MissionError>) {
         let result = assemble(&mut self.0).await;
         (self, result)
     }
@@ -765,10 +767,13 @@ pub(super) enum MultiplayerSetupFailurePolicy {
 }
 
 impl MultiplayerSetupFailurePolicy {
-    fn resolve(self, setup: Result<(), String>) -> Result<Option<GameCode>, String> {
+    fn resolve(
+        self,
+        setup: Result<(), super::multiplayer::MultiplayerSessionError>,
+    ) -> Result<Option<GameCode>, MissionError> {
         match (self, setup) {
             (_, Ok(())) => Ok(None),
-            (Self::Fatal, Err(error)) => Err(error),
+            (Self::Fatal, Err(error)) => Err(error.into()),
             (Self::ReturnToMenu, Err(error)) => {
                 tracing::error!("{error}; returning to main menu");
                 Ok(Some(GameCode::Quit))
@@ -791,25 +796,28 @@ impl InteractiveLoadStage {
         cold_save_lua: Option<(String, robin_engine::spellforge::SpellforgePackage)>,
         multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
         mut loading: MissionLoadingScreen,
-    ) -> Result<InteractiveLoadStart, String> {
+    ) -> Result<InteractiveLoadStart, MissionError> {
         let mission_id = campaign.missions[mission_idx]
             .profile(profiles)
             .mission_filename
             .clone();
+        // TODO(10/F11): leaf returns String (application context / Host services).
         let mut host = Host::new(
-            crate::host::ReadyApplicationContext::try_from(args.global_options.clone())?,
+            crate::host::ReadyApplicationContext::try_from(args.global_options.clone())
+                .map_err(MissionError::application)?,
             window.width as f32,
             window.height as f32,
-        )?;
+        )
+        .map_err(MissionError::application)?;
         host.bind_session_achievement_eligibility(
             crate::session_achievement::SessionAchievementEligibility::from_launch(
                 args,
                 crate::session_achievement::SessionExecutionMode::Interactive,
             ),
-        )?;
-        install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        install_cold_save_lua_session(&mut host, args, cold_save_lua)
-            .map_err(|error| error.to_string())?;
+        )
+        .map_err(MissionError::application)?;
+        install_pending_lua_session(&mut host, args)?;
+        install_cold_save_lua_session(&mut host, args, cold_save_lua)?;
         if let Some(code) = multiplayer_setup_failure_policy.resolve(
             setup_multiplayer_session(
                 &mut host,
@@ -819,9 +827,7 @@ impl InteractiveLoadStage {
                 sim_config,
                 multiplayer_campaign,
             )
-            .await
-            // The launch result reported by the mission owner is text.
-            .map_err(|error| error.to_string()),
+            .await,
         )? {
             loading.status("Multiplayer connection failed", 1.0);
             if let Some(renderer) = loading.renderer.as_mut() {
@@ -838,8 +844,7 @@ impl InteractiveLoadStage {
             &mut host,
             &game,
             args.replay.is_none() && args.replay_data.is_none(),
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
             host,
@@ -925,7 +930,7 @@ impl LoadedInteractiveStage {
     fn prepare_audio(
         mut self,
         profiles: &ProfileManager,
-    ) -> Result<LoadedInteractiveStage<AudioPreparedBootstrap>, (Box<MissionBootstrap>, String)>
+    ) -> Result<LoadedInteractiveStage<AudioPreparedBootstrap>, (Box<MissionBootstrap>, MissionError)>
     {
         self.loading
             .status("Loading mission audio...", LOADING_AUDIO_PROGRESS);
@@ -953,7 +958,7 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         'a,
         (
             AudioPreparedBootstrap,
-            Result<InteractiveFrontendAssembly, String>,
+            Result<InteractiveFrontendAssembly, MissionError>,
         ),
     > {
         Box::pin(self.assemble_frontend_inner(window, profiles, args))
@@ -966,7 +971,7 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         args: &crate::main_entry::MissionLaunch,
     ) -> (
         AudioPreparedBootstrap,
-        Result<InteractiveFrontendAssembly, String>,
+        Result<InteractiveFrontendAssembly, MissionError>,
     ) {
         let Self {
             bootstrap,
@@ -991,7 +996,8 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         window: &'a mut GameWindow,
         profiles: &'a ProfileManager,
         args: &'a crate::main_entry::MissionLaunch,
-    ) -> futures::future::LocalBoxFuture<'a, Result<InteractiveFrontendAssembly, String>> {
+    ) -> futures::future::LocalBoxFuture<'a, Result<InteractiveFrontendAssembly, MissionError>>
+    {
         Box::pin(Self::assemble_process_frontend_inner(
             bootstrap, process, loading, window, profiles, args,
         ))
@@ -1004,7 +1010,7 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         window: &mut GameWindow,
         profiles: &ProfileManager,
         args: &crate::main_entry::MissionLaunch,
-    ) -> Result<InteractiveFrontendAssembly, String> {
+    ) -> Result<InteractiveFrontendAssembly, MissionError> {
         let LoadedInteractiveResources {
             level_descriptors,
             hud_fonts,
@@ -1016,9 +1022,7 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
             &bootstrap.host,
             &bootstrap.game,
         )?;
-        let short_briefings = process
-            .resolve_short_briefings(level_descriptors.as_ref())
-            .map_err(|error| error.to_string())?;
+        let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref())?;
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
         let (renderer_config, prepared_renderer) = loading.close_before_renderer();
@@ -1036,7 +1040,8 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
             Some(pending) => {
                 let decoded = pending.join().await;
-                let background = decoded.background?;
+                // TODO(10/F11): leaf returns String (terrain decode worker).
+                let background = decoded.background.map_err(MissionError::asset)?;
                 if let Some(bg) = background.as_ref() {
                     assert_eq!(
                         (bg.width as f32, bg.height as f32),
@@ -1107,7 +1112,7 @@ impl BuiltInteractiveMission {
         callbacks: &mut RustCallbacks,
         profiles: &ProfileManager,
         args: &crate::main_entry::MissionLaunch,
-    ) -> Result<GameCode, String> {
+    ) -> Result<GameCode, MissionError> {
         let mut services = MissionServices {
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             startup_audio_pause: &mut self.startup_audio_pause,
@@ -1119,7 +1124,7 @@ impl BuiltInteractiveMission {
         self.mission.run(&mut services).await
     }
 
-    pub(super) fn finish(mut self, result: Result<GameCode, String>) -> MissionOutcome {
+    pub(super) fn finish(mut self, result: Result<GameCode, MissionError>) -> MissionOutcome {
         self.mission
             .runtime
             .world
@@ -1160,21 +1165,24 @@ impl HeadlessLoadStage {
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
         cold_save_lua: Option<(String, robin_engine::spellforge::SpellforgePackage)>,
-    ) -> Result<HeadlessLoadStage, String> {
+    ) -> Result<HeadlessLoadStage, MissionError> {
+        // TODO(10/F11): leaf returns String (application context / Host services).
         let mut host = Host::new(
-            crate::host::ReadyApplicationContext::try_from(args.global_options.clone())?,
+            crate::host::ReadyApplicationContext::try_from(args.global_options.clone())
+                .map_err(MissionError::application)?,
             1024.0,
             768.0,
-        )?;
+        )
+        .map_err(MissionError::application)?;
         host.bind_session_achievement_eligibility(
             crate::session_achievement::SessionAchievementEligibility::from_launch(
                 args,
                 crate::session_achievement::SessionExecutionMode::Headless,
             ),
-        )?;
-        install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
-        install_cold_save_lua_session(&mut host, args, cold_save_lua)
-            .map_err(|error| error.to_string())?;
+        )
+        .map_err(MissionError::application)?;
+        install_pending_lua_session(&mut host, args)?;
+        install_cold_save_lua_session(&mut host, args, cold_save_lua)?;
         let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
             setup_multiplayer_session(
                 &mut host,
@@ -1184,9 +1192,7 @@ impl HeadlessLoadStage {
                 sim_config,
                 multiplayer_campaign,
             )
-            .await
-            // The launch result reported by the mission owner is text.
-            .map_err(|error| error.to_string()),
+            .await,
         )?;
         debug_assert!(
             setup_exit.is_none(),
@@ -1194,7 +1200,7 @@ impl HeadlessLoadStage {
         );
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
-        let resources = MissionEngineResources::load(&host).map_err(|error| error.to_string())?;
+        let resources = MissionEngineResources::load(&host)?;
         Ok(Self {
             host,
             game,
@@ -1286,7 +1292,7 @@ impl BuiltHeadlessMission {
             sim_config,
             outcome
                 .map(|outcome| outcome.code)
-                .map_err(|error| error.to_string()),
+                .map_err(MissionError::from),
         )
     }
 }
@@ -1309,11 +1315,13 @@ pub(crate) async fn export_official_mission_headless(
     args: &crate::main_entry::MissionLaunch,
     rng_seed: u64,
     sim_config: engine_api::SimConfig,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     if !args.headless || args.simulation_content_export.is_none() {
-        return Err("official projection requires a headless export request".to_owned());
+        return Err(MissionError::launch(
+            "official projection requires a headless export request",
+        ));
     }
-    crate::lua_session::validate_launch_mode(args, false).map_err(|error| error.to_string())?;
+    crate::lua_session::validate_launch_mode(args, false)?;
     let mission_id = campaign.missions[mission_idx]
         .profile(profiles)
         .mission_filename
@@ -1367,7 +1375,7 @@ impl HeadlessMissionBuilder {
                 campaign,
                 rng_seed,
                 sim_config,
-                Err(error.to_string()),
+                Err(error.into()),
             ));
         }
         assert!(
@@ -1495,7 +1503,7 @@ impl InteractiveMissionBuilder {
                 campaign,
                 rng_seed,
                 sim_config,
-                Err(error.to_string()),
+                Err(error.into()),
             ));
         }
         assert!(
@@ -1512,11 +1520,12 @@ impl InteractiveMissionBuilder {
             {
                 Ok(pause) => pause,
                 Err(error) => {
+                    // TODO(10/F11): leaf returns String (browser audio session).
                     return InteractiveBuildOutcome::Finished(MissionOutcome::new(
                         campaign,
                         rng_seed,
                         sim_config,
-                        Err(error),
+                        Err(MissionError::audio(error)),
                     ));
                 }
             }
@@ -1855,8 +1864,11 @@ mod tests {
     #[test]
     fn frontend_retention_future_does_not_embed_the_simulation_owner() {
         let bootstrap = AudioPreparedBootstrap(Box::new(scratch_bootstrap_fixture()));
-        let future = bootstrap
-            .retain_during_frontend_assembly(async |_| Err("assembly rejected".to_owned()));
+        let future = bootstrap.retain_during_frontend_assembly(async |_| {
+            Err(crate::game_session::MissionError::application(
+                "assembly rejected",
+            ))
+        });
         assert!(
             std::mem::size_of_val(&future) < 4096,
             "frontend ownership handoff must retain a pointer, not inline simulation state: {} bytes",
@@ -1937,7 +1949,7 @@ mod tests {
             Ok(_) => panic!("scratch host unexpectedly acquired resource authority"),
             Err(failure) => failure,
         };
-        assert!(!error.is_empty());
+        assert!(!error.to_string().is_empty());
         assert!(matches!(bootstrap.restart_save, RestartSaveState::Absent));
         let (campaign, _, _) = bootstrap.into_campaign_and_simulation();
         assert_eq!(campaign.missions.as_ptr(), original_allocation);
@@ -1966,7 +1978,7 @@ mod tests {
                     Err(error) => error,
                     Ok(_) => panic!("scratch fixture unexpectedly has resource authority"),
                 };
-                Err(error)
+                Err(crate::game_session::MissionError::application(error))
             }),
         );
         assert!(result.is_err());
@@ -2196,16 +2208,20 @@ mod tests {
             "multiplayer cannot be combined with replay playback",
         ] {
             let actual = MultiplayerSetupFailurePolicy::Fatal
-                .resolve(Err(error.to_string()))
+                .resolve(Err(setup_failure(error)))
                 .unwrap_err();
-            assert_eq!(actual, error);
+            assert_eq!(actual.to_string(), error);
         }
+    }
+
+    fn setup_failure(message: &'static str) -> super::super::multiplayer::MultiplayerSessionError {
+        super::super::multiplayer::SessionSetupFailure::InvalidLaunch(message.into()).into()
     }
 
     #[test]
     fn menu_owned_setup_policy_returns_to_existing_menu() {
         let actual = MultiplayerSetupFailurePolicy::ReturnToMenu
-            .resolve(Err("multiplayer Welcome mission mismatch".to_string()))
+            .resolve(Err(setup_failure("multiplayer Welcome mission mismatch")))
             .unwrap();
 
         assert_eq!(actual, Some(GameCode::Quit));

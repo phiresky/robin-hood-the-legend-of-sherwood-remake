@@ -14,14 +14,13 @@ fn drain_pre_tick_network(
     frame: &mut MissionFrame,
     mp_clock_pause: &mut bool,
     rewind_active: bool,
-) -> Result<(), String> {
+) -> Result<(), MissionError> {
     if host.transport.net().is_none() || rewind_active {
         return Ok(());
     }
 
     runtime.trace(FrameContractStage::SecondNetworkDrain);
-    let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())
-        .map_err(|error| error.to_string())?;
+    let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())?;
     if drain.rollback.is_some() {
         // Late input invalidates the capture opened before local input/UI.
         // Reconstruction returns to this same pre-tick frame; retain its
@@ -179,7 +178,7 @@ fn prepare_pre_tick_timeline(
     rewind_active: bool,
     mut paused: bool,
     replay_cursor_paused: bool,
-) -> Result<PreTickTimelineOutput, String> {
+) -> Result<PreTickTimelineOutput, MissionError> {
     if runtime.playback().is_some() && !replay_cursor_paused {
         // Recorded save markers pin the boundary state and load-back
         // records swap a pinned state in, before this frame's commands.
@@ -210,11 +209,11 @@ fn prepare_pre_tick_timeline(
     let current_frame = runtime.frame_number();
     if !rewind_active && !paused && current_frame < runtime.retained_history().next_record_frame() {
         let Some(recorded) = runtime.retained_history().frame_for(current_frame).cloned() else {
-            return Err(format!(
+            return Err(MissionError::frame(format!(
                 "cannot replay frame {}: rewind command history starts at frame {}",
                 current_frame,
                 runtime.retained_history().oldest_cmd_frame()
-            ));
+            )));
         };
         if runtime.playback().is_some() && frame.external_actions().is_empty() {
             frame.adopt_authoritative_input(recorded);
@@ -293,7 +292,7 @@ pub(super) fn finalize_pre_tick(
     input: &MissionInput,
     ui: &MissionUi,
     saves: SavesPrepared,
-) -> Result<FramePreparation, String> {
+) -> Result<FramePreparation, MissionError> {
     let PreparationPhaseState {
         mut frame,
         mut mp_clock_pause,

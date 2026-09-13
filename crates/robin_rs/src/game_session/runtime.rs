@@ -4,6 +4,7 @@
 //! presentation work, but they share the same deterministic frame
 //! bookkeeping through [`TimelineRuntime`].
 
+use super::MissionError;
 use super::multiplayer::{MultiplayerAdmissionEvent, MultiplayerRollbackTelemetry};
 use super::replay_init::ReplayAndRollback;
 use crate::game::Game;
@@ -369,7 +370,7 @@ impl MissionRuntime {
     pub(super) fn inject_next_replay_frame(
         &mut self,
         frame: &mut MissionFrame,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.timeline.apply_playback_timeline_events(
             &mut self.world.host,
             &mut self.world.game,
@@ -855,7 +856,7 @@ impl TimelineRuntime {
     pub(super) fn resolve_replay_ordinal(
         &self,
         target: TimelineFrame,
-    ) -> Result<Option<ReplayFrameOrdinal>, String> {
+    ) -> Result<Option<ReplayFrameOrdinal>, MissionError> {
         self.replay.resolve_ordinal(target)
     }
 
@@ -1520,7 +1521,7 @@ impl TimelineRuntime {
         game: &mut Game,
         manager: &mut EngineManager,
         assets: &LevelAssets,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         let adopted_timeline = self.replay.apply_playback_boundary(
             self.replay_ordinal,
             self.current_frame,
@@ -1549,7 +1550,7 @@ impl TimelineRuntime {
         host: &mut Host,
         game: &mut Game,
         assets: &LevelAssets,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.replay.restore_initial(manager, host, game, assets)?;
         self.replay_ordinal = ReplayFrameOrdinal::ZERO;
         self.reset_reconstruction_history(TimelineFrame::ZERO, &manager.engine);
@@ -1562,7 +1563,9 @@ impl TimelineRuntime {
     /// Debugger/manual stepping owns its own transaction, so it advances the
     /// dense replay ordinal immediately instead of deferring it to
     /// [`Self::finish_recording`].
-    pub(super) fn consume_replay_frame_for_step(&mut self) -> Result<ReplayStepAdmission, String> {
+    pub(super) fn consume_replay_frame_for_step(
+        &mut self,
+    ) -> Result<ReplayStepAdmission, MissionError> {
         let admission = self
             .replay
             .consume_step(self.replay_ordinal, self.current_frame)?;
@@ -1753,31 +1756,31 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     game: &mut Game,
     manager: &mut EngineManager,
     assets: &LevelAssets,
-) -> Result<Option<TimelineFrame>, String> {
+) -> Result<Option<TimelineFrame>, MissionError> {
     let frame = player.current_frame();
     let mut adopted_timeline = None;
     if let Some(marker) = player.save_marker_for_frame(frame) {
         if current_timeline.number() != marker.timeline_frame {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay save marker at ordinal {frame} belongs to timeline {}, current timeline is {}",
                 marker.timeline_frame,
                 current_timeline.number()
-            ));
+            )));
         }
         let actual = robin_engine::replay::state_hash(&manager.engine);
         if actual != marker.state_hash {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay save-marker desync at frame {frame}: \
                  expected {:016x}, got {actual:016x}",
                 marker.state_hash
-            ));
+            )));
         }
         pinned_saves.insert(
             frame,
             GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
-                format!(
+                MissionError::replay(format!(
                     "replay save marker at ordinal {frame} could not pin save payload: {error:#}"
-                )
+                ))
             })?,
         );
         tracing::info!(frame, "replay playback: pinned save state");
@@ -1785,21 +1788,28 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     if let Some(load_back) = player.load_back_for_frame(frame) {
         if let Some(snapshot) = &load_back.snapshot {
             let save: crate::save_file::GameSaveFile = serde_json::from_slice(&snapshot.payload)
-                .map_err(|error| format!("invalid embedded save at frame {frame}: {error}"))?;
-            save.validate_current_schema()
-                .map_err(|error| format!("invalid embedded save: {error:#}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("invalid embedded save at frame {frame}: {error}"))
+                })?;
+            save.validate_current_schema().map_err(|error| {
+                MissionError::replay(format!("invalid embedded save: {error:#}"))
+            })?;
             save.engine
                 .campaign()
                 .validate_history_schema()
-                .map_err(|error| format!("invalid embedded save campaign: {error}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("invalid embedded save campaign: {error}"))
+                })?;
             if save.header.mission_assets != player.header().mission_assets {
-                return Err(format!(
+                return Err(MissionError::replay(format!(
                     "embedded save at frame {frame} requires different mission assets"
-                ));
+                )));
             }
             save.apply_to_with_game(&mut manager.engine, host, game, assets)
                 .map_err(|error| {
-                    format!("embedded save restore at frame {frame} failed: {error}")
+                    MissionError::replay(format!(
+                        "embedded save restore at frame {frame} failed: {error}"
+                    ))
                 })?;
             game.apply_post_load_sync(load_back.is_continue);
             game.post_load_resolution_resync();
@@ -1807,9 +1817,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             if let Some(expected) = player.hash_for_frame(frame) {
                 let actual = robin_engine::replay::state_hash(&manager.engine);
                 if actual != expected {
-                    return Err(format!(
+                    return Err(MissionError::replay(format!(
                         "replay embedded-save desync at frame {frame}: expected {expected:016x}, got {actual:016x}"
-                    ));
+                    )));
                 }
             }
             return Ok(Some(TimelineFrame::from_wire(snapshot.timeline_frame)));
@@ -1818,20 +1828,20 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             .get(&load_back.to_frame)
             .cloned()
             .ok_or_else(|| {
-                format!(
+                MissionError::replay(format!(
                     "replay load-back at frame {frame} targets frame {}, \
                  but no save state was pinned there (corrupt recording?)",
                     load_back.to_frame
-                )
+                ))
             })?;
         pinned
             .apply_to_with_game(&mut manager.engine, host, game, assets)
             .map_err(|error| {
-                format!(
+                MissionError::replay(format!(
                     "replay load-back at frame {frame} could not restore marker \
                      frame {}: {error}",
                     load_back.to_frame
-                )
+                ))
             })?;
         adopted_timeline = Some(TimelineFrame::from_wire(
             player
@@ -1845,9 +1855,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         if let Some(expected) = player.hash_for_frame(frame)
             && restored_hash != expected
         {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "Replay desync after save restore at frame {frame}: expected {expected:016x}, got {restored_hash:016x}"
-            ));
+            )));
         }
         *rewind_buffer = RewindBuffer::new();
         tracing::info!(
@@ -2529,6 +2539,7 @@ mod tests {
                         &assets,
                     )
                     .unwrap_err()
+                    .to_string()
                     .contains("desync after save restore")
             );
             let mut playback = timeline_for_trace_test(FrameContract::Headless);
@@ -2545,6 +2556,7 @@ mod tests {
                         &assets,
                     )
                     .unwrap_err()
+                    .to_string()
                     .contains("save-marker desync")
             );
         }
@@ -3132,7 +3144,8 @@ mod tests {
             let error = live
                 .replay
                 .restore_archive(&serde_json::to_vec(&bad).unwrap())
-                .unwrap_err();
+                .unwrap_err()
+                .to_string();
             assert!(
                 error.contains(if corrupt_digest {
                     "payload does not match"
@@ -3473,7 +3486,8 @@ mod tests {
                         &mut untouched,
                         &assets,
                     )
-                    .unwrap_err();
+                    .unwrap_err()
+                    .to_string();
                     assert!(
                         error.contains(if corrupt_json {
                             "invalid embedded save"
@@ -3618,7 +3632,8 @@ mod tests {
             &mut manager,
             &assets,
         )
-        .expect_err("mismatched marker must fail playback");
+        .expect_err("mismatched marker must fail playback")
+        .to_string();
 
         assert!(error.contains("save-marker desync"), "{error}");
         assert!(pinned_saves.is_empty());

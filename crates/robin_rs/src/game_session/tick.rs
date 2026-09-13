@@ -434,7 +434,7 @@ pub(super) fn drain_steps(
                         if target < from {
                             timeline
                                 .rewind_replay_to_start(manager, host, game, assets)
-                                .map_err(RpcError::internal)?;
+                                .map_err(|error| RpcError::internal(error.to_string()))?;
                             if let Some(scheduler) = session_modals.as_deref_mut() {
                                 *scheduler = Default::default();
                                 scheduler.checkpoint(0, &host.effects);
@@ -738,7 +738,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
             }
             timeline
                 .apply_playback_timeline_events(host, game, manager, assets)
-                .map_err(RpcError::internal)?;
+                .map_err(|error| RpcError::internal(error.to_string()))?;
             if loads_state && let Some(scheduler) = session_modals.as_deref_mut() {
                 scheduler.after_load_back();
             }
@@ -759,7 +759,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         let mut recorded_modals = super::session_policy::ReplayModalDismissals::default();
         let source = match timeline
             .consume_replay_frame_for_step()
-            .map_err(RpcError::internal)?
+            .map_err(|error| RpcError::internal(error.to_string()))?
         {
             super::runtime::ReplayStepAdmission::NoActiveReplay => match buffered_frame {
                 Some(input) => ManualFrameSource::Buffered(input),
@@ -950,7 +950,7 @@ fn rewind_with_session_modals(
     let restore_ordinal = if let Some(scheduler) = session_modals.as_ref() {
         let ordinal = timeline
             .resolve_replay_ordinal(super::runtime::TimelineFrame::from_wire(target))
-            .map_err(RpcError::unavailable_capability)?
+            .map_err(|error| RpcError::unavailable_capability(error.to_string()))?
             .map(|ordinal| ordinal.number());
         if let Some(ordinal) = ordinal {
             scheduler

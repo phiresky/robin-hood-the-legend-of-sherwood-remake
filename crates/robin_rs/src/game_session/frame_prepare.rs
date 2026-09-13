@@ -79,7 +79,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
     /// Consume each phase's output before entering the next boundary. Only
     /// this coordinator borrows the entire mission and service collection.
-    pub(super) async fn run(self) -> Result<FramePreparation, String> {
+    pub(super) async fn run(self) -> Result<FramePreparation, MissionError> {
         let InteractiveMission {
             runtime,
             frontend,

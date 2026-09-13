@@ -834,7 +834,8 @@ async fn dispatch_click(
                     save.engine.campaign(),
                     &save.header.mission_assets,
                 )?;
-                crate::game_session::install_and_validate_saved_profile(&mut view_profiles, &save)?;
+                crate::game_session::install_and_validate_saved_profile(&mut view_profiles, &save)
+                    .map_err(|error| error.to_string())?;
                 save.engine.campaign().clone()
             } else {
                 let difficulty =

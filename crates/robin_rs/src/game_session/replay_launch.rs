@@ -1,5 +1,7 @@
 //! Replay-specific launch reconstruction and immutable asset admission.
-use super::{ApplicationContext, Campaign, MissionLocation, engine_api, engine_profiles};
+use super::{
+    ApplicationContext, Campaign, MissionError, MissionLocation, engine_api, engine_profiles,
+};
 
 // Per-platform replay asset restore; both modules export the same signature.
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,25 +26,31 @@ pub(super) fn prepare_replay_mission(
     args: &crate::main_entry::MissionLaunch,
     data: robin_engine::replay::ReplayData,
     paused: bool,
-) -> Result<PreparedReplayLaunch, String> {
+) -> Result<PreparedReplayLaunch, MissionError> {
     crate::replay_format::validate_replay_data(&data)
-        .map_err(|error| format!("invalid replay: {error}"))?;
-    let campaign: Campaign = bitcode::decode(&data.header().campaign)
-        .map_err(|error| format!("failed to restore replay campaign: {error}"))?;
-    campaign
-        .validate_history_schema()
-        .map_err(|error| format!("invalid replay campaign history: {error}"))?;
+        .map_err(|error| MissionError::replay(format!("invalid replay: {error}")))?;
+    let campaign: Campaign = bitcode::decode(&data.header().campaign).map_err(|error| {
+        MissionError::replay(format!("failed to restore replay campaign: {error}"))
+    })?;
+    campaign.validate_history_schema().map_err(|error| {
+        MissionError::replay(format!("invalid replay campaign history: {error}"))
+    })?;
     let mission_id = data.header().mission_id.clone();
     let mission_assets = &data.header().mission_assets;
     let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
-        format!("replay campaign has no current mission for header mission `{mission_id}`")
+        MissionError::replay(format!(
+            "replay campaign has no current mission for header mission `{mission_id}`"
+        ))
     })?;
-    let mission = campaign
-        .missions
-        .get(mission_idx)
-        .ok_or_else(|| format!("replay current mission index {mission_idx} is out of range"))?;
+    let mission = campaign.missions.get(mission_idx).ok_or_else(|| {
+        MissionError::replay(format!(
+            "replay current mission index {mission_idx} is out of range"
+        ))
+    })?;
     let profile_idx = mission.profile_idx.ok_or_else(|| {
-        format!("replay mission `{mission_id}` at index {mission_idx} has no profile")
+        MissionError::replay(format!(
+            "replay mission `{mission_id}` at index {mission_idx} has no profile"
+        ))
     })? as usize;
     if profile_idx == profiles.missions.len() {
         // Forced/custom missions append one synthetic profile immediately
@@ -59,26 +67,26 @@ pub(super) fn prepare_replay_mission(
             "forced replay profile must restore its serialized allocation"
         );
     } else if profile_idx > profiles.missions.len() {
-        return Err(format!(
+        return Err(MissionError::replay(format!(
             "replay mission `{mission_id}` references missing profile {profile_idx}, but only {} profiles are loaded",
             profiles.missions.len()
-        ));
+        )));
     }
     let profile = campaign.missions[mission_idx].profile(profiles);
     if profile.mission_filename != mission_id {
-        return Err(format!(
+        return Err(MissionError::replay(format!(
             "replay campaign mission at index {mission_idx} resolves to `{}`, not header mission `{mission_id}`",
             profile.mission_filename
-        ));
+        )));
     }
     if !profile
         .proto_level_filename
         .eq_ignore_ascii_case(&mission_assets.proto_level_filename)
     {
-        return Err(format!(
+        return Err(MissionError::replay(format!(
             "replay campaign mission `{mission_id}` resolves to proto `{}`, not descriptor proto `{}`",
             profile.proto_level_filename, mission_assets.proto_level_filename
-        ));
+        )));
     }
     let location = profile.location;
     let rng_seed = data.header().rng_seed;
@@ -106,23 +114,23 @@ pub(crate) async fn prepare_replay_launch(
     args: &crate::main_entry::MissionLaunch,
     data: robin_engine::replay::ReplayData,
     paused: bool,
-) -> Result<PreparedReplayLaunch, String> {
+) -> Result<PreparedReplayLaunch, MissionError> {
     crate::replay_format::validate_replay_data(&data)
-        .map_err(|error| format!("invalid replay: {error}"))?;
+        .map_err(|error| MissionError::replay(format!("invalid replay: {error}")))?;
     if args.mission_start_legacy_save.is_some() {
-        return Err(
-            "custom/current replay playback cannot be combined with Original parity save capture"
-                .to_owned(),
-        );
+        return Err(MissionError::launch(
+            "custom/current replay playback cannot be combined with Original parity save capture",
+        ));
     }
     if data.header().spellforge_package.is_some()
         && !application_context
-            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)?
+            .with_active_profile(|profile| profile.gameplay_config.enable_spellforge_missions)
+            .map_err(MissionError::application)?
     {
-        return Err(format!(
+        return Err(MissionError::launch(format!(
             "Spellforge mission `{}` is disabled in Gameplay settings; playback did not change the saved preference",
             data.header().mission_assets.mission_basename
-        ));
+        )));
     }
 
     let resolved = resolve_replay_mission_assets(application_context, &data).await?;
@@ -134,7 +142,7 @@ pub(crate) async fn prepare_replay_launch(
 async fn resolve_replay_mission_assets(
     application_context: &ApplicationContext,
     data: &robin_engine::replay::ReplayData,
-) -> Result<crate::mission_asset_restore::ResolvedMissionAssets, String> {
+) -> Result<crate::mission_asset_restore::ResolvedMissionAssets, MissionError> {
     let descriptor = &data.header().mission_assets;
     let package = data.header().spellforge_package.as_ref();
     // Built-in descriptors are validated values, not mounted archives. Resolve
@@ -144,8 +152,9 @@ async fn resolve_replay_mission_assets(
         descriptor.source,
         robin_engine::mission_assets::MissionAssetSource::BuiltIn
     ) {
-        return crate::mission_asset_restore::resolve_built_in_mission_assets(descriptor, package)
-            .map_err(|error| error.to_string());
+        return Ok(
+            crate::mission_asset_restore::resolve_built_in_mission_assets(descriptor, package)?,
+        );
     }
 
     platform::resolve_non_built_in_mission_assets(application_context, descriptor, package).await

@@ -41,7 +41,7 @@ fn parse_replay_spec(s: &str) -> Result<String, String> {
 
 pub(super) fn requested_replay_data(
     args: &MissionLaunch,
-) -> Result<Option<engine_replay::ReplayData>, String> {
+) -> Result<Option<engine_replay::ReplayData>, super::LaunchError> {
     if let Some(data) = args.replay_data.clone() {
         return Ok(Some(data));
     }
@@ -49,7 +49,7 @@ pub(super) fn requested_replay_data(
         .as_deref()
         .map(crate::replay_format::load_replay_spec)
         .transpose()
-        .map_err(|error| format!("failed to load replay: {error}"))
+        .map_err(|error| super::LaunchError::replay(format!("failed to load replay: {error}")))
 }
 
 /// Robin Hood — The Legend of Sherwood (Rust port)
@@ -509,7 +509,7 @@ pub fn set_pending_browser_join(code: String, redeemed: bool) -> Result<(), Stri
         .map_err(|error| error.to_string())?;
     ticket
         .validate_use_at(
-            current_epoch_seconds()?,
+            current_epoch_seconds().map_err(|error| error.to_string())?,
             if redeemed {
                 crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
             } else {
@@ -536,7 +536,7 @@ pub fn set_pending_browser_join(_code: String, _redeemed: bool) -> Result<(), St
 }
 
 #[cfg(feature = "multiplayer")]
-pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String> {
+pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), super::LaunchError> {
     #[cfg(target_arch = "wasm32")]
     if args.join.is_none() {
         if let Some((code, redeemed)) =
@@ -550,20 +550,19 @@ pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String
         return Ok(());
     };
     if args.server || args.connect.is_some() || args.mission.is_some() {
-        return Err("--join cannot be combined with --server, --connect, or --mission".to_string());
+        return Err(super::LaunchError::arguments(
+            "--join cannot be combined with --server, --connect, or --mission",
+        ));
     }
-    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)
-        .map_err(|error| error.to_string())?;
-    ticket
-        .validate_use_at(
-            current_epoch_seconds()?,
-            if args.browser_join_redeemed {
-                crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
-            } else {
-                crate::multiplayer::join_ticket::InvitationUse::Initial
-            },
-        )
-        .map_err(|error| error.to_string())?;
+    let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)?;
+    ticket.validate_use_at(
+        current_epoch_seconds()?,
+        if args.browser_join_redeemed {
+            crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
+        } else {
+            crate::multiplayer::join_ticket::InvitationUse::Initial
+        },
+    )?;
     apply_authenticated_join_route(args, &ticket, cfg!(target_arch = "wasm32"))
 }
 
@@ -572,7 +571,7 @@ fn apply_authenticated_join_route(
     args: &mut MissionLaunch,
     ticket: &crate::multiplayer::join_ticket::BrowserJoinTicket,
     browser_interactive_preflight: bool,
-) -> Result<(), String> {
+) -> Result<(), super::LaunchError> {
     if browser_interactive_preflight {
         // A browser direct invite must enter the graphical multiplayer
         // preflight before mission construction. That probe obtains the
@@ -585,7 +584,7 @@ fn apply_authenticated_join_route(
         return Ok(());
     }
 
-    let endpoint_addr = ticket.endpoint_addr().map_err(|error| error.to_string())?;
+    let endpoint_addr = ticket.endpoint_addr()?;
     let connect = serde_json::to_string(&endpoint_addr)
         .expect("validated iroh EndpointAddr serialization cannot fail");
     args.connect = Some(connect);
@@ -597,22 +596,23 @@ fn apply_authenticated_join_route(
 }
 
 #[cfg(not(feature = "multiplayer"))]
-pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String> {
+pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), super::LaunchError> {
     if args.join.is_some() || args.server || args.connect.is_some() {
-        return Err(
-            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
-                .to_string(),
-        );
+        return Err(super::LaunchError::arguments(
+            "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`",
+        ));
     }
     Ok(())
 }
 
 #[cfg(feature = "multiplayer")]
-fn current_epoch_seconds() -> Result<u64, String> {
+fn current_epoch_seconds() -> Result<u64, super::LaunchError> {
     web_time::SystemTime::now()
         .duration_since(web_time::SystemTime::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
-        .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))
+        .map_err(|error| {
+            super::LaunchError::clock(format!("system clock precedes the Unix epoch: {error}"))
+        })
 }
 
 fn options_from_args(args: &CliArgs) -> engine_api::GlobalOptions {
@@ -1044,7 +1044,9 @@ mod tests {
             missions_required_to_be_done: vec![99],
             ..Default::default()
         });
-        let error = recommended_export_team(&profiles, "Emb_Test").unwrap_err();
+        let error = recommended_export_team(&profiles, "Emb_Test")
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("prerequisite mission profile id 99"));
     }
 
@@ -1201,7 +1203,9 @@ mod tests {
         let host = crate::host::Host::scratch(800.0, 600.0);
         let save = crate::save_file::GameSaveFile::capture(&engine, &host, 20, "mismatch".into());
 
-        let error = validate_save_mission(&save, &profiles).unwrap_err();
+        let error = validate_save_mission(&save, &profiles)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("current mission Some(0)"));
         assert!(error.contains("mission id 20 at index 1"));
     }
@@ -1276,7 +1280,8 @@ mod tests {
         save.header.mission_id = 0;
         assert_eq!(
             validated_save_reload_target(&save, &profiles, 10, &mission_10_assets, None)
-                .unwrap_err(),
+                .unwrap_err()
+                .to_string(),
             "invalid current save schema: invalid save mission ID: zero is not a valid mission"
         );
     }
@@ -1316,7 +1321,9 @@ mod tests {
             .expect("malformed campaign fixture admission");
         let save = crate::save_file::GameSaveFile::capture(&engine, &host, 10, "malformed".into());
 
-        let error = validate_save_mission(&save, &profiles).unwrap_err();
+        let error = validate_save_mission(&save, &profiles)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("out-of-range profile_idx 999"));
     }
 

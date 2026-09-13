@@ -18,6 +18,7 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
 use super::cli::MissionLaunch;
+use crate::game_session::MissionError;
 
 mod executor;
 mod load_owner;
@@ -333,8 +334,12 @@ impl RustCallbacks {
     pub(crate) async fn new_for_window(
         application_context: ApplicationContext,
         window: &mut crate::window::GameWindow,
-    ) -> Result<Option<Self>, String> {
-        match crate::save_recovery::open_for_launch(&application_context, window).await? {
+    ) -> Result<Option<Self>, MissionError> {
+        // TODO(10/F11): leaf returns String (save-store recovery dialog).
+        match crate::save_recovery::open_for_launch(&application_context, window)
+            .await
+            .map_err(MissionError::save)?
+        {
             crate::save_recovery::OpenedSaveStore::Ready(manager) => {
                 Ok(Some(Self::with_save_manager(application_context, manager)))
             }
@@ -410,7 +415,7 @@ impl RustCallbacks {
         profiles: &engine_profiles::ProfileManager,
         thumbnail: Option<crate::save_file::Thumbnail>,
         reason: AutosaveReason,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.autosave
             .enqueue(
                 &self.save_manager,
@@ -424,7 +429,7 @@ impl RustCallbacks {
                 thumbnail,
                 reason,
             )
-            .map_err(|error| format!("{error:#}"))
+            .map_err(|error| MissionError::save(format!("{error:#}")))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -438,7 +443,7 @@ impl RustCallbacks {
         thumbnail: std::pin::Pin<
             Box<dyn std::future::Future<Output = Option<crate::save_file::Thumbnail>>>,
         >,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.autosave
             .enqueue_initial_with_thumbnail(
                 &self.save_manager,
@@ -451,7 +456,7 @@ impl RustCallbacks {
                 },
                 thumbnail,
             )
-            .map_err(|error| format!("{error:#}"))
+            .map_err(|error| MissionError::save(format!("{error:#}")))
     }
 
     pub(crate) fn poll_autosaves(&mut self) -> Vec<AutosavePollResult> {
@@ -465,7 +470,9 @@ impl RustCallbacks {
     /// Retire every accepted filesystem operation before returning to a menu,
     /// changing profiles, or reporting session completion. Always drain both
     /// owners even when one reports failure.
-    pub(crate) fn finish_save_operations(&mut self) -> Result<(), String> {
+    pub(crate) fn finish_save_operations(
+        &mut self,
+    ) -> Result<(), crate::game_session::MissionError> {
         let mut errors = Vec::new();
         if let Err(error) = self.save_manager.finish_background() {
             let error = format!("{error:#}");
@@ -486,7 +493,7 @@ impl RustCallbacks {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(errors.join("; "))
+            Err(crate::game_session::MissionError::save(errors.join("; ")))
         }
     }
 }
@@ -642,37 +649,43 @@ pub(crate) fn current_mission_id(
 pub(crate) fn validate_save_mission(
     save: &crate::save_file::GameSaveFile,
     profiles: &engine_profiles::ProfileManager,
-) -> Result<usize, String> {
+) -> Result<usize, MissionError> {
     let mission_id = save.header.mission_id;
     if mission_id == 0 {
-        return Err("save header mission ID zero is invalid".to_string());
+        return Err(MissionError::save("save header mission ID zero is invalid"));
     }
     let campaign = save.engine.campaign();
     let mut mission_idx = None;
     for (index, mission) in campaign.missions.iter().enumerate() {
-        let profile_idx = mission
-            .profile_idx
-            .ok_or_else(|| format!("save campaign mission at index {index} has no profile_idx"))?
-            as usize;
+        let profile_idx = mission.profile_idx.ok_or_else(|| {
+            MissionError::save(format!(
+                "save campaign mission at index {index} has no profile_idx"
+            ))
+        })? as usize;
         let profile = profiles.missions.get(profile_idx).ok_or_else(|| {
-            format!(
+            MissionError::save(format!(
                 "save campaign mission at index {index} references out-of-range profile_idx {profile_idx}"
-            )
+            ))
         })?;
         if profile.id == mission_id && mission_idx.is_none() {
             mission_idx = Some(index);
         }
     }
-    let mission_idx = mission_idx
-        .ok_or_else(|| format!("save mission id {mission_id} is absent from its campaign"))?;
+    let mission_idx = mission_idx.ok_or_else(|| {
+        MissionError::save(format!(
+            "save mission id {mission_id} is absent from its campaign"
+        ))
+    })?;
     if campaign.current_mission_idx != Some(mission_idx) {
-        return Err(format!(
+        return Err(MissionError::save(format!(
             "save campaign current mission {:?} does not match header mission id {mission_id} at index {mission_idx}",
             campaign.current_mission_idx,
-        ));
+        )));
     }
     if !campaign.has_restart_simulation_checkpoint() {
-        return Err("save campaign is missing its mission restart checkpoint".to_string());
+        return Err(MissionError::save(
+            "save campaign is missing its mission restart checkpoint",
+        ));
     }
     Ok(mission_idx)
 }
@@ -691,13 +704,13 @@ pub(crate) fn validated_save_reload_target(
     active_mission_id: u32,
     active_mission_assets: &robin_engine::mission_assets::MissionAssetDescriptor,
     active_spellforge_package: Option<&robin_engine::spellforge::SpellforgePackage>,
-) -> Result<Option<u32>, String> {
+) -> Result<Option<u32>, MissionError> {
     assert_ne!(
         active_mission_id, 0,
         "validated_save_reload_target: active mission ID zero is invalid"
     );
     save.validate_current_schema()
-        .map_err(|error| format!("invalid current save schema: {error:#}"))?;
+        .map_err(|error| MissionError::save(format!("invalid current save schema: {error:#}")))?;
     if save.header.mission_id != active_mission_id
         || save.header.mission_assets != *active_mission_assets
         || save.engine.spellforge_package().as_deref() != active_spellforge_package
@@ -791,28 +804,39 @@ fn replay_save_written_event(
 fn begin_multiplayer_snapshot_transition(
     host: &mut crate::host::Host,
     load: PreparedLoad,
-) -> Result<bool, String> {
+) -> Result<bool, MissionError> {
     let Some(net) = host.transport.net() else {
         return Ok(false);
     };
     if host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
-        return Err(
-            "only the multiplayer host can load, restart, or quick-load the session".to_string(),
-        );
+        return Err(MissionError::save(
+            "only the multiplayer host can load, restart, or quick-load the session",
+        ));
     }
     if host.transport.reconnecting() || host.transport.has_snapshot_transition() {
-        return Err("a multiplayer snapshot transition is already in progress".to_string());
+        return Err(MissionError::save(
+            "a multiplayer snapshot transition is already in progress",
+        ));
     }
     let save = load.save();
     if save.header.multiplayer_diagnostic {
-        return Err("multiplayer diagnostic saves cannot be loaded while connected".to_string());
+        return Err(MissionError::save(
+            "multiplayer diagnostic saves cannot be loaded while connected",
+        ));
     }
-    save.validate_current_schema()
-        .map_err(|error| format!("multiplayer snapshot is not a current valid save: {error:#}"))?;
+    save.validate_current_schema().map_err(|error| {
+        MissionError::save(format!(
+            "multiplayer snapshot is not a current valid save: {error:#}"
+        ))
+    })?;
     let mission_id = save.header.mission_id;
-    let save_bytes = serde_json::to_vec(&save)
-        .map_err(|error| format!("encode multiplayer snapshot transition: {error}"))?;
-    let id = net.begin_snapshot_transition(mission_id, save_bytes)?;
+    let save_bytes = serde_json::to_vec(&save).map_err(|error| {
+        MissionError::save(format!("encode multiplayer snapshot transition: {error}"))
+    })?;
+    // TODO(10/F11): leaf returns String (engine snapshot-transition channel).
+    let id = net
+        .begin_snapshot_transition(mission_id, save_bytes)
+        .map_err(MissionError::save)?;
     host.transport
         .prepare_snapshot_transition(crate::host::PendingSnapshotTransition::new(
             id,
@@ -983,7 +1007,8 @@ pub(super) fn force_mission_launch(
     profiles: &mut std::sync::Arc<ProfileManager>,
     application_context: &ApplicationContext,
     args: &MissionLaunch,
-) -> Result<Option<(usize, MissionLocation)>, String> {
+) -> Result<Option<(usize, MissionLocation)>, super::LaunchError> {
+    use super::LaunchError;
     let Some(mission_name) = args.mission.as_deref() else {
         return Ok(None);
     };
@@ -1003,19 +1028,19 @@ pub(super) fn force_mission_launch(
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
     if args.preserve_forced_mission_campaign {
-        let idx = campaign
-            .current_mission_idx
-            .ok_or_else(|| "preserved capture campaign has no current mission".to_owned())?;
+        let idx = campaign.current_mission_idx.ok_or_else(|| {
+            LaunchError::campaign("preserved capture campaign has no current mission")
+        })?;
         let profile = campaign.missions[idx].profile(profiles_mut);
         if !profile.mission_filename.eq_ignore_ascii_case(mission_name)
             || !profile
                 .proto_level_filename
                 .eq_ignore_ascii_case(&proto_name)
         {
-            return Err(format!(
+            return Err(LaunchError::campaign(format!(
                 "preserved capture campaign mission {}/{} disagrees with requested {mission_name}/{proto_name}",
                 profile.mission_filename, profile.proto_level_filename
-            ));
+            )));
         }
         return Ok(Some((idx, profile.location)));
     }
@@ -1050,7 +1075,9 @@ pub(super) fn force_mission_launch(
     let idx = campaign
         .force_next_mission_by_name(profiles_mut, mission_name, &proto_name, true)
         .ok_or_else(|| {
-            format!("--mission: failed to force mission `{mission_name}` with proto `{proto_name}`")
+            LaunchError::campaign(format!(
+                "--mission: failed to force mission `{mission_name}` with proto `{proto_name}`"
+            ))
         })?;
     campaign.current_mission_idx = Some(idx);
     let location = campaign.missions[idx].profile(profiles_mut).location;
@@ -1067,7 +1094,8 @@ pub(super) fn force_mission_launch(
 pub(super) fn recommended_export_team(
     profiles: &robin_engine::profiles::ProfileManager,
     mission_filename: &str,
-) -> Result<String, String> {
+) -> Result<String, super::LaunchError> {
+    use super::LaunchError;
     let fixed = match mission_filename.to_ascii_lowercase().as_str() {
         // The original final-outro launcher selects every VIP in the gang.
         // The mission prerequisite graph only describes reachability, not all
@@ -1098,7 +1126,9 @@ pub(super) fn recommended_export_team(
                 .eq_ignore_ascii_case(mission_filename)
         })
         .ok_or_else(|| {
-            format!("mission-map team: no mission profile found for {mission_filename:?}")
+            LaunchError::campaign(format!(
+                "mission-map team: no mission profile found for {mission_filename:?}"
+            ))
         })?;
 
     let mut completed = std::collections::HashSet::new();
@@ -1112,10 +1142,10 @@ pub(super) fn recommended_export_team(
             .iter()
             .find(|profile| profile.id == id)
             .ok_or_else(|| {
-                format!(
+                LaunchError::campaign(format!(
                     "mission-map team: prerequisite mission profile id {id} referenced by {:?} was not found",
                     target.mission_filename
-                )
+                ))
             })?;
         pending.extend(profile.missions_required_to_be_done.iter().copied());
     }
@@ -1272,7 +1302,7 @@ mod operation_outcome_tests {
             .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
             .unwrap();
 
-        let error = callbacks.finish_save_operations().unwrap_err();
+        let error = callbacks.finish_save_operations().unwrap_err().to_string();
         assert!(!error.is_empty());
         // Autosave publication is independently durable even if integration
         // into the failed manual owner reports another retirement error.

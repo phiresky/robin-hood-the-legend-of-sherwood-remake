@@ -62,12 +62,15 @@ pub fn prepare_direct_custom_mission_args(
     args: &MissionLaunch,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, String> {
+) -> Result<Option<MissionLaunch>, crate::main_entry::LaunchError> {
+    use crate::main_entry::LaunchError;
     let Some(archive) = args.custom_mission.as_deref() else {
         return Ok(None);
     };
     let mission = args.mission.as_deref().ok_or_else(|| {
-        "--custom-mission requires --mission even when arguments bypass clap".to_owned()
+        LaunchError::arguments(
+            "--custom-mission requires --mission even when arguments bypass clap",
+        )
     })?;
     let map = args
         .proto
@@ -88,13 +91,13 @@ pub fn prepare_direct_custom_mission_args(
         &map,
         args.custom_mission_entry.as_deref(),
     )
-    .map_err(|error| format!("--custom-mission: {error}"))?;
+    // TODO(10/F11): leaf returns String (custom-mission archive admission).
+    .map_err(|error| LaunchError::content(format!("--custom-mission: {error}")))?;
 
     if prepared.spellforge_package.is_some() {
-        return Err(
-            "--custom-mission accepts vanilla archives only; launch Spellforge content from the Custom Missions menu"
-                .to_owned(),
-        );
+        return Err(LaunchError::arguments(
+            "--custom-mission accepts vanilla archives only; launch Spellforge content from the Custom Missions menu",
+        ));
     }
     let mut prepared_args = args.clone();
     prepared_args.resolved_mission_assets = Some(prepared.resolved);

@@ -2,6 +2,7 @@
 //! through mutable getters: lifecycle transitions retire all related state.
 
 use super::{BootstrapSaveBoundary, MissionFrame, ReplayFrameOrdinal, TimelineFrame};
+use crate::game_session::MissionError;
 use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
 #[cfg(test)]
 use robin_engine::replay::ReplayRecorder;
@@ -117,18 +118,18 @@ impl ReplayLifecycle {
         timeline: TimelineFrame,
         hash: u64,
         recording_index: &crate::mission_replays::RecordingIndex,
-    ) -> Result<u32, String> {
+    ) -> Result<u32, MissionError> {
         self.recording
             .recorder()
             .expect("active archive restore")
             .commit_restore_boundary(timeline.number(), hash, recording_index)
-            .map_err(|error| format!("{error:#}"))
+            .map_err(|error| MissionError::replay(format!("{error:#}")))
     }
 
     pub(super) fn restore_archive(
         &mut self,
         snapshot: &[u8],
-    ) -> Result<Option<crate::replay_recording::ReplayRestoreBoundary>, String> {
+    ) -> Result<Option<crate::replay_recording::ReplayRestoreBoundary>, MissionError> {
         let recorder = self
             .recording
             .recorder()
@@ -137,11 +138,11 @@ impl ReplayLifecycle {
         let Some(recorder) = recorder.filter(|recorder| recorder.has_archive()) else {
             return Ok(None);
         };
-        let save: crate::save_file::GameSaveFile =
-            serde_json::from_slice(snapshot).map_err(|error| error.to_string())?;
+        let save: crate::save_file::GameSaveFile = serde_json::from_slice(snapshot)
+            .map_err(|error| MissionError::replay(error.to_string()))?;
         let boundary = recorder
             .restore(&save, &self.control)
-            .map_err(|error| format!("{error:#}"))?;
+            .map_err(|error| MissionError::replay(format!("{error:#}")))?;
         self.recording = RecordingState::Recording(recorder);
         self.saved_frames.clear();
         Ok(Some(boundary))
@@ -164,20 +165,29 @@ impl ReplayLifecycle {
     pub(super) fn resolve_ordinal(
         &self,
         target: TimelineFrame,
-    ) -> Result<Option<ReplayFrameOrdinal>, String> {
+    ) -> Result<Option<ReplayFrameOrdinal>, MissionError> {
+        // TODO(10/F11): leaf returns String (engine replay player).
         self.player
             .as_ref()
-            .map(|player| player.resolve_timeline_frame(target))
+            .map(|player| {
+                player
+                    .resolve_timeline_frame(target)
+                    .map_err(MissionError::replay)
+            })
             .transpose()
     }
 
     pub(super) fn seek_timeline(
         &mut self,
         target: TimelineFrame,
-    ) -> Result<Option<ReplayFrameOrdinal>, String> {
+    ) -> Result<Option<ReplayFrameOrdinal>, MissionError> {
         self.player
             .as_mut()
-            .map(|player| player.seek_timeline_frame(target))
+            .map(|player| {
+                player
+                    .seek_timeline_frame(target)
+                    .map_err(MissionError::replay)
+            })
             .transpose()
     }
 
@@ -185,16 +195,16 @@ impl ReplayLifecycle {
         &mut self,
         ordinal: ReplayFrameOrdinal,
         timeline: TimelineFrame,
-    ) -> Result<super::ReplayStepAdmission, String> {
+    ) -> Result<super::ReplayStepAdmission, MissionError> {
         let Some(player) = &mut self.player else {
             return Ok(super::ReplayStepAdmission::NoActiveReplay);
         };
         if player.current_frame() != ordinal.number() {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay player ordinal {} diverged from timeline runtime ordinal {}",
                 player.current_frame(),
                 ordinal.number()
-            ));
+            )));
         }
         if player.is_finished() {
             return Ok(super::ReplayStepAdmission::Finished {
@@ -204,12 +214,12 @@ impl ReplayLifecycle {
         }
         let recorded = player.next_frame().clone();
         if recorded.timeline_before != timeline.number() {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay ordinal {} starts at timeline {}, current timeline is {}",
                 ordinal.number(),
                 recorded.timeline_before,
                 timeline.number()
-            ));
+            )));
         }
         Ok(super::ReplayStepAdmission::Recorded(recorded))
     }
@@ -223,24 +233,25 @@ impl ReplayLifecycle {
         game: &mut crate::game::Game,
         manager: &mut robin_engine::engine_manager::EngineManager,
         assets: &robin_engine::engine::LevelAssets,
-    ) -> Result<Option<TimelineFrame>, String> {
+    ) -> Result<Option<TimelineFrame>, MissionError> {
         let Some(player) = self.player.as_ref().filter(|player| !player.is_finished()) else {
             return Ok(None);
         };
         if player.current_frame() != ordinal.number() {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay player ordinal {} diverged from timeline runtime ordinal {}",
                 player.current_frame(),
                 ordinal.number()
-            ));
+            )));
         }
         if ordinal == ReplayFrameOrdinal::ZERO && self.initial_state.is_none() {
             let mut modals = super::super::session_policy::SessionModalScheduler::default();
             modals.checkpoint(0, &host.effects);
             self.initial_state = Some((
                 manager.engine.clone(),
-                GameRuntimeSnapshot::capture(&manager.engine, host, game)
-                    .map_err(|error| format!("capture replay start: {error:#}"))?,
+                GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
+                    MissionError::replay(format!("capture replay start: {error:#}"))
+                })?,
                 modals,
             ));
         }
@@ -262,15 +273,15 @@ impl ReplayLifecycle {
         host: &mut crate::host::Host,
         game: &mut crate::game::Game,
         assets: &robin_engine::engine::LevelAssets,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         let (engine, snapshot, modals) = self
             .initial_state
             .as_mut()
-            .ok_or("replay start has not been captured")?;
+            .ok_or_else(|| MissionError::replay("replay start has not been captured"))?;
         snapshot
             .clone()
             .apply_to_with_game(&mut manager.engine, host, game, assets)
-            .map_err(|error| format!("restore replay start: {error}"))?;
+            .map_err(|error| MissionError::replay(format!("restore replay start: {error}")))?;
         // Seeking is rollback, not a save load: retain the exact pre-frame-zero
         // engine, including runtime queues that persisted-load reconciliation changes.
         manager.engine = engine.clone();
@@ -279,7 +290,7 @@ impl ReplayLifecycle {
         modals.restore(0, &mut host.effects);
         self.player
             .as_mut()
-            .ok_or("no active replay")?
+            .ok_or_else(|| MissionError::replay("no active replay"))?
             .seek_ordinal(ReplayFrameOrdinal::ZERO);
         self.pinned_saves.clear();
         Ok(())

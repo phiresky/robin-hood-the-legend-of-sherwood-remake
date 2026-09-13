@@ -6,18 +6,19 @@
 //! callers must await it; cancellation and unwinding retain existing owner Drop
 //! fallbacks and are not reported as successful retirement.
 
-use super::{MissionOutcome, SessionOutcome};
+use super::error::legacy_result_debug;
+use super::{MissionError, MissionOutcome, SessionOutcome};
 use crate::main_entry::RustCallbacks;
 
 /// The owner is borrowed for the whole run, but the body cannot bypass its
 /// completion step. Kept narrow so tests exercise actual control flow without
 /// constructing a renderer or opening an application profile.
 pub(super) trait SaveRetirement {
-    fn retire_saves(&mut self) -> Result<(), String>;
+    fn retire_saves(&mut self) -> Result<(), MissionError>;
 }
 
 impl SaveRetirement for RustCallbacks {
-    fn retire_saves(&mut self) -> Result<(), String> {
+    fn retire_saves(&mut self) -> Result<(), MissionError> {
         // This callback boundary drains both the special-save writer and autosave
         // coordinator even if the first fails; do not short-circuit its owners.
         self.finish_save_operations()
@@ -25,32 +26,37 @@ impl SaveRetirement for RustCallbacks {
 }
 
 pub(super) trait CompletionOutcome {
-    fn complete_retirement(&mut self, retirement: Result<(), String>);
+    fn complete_retirement(&mut self, retirement: Result<(), MissionError>);
 }
 
-fn merge_result<T: std::fmt::Debug>(
-    result: &mut Result<T, String>,
-    scope: &str,
-    retirement: Result<(), String>,
-) {
-    if let Err(error) = retirement {
-        // Preserve the original success code or failure diagnostic as context;
-        // campaign, simulation policy and other outcome fields remain intact.
-        *result = Err(format!(
-            "{scope} save retirement failed: {error}; {scope} result: {result:?}"
-        ));
+/// Preserve the original success code or failure diagnostic as context;
+/// campaign, simulation policy and other outcome fields remain intact.
+fn retirement_failure<T: std::fmt::Debug, E: std::fmt::Display>(
+    result: &Result<T, E>,
+    scope: &'static str,
+    error: MissionError,
+) -> MissionError {
+    MissionError::SaveRetirement {
+        scope,
+        error: Box::new(error),
+        result: legacy_result_debug(result),
     }
 }
 
 impl CompletionOutcome for MissionOutcome {
-    fn complete_retirement(&mut self, retirement: Result<(), String>) {
-        merge_result(&mut self.result, "mission", retirement);
+    fn complete_retirement(&mut self, retirement: Result<(), MissionError>) {
+        if let Err(error) = retirement {
+            self.result = Err(retirement_failure(&self.result, "mission", error));
+        }
     }
 }
 
 impl CompletionOutcome for SessionOutcome {
-    fn complete_retirement(&mut self, retirement: Result<(), String>) {
-        merge_result(&mut self.result, "session", retirement);
+    fn complete_retirement(&mut self, retirement: Result<(), MissionError>) {
+        if let Err(error) = retirement {
+            // The session result is the menu-facing text boundary.
+            self.result = Err(retirement_failure(&self.result, "session", error).to_string());
+        }
     }
 }
 
@@ -77,10 +83,10 @@ mod tests {
     }
 
     impl SaveRetirement for Owner {
-        fn retire_saves(&mut self) -> Result<(), String> {
+        fn retire_saves(&mut self) -> Result<(), MissionError> {
             self.events.push("retired".into());
             if self.fail_retirement {
-                Err("accepted write failed".into())
+                Err(MissionError::save("accepted write failed"))
             } else {
                 Ok(())
             }
@@ -151,7 +157,7 @@ mod tests {
     fn mission_completion_preserves_simulation_metadata() {
         for original in [
             Ok(super::super::GameCode::LevelSucceeded),
-            Err("mission setup failed".into()),
+            Err::<_, String>("mission setup failed".into()),
         ] {
             let campaign = Campaign {
                 current_mission_idx: Some(7),
@@ -160,13 +166,21 @@ mod tests {
             let expected = format!(
                 "mission save retirement failed: autosave failed; mission result: {original:?}"
             );
-            let mut outcome = MissionOutcome::new(campaign, 73, Default::default(), original);
+            let mut outcome = MissionOutcome::new(
+                campaign,
+                73,
+                Default::default(),
+                original.map_err(MissionError::launch),
+            );
             let sim_config = outcome.sim_config;
-            outcome.complete_retirement(Err("autosave failed".into()));
+            outcome.complete_retirement(Err(MissionError::save("autosave failed")));
             assert_eq!(outcome.rng_seed, 73);
             assert_eq!(outcome.sim_config, sim_config);
             assert_eq!(outcome.campaign.current_mission_idx, Some(7));
-            assert_eq!(outcome.result, Err(expected));
+            assert_eq!(
+                outcome.result.map_err(|error| error.to_string()),
+                Err(expected)
+            );
         }
     }
 

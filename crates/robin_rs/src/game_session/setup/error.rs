@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-pub(in crate::game_session) enum ResourcePreparationError {
+pub(crate) enum ResourcePreparationError {
     #[error("preparation authority unavailable: {0}")]
     MissingAuthority(String),
     #[error("cannot read {path}: {detail}")]

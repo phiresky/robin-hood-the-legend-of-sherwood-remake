@@ -114,7 +114,7 @@ pub(super) async fn process_operation_and_save(
     profiles: &engine_profiles::ProfileManager,
     args: &crate::main_entry::CliArgs,
     prepared: InputPrepared,
-) -> Result<ControlFlow<FrameControl, SavesPrepared>, String> {
+) -> Result<ControlFlow<FrameControl, SavesPrepared>, MissionError> {
     let PreparationPhaseState {
         mut frame,
         mp_clock_pause,

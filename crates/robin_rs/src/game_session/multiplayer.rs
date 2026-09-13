@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum MultiplayerAdmissionEvent {
+pub(crate) enum MultiplayerAdmissionEvent {
     Disconnected,
     InitialSnapshotAdopted { frame: u32 },
     HostResynchronizing { frame: u32 },
@@ -30,7 +30,7 @@ fn canonicalize_player_input_order(inputs: &mut Vec<PlayerInput>) {
 ///
 /// Not serde: carries the transport's `NetFatal` and source errors.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum MultiplayerSessionError {
+pub(crate) enum MultiplayerSessionError {
     /// The running session broke a protocol, transport or snapshot rule.
     #[error("multiplayer protocol failure: {0}")]
     Protocol(#[from] SessionProtocolFailure),
@@ -43,7 +43,7 @@ pub(super) enum MultiplayerSessionError {
 /// text that followed "multiplayer protocol failure: " before these errors
 /// were typed.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum SessionProtocolFailure {
+pub(crate) enum SessionProtocolFailure {
     #[error("fatal multiplayer session error: transport worker closed its event channel")]
     TransportClosed,
     #[error("fatal multiplayer session error: {0}")]
@@ -122,7 +122,7 @@ pub(super) enum SessionProtocolFailure {
     )
 )]
 #[derive(Debug, thiserror::Error)]
-pub(super) enum SessionSetupFailure {
+pub(crate) enum SessionSetupFailure {
     /// The launch requests an impossible multiplayer combination.
     #[error("{0}")]
     InvalidLaunch(std::borrow::Cow<'static, str>),
