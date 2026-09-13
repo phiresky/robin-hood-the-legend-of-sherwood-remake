@@ -195,13 +195,10 @@ impl DialogueSentence {
 /// Geometry is virtual; alpha masks are attached by the caller with its renderer.
 fn dialogue_buttons(
     (virt_x, virt_y): (i32, i32),
-    (ok_w, ok_h): (i32, i32),
-    (cancel_w, cancel_h): (i32, i32),
+    (btn_w, btn_h): (i32, i32),
     skip_tooltip: &str,
     stop_tooltip: &str,
 ) -> FrameWnd {
-    let btn_w = ok_w.max(cancel_w);
-    let btn_h = ok_h.max(cancel_h);
     let spacing = 8;
     let total_w = 2 * btn_w + spacing;
     let start_x = virt_x + (WIN_W - total_w) / 2;
@@ -269,8 +266,7 @@ pub async fn show_dialogue(
 
     let mut frame = dialogue_buttons(
         (virt_x, virt_y),
-        resources.seal_button_dimensions(SealButton::Ok),
-        resources.seal_button_dimensions(SealButton::Cancel),
+        resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
         &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
     );
@@ -509,8 +505,7 @@ impl DialogueModalState {
 
         let mut frame = dialogue_buttons(
             (virt_x, virt_y),
-            resources.seal_button_dimensions(SealButton::Ok),
-            resources.seal_button_dimensions(SealButton::Cancel),
+            resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel),
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_CONTINUE),
             &resources.menu_text.get(MT_INFOBULLE_BUTTON_DIALOG_ABANDON),
         );
@@ -1215,10 +1210,8 @@ mod tests {
 
     #[test]
     fn dialogue_button_pair_shares_dimensions_spacing_and_tooltips() {
-        for (ok, cancel, expected_y, expected_h) in
-            [((20, 30), (40, 50), 404, 50), ((40, 80), (20, 30), 387, 80)]
-        {
-            let frame = dialogue_buttons((10, 20), ok, cancel, "Continue", "Abandon");
+        for (pair, expected_y, expected_h) in [((40, 50), 404, 50), ((40, 80), 387, 80)] {
+            let frame = dialogue_buttons((10, 20), pair, "Continue", "Abandon");
             assert!(frame.enabled && frame.input_enabled);
             assert_eq!(frame.widgets().len(), 2);
             for (id, x, tooltip) in [(ID_SKIP, 214, "Continue"), (ID_STOP, 262, "Abandon")] {

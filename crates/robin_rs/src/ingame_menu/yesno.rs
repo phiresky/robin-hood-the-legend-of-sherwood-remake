@@ -107,10 +107,7 @@ impl YesNoModalState {
         // `RHID_CANCEL`) with no label, like the original dialog.  Both
         // get the max intrinsic size so they render at native
         // dimensions when centred as a pair.
-        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
-        let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
-        let btn_w = ok_w.max(cancel_w);
-        let btn_h = ok_h.max(cancel_h);
+        let (btn_w, btn_h) = resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel);
         let n = 2i32;
         let total_w = n * btn_w + (n - 1) * BUTTON_GAP;
         let start_x = win_x + (WIN_W - total_w) / 2;

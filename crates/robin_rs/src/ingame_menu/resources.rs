@@ -1441,6 +1441,14 @@ impl IngameMenuResources {
             .or_else(|| self.button_surface(state))
     }
 
+    /// Shared size for a two-seal modal row: both seals render at the larger
+    /// intrinsic width and height so the pair stays aligned.
+    pub fn seal_pair_dimensions(&self, a: SealButton, b: SealButton) -> (i32, i32) {
+        let (a_w, a_h) = self.seal_button_dimensions(a);
+        let (b_w, b_h) = self.seal_button_dimensions(b);
+        (a_w.max(b_w), a_h.max(b_h))
+    }
+
     pub fn input_field_surface(&self, selected: bool) -> Option<SurfaceHandle> {
         let idx = if selected { 1 } else { 0 };
         self.input_field.frame(idx)
@@ -2138,6 +2146,17 @@ mod tests {
         assert_eq!(
             resources.seal_button_dimensions(SealButton::Cancel),
             (80, 90)
+        );
+        // Pairs take the per-axis maximum of both seals.
+        resources.ok_button.height = 100;
+        resources.ok_button.width = 50;
+        assert_eq!(
+            resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel),
+            (80, 100)
+        );
+        assert_eq!(
+            resources.seal_pair_dimensions(SealButton::Cancel, SealButton::Ok),
+            (80, 100)
         );
     }
 

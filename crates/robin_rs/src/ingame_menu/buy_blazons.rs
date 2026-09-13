@@ -94,10 +94,7 @@ impl BuyBlazonsModalState {
         );
         let win_x = (MENU_W - WIN_W) / 2;
         let win_y = (MENU_H - WIN_H) / 2;
-        let (ok_w, ok_h) = resources.seal_button_dimensions(SealButton::Ok);
-        let (cancel_w, cancel_h) = resources.seal_button_dimensions(SealButton::Cancel);
-        let btn_w = ok_w.max(cancel_w);
-        let btn_h = ok_h.max(cancel_h);
+        let (btn_w, btn_h) = resources.seal_pair_dimensions(SealButton::Ok, SealButton::Cancel);
         let total_w = 2 * btn_w + BUTTON_GAP;
         let buy_x = win_x + (WIN_W - total_w) / 2;
         let quit_x = buy_x + btn_w + BUTTON_GAP;
