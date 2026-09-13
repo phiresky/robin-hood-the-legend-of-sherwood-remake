@@ -327,6 +327,28 @@ Saves go to the app internal data directory under `saves/`. Video is
 disabled in the Android feature set for now; ffmpeg packaging is a
 follow-up once the native APK is booting on device.
 
+## Releasing
+
+Production (leaderboard service on the VPS, game on Cloudflare) is released
+from a clean checkout at the tip of `main` with one command:
+
+    scripts/release.sh [--server-only|--web-only] [--rebuild-datadir] [--dry-run] [--ssh-config PATH]
+
+The server stage builds the service tarball in a Debian 12 container
+(`crates/robin_highscores/ops/release-image/Dockerfile`), uploads it and runs
+the tarball's `ops/deploy.sh` on the host, then checks `/readyz` and the public
+API. The web stage stages the runtime for `HEAD`, assembles it onto the last
+deployed upload set (`~/.local/share/robin_hood/deployment-staging/live`), and
+deploys through `wasm-www/scripts/deploy-cloudflare.sh`. It rebuilds the Demo
+datadir only when the live datadir's format header differs from
+`SHIPPING_DATADIR_VERSION` (or with `--rebuild-datadir`); a format bump must
+already have moved `DEMO_ROOT` to a new generation directory. Credentials come
+from the main checkout's `.env`, tools from
+`~/.local/share/robin_hood/deployment-toolchain` (static `cjxl` in its `bin/`).
+`--dry-run` prints every command without running it. On failure the script
+prints the rollback for the failed stage. Logs go to
+`~/.local/share/robin_hood/release-logs/`. Stub test: `bash scripts/test_release.sh`.
+
 ## Running
 
 The engine expects a `Data/` folder (and a locale subfolder like `1033/`)

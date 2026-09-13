@@ -1175,3 +1175,17 @@ protocol 42; ranked admission and browser invitations require matching versions.
 Rust saves/replays and peers are rejected by the existing strict version gates,
 not silently migrated. Original-game save import and original parity trace
 formats remain separate and unchanged.
+
+### One-command production release
+
+`scripts/release.sh` releases the leaderboard service (a Debian 12 container
+build, then `ops/deploy.sh` on the VPS) and the web game (runtime staging,
+full-corpus assembly, and `deploy-cloudflare.sh`) with one command. It supports
+`--server-only`, `--web-only`, `--rebuild-datadir`, `--dry-run` and
+`--ssh-config`. It refuses dirty trees and commits that are not the tip of
+`main`. It rebuilds the Demo datadir only when the live datadir header differs
+from `SHIPPING_DATADIR_VERSION`, logs every run, and prints the stage's
+rollback commands on failure. `deploy-cloudflare.sh` gained `--datadir-only`
+and `ROBINHOOD_PUBLIC_RETAIN`, so a public deploy keeps previously published
+public objects. `scripts/test_release.sh` (tooling suite) checks the script
+with stub tools.

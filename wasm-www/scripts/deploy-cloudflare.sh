@@ -4,17 +4,22 @@
 # Usage (from anywhere):
 #   CLOUDFLARE_ACCOUNT_ID=... CLOUDFLARE_ZONE_ID=... CLOUDFLARE_API_TOKEN=... \
 #   ROBINHOOD_WASM_BINDGEN=/abs/path/wasm-bindgen-0.2.127 \
-#     wasm-www/scripts/deploy-cloudflare.sh [--datadir] [--runtime]
+#     wasm-www/scripts/deploy-cloudflare.sh [--datadir | --datadir-only] [--runtime]
 #
 # --datadir  also deploy wasm-www/datadir-dist (assembled beforehand with
 #            assemble-datadir-corpus.mjs); writes target/datadir-deployment.json
 #            when target/datadir-authority.json exists.
+# --datadir-only  deploy only the datadir Worker (as --datadir), then stop. A new
+#            runtime is assembled against the receipt this writes.
 # --runtime  also deploy wasm-www/runtime-dist (assembled beforehand with
 #            assemble-runtime-corpus.mjs; verify:runtime needs
 #            target/datadir-authority.json).
 # Without a flag, ROBINHOOD_DATADIR_VERSION_ID / ROBINHOOD_RUNTIME_VERSION_ID must
 # name the live Worker versions (`pnpm exec wrangler deployments list --config
 # deploy/wrangler-runtime.json`); route reconciliation proves they exist.
+# ROBINHOOD_PUBLIC_RETAIN=DIR copies files of a previous public upload that the
+# fresh site build lacks (old hashed assets, published leaderboard builds) into
+# dist, because a Workers-with-assets deploy replaces the whole asset set.
 #
 # Rollback: `pnpm --dir wasm-www exec wrangler rollback --config
 # deploy/wrangler-<public|signer|runtime|datadir>.json [VERSION_ID]`.
@@ -22,14 +27,21 @@ set -euo pipefail
 
 deploy_datadir=0
 deploy_runtime=0
+datadir_only=0
 for argument in "$@"; do
     case "$argument" in
         --datadir) deploy_datadir=1 ;;
+        --datadir-only) deploy_datadir=1; datadir_only=1 ;;
         --runtime) deploy_runtime=1 ;;
-        *) echo "usage: $0 [--datadir] [--runtime]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--datadir | --datadir-only] [--runtime]" >&2; exit 2 ;;
     esac
 done
-: "${CLOUDFLARE_ACCOUNT_ID:?}" "${CLOUDFLARE_ZONE_ID:?}" "${CLOUDFLARE_API_TOKEN:?}" "${ROBINHOOD_WASM_BINDGEN:?}"
+if [[ $datadir_only == 1 && $deploy_runtime == 1 ]]; then
+    echo "--datadir-only cannot be combined with --runtime" >&2
+    exit 2
+fi
+: "${CLOUDFLARE_ACCOUNT_ID:?}" "${CLOUDFLARE_ZONE_ID:?}" "${CLOUDFLARE_API_TOKEN:?}"
+[[ $datadir_only == 1 ]] || : "${ROBINHOOD_WASM_BINDGEN:?}"
 
 cd "$(dirname "$0")/.."
 repository="$(cd .. && pwd -P)"
@@ -55,11 +67,18 @@ deploy_worker() {
 }
 
 pnpm verify:deployment-config
-pnpm build:site
-pnpm verify:public
-pnpm build:signer
-pnpm verify:signer
-pnpm verify:wrangler
+if [[ $datadir_only == 0 ]]; then
+    pnpm build:site
+    if [[ -n ${ROBINHOOD_PUBLIC_RETAIN:-} ]]; then
+        # Only add objects the fresh build lacks; never replace a built file.
+        cp -R --update=none "$ROBINHOOD_PUBLIC_RETAIN/." dist/
+        chmod -R u+w dist
+    fi
+    pnpm verify:public
+    pnpm build:signer
+    pnpm verify:signer
+    pnpm verify:wrangler
+fi
 
 if [[ $deploy_datadir == 1 ]]; then
     pnpm verify:datadir
@@ -71,6 +90,10 @@ if [[ $deploy_datadir == 1 ]]; then
         node scripts/datadir-release-authority.mjs receipt \
             "$repository/target/datadir-authority.json" "$ROBINHOOD_DATADIR_VERSION_ID" \
             "$repository/target/datadir-deployment.json"
+    fi
+    if [[ $datadir_only == 1 ]]; then
+        echo "deployed datadir=$ROBINHOOD_DATADIR_VERSION_ID"
+        exit 0
     fi
 fi
 if [[ $deploy_runtime == 1 ]]; then
