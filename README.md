@@ -32,8 +32,8 @@ Currently only tested on a Linux host. Bare builds use no optional client
 features. Use `--features desktop` for the normal native game (audio, OS
 data-directory lookup/dialogs, gamepads, and hardware reporting). Large
 integrations are opt-in: `multiplayer` (iroh/DHT matchmaking), `video`
-(intro/outro via ffmpeg-next) and `retroarch-shaders` (librashader; run
-`scripts/fetch-slang-shaders.sh` first for the preset collection). Custom
+(intro/outro via ffmpeg-next) and `retroarch-shaders` (librashader; presets
+come from the tracked `vendor/slang-shaders/` collection). Custom
 Spellforge missions always use the built-in pure-Rust Lua VM; the `lua` feature
 only enables legacy mlua comparison tests. Packaged desktop builds additionally
 enable `auto-update` (Velopack). Enable every runtime integration with:
