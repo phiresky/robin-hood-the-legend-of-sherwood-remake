@@ -1318,7 +1318,7 @@ pub(super) fn accept_client_ranked_join(
     let attestation: robin_run_protocol::NamedSeatJoinAttestationV1 =
         decode_ranked_wire_document(accepted.join_attestation.as_bytes())
             .map_err(|error| format!("invalid accepted ranked attestation: {error}"))?;
-    let participant_claims = crate::multiplayer::decode_ranked_participant_roster(
+    let participant_claims = crate::multiplayer::ranked_client::decode_ranked_participant_roster(
         &accepted.participant_roster,
         &genesis,
     )?;
@@ -1507,7 +1507,9 @@ pub(super) fn handle_client_wire_msg(
                             .to_string()
                     })?;
                 let participant_claims =
-                    crate::multiplayer::decode_ranked_participant_roster(&document, &genesis)?;
+                    crate::multiplayer::ranked_client::decode_ranked_participant_roster(
+                        &document, &genesis,
+                    )?;
                 ranked_lifecycle_lock(&context.lifecycle)
                     .update_ranked_client_roster(&genesis, participant_claims)
                     .map_err(|error| format!("update ranked client roster: {error}"))?;

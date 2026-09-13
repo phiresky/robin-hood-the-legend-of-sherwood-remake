@@ -780,7 +780,6 @@ impl MultiplayerSetupFailurePolicy {
 impl InteractiveLoadStage {
     async fn begin(
         window: &mut GameWindow,
-        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
         multiplayer_campaign: &crate::multiplayer::MultiplayerCampaignSession,
         campaign: &Campaign,
         profiles: &ProfileManager,
@@ -818,7 +817,6 @@ impl InteractiveLoadStage {
                 &mission_id,
                 rng_seed,
                 sim_config,
-                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
                 multiplayer_campaign,
             )
             .await,
@@ -1153,7 +1151,6 @@ struct HeadlessLoadStage {
 
 impl HeadlessLoadStage {
     async fn begin(
-        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
         multiplayer_campaign: &crate::multiplayer::MultiplayerCampaignSession,
         location: MissionLocation,
         args: &crate::main_entry::MissionLaunch,
@@ -1183,7 +1180,6 @@ impl HeadlessLoadStage {
                 mission_id,
                 rng_seed,
                 sim_config,
-                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
                 multiplayer_campaign,
             )
             .await,
@@ -1321,7 +1317,6 @@ pub(crate) async fn export_official_mission_headless(
     super::ensure_shipping_mission(args, &mission_id, &campaign, profiles, false, |_| {}).await?;
     let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
     let loading = HeadlessLoadStage::begin(
-        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
         &crate::multiplayer::MultiplayerCampaignSession::default(),
         location,
         args,
@@ -1392,7 +1387,6 @@ impl HeadlessMissionBuilder {
             }
         };
         let loading = match HeadlessLoadStage::begin(
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             &callbacks.multiplayer_campaign,
             location,
             args,
@@ -1582,7 +1576,6 @@ impl InteractiveMissionBuilder {
         let mut timer = super::setup::PhaseTimer::new("mission bootstrap");
         let mut loading = match InteractiveLoadStage::begin(
             window,
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             &callbacks.multiplayer_campaign,
             &campaign,
             profiles,

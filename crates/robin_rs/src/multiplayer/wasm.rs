@@ -56,6 +56,9 @@ const CONTENT_READINESS_TIMEOUT_MS: u32 = 5 * 60 * 1_000;
 
 use super::ranked_client::BrowserAdmissionPhase;
 
+mod native_only;
+pub use native_only::{MultiplayerCampaignSession, ServerHandle, connect_client_in_campaign};
+
 /// Browser-only ranking state that must survive a dropped relay stream. The
 /// shared gate owns the exact documents; the two cells retain transport facts
 /// needed to reject a Welcome that races ahead of admission or changes seats

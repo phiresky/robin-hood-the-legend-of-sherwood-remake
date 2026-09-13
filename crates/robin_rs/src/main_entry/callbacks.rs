@@ -39,7 +39,6 @@ pub use load_owner::PreparedLoad;
 /// by [`crate::game_session::perform_pending_save_load`] before the next
 /// engine tick, using [`crate::save_file::GameSaveFile`].
 pub(crate) struct RustCallbacks {
-    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     pub(crate) multiplayer_campaign: crate::multiplayer::MultiplayerCampaignSession,
     application_context: ApplicationContext,
     /// Save-slot metadata manager, persists slot list as `saves.json`.
@@ -349,7 +348,6 @@ impl RustCallbacks {
         save_manager: SaveGameManager,
     ) -> Self {
         Self {
-            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             multiplayer_campaign: crate::multiplayer::MultiplayerCampaignSession::default(),
             application_context,
             save_manager,

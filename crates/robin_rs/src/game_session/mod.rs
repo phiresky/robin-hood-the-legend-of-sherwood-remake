@@ -134,7 +134,7 @@ use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, execute_app_effects,
     perform_pending_save_load, validated_save_reload_target,
 };
-use crate::multiplayer::matchmaking::current_epoch_ms;
+use crate::multiplayer::current_epoch_ms;
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
 use crate::stature_hud::{StatureButton, StatureEnable, StatureHudLayout};

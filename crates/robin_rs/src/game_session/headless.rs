@@ -8,7 +8,7 @@ use super::runtime::{
     MissionIngress, MissionRuntime, TickPolicy,
 };
 use super::session_policy::SessionModalScheduler;
-use crate::multiplayer::matchmaking::current_epoch_ms;
+use crate::multiplayer::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use serde::{Deserialize, Serialize};

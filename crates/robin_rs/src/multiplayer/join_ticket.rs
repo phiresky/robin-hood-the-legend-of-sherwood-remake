@@ -10,7 +10,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use iroh::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, Signature, TransportAddr};
 use serde::{Deserialize, Serialize};
 
-use super::NET_PROTOCOL_VERSION;
+use super::{MAX_MULTIPLAYER_PLAYERS, NET_PROTOCOL_VERSION};
 
 pub use crate::runtime_contract::{JOIN_CODE_PREFIX, JOIN_TICKET_SCHEMA};
 pub const IROH_RELAY_TRANSPORT: &str = "iroh-relay-websocket";
@@ -18,7 +18,6 @@ pub const MAX_JOIN_CODE_BYTES: usize = 16 * 1024;
 pub const INVITATION_LIFETIME_SECS: u64 = 30 * 60;
 pub const MAX_CLOCK_SKEW_SECS: u64 = 2 * 60;
 pub const DEFAULT_BROWSER_URL: &str = "https://robinhood.phiresky.xyz/";
-pub const MAX_MULTIPLAYER_PLAYERS: u32 = 4;
 
 const SIGNING_DOMAIN: &[u8] = b"robinhood/browser-join-ticket/v3\0";
 

@@ -590,10 +590,10 @@ pub(super) fn start_server_inner(
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;
     robin_engine::multiplayer::validate_mission_id(&mission_id).map_err(std::io::Error::other)?;
-    if !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected_players) {
+    if !(1..=crate::multiplayer::MAX_MULTIPLAYER_PLAYERS).contains(&expected_players) {
         return Err(std::io::Error::other(format!(
             "multiplayer expected-player count must be between 1 and {}, got {expected_players}",
-            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+            crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
         )));
     }
     let host_endpoint_id = key.public();
