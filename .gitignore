@@ -20,6 +20,8 @@
 # copied from the game install
 /datadirs
 /original-game
+# reference C++ sources of the original game, not part of the port
+/original-code/
 
 # playwright cache
 /.playwright-mcp/

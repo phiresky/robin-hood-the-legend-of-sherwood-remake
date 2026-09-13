@@ -723,6 +723,31 @@ impl Entity {
         }
     }
 
+    /// Whether this human is knocked out (`HumanData::unconscious`).
+    ///
+    /// A non-human element (fx, projectile, bonus, ...) has no
+    /// consciousness to lose, so it is "not unconscious" by definition —
+    /// this is the same semantics every call site spelled out as
+    /// `entity.human_data().map(|h| h.unconscious).unwrap_or(false)`.
+    pub fn is_unconscious(&self) -> bool {
+        self.human_data().is_some_and(|h| h.unconscious)
+    }
+
+    /// Whether this entity is a VIP soldier, read from the flag cached on
+    /// its `EnemyAi` at level load (`EnemyAi::is_vip`).
+    ///
+    /// Only soldiers driven by an enemy brain can be VIPs here; PCs,
+    /// civilians and non-humans are never VIPs by this definition.  For
+    /// the profile-driven notion (which also covers PC/civilian VIPs)
+    /// see `engine::melee::is_vip_from_profile` and the civilian
+    /// `CivilianType::Vip` check in `door_combat_enemy_is_vip`.
+    pub fn is_vip(&self) -> bool {
+        match self {
+            Self::Soldier(s) => s.npc.ai_brain.enemy().is_some_and(|ai| ai.is_vip),
+            _ => false,
+        }
+    }
+
     /// Live life points of a human element; `0` for everything else.
     pub fn human_life_points(&self) -> i16 {
         match self {

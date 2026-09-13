@@ -1267,3 +1267,81 @@ fn action_slot_disabled_combines_sparse_permanent_and_temporary_state() {
     assert!(pc.action_slot_disabled(1));
     assert!(!pc.action_slot_disabled(2));
 }
+
+#[test]
+fn entity_is_unconscious_reads_human_flag_and_is_false_for_non_humans() {
+    let mut soldier = Entity::Soldier(ActorSoldier {
+        element: element_data(ElementKind::ActorSoldier),
+        actor: ActorData::default(),
+        human: HumanData::default(),
+        npc: NpcData::default(),
+        soldier: SoldierData::default(),
+    });
+    assert!(!soldier.is_unconscious());
+    soldier.human_data_mut().unwrap().unconscious = true;
+    assert!(soldier.is_unconscious());
+
+    let mut pc = Entity::Pc(ActorPc {
+        element: element_data(ElementKind::ActorPc),
+        actor: ActorData::default(),
+        human: HumanData {
+            unconscious: true,
+            ..HumanData::default()
+        },
+        pc: PcData::default(),
+    });
+    assert!(pc.is_unconscious());
+    pc.human_data_mut().unwrap().unconscious = false;
+    assert!(!pc.is_unconscious());
+
+    // Non-humans have no consciousness to lose: never unconscious.
+    let fx = Entity::Fx(ElementFx {
+        element: element_data(ElementKind::Fx),
+        fx: FxData::default(),
+    });
+    assert!(fx.human_data().is_none());
+    assert!(!fx.is_unconscious());
+}
+
+#[test]
+fn entity_is_vip_reads_enemy_ai_flag_only_for_soldiers() {
+    use crate::ai_enemy::EnemyAi;
+
+    let mut soldier = Entity::Soldier(ActorSoldier {
+        element: element_data(ElementKind::ActorSoldier),
+        actor: ActorData::default(),
+        human: HumanData::default(),
+        npc: NpcData::default(),
+        soldier: SoldierData::default(),
+    });
+    // No enemy brain attached yet: not a VIP.
+    assert!(!soldier.is_vip());
+
+    let mut enemy_ai = EnemyAi::new(3);
+    enemy_ai.is_vip = true;
+    match &mut soldier {
+        Entity::Soldier(s) => s.npc.ai_brain = AiBrain::Enemy(Box::new(enemy_ai)),
+        _ => unreachable!(),
+    }
+    assert!(soldier.is_vip());
+
+    match &mut soldier {
+        Entity::Soldier(s) => s.npc.ai_brain.enemy_mut().unwrap().is_vip = false,
+        _ => unreachable!(),
+    }
+    assert!(!soldier.is_vip());
+
+    // PCs and non-humans are never VIPs by this (EnemyAi-cached) definition.
+    let pc = Entity::Pc(ActorPc {
+        element: element_data(ElementKind::ActorPc),
+        actor: ActorData::default(),
+        human: HumanData::default(),
+        pc: PcData::default(),
+    });
+    assert!(!pc.is_vip());
+    let fx = Entity::Fx(ElementFx {
+        element: element_data(ElementKind::Fx),
+        fx: FxData::default(),
+    });
+    assert!(!fx.is_vip());
+}
