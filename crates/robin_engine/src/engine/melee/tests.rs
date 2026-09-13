@@ -2,7 +2,6 @@ use super::*;
 use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::ActiveFlight;
-use crate::scb::{SCB_VERSION, ScbFile};
 
 fn make_engine() -> EngineInner {
     let mut engine = EngineInner::new();
@@ -14,15 +13,6 @@ fn make_engine() -> EngineInner {
         ..Default::default()
     }];
     engine
-}
-
-fn empty_mission_script() -> crate::engine::types::MissionScript {
-    let startup = crate::engine::test_support::asm::empty_startup_class("melee_test.scs".into());
-    crate::engine::types::MissionScript::from_scb(ScbFile {
-        version: SCB_VERSION,
-        classes: vec![startup],
-    })
-    .expect("minimal StartUp script must load")
 }
 
 fn make_soldier(

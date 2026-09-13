@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::asm::empty_mission_script;
 use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
 #[test]
@@ -37,22 +38,6 @@ fn repeated_patch_target_skips_one_shot_vm_and_respects_config_and_locks() {
         activate(&mut engine).is_err(),
         "parity mode must dispatch the original VM"
     );
-}
-
-fn empty_mission_script() -> MissionScript {
-    let startup = ClassEntry {
-        source_file: "script_context_test.scs".into(),
-        class_name: "StartUp".into(),
-        size_of_member_variables: 0,
-        member_variables: Vec::new(),
-        functions: Vec::new(),
-        quads: Vec::new(),
-    };
-    MissionScript::from_scb(ScbFile {
-        version: SCB_VERSION,
-        classes: vec![startup],
-    })
-    .expect("minimal StartUp script must load")
 }
 
 #[test]
@@ -439,7 +424,7 @@ fn shipped_stare_natives_leave_view_direction_and_pending_work_untouched() {
 
 #[test]
 fn mission_script_snapshot_round_trips_state_and_reattaches_program() {
-    let mut script = empty_mission_script();
+    let mut script = empty_mission_script("script_context_test.scs");
     script
         .state
         .computed_locations
@@ -816,7 +801,7 @@ fn patch_background_effects_invalidate_canonical_side_effects_immediately() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine
         .script_domains
         .interactables
@@ -852,7 +837,7 @@ fn external_this_actor_success_keeps_canonical_entity_ownership() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.world.entities.push(None);
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine.attach_script_bindings(&LevelAssets::new());
 
     let result =
@@ -876,7 +861,7 @@ fn post_initialize_game_latch_covers_disabled_missing_vm_and_missing_function() 
             for already_initialized in [false, true] {
                 let mut engine = EngineInner::new();
                 if with_mission {
-                    engine.scripts.mission = Some(empty_mission_script());
+                    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
                     engine.attach_script_bindings(&assets);
                 }
                 engine.control.sim_config.script_enabled = script_enabled;
@@ -919,7 +904,7 @@ fn post_initialize_game_latch_survives_snapshots_without_a_script_mirror() {
             for with_mission in [false, true] {
                 let mut engine = EngineInner::new();
                 if with_mission {
-                    engine.scripts.mission = Some(empty_mission_script());
+                    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
                     engine.attach_script_bindings(&assets);
                 }
                 let rollback = engine.clone();
@@ -965,7 +950,7 @@ fn native_globals_are_canonical_across_json_native_snapshots_and_rollback() {
             let sim = crate::sim_rng::test_context();
             let assets = LevelAssets::new();
             let mut engine = EngineInner::new();
-            engine.scripts.mission = Some(empty_mission_script());
+            engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
             engine.attach_script_bindings(&assets);
             assert_eq!(
                 engine.call_external_native(&sim, &assets, "InitGlobal", &[0, 7]),
@@ -1084,7 +1069,7 @@ fn external_remove_all_subordinates_finishes_clear_before_returning() {
         member_ai.current_state = crate::ai::AiState::Seeking;
     }
 
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine.attach_script_bindings(&assets);
     let chief_handle = crate::natives::ScriptHandleCodec::actor_handle_from_index(0);
     assert_eq!(
@@ -1118,7 +1103,7 @@ fn native_mutation_writes_the_canonical_script_domains_in_place() {
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine
         .script_domains
         .interactables
@@ -1172,7 +1157,7 @@ fn native_ai_mutation_writes_engine_inner_directly() {
 
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     engine.ai.global.next_repulsive_point_id = 9;
     engine
         .ai
@@ -1223,7 +1208,7 @@ fn external_native_rejects_a_detached_live_script() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = EngineInner::new();
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
 
     let _ =
         engine.call_external_native_with_this(sim, &LevelAssets::new(), "ThisActor", &[], Some(99));
@@ -1236,7 +1221,7 @@ fn script_session_normal_return_restores_state_and_hash() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.world.entities.push(None);
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     let hash_before = robin_util::state_hash::compute(&engine);
@@ -1261,7 +1246,7 @@ fn script_callback_error_keeps_canonical_owners_in_place() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.world.entities.push(None);
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
 
@@ -1307,7 +1292,7 @@ fn script_callback_unwind_keeps_canonical_owners_in_place() {
     let mut engine = EngineInner::new();
     engine.mission_domain.campaign = crate::campaign::Campaign::default();
     engine.world.entities.push(None);
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
     let assets = LevelAssets::new();
     engine.attach_script_bindings(&assets);
     let _verify = VerifyRestoredOnUnwind(&engine);
@@ -1334,7 +1319,7 @@ fn external_native_early_returns_without_touching_callback_state() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     engine.world.entities.push(None);
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(empty_mission_script("script_context_test.scs"));
 
     let result = engine.call_external_native_with_this(
         sim,

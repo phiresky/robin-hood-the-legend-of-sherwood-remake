@@ -23,6 +23,14 @@ pub(super) fn attach_test_campaign_identities(engine: &mut EngineInner) {
     }
 }
 
+/// Activate `entity` and place it at world `(x, y, 0)` / map `(x, y)`.
+fn place_active(entity: &mut Entity, x: f32, y: f32) {
+    let element = entity.element_data_mut();
+    element.active = true;
+    element.set_position(crate::coordinates::WorldPoint3D { x, y, z: 0.0 });
+    element.set_position_map(MapPoint { x, y });
+}
+
 fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
     use crate::bow_shot::{SpawnArrowParams, spawn_arrow};
     use crate::coordinates::{WorldPoint3D, WorldVec3D};
@@ -322,26 +330,15 @@ fn install_owner_selected_test_melee_frames(
 }
 
 fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
-    use crate::coordinates::WorldPoint3D;
     use crate::element::Posture;
     use crate::profiles::{CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile};
     use crate::weapons::SwordStrike;
 
-    fn position(entity: &mut Entity, x: f32) {
-        entity.element_data_mut().active = true;
-        entity
-            .element_data_mut()
-            .set_position(WorldPoint3D { x, y: 0.0, z: 0.0 });
-        entity
-            .element_data_mut()
-            .set_position_map(MapPoint { x, y: 0.0 });
-    }
-
     let mut engine = EngineInner::new();
     let mut interrupter = make_test_pc(Posture::Upright);
-    position(&mut interrupter, 0.0);
+    place_active(&mut interrupter, 0.0, 0.0);
     let mut chained_attacker = make_test_soldier(Posture::Upright);
-    position(&mut chained_attacker, 20.0);
+    place_active(&mut chained_attacker, 20.0, 0.0);
     let Entity::Soldier(soldier) = &mut chained_attacker else {
         unreachable!();
     };
@@ -355,7 +352,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         .hth_weapon_id = 1;
     soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
     let mut final_target = make_test_pc(Posture::Upright);
-    position(&mut final_target, 40.0);
+    place_active(&mut final_target, 40.0, 0.0);
     let Entity::Pc(pc) = &mut final_target else {
         unreachable!();
     };
@@ -513,7 +510,7 @@ fn chained_nonstraight_strike_lives(
     interrupt: NonstraightInterrupt,
     interrupter_first: bool,
 ) -> (i16, i16) {
-    use crate::coordinates::{MapVec, MoveBox, WorldPoint3D};
+    use crate::coordinates::{MapVec, MoveBox};
     use crate::element::Posture;
     use crate::profiles::{
         CharacterProfile, HtHWeaponProfile, ProfileManager, SoldierProfile, WeaponThrustDirection,
@@ -521,11 +518,9 @@ fn chained_nonstraight_strike_lives(
     };
     use crate::weapons::SwordStrike;
 
-    fn position(entity: &mut Entity, x: f32, y: f32) {
+    fn place_facing_with_move_box(entity: &mut Entity, x: f32, y: f32) {
+        place_active(entity, x, y);
         let element = entity.element_data_mut();
-        element.active = true;
-        element.set_position(WorldPoint3D { x, y, z: 0.0 });
-        element.set_position_map(MapPoint { x, y });
         element.set_direction_instantly(0);
         element
             .sprite
@@ -538,9 +533,9 @@ fn chained_nonstraight_strike_lives(
 
     let mut engine = EngineInner::new();
     let mut interrupter = make_test_pc(Posture::Upright);
-    position(&mut interrupter, 0.0, 100.0);
+    place_facing_with_move_box(&mut interrupter, 0.0, 100.0);
     let mut chained_attacker = make_test_soldier(Posture::Upright);
-    position(&mut chained_attacker, 0.0, 50.0);
+    place_facing_with_move_box(&mut chained_attacker, 0.0, 50.0);
     let Entity::Soldier(soldier) = &mut chained_attacker else {
         unreachable!();
     };
@@ -556,7 +551,7 @@ fn chained_nonstraight_strike_lives(
     let mut final_target = make_test_pc(Posture::Upright);
     // Remain within the chained attacker's 100-unit straight range but
     // outside the interrupter's 100x100 push rectangle (half-width 50).
-    position(&mut final_target, 60.0, 50.0);
+    place_facing_with_move_box(&mut final_target, 60.0, 50.0);
     let Entity::Pc(pc) = &mut final_target else {
         unreachable!();
     };

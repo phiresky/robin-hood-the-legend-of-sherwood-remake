@@ -12,6 +12,15 @@ pub(crate) fn empty_startup_class(source_file: String) -> crate::scb::ClassEntry
     }
 }
 
+/// Mission script holding only an empty `StartUp` class from `source_file`.
+pub(crate) fn empty_mission_script(source_file: &str) -> crate::engine::types::MissionScript {
+    crate::engine::types::MissionScript::from_scb(crate::scb::ScbFile {
+        version: crate::scb::SCB_VERSION,
+        classes: vec![empty_startup_class(source_file.into())],
+    })
+    .expect("minimal StartUp script must load")
+}
+
 #[test]
 fn fixture_encoders_preserve_operand_layouts() {
     assert_eq!(
