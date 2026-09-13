@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::actors::for_both_creation_orders;
 
 #[test]
 fn primary_target_tracking_precedes_view_refresh() {
@@ -311,12 +312,13 @@ fn pc_noise_is_live_at_the_following_npc_slot_only() {
             .heard_last_frame
     }
 
+    let [pc_first, npc_first] = for_both_creation_orders(observe);
     assert!(
-        observe(true),
+        pc_first,
         "a PC must publish its current noise before a following NPC detects"
     );
     assert!(
-        !observe(false),
+        !npc_first,
         "an NPC before the PC must retain prior-frame noise for this slot"
     );
 }
@@ -747,8 +749,9 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         }
     }
 
+    let [body_first, observer_first] = for_both_creation_orders(observe);
     assert_eq!(
-        observe(true),
+        body_first,
         Observation {
             body_before_observer: true,
             body_slot: 1,
@@ -760,7 +763,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         "an earlier body must broadcast before the later observer detects and consume it"
     );
     assert_eq!(
-        observe(false),
+        observer_first,
         Observation {
             body_before_observer: false,
             body_slot: 2,
@@ -1357,7 +1360,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         )
     }
 
-    let attacker_first = observe(true);
+    let [attacker_first, officer_first] = for_both_creation_orders(observe);
     assert_eq!(attacker_first.0, AiState::Attacking);
     assert_eq!(
         attacker_first.1,
@@ -1370,7 +1373,7 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
     // synchronously: the soldier is hailed in the same slot and the
     // officer ends the tick already waiting for him.
     assert_eq!(
-        observe(false),
+        officer_first,
         (
             AiState::Attacking,
             AiState::Seeking,
@@ -1595,16 +1598,48 @@ fn detection_tick_preserves_authoritative_enemy_membership() {
 
 #[test]
 fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
-    use crate::ai::{AiLockFlags, AiState, StimulusInfo, StimulusType, Substate};
-    use crate::ai_enemy::task_priority;
-    use crate::element::{
-        Camp, Detectable, DetectableType, ElementBonus, ElementData, ElementKind, Entity,
-    };
-    use crate::element_kinds::ObjectType;
-    use crate::order::{Order, OrderType};
-    use crate::sequence::SequenceElement;
-
     let mut engine = EngineInner::new();
+    let ids = add_locked_detection_scene(&mut engine);
+    launch_running_noise_for(&mut engine, ids.first_visible);
+
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
+        .characters
+        .get_mut(0)
+        .expect("fixture installs the PC character profile");
+    profile.detection_speed_in_city = 100;
+    profile.detection_speed_in_forest = 100;
+
+    freeze_observer_with_seeded_detectables(&mut engine, ids);
+
+    crate::sim_rng::with_seed(0xA013_0B22, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    assert_locked_detection_commits_latches(&engine, ids);
+    assert_locked_ai_retains_detection_fifo(&engine, ids);
+    prepare_static_freeze_rescan(&mut engine, ids.observer);
+
+    engine.ai.global.freeze = true;
+    crate::sim_rng::with_seed(0xA013_0B24, |sim| engine.tick_enemy_ai(sim, &assets));
+
+    assert_static_freeze_discards_stimuli(&engine, ids.observer);
+}
+
+#[derive(Clone, Copy)]
+struct LockedDetectionIds {
+    observer: EntityId,
+    first_visible: EntityId,
+    lost: EntityId,
+    last_visible: EntityId,
+    body: EntityId,
+    object: EntityId,
+    friend: EntityId,
+}
+
+fn add_locked_detection_scene(engine: &mut EngineInner) -> LockedDetectionIds {
+    use crate::element::{Camp, ElementBonus, ElementData, ElementKind, Entity};
+    use crate::element_kinds::ObjectType;
+
     engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
         element: {
             let mut initial_element = ElementData::default();
@@ -1701,6 +1736,20 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     friend.element.set_position_map(MapPoint::new(-20.0, 20.0));
     friend.npc.life_points = 100;
     friend.npc.eye_status = crate::element::EyeStatus::Closed;
+    LockedDetectionIds {
+        observer: observer_id,
+        first_visible: first_visible_id,
+        lost: lost_id,
+        last_visible: last_visible_id,
+        body: body_id,
+        object: object_id,
+        friend: friend_id,
+    }
+}
+
+fn launch_running_noise_for(engine: &mut EngineInner, first_visible_id: EntityId) {
+    use crate::order::{Order, OrderType};
+    use crate::sequence::SequenceElement;
 
     // RunningUpright produces the production 70-volume TAPTAPTAP used by
     // RefreshDetection's acoustic pass; the frame chosen above keeps the
@@ -1719,16 +1768,22 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         .orders
         .sequence_manager
         .element_in_progress(movement_sequence, 0);
+}
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
-    let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
-        .characters
-        .get_mut(0)
-        .expect("fixture installs the PC character profile");
-    profile.detection_speed_in_city = 100;
-    profile.detection_speed_in_forest = 100;
+fn freeze_observer_with_seeded_detectables(engine: &mut EngineInner, ids: LockedDetectionIds) {
+    use crate::ai::{AiLockFlags, AiState, Substate};
+    use crate::ai_enemy::task_priority;
+    use crate::element::{Detectable, DetectableType, Entity};
 
+    let LockedDetectionIds {
+        observer: observer_id,
+        first_visible: first_visible_id,
+        lost: lost_id,
+        last_visible: last_visible_id,
+        body: body_id,
+        object: object_id,
+        ..
+    } = ids;
     let Entity::Soldier(observer) = engine
         .get_entity_mut(observer_id)
         .expect("locked detection observer exists after fixture")
@@ -1776,9 +1831,12 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         detectable_type: DetectableType::Object,
         ..Detectable::default()
     });
+}
 
-    crate::sim_rng::with_seed(0xA013_0B22, |sim| engine.tick_enemy_ai(sim, &assets));
+fn assert_locked_detection_commits_latches(engine: &EngineInner, ids: LockedDetectionIds) {
+    use crate::element::{DetectableType, Entity};
 
+    let observer_id = ids.observer;
     let observer = engine
         .get_entity(observer_id)
         .and_then(Entity::npc_data)
@@ -1812,7 +1870,21 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
         observer.detectable_lists[DetectableType::Object as usize].is_empty(),
         "locked Object detection must still commit its one-shot detectable"
     );
+}
 
+fn assert_locked_ai_retains_detection_fifo(engine: &EngineInner, ids: LockedDetectionIds) {
+    use crate::ai::{AiState, StimulusInfo, StimulusType, Substate};
+    use crate::element::Entity;
+
+    let LockedDetectionIds {
+        observer: observer_id,
+        first_visible: first_visible_id,
+        lost: lost_id,
+        last_visible: last_visible_id,
+        body: body_id,
+        object: object_id,
+        friend: friend_id,
+    } = ids;
     let ai = engine
         .get_entity(observer_id)
         .and_then(Entity::enemy_ai)
@@ -1890,6 +1962,11 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
             .alerted,
         "AILOCK_FREEZE must retain VIEW without pre-alerting its observer"
     );
+}
+
+fn prepare_static_freeze_rescan(engine: &mut EngineInner, observer_id: EntityId) {
+    use crate::ai::AiLockFlags;
+    use crate::element::{DetectableType, Entity};
 
     // The original game's global AI freeze is a separate mode: the
     // next detection refresh still scans and commits its latch, but AI admission
@@ -1910,9 +1987,11 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     observer.npc.detection_suspects[DetectableType::Enemy as usize] = 999;
     observer.npc.detectable_lists[DetectableType::Enemy as usize][0].seen_last_frame = false;
     observer.npc.detectable_lists[DetectableType::Enemy as usize][0].shadow_seen_last_frame = true;
+}
 
-    engine.ai.global.freeze = true;
-    crate::sim_rng::with_seed(0xA013_0B24, |sim| engine.tick_enemy_ai(sim, &assets));
+fn assert_static_freeze_discards_stimuli(engine: &EngineInner, observer_id: EntityId) {
+    use crate::ai::AiState;
+    use crate::element::{DetectableType, Entity};
 
     let observer = engine
         .get_entity(observer_id)
@@ -2318,8 +2397,10 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
         (ai.list_them.clone(), latches, expected_order)
     }
 
-    let (far_then_near, far_then_near_latches, far_then_near_expected) = observe(true);
-    let (near_then_far, near_then_far_latches, near_then_far_expected) = observe(false);
+    let [
+        (far_then_near, far_then_near_latches, far_then_near_expected),
+        (near_then_far, near_then_far_latches, near_then_far_expected),
+    ] = for_both_creation_orders(observe);
 
     assert_eq!(far_then_near_latches, vec![true, true]);
     assert_eq!(near_then_far_latches, vec![true, true]);
@@ -2490,14 +2571,13 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
         )
     }
 
-    let source_first = observe(true);
+    let [source_first, listener_first] = for_both_creation_orders(observe);
     assert_eq!(
         source_first,
         (false, AiState::Wondering, false),
         "a first Royalist's alert must not bypass the later Royalist's closed modulo-16 gate"
     );
 
-    let listener_first = observe(false);
     assert_eq!(
         listener_first,
         (false, AiState::Wondering, false),

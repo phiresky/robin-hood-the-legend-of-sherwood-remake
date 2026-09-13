@@ -203,7 +203,9 @@ fn fresh_selected_strike_uses_captured_stale_impossible_row_residue() {
 #[test]
 fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
     let mut engine = make_engine();
-    engine.scripts.mission = Some(empty_mission_script());
+    engine.scripts.mission = Some(crate::engine::test_support::asm::empty_mission_script(
+        "melee_test.scs",
+    ));
 
     let lift_sector = crate::sector::SectorNumber::new(42);
     let level = std::sync::Arc::make_mut(&mut engine.world.fast_grid_mut().level);

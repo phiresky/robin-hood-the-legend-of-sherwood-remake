@@ -1,5 +1,6 @@
 use super::scenarios::bind_walking_sprite;
 use super::*;
+use crate::engine::test_support::actors::for_both_creation_orders;
 
 use crate::element_kinds::Command;
 
@@ -116,13 +117,53 @@ fn rejected_gate_routes_launch_nothing_and_consume_no_random_draws() {
 
 #[test]
 fn exact_building_source_identity_consumes_original_gate_wait_draws() {
-    use crate::engine::movement::GoalShape;
+    use crate::fast_find_grid::SectorIndex;
+
+    let (mut engine, owner) = building_exit_route_fixture();
+    let source_sector = crate::position_interface::SectorHandle::new(64)
+        .unwrap()
+        .with_arena_index(SectorIndex::new(0).unwrap());
+    let sim = crate::sim_rng::test_context();
+
+    exact_building_source_draws_exit_wait(&mut engine, &sim, owner, source_sector);
+    number_only_building_source_draws_exit_wait(&mut engine, &sim, owner);
+    indirect_number_only_source_draws_exit_wait(&mut engine, &sim, owner);
+    exact_ordinary_alias_keeps_building_side_draws(&mut engine, &sim, owner);
+    multi_gate_route_draws_only_for_real_building_exit(&mut engine, &sim, owner);
+}
+
+/// Gate route request shared by the building-exit draw scenarios; only the
+/// source, gate path and goal point vary.
+fn building_exit_route_request(
+    owner: crate::element::EntityId,
+    source_sector: Option<crate::position_interface::SectorHandle>,
+    gate_path: Vec<crate::gate::GatePathStep>,
+    goal_point: MapPoint,
+) -> crate::engine::movement::GateRouteRequest {
+    crate::engine::movement::GateRouteRequest {
+        entity_id: owner,
+        source_sector,
+        gate_path,
+        goal: crate::engine::movement::GoalShape::Point {
+            point: goal_point,
+            tolerance: 0.0,
+        },
+        goal_layer: 0,
+        base_action: crate::order::OrderType::WalkingUpright,
+        move_after_last_door: true,
+        speed_factor: 1.0,
+        initial_flags: crate::sequence::MoveFlags::empty(),
+        prefix_elements: Vec::new(),
+        tail_elements: Vec::new(),
+        append_arrival_speech: false,
+        append_recovery: false,
+    }
+}
+
+fn building_exit_route_fixture() -> (EngineInner, crate::element::EntityId) {
     use crate::fast_find_grid::{GridSector, SectorIndex};
-    use crate::gate::{Door, DoorIndex, GatePathStep};
-    use crate::order::OrderType;
+    use crate::gate::Door;
     use crate::sector::{SectorNumber, SectorType};
-    use crate::sequence::{Field, FieldValue, MoveFlags};
-    use crate::sim_rng::RngSite;
 
     let make_sector = |number, sector_type| GridSector {
         points: Vec::new(),
@@ -221,36 +262,32 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         sector_out_index: SectorIndex::new(4),
         ..Door::default()
     });
-    let source_sector = crate::position_interface::SectorHandle::new(64)
-        .unwrap()
-        .with_arena_index(SectorIndex::new(0).unwrap());
-    let sim = crate::sim_rng::test_context();
+    (engine, owner)
+}
+
+fn exact_building_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+    source_sector: crate::position_interface::SectorHandle,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sequence::{Field, FieldValue};
+    use crate::sim_rng::RngSite;
 
     let (sequence_id, draws) = crate::sim_rng::with_draw_trace(|| {
         engine
             .launch_gate_movement_sequence(
-                &sim,
-                crate::engine::movement::GateRouteRequest {
-                    entity_id: owner,
-                    source_sector: Some(source_sector),
-                    gate_path: vec![GatePathStep {
+                sim,
+                building_exit_route_request(
+                    owner,
+                    Some(source_sector),
+                    vec![GatePathStep {
                         door_index: DoorIndex::new(0).expect("valid door index"),
                         direct: true,
                     }],
-                    goal: GoalShape::Point {
-                        point: MapPoint::new(140.0, 100.0),
-                        tolerance: 0.0,
-                    },
-                    goal_layer: 0,
-                    base_action: OrderType::WalkingUpright,
-                    move_after_last_door: true,
-                    speed_factor: 1.0,
-                    initial_flags: MoveFlags::empty(),
-                    prefix_elements: Vec::new(),
-                    tail_elements: Vec::new(),
-                    append_arrival_speech: false,
-                    append_recovery: false,
-                },
+                    MapPoint::new(140.0, 100.0),
+                ),
             )
             .expect("building-exit route")
     });
@@ -277,31 +314,28 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         random_wait.get_property(Field::Timer),
         Some(FieldValue::Integer(0..=30))
     ));
+}
+
+fn number_only_building_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let (number_only_sequence, number_only_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: crate::position_interface::SectorHandle::new(64),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                crate::position_interface::SectorHandle::new(64),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(140.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(140.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -323,31 +357,28 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             .iter()
             .any(|element| element.command == Command::ChangePosition)
     );
+}
+
+fn indirect_number_only_source_draws_exit_wait(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let (indirect_sequence, indirect_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: crate::position_interface::SectorHandle::new(274),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                crate::position_interface::SectorHandle::new(274),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(3).expect("valid door index"),
                     direct: false,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(240.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(240.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -369,34 +400,32 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
             .iter()
             .any(|element| element.command == Command::ChangePosition)
     );
+}
+
+fn exact_ordinary_alias_keeps_building_side_draws(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let exact_ordinary_alias = crate::position_interface::SectorHandle::new(274)
         .unwrap()
         .with_arena_index(SectorIndex::new(3).unwrap());
     let (_, exact_alias_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: Some(exact_ordinary_alias),
-                gate_path: vec![GatePathStep {
+            sim,
+            building_exit_route_request(
+                owner,
+                Some(exact_ordinary_alias),
+                vec![GatePathStep {
                     door_index: DoorIndex::new(3).expect("valid door index"),
                     direct: false,
                 }],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(240.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(240.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -407,17 +436,27 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
         ],
         "replay-011's retained gate42 building side overrides an overlapping ordinary spatial alias"
     );
+}
+
+fn multi_gate_route_draws_only_for_real_building_exit(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    owner: crate::element::EntityId,
+) {
+    use crate::fast_find_grid::SectorIndex;
+    use crate::gate::{DoorIndex, GatePathStep};
+    use crate::sim_rng::RngSite;
 
     let exact_building_alias = crate::position_interface::SectorHandle::new(66)
         .unwrap()
         .with_arena_index(SectorIndex::new(5).unwrap());
     let (_, multi_gate_draws) = crate::sim_rng::with_draw_trace(|| {
         engine.launch_gate_movement_sequence(
-            &sim,
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: Some(exact_building_alias),
-                gate_path: vec![
+            sim,
+            building_exit_route_request(
+                owner,
+                Some(exact_building_alias),
+                vec![
                     GatePathStep {
                         door_index: DoorIndex::new(1).expect("valid door index"),
                         direct: true,
@@ -427,20 +466,8 @@ fn exact_building_source_identity_consumes_original_gate_wait_draws() {
                         direct: false,
                     },
                 ],
-                goal: GoalShape::Point {
-                    point: MapPoint::new(380.0, 100.0),
-                    tolerance: 0.0,
-                },
-                goal_layer: 0,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.0,
-                initial_flags: MoveFlags::empty(),
-                prefix_elements: Vec::new(),
-                tail_elements: Vec::new(),
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+                MapPoint::new(380.0, 100.0),
+            ),
         )
     });
     assert_eq!(
@@ -2981,7 +3008,7 @@ fn unobstructed_rider_charge_with_anti_collision_keeps_raw_motion() {
 
 #[test]
 fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::capture_post_execute_crossings;
     use crate::order::{Order, OrderType};
 
     let mut engine = EngineInner::new();
@@ -3009,27 +3036,22 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
         .orders
         .push_back(Order::new(OrderType::RunningUpright, 300.0, 100.0, next_id));
 
-    let crossing_saw_charge = std::rc::Rc::new(std::cell::Cell::new(false));
-    let crossing_observed = crossing_saw_charge.clone();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner == rider {
-            assert_eq!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(owner)
-                    .map(|(_, _, order)| order.order_type),
-                Some(OrderType::RiderCharging),
-                "line-crossing callbacks observe the terminating entry order"
-            );
-            crossing_observed.set(true);
-        }
-    })));
+    let (_, crossings) = capture_post_execute_crossings(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    });
 
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
-
-    assert!(crossing_saw_charge.get());
+    let rider_crossings = crossings
+        .iter()
+        .filter(|crossing| crossing.owner == rider)
+        .collect::<Vec<_>>();
+    assert!(!rider_crossings.is_empty());
+    for crossing in rider_crossings {
+        assert_eq!(
+            crossing.current_order.map(|(_, order_type)| order_type),
+            Some(OrderType::RiderCharging),
+            "line-crossing callbacks observe the terminating entry order"
+        );
+    }
     assert_eq!(
         engine
             .get_entity(rider)
@@ -3052,7 +3074,7 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
 
 #[test]
 fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::capture_post_execute_crossings;
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -3072,22 +3094,14 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
     charge.target_y = 100.0;
     charge.tolerance = 0.0;
 
-    let rewritten_id = std::rc::Rc::new(std::cell::Cell::new(None));
-    let observed_id = rewritten_id.clone();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner == rider {
-            observed_id.set(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(owner)
-                    .map(|(_, _, order)| order.order_id),
-            );
-        }
-    })));
-
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
+    let (_, crossings) = capture_post_execute_crossings(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    });
+    let rewritten_id = crossings
+        .iter()
+        .rfind(|crossing| crossing.owner == rider)
+        .and_then(|crossing| crossing.current_order)
+        .map(|(order_id, _)| order_id);
 
     let element = engine
         .orders
@@ -3106,9 +3120,7 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
         "completion notification clears the completed selected movement goal"
     );
     assert_ne!(
-        rewritten_id
-            .get()
-            .expect("post-Execute crossing must observe the rewritten order"),
+        rewritten_id.expect("post-Execute crossing must observe the rewritten order"),
         old_id,
         "the completed order was legitimately assigned a fresh ID during Execute"
     );
@@ -3116,7 +3128,9 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
 
 #[test]
 fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::{
+        PostExecuteOrderReplacement, install_post_execute_order_replacement,
+    };
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -3137,23 +3151,16 @@ fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
     charge.tolerance = 0.0;
 
     let replacement_id = engine.orders.allocate_order_id();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner != rider {
-            return;
-        }
-        let replacement = engine
-            .orders
-            .sequence_manager
-            .get_element_mut(sequence, 0)
-            .and_then(|element| element.orders.front_mut())
-            .expect("post-Execute replacement retains the selected element");
-        assert_eq!(replacement.order_type, OrderType::RunningUpright);
-        replacement.order_type = OrderType::WaitingUpright;
-        replacement.order_id = replacement_id;
-    })));
+    install_post_execute_order_replacement(PostExecuteOrderReplacement {
+        owner: rider,
+        seq_id: sequence,
+        elem_idx: 0,
+        expected_order_type: OrderType::RunningUpright,
+        order_type: OrderType::WaitingUpright,
+        order_id: replacement_id,
+    });
 
     tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
 
     let current = engine
         .orders
@@ -3804,7 +3811,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     }
 
     assert_eq!(
-        [observe(true), observe(false)],
+        for_both_creation_orders(observe),
         [
             Observation {
                 frame: 73,
@@ -4017,7 +4024,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     }
 
     assert_eq!(
-        [observe(true), observe(false)],
+        for_both_creation_orders(observe),
         [
             Observation {
                 seeker_slot: 0,

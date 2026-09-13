@@ -2,6 +2,109 @@
 pub(crate) mod actors;
 pub(crate) mod asm;
 
+use super::commands::SelectionCommandBatchMode;
+use super::{EngineInner, HostDisplayState, InputState, LevelAssets};
+use crate::player_command::{PlayerCommand, PlayerInput};
+
+/// Test adapters over the authoritative command dispatcher
+/// (`commands::apply_commands_authoritative`). Production callers go
+/// through `Engine::advance_frame`; unit tests across the engine drive
+/// batches through these.
+impl EngineInner {
+    /// Apply a batch of player commands for the current frame.
+    /// Per-frame scroll dedupe (`frame_scrolled`) is reset at the end
+    /// of `perform_hourglass` (after `tick_display_state`), not here —
+    /// the live game pushes scroll commands via `apply_command`
+    /// (singular) one-at-a-time during input handling, while the
+    /// rollback path calls `apply_commands` in a batch; both paths
+    /// must dedupe identically, and the display-state tick still needs
+    /// to see which directions were pressed this frame.
+    pub(crate) fn apply_commands(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        commands: &[PlayerInput],
+    ) {
+        self.apply_commands_with_mode(
+            sim,
+            display,
+            input,
+            assets,
+            commands,
+            SelectionCommandBatchMode::InferNestedSelection,
+        );
+    }
+
+    pub(crate) fn apply_commands_with_mode(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        commands: &[PlayerInput],
+        mode: SelectionCommandBatchMode,
+    ) {
+        let event_start = self.feedback.pending_side_effects.host_events.len();
+        let mut camera = self.feedback.cutscene_camera.display.clone();
+        self.apply_commands_authoritative(sim, &mut camera, assets, commands, mode);
+        self.feedback.cutscene_camera.display = camera;
+        for event in self.feedback.pending_side_effects.host_events[event_start..]
+            .iter()
+            .cloned()
+        {
+            display.apply_host_event(input, event);
+        }
+    }
+
+    /// Apply a batch of commands tagged as issued by the local seat.
+    /// Convenience wrapper around [`Self::apply_commands`] for the
+    /// single-player input pipeline: each raw [`PlayerCommand`] is
+    /// stamped with [`crate::player_command::PlayerId::HOST`] before
+    /// dispatch.  Live multiplayer pipelines should build
+    /// [`PlayerInput`]s with their `Host::local_seat` and call
+    /// [`Self::apply_commands`] directly so the seat tag is
+    /// data-driven.
+    pub(crate) fn apply_local_commands(
+        &mut self,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        commands: &[PlayerCommand],
+    ) {
+        let sim = self.control.simulation_context();
+        let commands = commands
+            .iter()
+            .cloned()
+            .map(PlayerInput::host)
+            .collect::<Vec<_>>();
+        self.apply_commands(&sim, display, input, assets, &commands);
+    }
+
+    /// Apply a single [`PlayerCommand`] as if it came from
+    /// [`crate::player_command::PlayerId::HOST`].
+    ///
+    /// Test adapter over the same authoritative batch dispatcher used by
+    /// [`crate::engine::Engine::advance_frame`].
+    pub(crate) fn apply_command(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut HostDisplayState,
+        input: &mut InputState,
+        assets: &LevelAssets,
+        cmd: &PlayerCommand,
+    ) {
+        self.apply_commands(
+            sim,
+            display,
+            input,
+            assets,
+            &[PlayerInput::host(cmd.clone())],
+        );
+    }
+}
+
 /// Axis-aligned walkable test geometry, with stable counter-clockwise vertices.
 pub(crate) fn square_sector(
     number: i16,

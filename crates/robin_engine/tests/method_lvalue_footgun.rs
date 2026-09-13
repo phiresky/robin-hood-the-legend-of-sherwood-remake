@@ -20,8 +20,9 @@
 //! / etc., or read the value into a local, mutate the local, write it
 //! back via the setter).
 
-use std::fs;
 use std::path::{Path, PathBuf};
+
+mod support;
 
 /// Methods known to return a value type whose fields are mutable
 /// place expressions — i.e. exactly the methods where
@@ -191,25 +192,6 @@ fn find_matching_open_paren(line: &str, close: usize) -> Option<usize> {
     None
 }
 
-/// Recursively collect `*.rs` files under `dir`, skipping `target/`.
-fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        if name == "target" || name == ".git" {
-            continue;
-        }
-        if path.is_dir() {
-            collect_rust_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            out.push(path);
-        }
-    }
-}
-
 #[test]
 fn no_method_lvalue_footgun_in_workspace() {
     // CARGO_MANIFEST_DIR -> crates/robin_engine; workspace root is two up.
@@ -217,8 +199,7 @@ fn no_method_lvalue_footgun_in_workspace() {
     let workspace = manifest.parent().and_then(Path::parent).unwrap().to_owned();
     let crates_dir = workspace.join("crates");
 
-    let mut files = Vec::new();
-    collect_rust_files(&crates_dir, &mut files);
+    let files = support::rust_sources(&crates_dir);
     assert!(!files.is_empty(), "found no .rs files under {crates_dir:?}");
 
     // Skip this test file itself — it contains the patterns as data
@@ -228,14 +209,12 @@ fn no_method_lvalue_footgun_in_workspace() {
     let self_name = self_path.file_name().unwrap();
 
     let mut hits: Vec<String> = Vec::new();
-    for path in &files {
+    for file in files.iter() {
+        let path = &file.path;
         if path.file_name() == Some(self_name) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(path) else {
-            continue;
-        };
-        for (lineno, line) in text.lines().enumerate() {
+        for (lineno, line) in file.text.lines().enumerate() {
             // Skip comments quickly.
             let trimmed = line.trim_start();
             if trimmed.starts_with("//") || trimmed.starts_with("///") {

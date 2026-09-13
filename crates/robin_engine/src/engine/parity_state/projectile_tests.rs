@@ -180,6 +180,10 @@ fn projectile_subtypes_match_frozen_json_including_partial_runtime_metadata() {
             } else {
                 assert!(actual.get("subtype").is_none());
             }
+            golden::assert_golden(
+                &format!("entity_projectile_{object_type:?}_{active}"),
+                &actual,
+            );
         }
     }
 }
@@ -220,9 +224,8 @@ fn target_scroll_and_net_subtypes_match_frozen_json() {
             inner,
             bootstrap_open: false,
         };
-        assert_eq!(
-            engine.parity_entity_runtime_state(id, &LevelAssets::new())["subtype"],
-            engine.original_subtype_frontier(id),
-        );
+        let actual = engine.parity_entity_runtime_state(id, &LevelAssets::new());
+        assert_eq!(actual["subtype"], engine.original_subtype_frontier(id));
+        golden::assert_golden(&format!("entity_subtype_{:?}", id.kind()), &actual);
     }
 }

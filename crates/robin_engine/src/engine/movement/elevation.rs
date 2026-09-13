@@ -142,7 +142,7 @@ impl EngineInner {
             )
         };
         #[cfg(test)]
-        LAST_MOBILE_CROSSING_INCREMENT.with(|observed| observed.set(Some(increment)));
+        observe_mobile_crossing_increment(increment);
         if old_pos == new_pos {
             return;
         }

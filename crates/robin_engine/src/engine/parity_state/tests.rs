@@ -165,7 +165,7 @@ impl Engine {
         position_state
             .as_object_mut()
             .expect("parity position chunk must be an object")
-            .extend(into_projection_fields(json!({
+            .extend(serde_json::from_value::<serde_json::Map<String, Value>>(json!({
                 "world": point3(position.position.x, position.position.y, position.position.z),
                 "map": point2(position.map.x, position.map.y),
                 "sprite": point2(current_sprite.x, current_sprite.y),
@@ -180,7 +180,7 @@ impl Engine {
                 "accumulated_movement_map": point2(position.accumulated_movement_map.x, position.accumulated_movement_map.y),
                 "forecasted_movement": point3(position.forecasted_movement.x, position.forecasted_movement.y, position.forecasted_movement.z),
                 "move_box": bbox(position.move_box_map), "blocked_box": bbox(position.blocked_box),
-                })));
+                })).expect("frozen oracle chunk is a JSON object"));
         let sprite_state = json!({
                 "row": sprite.current_row, "frame": sprite.current_frame,
                 "frame_count": sprite.frame_count,
@@ -231,6 +231,10 @@ fn position_and_sprite_match_frozen_json_encoder() {
             "absent subtype keys must stay omitted"
         );
         assert!(actual["position"]["target"].is_null());
+        golden::assert_golden(
+            &format!("entity_fx_{}_{}", x.to_bits(), y.to_bits()),
+            &actual,
+        );
     }
 }
 
@@ -449,6 +453,21 @@ fn manager_snapshots_match_frozen_json_encoders() {
     assert_eq!(
         engine.parity_shield_controller_state(),
         engine.original_parity_shield_controller_state()
+    );
+    golden::assert_golden("sound_sources", &engine.parity_sound_sources_state());
+    golden::assert_golden(
+        "sound_completion_frontier",
+        &engine.parity_sound_completion_frontier_state(),
+    );
+    golden::assert_golden("ai_global", &engine.parity_ai_global_state());
+    golden::assert_golden(
+        "shield_controller",
+        &engine.parity_shield_controller_state(),
+    );
+    golden::assert_golden("game_ui", &engine.parity_game_ui_state());
+    golden::assert_golden(
+        "messenger_controller",
+        &engine.parity_messenger_controller_state(),
     );
 }
 

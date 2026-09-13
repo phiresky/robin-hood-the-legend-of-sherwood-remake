@@ -10,7 +10,6 @@ impl EngineInner {
         assets: &mut LevelAssets,
         loaded: &crate::level_data::LoadedLevel,
     ) -> Result<(), EngineError> {
-        let bank_signature = assets.bank_signature;
         assets.entities.mobile_element_count = loaded.mission.mobile_elements.len();
         // Spawn the masked child sprites owned by mission mobile elements.
         // Released data contains only the five chariot profiles. The mobile
@@ -58,52 +57,20 @@ impl EngineInner {
             for raw in &raw_mobile.sprites {
                 let fname = &raw.sprite.frame_profile_name;
                 let profile = &raw.sprite.profile_name;
-                let mut sprite = crate::sprite::Sprite::default();
-                let path = assets
-                    .sprite_scriptor
-                    .resolve_rhs_path(
-                        crate::sprite_script::FrameKind::Animation,
-                        "Data/Animations",
-                        fname,
-                        Some(crate::engine::Ambiance::Day.to_sprite_ambiance()),
-                    )
-                    .map_err(|e| EngineError::MissionLevelStage {
-                        stage: "mobile elements",
-                        reason: format!(
-                            "failed to resolve mobile {mobile_index} sprite '{fname}': {e}"
-                        ),
-                    })?;
-                let cache_key = format!("{fname}/{profile}");
-                let info = assets
-                    .sprite_scriptor_mut()
-                    .load(
-                        &path,
-                        profile,
-                        &cache_key,
-                        crate::sprite_script::FrameKind::Animation,
-                        |file| {
-                            let sig = robin_data_io::legacy_io::LegacyReader::new(file).read_u32("bank signature").map_err(|error| error.to_string())?;
-                            if sig != bank_signature {
-                                return Err(format!(
-                                    "bank signature mismatch: file {sig:#x} != bank {bank_signature:#x}"
-                                ));
-                            }
-                            Ok(())
-                        },
-                    )
-                    .map_err(|e| EngineError::MissionLevelStage {
-                        stage: "mobile elements",
-                        reason: format!(
-                            "failed to load mobile {mobile_index} sprite '{fname}' profile '{profile}': {e}"
-                        ),
-                    })?;
-                sprite.scripts = info.scripts.clone();
-                sprite.conversion = info.conversion.clone();
-                sprite.center = info.center;
-                sprite.current_width = info.size.x as u16;
-                sprite.current_height = info.size.y as u16;
-                sprite.frame_profile_name = fname.clone();
-                sprite.profile_cache_key = cache_key;
+                // Mobile child sprites are day-ambiance animation banks
+                // resolved/loaded exactly like patch and proto FX sprites.
+                let mut sprite = load_fx_sprite(
+                    assets,
+                    fname,
+                    profile,
+                    Some(crate::engine::Ambiance::Day.to_sprite_ambiance()),
+                )
+                .map_err(|e| EngineError::MissionLevelStage {
+                    stage: "mobile elements",
+                    reason: format!(
+                        "failed to load mobile {mobile_index} sprite '{fname}' profile '{profile}': {e}"
+                    ),
+                })?;
                 sprite.apply_placement(
                     mobile_sprite_map_position(
                         raw.sprite.position_x,

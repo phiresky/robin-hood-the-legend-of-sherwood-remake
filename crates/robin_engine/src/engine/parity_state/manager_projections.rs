@@ -46,12 +46,27 @@ struct SequenceOrder {
     id: u32,
     antagonist: Option<ParityEntityReference>,
 }
+/// Heterogeneous Original field-bag payload. Untagged, so every variant
+/// serializes as exactly its inner JSON shape (`Null` as `null`).
 #[derive(Serialize, Deserialize)]
-/// Only the heterogeneous Original field-bag payload remains dynamic.
-/// Its ordinal and stable surrounding sequence schema remain typed.
+#[serde(untagged)]
+enum PropertyValue {
+    Null,
+    Bool(bool),
+    Integer(u32),
+    Float(FloatBits),
+    Point2(Point2Bits),
+    Point3(Point3Bits),
+    Element(ParityEntityReference),
+    OptionalElement(Option<ParityEntityReference>),
+    Animation(u32),
+    Line(Option<LineBits>),
+    Gate(Option<GateBits>),
+}
+#[derive(Serialize, Deserialize)]
 struct Property {
     field: u32,
-    value: serde_json::Value,
+    value: PropertyValue,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -288,7 +303,6 @@ impl Engine {
     #[doc(hidden)]
     pub fn parity_sequence_manager_state(&self) -> serde_json::Value {
         use crate::sequence::{Field, FieldValue, SequenceElementData};
-        use serde_json::{Value, json};
 
         let float = bits;
         let point = point_bits;
@@ -445,30 +459,46 @@ impl Engine {
                             .into_iter()
                             .map(|(ordinal, field, value)| {
                                 let value = match value {
-                                    FieldValue::Bool(value) => json!(value),
+                                    FieldValue::Bool(value) => PropertyValue::Bool(*value),
                                     FieldValue::Integer(value) => {
                                         if matches!(
                                             field,
                                             Field::JumplineSource | Field::JumplineDestination
                                         ) && *value == 0
                                         {
-                                            Value::Null
+                                            PropertyValue::Null
                                         } else {
-                                            json!(value)
+                                            PropertyValue::Integer(*value)
                                         }
                                     }
-                                    FieldValue::Float(value) => json!(float(*value)),
-                                    FieldValue::GeoPoint2D { x, y } => json!(point(*x, *y)),
-                                    FieldValue::Point3D { x, y, z } => json!(point3(*x, *y, *z)),
-                                    FieldValue::Element(value) => json!(entity(*value)),
-                                    FieldValue::OptionalElement(value) => {
-                                        json!(value.map(&entity))
+                                    FieldValue::Float(value) => PropertyValue::Float(float(*value)),
+                                    FieldValue::GeoPoint2D { x, y } => {
+                                        PropertyValue::Point2(point(*x, *y))
                                     }
-                                    FieldValue::Animation(value) => json!(*value as u32),
-                                    FieldValue::LineId(value) => json!(line(Some(*value))),
-                                    FieldValue::OptionalLineId(value) => json!(line(*value)),
-                                    FieldValue::DoorId(value) => json!(gate(Some(*value))),
-                                    FieldValue::OptionalDoorId(value) => json!(gate(*value)),
+                                    FieldValue::Point3D { x, y, z } => {
+                                        PropertyValue::Point3(point3(*x, *y, *z))
+                                    }
+                                    FieldValue::Element(value) => {
+                                        PropertyValue::Element(entity(*value))
+                                    }
+                                    FieldValue::OptionalElement(value) => {
+                                        PropertyValue::OptionalElement(value.map(&entity))
+                                    }
+                                    FieldValue::Animation(value) => {
+                                        PropertyValue::Animation(*value as u32)
+                                    }
+                                    FieldValue::LineId(value) => {
+                                        PropertyValue::Line(line(Some(*value)))
+                                    }
+                                    FieldValue::OptionalLineId(value) => {
+                                        PropertyValue::Line(line(*value))
+                                    }
+                                    FieldValue::DoorId(value) => {
+                                        PropertyValue::Gate(gate(Some(*value)))
+                                    }
+                                    FieldValue::OptionalDoorId(value) => {
+                                        PropertyValue::Gate(gate(*value))
+                                    }
                                 };
                                 Property {
                                     field: ordinal,

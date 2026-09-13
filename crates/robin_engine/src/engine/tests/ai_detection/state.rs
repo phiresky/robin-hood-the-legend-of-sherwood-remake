@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::test_support::actors::for_both_creation_orders;
 
 #[test]
 fn quiet_pc_noise_refresh_preserves_the_previous_hearing_box() {
@@ -540,8 +541,7 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
         )
     }
 
-    let earlier = observe(true);
-    let later = observe(false);
+    let [earlier, later] = for_both_creation_orders(observe);
     assert_eq!(earlier.2, EyeStatus::Stare);
     assert_eq!(later.2, EyeStatus::Stare);
     assert!(
@@ -778,9 +778,12 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
     }
 
     for natural in [true, false] {
-        assert_eq!(observe(true, natural), ((false, false), (false, false)));
+        let [waker_first, observer_first] = for_both_creation_orders(|waker_before_observer| {
+            observe(waker_before_observer, natural)
+        });
+        assert_eq!(waker_first, ((false, false), (false, false)));
         assert_eq!(
-            observe(false, natural),
+            observer_first,
             ((false, false), (false, false)),
             "BlinkEnemy must mutate an already-visited opposing observer inline at the later waker's slot"
         );

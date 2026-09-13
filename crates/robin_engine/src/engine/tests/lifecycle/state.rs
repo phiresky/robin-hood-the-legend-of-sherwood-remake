@@ -914,14 +914,42 @@ fn aborted_ability_cleanup_is_exact_and_allows_later_selection() {
 
 #[test]
 fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
-    use crate::campaign::CampaignValue;
-    use crate::element::{Command, Entity, Posture};
-    use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceState};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
-
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
+    let (pc, beggar) = add_pay_facing_actors(&mut engine);
+    let seq = translate_pay_without_facing_or_speech(&mut engine, pc, beggar);
+
+    let assets = assets_with_test_pc_profile();
+    assert_invalid_first_pay_execute_aborts_before_facing(&engine, &sim, &assets, pc, beggar);
+    first_valid_pay_execute_samples_facing_once(&mut engine, &sim, &assets, pc, beggar);
+
+    let mut completion = fork_pay_completion_branches(&engine, &assets, pc, beggar, seq);
+    later_pay_execute_frames_do_not_resample(&mut engine, &sim, &assets, pc, beggar);
+    assert_invalid_pay_completion_aborts(
+        &mut completion.invalid,
+        &completion.invalid_sim,
+        completion.invalid_sequence_count,
+        &assets,
+        pc,
+        beggar,
+        seq,
+    );
+    assert_valid_pay_completion_launches_response(
+        &mut completion.valid,
+        &completion.valid_sim,
+        &assets,
+        pc,
+        beggar,
+        seq,
+    );
+}
+
+fn add_pay_facing_actors(engine: &mut EngineInner) -> (EntityId, EntityId) {
+    use crate::campaign::CampaignValue;
+    use crate::element::{Entity, Posture};
+    use crate::order::OrderType;
+    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
     let pc = engine.add_test_entity(make_test_pc(Posture::Upright));
     let beggar = engine.add_test_entity(make_test_civilian(Posture::Upright));
     let Entity::Civilian(civilian) = engine.get_entity_mut(beggar).unwrap() else {
@@ -968,6 +996,16 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(1);
+    (pc, beggar)
+}
+
+fn translate_pay_without_facing_or_speech(
+    engine: &mut EngineInner,
+    pc: EntityId,
+    beggar: EntityId,
+) -> crate::sequence::SequenceId {
+    use crate::element::Command;
+    use crate::sequence::SequenceElement;
 
     let seq = engine
         .orders
@@ -1005,8 +1043,18 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         engine.feedback.sound_sim.pending_exclamations.is_empty(),
         "translation must not emit HERO_GIVE_MONEY"
     );
+    seq
+}
 
-    let assets = assets_with_test_pc_profile();
+fn assert_invalid_first_pay_execute_aborts_before_facing(
+    engine: &EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+) {
+    use crate::campaign::CampaignValue;
+
     let mut invalid = engine.clone();
     invalid
         .mission_domain
@@ -1023,7 +1071,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    invalid.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
+    invalid.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
     assert_eq!(
         invalid
             .get_entity(pc)
@@ -1038,7 +1086,15 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         invalid.feedback.sound_sim.pending_exclamations.is_empty(),
         "failed first-Execute validity must abort before speech"
     );
+}
 
+fn first_valid_pay_execute_samples_facing_once(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+) {
     // The target can turn after translation. Original samples its live
     // direction only when PAYING first enters Execute.
     engine
@@ -1052,7 +1108,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .actor_data_mut()
         .unwrap()
         .execute_order_initialising = true;
-    engine.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
+    engine.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
     assert_eq!(
         engine
             .get_entity(pc)
@@ -1073,6 +1129,26 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         1,
         "first valid Execute must emit HERO_GIVE_MONEY exactly once"
     );
+}
+
+struct PayCompletionBranches {
+    invalid: EngineInner,
+    valid: EngineInner,
+    invalid_sim: crate::sim_rng::SimulationContext,
+    valid_sim: crate::sim_rng::SimulationContext,
+    invalid_sequence_count: usize,
+}
+
+fn fork_pay_completion_branches(
+    engine: &EngineInner,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+    seq: crate::sequence::SequenceId,
+) -> PayCompletionBranches {
+    use crate::campaign::CampaignValue;
+    use crate::element::Command;
+    use crate::sequence::SequenceState;
 
     // Capture the invalid-completion branch immediately after first Execute,
     // before another sprite tick can reach PAYING's DONE boundary.
@@ -1136,7 +1212,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
     );
     assert!(
         valid_completion.check_sequence_element_validity(
-            &assets,
+            assets,
             pc,
             valid_completion
                 .orders
@@ -1146,6 +1222,23 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
             true,
         )
     );
+    PayCompletionBranches {
+        invalid: invalid_completion,
+        valid: valid_completion,
+        invalid_sim: invalid_completion_sim,
+        valid_sim: valid_completion_sim,
+        invalid_sequence_count,
+    }
+}
+
+fn later_pay_execute_frames_do_not_resample(
+    engine: &mut EngineInner,
+    sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+) {
+    use crate::element::Entity;
 
     engine.control.chorus_timer = 0;
     let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
@@ -1163,7 +1256,7 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         .unwrap()
         .element_data_mut()
         .set_direction_instantly(8);
-    engine.tick_ability_for(&sim, &mut CameraDisplayState::default(), &assets, pc);
+    engine.tick_ability_for(sim, &mut CameraDisplayState::default(), assets, pc);
     assert_eq!(
         engine
             .get_entity(pc)
@@ -1185,6 +1278,20 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
         1,
         "later Execute frames must not re-emit HERO_GIVE_MONEY"
     );
+}
+
+fn assert_invalid_pay_completion_aborts(
+    invalid_completion: &mut EngineInner,
+    invalid_completion_sim: &crate::sim_rng::SimulationContext,
+    invalid_sequence_count: usize,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+    seq: crate::sequence::SequenceId,
+) {
+    use crate::campaign::CampaignValue;
+    use crate::element::Command;
+    use crate::sequence::SequenceState;
 
     // The original game validates payment again after action completion. A
     // campaign change during the animation aborts before salary deduction or
@@ -1196,9 +1303,9 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
     let ((), invalid_cards) = crate::engine::soldier_helpers::capture_condolation_cards(|| {
         for _ in 0..128 {
             invalid_completion.tick_ability_for(
-                &invalid_completion_sim,
+                invalid_completion_sim,
                 &mut CameraDisplayState::default(),
-                &assets,
+                assets,
                 pc,
             );
             if invalid_completion
@@ -1267,13 +1374,26 @@ fn pay_facing_is_sampled_once_at_first_execute_not_translation() {
             .active_ability
             .is_active()
     );
+}
+
+fn assert_valid_pay_completion_launches_response(
+    valid_completion: &mut EngineInner,
+    valid_completion_sim: &crate::sim_rng::SimulationContext,
+    assets: &LevelAssets,
+    pc: EntityId,
+    beggar: EntityId,
+    seq: crate::sequence::SequenceId,
+) {
+    use crate::campaign::CampaignValue;
+    use crate::element::Command;
+
     // Valid completion still applies the salary exactly once and launches
     // the civilian response.
     for _ in 0..128 {
         valid_completion.tick_ability_for(
-            &valid_completion_sim,
+            valid_completion_sim,
             &mut CameraDisplayState::default(),
-            &assets,
+            assets,
             pc,
         );
         if valid_completion
@@ -1487,9 +1607,27 @@ fn production_selected_beggar_frozen_turns_and_bids_while_execution_frozen_and_f
 
 #[test]
 fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
+    let mut fx = leave_listen_postpone_fixture();
+    run_enter_listen_until_counting_down(&mut fx);
+    let leave_seq = launch_leave_listen_postponed_behind_enter(&mut fx);
+    enter_listen_finishes_through_its_own_exit(&mut fx);
+    listen_done_wait_survives_same_frame_reselection(&mut fx);
+    released_leave_listen_is_consumed_once(&mut fx, leave_seq);
+}
+
+struct LeaveListenFixture {
+    engine: EngineInner,
+    owner: EntityId,
+    assets: LevelAssets,
+    enter_seq: crate::sequence::SequenceId,
+    display: HostDisplayState,
+    dev: DevState,
+}
+
+fn leave_listen_postpone_fixture() -> LeaveListenFixture {
     use crate::element::{Command, Posture};
     use crate::order::OrderType;
-    use crate::sequence::{SequenceElement, SequenceState};
+    use crate::sequence::SequenceElement;
     use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
 
     let mut engine = EngineInner::new();
@@ -1542,11 +1680,30 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     engine.players.seats[0].selected_action = crate::profiles::Action::Listen;
     let enter_seq =
         engine.launch_element(SequenceElement::new(1, Command::EnterListen, Some(owner)));
-    let mut display = HostDisplayState::default();
-    let mut dev = DevState::default();
+    let display = HostDisplayState::default();
+    let dev = DevState::default();
+    LeaveListenFixture {
+        engine,
+        owner,
+        assets,
+        enter_seq,
+        display,
+        dev,
+    }
+}
+
+fn run_enter_listen_until_counting_down(fx: &mut LeaveListenFixture) {
+    use crate::order::OrderType;
+
+    let owner = fx.owner;
+    let enter_seq = fx.enter_seq;
+    let engine = &mut fx.engine;
+    let assets = &fx.assets;
+    let display = &mut fx.display;
+    let dev = &mut fx.dev;
 
     for _ in 0..20 {
-        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        engine.perform_hourglass(display, &mut InputState::default(), assets, dev);
         if engine
             .get_entity(owner)
             .unwrap()
@@ -1578,6 +1735,20 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .order_type,
         OrderType::Listening
     );
+}
+
+fn launch_leave_listen_postponed_behind_enter(
+    fx: &mut LeaveListenFixture,
+) -> crate::sequence::SequenceId {
+    use crate::element::Command;
+    use crate::sequence::{SequenceElement, SequenceState};
+
+    let owner = fx.owner;
+    let enter_seq = fx.enter_seq;
+    let engine = &mut fx.engine;
+    let assets = &fx.assets;
+    let display = &mut fx.display;
+    let dev = &mut fx.dev;
 
     let listening_order_id = engine
         .orders
@@ -1592,7 +1763,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
     // Sequence-element launch only registers the element on the manager's
     // to-go queue; the owner instruction boundary that arbitrates it against
     // the non-interruptable EnterListen runs at the next manager hourglass.
-    engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+    engine.perform_hourglass(display, &mut InputState::default(), assets, dev);
     let leave = engine
         .orders
         .sequence_manager
@@ -1614,10 +1785,23 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
         SequenceState::InProgress,
         "LeaveListen must not replace the non-interruptable EnterListen owner"
     );
+    leave_seq
+}
+
+fn enter_listen_finishes_through_its_own_exit(fx: &mut LeaveListenFixture) {
+    use crate::order::OrderType;
+    use crate::sequence::SequenceState;
+
+    let owner = fx.owner;
+    let enter_seq = fx.enter_seq;
+    let engine = &mut fx.engine;
+    let assets = &fx.assets;
+    let display = &mut fx.display;
+    let dev = &mut fx.dev;
 
     let mut saw_enter_exit = false;
     for _ in 0..80 {
-        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        engine.perform_hourglass(display, &mut InputState::default(), assets, dev);
         saw_enter_exit |= engine
             .orders
             .sequence_manager
@@ -1685,6 +1869,16 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
         crate::profiles::Action::NoAction,
         "selected Listen DONE must synchronously apply MSG_UNSELECT_ACTION"
     );
+}
+
+fn listen_done_wait_survives_same_frame_reselection(fx: &mut LeaveListenFixture) {
+    use crate::element::Command;
+    use crate::sequence::SequenceState;
+
+    let owner = fx.owner;
+    let engine = &mut fx.engine;
+    let assets = &fx.assets;
+
     let listen_done_waits_before_reselection: Vec<_> = engine
         .orders
         .sequence_manager
@@ -1717,7 +1911,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
         ),
         "Listen DONE Wait must remain live before terminal advance"
     );
-    engine.select_pc(&assets, 0, owner, false, false);
+    engine.select_pc(assets, 0, owner, false, false);
     let listen_done_waits_after_reselection: Vec<_> = engine
         .orders
         .sequence_manager
@@ -1740,6 +1934,20 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
             .collect::<Vec<_>>(),
         "same-frame SelectPC restitution of cleared NOACTION must not Stop the Listen DONE Wait"
     );
+}
+
+fn released_leave_listen_is_consumed_once(
+    fx: &mut LeaveListenFixture,
+    leave_seq: crate::sequence::SequenceId,
+) {
+    use crate::sequence::SequenceState;
+
+    let owner = fx.owner;
+    let engine = &mut fx.engine;
+    let assets = &fx.assets;
+    let display = &mut fx.display;
+    let dev = &mut fx.dev;
+
     // The enter chain's terminal condolence releases the postponed leave
     // back through the production to-go queue. Depending on where in the
     // frame the release lands, the same frame's manager drain may already
@@ -1762,7 +1970,7 @@ fn production_leave_listen_is_postponed_until_enter_chain_naturally_finishes() {
          (state: {leave_state:?})"
     );
     for _ in 0..20 {
-        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        engine.perform_hourglass(display, &mut InputState::default(), assets, dev);
         if engine
             .orders
             .sequence_manager

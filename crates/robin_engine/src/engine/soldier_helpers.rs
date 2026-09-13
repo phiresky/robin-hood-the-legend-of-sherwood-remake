@@ -1979,7 +1979,7 @@ impl EngineInner {
 
 fn door_combat_enemy_is_vip(entity: &Entity) -> bool {
     match entity {
-        Entity::Soldier(s) => s.npc.ai_brain.enemy().map(|en| en.is_vip).unwrap_or(false),
+        Entity::Soldier(_) => entity.is_vip(),
         Entity::Civilian(c) => {
             c.civilian.cached_civilian_type == crate::profiles::CivilianType::Vip
         }

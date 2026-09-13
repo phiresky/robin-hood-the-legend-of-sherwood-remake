@@ -626,7 +626,23 @@ impl crate::sherwood_stat::MenuTextLookup for Menu {
         }
     }
 }
-fn assert_manager_encoders(engine: &Engine, assets: &LevelAssets) {
+fn assert_manager_encoders(engine: &Engine, assets: &LevelAssets, label: &str) {
+    for (name, value) in [
+        ("sequence_manager", engine.parity_sequence_manager_state()),
+        ("pc_registry", engine.parity_pc_registry_state()),
+        (
+            "runtime_roots",
+            engine.parity_engine_runtime_roots_state(&Menu),
+        ),
+        (
+            "world_interactables",
+            engine.parity_world_interactables_state(assets),
+        ),
+        ("repulsive_points", engine.parity_repulsive_points_state()),
+        ("titbit_manager", engine.parity_titbit_manager_state()),
+    ] {
+        golden::assert_golden(&format!("manager_{label}_{name}"), &value);
+    }
     assert_eq!(
         engine.parity_sequence_manager_state(),
         engine.original_sequence_manager_state()
@@ -659,7 +675,7 @@ fn empty_managers_keep_null_references_and_empty_arrays() {
         inner: EngineInner::new(),
         bootstrap_open: false,
     };
-    assert_manager_encoders(&engine, &LevelAssets::new());
+    assert_manager_encoders(&engine, &LevelAssets::new(), "empty");
     let roots = engine.parity_engine_runtime_roots_state(&Menu);
     assert!(roots["camera_sequence"].is_null());
     assert!(roots["dead_pc"].is_null());
@@ -700,7 +716,7 @@ fn sector_and_script_zone_schemas_keep_table_order_and_conditional_apex() {
         inner,
         bootstrap_open: false,
     };
-    assert_manager_encoders(&engine, &assets);
+    assert_manager_encoders(&engine, &assets, "sectors");
     let value = engine.parity_world_interactables_state(&assets);
     assert_eq!(value["sector_doors"][0]["sector"], 31);
     assert_eq!(value["lifts"][0]["sector"], 17);
@@ -942,7 +958,7 @@ fn populated_manager_schemas_match_original_encoders() {
         inner,
         bootstrap_open: false,
     };
-    assert_manager_encoders(&engine, &LevelAssets::new());
+    assert_manager_encoders(&engine, &LevelAssets::new(), "populated");
     let sequences = engine.parity_sequence_manager_state();
     assert!(sequences["sequences"][0]["elements"][1]["transition_orders"].is_null());
     assert_eq!(

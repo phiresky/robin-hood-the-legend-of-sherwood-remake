@@ -1,9 +1,10 @@
 use super::*;
 use crate::coordinates::WorldPoint3D;
+use crate::element::Camp;
 use crate::element::{
-    ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, ElementNet, HumanData, NetData,
-    NpcData, ObjectData, PcData, Posture, ProjectileData, SoldierData,
+    ElementData, ElementKind, ElementNet, NetData, ObjectData, Posture, ProjectileData,
 };
+use crate::engine::test_support::actors::TestActor;
 use crate::profiles::{Action, CharacterProfile, ProfileManager, SoldierProfile};
 
 /// Square root of [`SQUARE_RADIUS_NET_CAPTURE`] is 40, so any human
@@ -199,39 +200,13 @@ fn owner_path_frozen_all_keeps_net_physics_but_suppresses_sprite_call() {
     );
 }
 
-fn make_soldier(pos: WorldPoint3D, profile_idx: u32, rider: bool) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorSoldier;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(pos);
-    element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
-    Entity::Soldier(ActorSoldier {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        npc: NpcData {
-            life_points: 50,
-            // Level loading copies the soldier profile's HtH weapon onto
-            // the brain; the fighter-registry scan reached from net
-            // capture requires it.
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
-                    hth_weapon_id: 1,
-                    ..crate::ai_enemy::EnemyAi::default()
-                })),
-                ..Default::default()
-            },
-        },
-        soldier: SoldierData {
-            soldier_profile_index: crate::profiles::SoldierProfileIdx(profile_idx),
-            cached_camp: crate::element::Camp::Lacklandists,
-            rider,
-            ..SoldierData::default()
-        },
-    })
+/// Level loading copies the soldier profile's HtH weapon onto the brain; the
+/// fighter-registry scan reached from net capture requires it.
+fn net_capture_enemy_ai() -> crate::ai_enemy::EnemyAi {
+    crate::ai_enemy::EnemyAi {
+        hth_weapon_id: 1,
+        ..crate::ai_enemy::EnemyAi::default()
+    }
 }
 
 /// Add a soldier and complete the runtime identity production spawn
@@ -245,7 +220,16 @@ fn add_soldier(
     profile_idx: u32,
     rider: bool,
 ) -> EntityId {
-    let id = engine.add_test_entity(make_soldier(pos, profile_idx, rider));
+    let id = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .at(pos)
+            .life_points(50)
+            .enemy_ai(net_capture_enemy_ai())
+            .soldier_profile(profile_idx)
+            .camp(Camp::Lacklandists)
+            .rider(rider)
+            .build(),
+    );
     let enemy = engine
         .world
         .entities
@@ -255,27 +239,6 @@ fn add_soldier(
     enemy.base.me = id.index();
     enemy.hth_weapon_id = 1;
     id
-}
-
-fn make_pc(pos: WorldPoint3D, profile_idx: u32) -> Entity {
-    let mut element = {
-        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
-        initial_element.kind = ElementKind::ActorPc;
-        initial_element.active = true;
-        initial_element
-    };
-    element.set_position(pos);
-    element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
-    Entity::Pc(ActorPc {
-        element,
-        actor: ActorData::default(),
-        human: HumanData::default(),
-        pc: PcData {
-            profile_index: crate::profiles::CharacterProfileIdx(profile_idx),
-            life_points: 50,
-            ..PcData::default()
-        },
-    })
 }
 
 /// Build a [`LevelAssets`] with three character/soldier profiles set
@@ -476,15 +439,20 @@ fn net_crumples_when_only_rider_in_range() {
         z: LAND_Z,
     };
     let net_id = engine.add_test_entity(make_net(landing));
-    let rider_id = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: LAND_X + 5.0,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        0,
-        true, // rider
-    ));
+    let rider_id = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X + 5.0,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .life_points(50)
+            .enemy_ai(net_capture_enemy_ai())
+            .soldier_profile(0)
+            .camp(Camp::Lacklandists)
+            .rider(true)
+            .build(),
+    );
 
     engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -538,8 +506,13 @@ fn selective_immunity_skips_all_resistant_types_and_captures_an_ally() {
         1,
         false,
     );
-    let stuteley_id =
-        engine.add_test_entity(make_pc(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z), 1));
+    let stuteley_id = engine.add_test_entity(
+        TestActor::pc(Posture::Upright)
+            .at(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z))
+            .pc_profile(1)
+            .life_points(50)
+            .build(),
+    );
 
     engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -602,15 +575,20 @@ fn net_crumples_on_vip_soldier_alone() {
     };
     let net_id = engine.add_test_entity(make_net(landing));
     // Profile 1 = VIP soldier
-    let vip_id = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: LAND_X,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        1,
-        false,
-    ));
+    let vip_id = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .life_points(50)
+            .enemy_ai(net_capture_enemy_ai())
+            .soldier_profile(1)
+            .camp(Camp::Lacklandists)
+            .rider(false)
+            .build(),
+    );
 
     engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -639,24 +617,34 @@ fn net_with_existing_victim_ignores_new_rider() {
         z: LAND_Z,
     };
     let net_id = engine.add_test_entity(make_net(landing));
-    let existing_id = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: LAND_X,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        0,
-        false,
-    ));
-    let rider_id = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: LAND_X + 5.0,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        0,
-        true,
-    ));
+    let existing_id = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .life_points(50)
+            .enemy_ai(net_capture_enemy_ai())
+            .soldier_profile(0)
+            .camp(Camp::Lacklandists)
+            .rider(false)
+            .build(),
+    );
+    let rider_id = engine.add_test_entity(
+        TestActor::soldier(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X + 5.0,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .life_points(50)
+            .enemy_ai(net_capture_enemy_ai())
+            .soldier_profile(0)
+            .camp(Camp::Lacklandists)
+            .rider(true)
+            .build(),
+    );
     // Seed the net with an already-captured victim so the
     // crumple guard sees a non-empty list.
     if let Some(Entity::Net(n)) = engine.world.entities.get_mut(net_id) {
@@ -738,14 +726,17 @@ fn net_crumples_on_stuteley_pc() {
     };
     let net_id = engine.add_test_entity(make_net(landing));
     // Character profile 1 = Stuteley (Action::Net present).
-    let _ = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: LAND_X,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        1,
-    ));
+    let _ = engine.add_test_entity(
+        TestActor::pc(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .pc_profile(1)
+            .life_points(50)
+            .build(),
+    );
 
     engine.apply_net_falling_effect(sim, &assets, net_id);
 
@@ -855,15 +846,18 @@ fn vip_soldier_says_vip_net_no_remark() {
         z: LAND_Z,
     };
     let net_id = engine.add_test_entity(make_net(landing));
-    let mut vip = make_soldier(
-        WorldPoint3D {
+    let mut vip = TestActor::soldier(Posture::Upright)
+        .at(WorldPoint3D {
             x: LAND_X,
             y: LAND_Y,
             z: 0.0,
-        },
-        1, // VIP profile
-        false,
-    );
+        })
+        .life_points(50)
+        .enemy_ai(net_capture_enemy_ai())
+        .soldier_profile(1) // VIP profile
+        .camp(Camp::Lacklandists)
+        .rider(false)
+        .build();
     if let Entity::Soldier(ref mut s) = vip {
         s.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(EnemyAi {
             base: AiController::default(),
@@ -977,14 +971,17 @@ fn taking_net_animation_dispatched_for_pc() {
         z: LAND_Z,
     };
     let net_id = engine.add_test_entity(make_net(landing));
-    let pc_id = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: LAND_X,
-            y: LAND_Y,
-            z: 0.0,
-        },
-        1, // Stuteley (has Action::Net)
-    ));
+    let pc_id = engine.add_test_entity(
+        TestActor::pc(Posture::Upright)
+            .at(WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            })
+            .pc_profile(1) // Stuteley (has Action::Net)
+            .life_points(50)
+            .build(),
+    );
     // The full hourglass resolves the PC's portrait/ammo state through
     // its campaign-description identity; install it like production
     // roster construction does.

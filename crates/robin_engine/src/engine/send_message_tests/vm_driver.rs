@@ -767,9 +767,8 @@ fn real_active_driver_rejects_snapshot_and_idle_driver_serializes() {
     let actor_id = engine.add_test_entity(scripted_soldier("YieldingFlavor"));
     let handle = bind_script_actor(&mut engine, actor_id, "YieldingFlavor");
 
-    super::script::arm_active_driver_snapshot_probe();
-    engine
-        .call_script_vm(
+    let (result, errors) = super::script::capture_active_driver_snapshot_errors(|| {
+        engine.call_script_vm(
             &crate::sim_rng::test_context(),
             &assets,
             super::ScriptVmKey::Actor(handle),
@@ -777,8 +776,10 @@ fn real_active_driver_rejects_snapshot_and_idle_driver_serializes() {
             &[],
             crate::natives::ScriptCallFrame::actor(handle),
         )
-        .expect("effect-producing callback");
-    let error = super::script::take_active_driver_snapshot_error()
+    });
+    result.expect("effect-producing callback");
+    let error = errors
+        .first()
         .expect("effect drain executed the active-driver snapshot probe");
     assert!(error.contains("active script callback"), "{error}");
     let script = engine.scripts.mission.as_ref().unwrap();

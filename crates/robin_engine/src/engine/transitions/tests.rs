@@ -1,55 +1,18 @@
 use super::*;
-use crate::element::{ActorData, Entity, HumanData, NpcData, SoldierData};
+use crate::element::{Camp, Entity};
 use crate::element_kinds::{ActionState as AS, Posture as P};
+use crate::engine::test_support::actors::TestActor;
 use crate::sequence::{SequenceElement, SequencePriority};
 
-fn make_soldier(posture: P, action_state: AS, attentive: bool) -> Entity {
+/// Enemy AI of a settled soldier. In the running game,
+/// `set_soldier_attentive_mode` flips `will_be_attentive` synchronously and
+/// `attentive` after the transition animation completes — so a settled
+/// alerted soldier has both true. Mirror that for tests.
+fn settled_enemy_ai(attentive: bool) -> crate::ai_enemy::EnemyAi {
     let mut enemy_ai = crate::ai_enemy::EnemyAi::new(0);
     enemy_ai.attentive = attentive;
-    // In the running game, `set_soldier_attentive_mode`
-    // flips `will_be_attentive` synchronously and `attentive`
-    // after the transition animation completes — so a settled
-    // alerted soldier has both true.  Mirror that for tests.
     enemy_ai.will_be_attentive = attentive;
-    Entity::Soldier(crate::element::ActorSoldier {
-        element: {
-            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
-            initial_element.kind = crate::element::ElementKind::ActorSoldier;
-            initial_element
-        },
-        actor: ActorData {
-            action_state,
-            ..Default::default()
-        },
-        human: HumanData::default(),
-        npc: NpcData {
-            ai: crate::element::AiActorData {
-                ai_brain: crate::element::AiBrain::Enemy(Box::new(enemy_ai)),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        soldier: SoldierData {
-            cached_camp: crate::element::Camp::Lacklandists,
-            ..SoldierData::default()
-        },
-    })
-}
-
-fn make_pc(posture: P, action_state: AS) -> Entity {
-    Entity::Pc(crate::element::ActorPc {
-        element: {
-            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
-            initial_element.kind = crate::element::ElementKind::ActorPc;
-            initial_element
-        },
-        actor: ActorData {
-            action_state,
-            ..Default::default()
-        },
-        human: HumanData::default(),
-        pc: Default::default(),
-    })
+    enemy_ai
 }
 
 /// Launch a sequence element for `owner` with the given command.
@@ -109,7 +72,8 @@ fn generate_transition(
 #[test]
 fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
+    let owner =
+        engine.add_test_entity(TestActor::pc(P::Crouched).action_state(AS::Waiting).build());
     let (seq_id, elem_idx) = launch(&mut engine, owner, Command::CrouchDown);
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::default();
@@ -148,7 +112,8 @@ fn invalid_transition_targets_are_errors_not_gameplay_refusals() {
 fn transition_stages_revalidate_callback_mutations_even_on_refusal() {
     for allowed in [true, false] {
         let mut engine = EngineInner::new();
-        let owner = engine.add_test_entity(make_pc(P::Upright, AS::Waiting));
+        let owner =
+            engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Waiting).build());
         let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
         let target = TransitionTarget {
             owner,
@@ -182,7 +147,7 @@ fn transition_stages_revalidate_callback_mutations_even_on_refusal() {
 #[test]
 fn transition_stages_observe_live_state_without_reordering_effects() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Upright, AS::Waiting));
+    let owner = engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Waiting).build());
     let (seq_id, elem_idx) = launch(&mut engine, owner, Command::Wait);
     let target = TransitionTarget {
         owner,
@@ -257,7 +222,13 @@ fn stand_up_transition_matches_game_action_variants() {
 #[test]
 fn lying_soldier_stand_up_transition_is_in_place_no_direction() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Lying, AS::WaitingSword, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Lying)
+            .action_state(AS::WaitingSword)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -287,8 +258,18 @@ fn sword_exit_transition_synchronously_quits_the_fight() {
     let mut engine = EngineInner::new();
     // Exercise the soldier path because its synchronous quit also drives
     // the ordinary NPC AI callbacks covered by this regression.
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::WaitingSword, false));
-    let opponent = engine.add_test_entity(make_pc(P::Upright, AS::WaitingSword));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::WaitingSword)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
+    let opponent = engine.add_test_entity(
+        TestActor::pc(P::Upright)
+            .action_state(AS::WaitingSword)
+            .build(),
+    );
     // The synchronous quit notifies the AI, which reads every live PC's
     // campaign-description identity.
     engine
@@ -365,7 +346,13 @@ fn sword_exit_transition_synchronously_quits_the_fight() {
 #[test]
 fn tied_soldier_rejects_upright_command_like_original_release() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Tied, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Tied)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::RaiseBow);
 
     assert!(!generate_transition(&mut engine, owner, seq, idx));
@@ -384,7 +371,11 @@ fn tied_soldier_rejects_upright_command_like_original_release() {
 #[test]
 fn anonymous_archer_aiming_bow_up_transition_uses_anonymous_raise() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::AnonymousArcher, AS::Waiting));
+    let owner = engine.add_test_entity(
+        TestActor::pc(P::AnonymousArcher)
+            .action_state(AS::Waiting)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::LowerBow);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -406,7 +397,13 @@ fn anonymous_archer_aiming_bow_up_transition_uses_anonymous_raise() {
 #[test]
 fn soldier_move_from_leaning_out_queues_unstick() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::LeaningOut)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -426,7 +423,13 @@ fn soldier_move_from_leaning_out_queues_unstick() {
 #[test]
 fn soldier_lean_out_from_leaning_out_stays_leaning_out() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::LeaningOut, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::LeaningOut)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::LeanOut);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -446,7 +449,13 @@ fn soldier_lean_out_from_leaning_out_stays_leaning_out() {
 #[test]
 fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, true));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(true))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::EquipBowDown);
 
     let ok = dispatch_make_final_action_transition(
@@ -473,7 +482,13 @@ fn soldier_bow_down_entry_from_waiting_loads_before_lowering() {
 #[test]
 fn soldier_bow_down_exit_queues_unload_before_unequip() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::LeaningOut, AS::AimingWithBowDown, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::LeaningOut)
+            .action_state(AS::AimingWithBowDown)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -499,7 +514,13 @@ fn soldier_bow_down_exit_queues_unload_before_unequip() {
 #[test]
 fn soldier_move_from_crouched_stays_crouched() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Crouched, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Crouched)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch_movement(&mut engine, owner, Command::Move, OrderType::WalkingUpright);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -525,7 +546,8 @@ fn soldier_move_from_crouched_stays_crouched() {
 #[test]
 fn crouched_pc_takes_bonus_net_without_landed_net_standup() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
+    let owner =
+        engine.add_test_entity(TestActor::pc(P::Crouched).action_state(AS::Waiting).build());
     let bonus_net = engine.add_test_entity(Entity::Bonus(crate::element::ElementBonus {
         element: {
             let mut initial_element = crate::element::ElementData::default();
@@ -564,7 +586,13 @@ fn crouched_pc_takes_bonus_net_without_landed_net_standup() {
 #[test]
 fn soldier_run_from_crouched_queues_crouch_up() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Crouched, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Crouched)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch_movement(&mut engine, owner, Command::Move, OrderType::RunningUpright);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -588,7 +616,7 @@ fn soldier_run_from_crouched_queues_crouch_up() {
 #[test]
 fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Moving));
+    let owner = engine.add_test_entity(TestActor::pc(P::Crouched).action_state(AS::Moving).build());
     let (seq, idx) = launch_movement(
         &mut engine,
         owner,
@@ -632,7 +660,7 @@ fn pc_pass_door_high_crenel_wall_from_crouched_keeps_authored_walk() {
 #[test]
 fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Moving));
+    let owner = engine.add_test_entity(TestActor::pc(P::Crouched).action_state(AS::Moving).build());
     let (seq, idx) = launch_movement(
         &mut engine,
         owner,
@@ -676,8 +704,14 @@ fn pc_pass_door_high_wall_from_crouched_still_queues_crouch_up() {
 #[test]
 fn pc_carrying_on_shoulders_exit_queues_lower_then_stand_chain() {
     let mut engine = EngineInner::new();
-    let mut carrier = make_pc(P::CarryingOnShoulders, AS::Waiting);
-    let carried = engine.add_test_entity(make_pc(P::OnShoulders, AS::Waiting));
+    let mut carrier = TestActor::pc(P::CarryingOnShoulders)
+        .action_state(AS::Waiting)
+        .build();
+    let carried = engine.add_test_entity(
+        TestActor::pc(P::OnShoulders)
+            .action_state(AS::Waiting)
+            .build(),
+    );
     if let Entity::Pc(pc) = &mut carrier {
         pc.pc.carried = Some(carried);
     }
@@ -706,7 +740,11 @@ fn pc_carrying_on_shoulders_exit_queues_lower_then_stand_chain() {
 #[test]
 fn pc_carrying_corpse_without_carried_entity_is_impossible() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::CarryingCorpse, AS::Waiting));
+    let owner = engine.add_test_entity(
+        TestActor::pc(P::CarryingCorpse)
+            .action_state(AS::Waiting)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::Turn);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -723,8 +761,16 @@ fn pc_carrying_corpse_without_carried_entity_is_impossible() {
 #[test]
 fn pc_enter_swordfight_from_carrying_corpse_registers_exit_before_execute() {
     let mut engine = EngineInner::new();
-    let carried = engine.add_test_entity(make_soldier(P::Carried, AS::Waiting, false));
-    let mut carrier = make_pc(P::CarryingCorpse, AS::Waiting);
+    let carried = engine.add_test_entity(
+        TestActor::soldier(P::Carried)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
+    let mut carrier = TestActor::pc(P::CarryingCorpse)
+        .action_state(AS::Waiting)
+        .build();
     if let Entity::Pc(pc) = &mut carrier {
         pc.pc.carried = Some(carried);
     }
@@ -766,7 +812,8 @@ fn pc_enter_swordfight_from_carrying_corpse_registers_exit_before_execute() {
 #[test]
 fn pc_crouch_up_from_crouched_snaps_to_upright() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Crouched, AS::Waiting));
+    let owner =
+        engine.add_test_entity(TestActor::pc(P::Crouched).action_state(AS::Waiting).build());
     let (seq, idx) = launch(&mut engine, owner, Command::CrouchUp);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -791,7 +838,11 @@ fn pc_crouch_up_from_crouched_snaps_to_upright() {
 #[test]
 fn soldier_enter_swordfight_fires_must_be_alerted() {
     let mut engine = EngineInner::new();
-    let mut soldier = make_soldier(P::Upright, AS::Waiting, false);
+    let mut soldier = TestActor::soldier(P::Upright)
+        .action_state(AS::Waiting)
+        .enemy_ai(settled_enemy_ai(false))
+        .camp(Camp::Lacklandists)
+        .build();
     soldier.element_data_mut().set_direction_goal(15);
     let owner = engine.add_test_entity(soldier);
     let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
@@ -834,7 +885,11 @@ fn soldier_enter_swordfight_fires_must_be_alerted() {
 #[test]
 fn attentive_exit_transition_preserves_direction_goal() {
     let mut engine = EngineInner::new();
-    let mut soldier = make_soldier(P::Upright, AS::Waiting, true);
+    let mut soldier = TestActor::soldier(P::Upright)
+        .action_state(AS::Waiting)
+        .enemy_ai(settled_enemy_ai(true))
+        .camp(Camp::Lacklandists)
+        .build();
     soldier.element_data_mut().set_direction_goal(1);
     let owner = engine.add_test_entity(soldier);
     let (seq, idx) = launch(&mut engine, owner, Command::SitDown);
@@ -870,7 +925,11 @@ fn attentive_exit_transition_preserves_direction_goal() {
 #[test]
 fn mid_transition_soldier_uses_current_attentive_pose() {
     let mut engine = EngineInner::new();
-    let mut e = make_soldier(P::Upright, AS::Waiting, false);
+    let mut e = TestActor::soldier(P::Upright)
+        .action_state(AS::Waiting)
+        .enemy_ai(settled_enemy_ai(false))
+        .camp(Camp::Lacklandists)
+        .build();
     if let Entity::Soldier(s) = &mut e
         && let Some(enemy) = s.npc.ai_brain.enemy_mut()
     {
@@ -898,7 +957,13 @@ fn mid_transition_soldier_uses_current_attentive_pose() {
 #[test]
 fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::default();
 
@@ -965,7 +1030,13 @@ fn postponed_leave_after_enter_does_not_requeue_enter_transition() {
 #[test]
 fn attentive_soldier_enter_swordfight_no_double_alert() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Waiting, true));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::Waiting)
+            .enemy_ai(settled_enemy_ai(true))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::EnterSwordfight);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -985,7 +1056,13 @@ fn attentive_soldier_enter_swordfight_no_double_alert() {
 #[test]
 fn bored_soldier_wait_no_transition() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Bored, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::Bored)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::Wait);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);
@@ -1007,7 +1084,7 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
     let sim = crate::sim_rng::test_context();
     let assets = crate::engine::LevelAssets::new();
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_pc(P::Upright, AS::Bored));
+    let owner = engine.add_test_entity(TestActor::pc(P::Upright).action_state(AS::Bored).build());
     let (seq, idx) = launch(&mut engine, owner, Command::ThrowPurse);
 
     assert!(generate_transition(&mut engine, owner, seq, idx));
@@ -1102,7 +1179,13 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
 #[test]
 fn soldier_crouch_down_from_upright_moving_queues_exit() {
     let mut engine = EngineInner::new();
-    let owner = engine.add_test_entity(make_soldier(P::Upright, AS::Moving, false));
+    let owner = engine.add_test_entity(
+        TestActor::soldier(P::Upright)
+            .action_state(AS::Moving)
+            .enemy_ai(settled_enemy_ai(false))
+            .camp(Camp::Lacklandists)
+            .build(),
+    );
     let (seq, idx) = launch(&mut engine, owner, Command::CrouchDown);
 
     let ok = generate_transition(&mut engine, owner, seq, idx);

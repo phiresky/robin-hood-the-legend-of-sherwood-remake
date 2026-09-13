@@ -7,6 +7,10 @@ use std::path::{Path, PathBuf};
 use strum::IntoEnumIterator;
 use syn::visit::Visit;
 
+mod support;
+#[path = "support/syntax.rs"]
+mod syntax;
+
 const REVIEWED_PUBLIC_ENTRY_POINTS: &[&str] = &[
     "bool",
     "c_rand_unit_inclusive",
@@ -203,25 +207,6 @@ impl<'ast> Visit<'ast> for RngSourceVisitor<'_> {
     }
 }
 
-fn rust_sources(root: &Path) -> Vec<PathBuf> {
-    let mut pending = vec![root.to_owned()];
-    let mut result = Vec::new();
-    while let Some(path) = pending.pop() {
-        for entry in std::fs::read_dir(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
-        {
-            let path = entry.expect("read source entry").path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                result.push(path);
-            }
-        }
-    }
-    result.sort();
-    result
-}
-
 #[test]
 fn gaussian_sampler_sites_must_be_explicit_at_each_draw() {
     for (source, expected_unlabelled) in [
@@ -267,9 +252,7 @@ fn authoritative_rng_source_inventory_is_reviewed() {
     let mut actual_ambient = BTreeMap::<String, usize>::new();
     let mut violations = Vec::new();
 
-    let sim_rng_source =
-        std::fs::read_to_string(manifest.join("src/sim_rng.rs")).expect("read sim_rng.rs");
-    let sim_rng_syntax = syn::parse_file(&sim_rng_source).expect("parse sim_rng.rs");
+    let sim_rng_syntax = syntax::parse_path(&manifest.join("src/sim_rng.rs"));
     let public_entry_points = sim_rng_syntax
         .items
         .iter()
@@ -289,16 +272,18 @@ fn authoritative_rng_source_inventory_is_reviewed() {
         public_entry_points, expected_entry_points,
         "update the reviewed public sim_rng entry-point inventory"
     );
-    for file in roots.iter().flat_map(|root| rust_sources(root)) {
+    let trees = roots
+        .iter()
+        .map(|root| support::rust_sources(root))
+        .collect::<Vec<_>>();
+    for source in trees.iter().flat_map(|files| files.iter()) {
+        let file = &source.path;
         if file.ends_with("sim_rng.rs") || file.ends_with("engine/tests.rs") {
             continue;
         }
-        let source = std::fs::read_to_string(&file)
-            .unwrap_or_else(|error| panic!("read {}: {error}", file.display()));
-        let syntax = syn::parse_file(&source)
-            .unwrap_or_else(|error| panic!("parse {}: {error}", file.display()));
+        let syntax = syntax::parse(source);
         let mut visitor = RngSourceVisitor {
-            file: &file,
+            file,
             sites: BTreeMap::new(),
             auxiliary_sites: BTreeMap::new(),
             unlabelled_calls: Vec::new(),

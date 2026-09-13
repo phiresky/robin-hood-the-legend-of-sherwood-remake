@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 use syn::visit::{self, Visit};
 
-fn references_geometry(source: &str, name: &str) -> bool {
+mod support;
+#[path = "support/syntax.rs"]
+mod syntax;
+
+fn references_geometry(syntax: &syn::File, name: &str) -> bool {
     struct References<'a> {
         name: &'a str,
         found: bool,
@@ -27,16 +30,15 @@ fn references_geometry(source: &str, name: &str) -> bool {
             visit::visit_use_tree(self, tree);
         }
     }
-    let syntax = syn::parse_file(source).expect("geometry guard source must parse");
     let mut references = References { name, found: false };
-    references.visit_file(&syntax);
+    references.visit_file(syntax);
     references.found
 }
 
 /// Computational helpers may use generic geometry locally, but it must not
 /// escape into an API or stored field, including through renamed imports and
 /// private type aliases.
-fn exposes_generic_geometry(source: &str) -> bool {
+fn exposes_generic_geometry(syntax: &syn::File) -> bool {
     struct Paths<'a> {
         forbidden: &'a BTreeSet<String>,
         found: bool,
@@ -114,7 +116,6 @@ fn exposes_generic_geometry(source: &str) -> bool {
         }
     }
 
-    let syntax = syn::parse_file(source).expect("geometry guard source must parse");
     let mut forbidden = [
         "geo2d",
         "GeoPoint2D",
@@ -135,7 +136,7 @@ fn exposes_generic_geometry(source: &str) -> bool {
             forbidden: &forbidden,
             discovered: BTreeSet::new(),
         };
-        aliases.visit_file(&syntax);
+        aliases.visit_file(syntax);
         let discovered = aliases.discovered;
         let previous = forbidden.len();
         forbidden.extend(discovered);
@@ -147,7 +148,7 @@ fn exposes_generic_geometry(source: &str) -> bool {
         forbidden: &forbidden,
         found: false,
     });
-    surface.visit_file(&syntax);
+    surface.visit_file(syntax);
     surface.0.found
 }
 
@@ -156,9 +157,13 @@ fn exposes_generic_geometry(source: &str) -> bool {
 // adapter, serialization, and computational geometry internals; see
 // docs/COORDINATES.md for the policy.
 
-fn read_src(relative_path: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
-    fs::read_to_string(&path).unwrap_or_else(|err| panic!("failed to read {path:?}: {err}"))
+fn parse_src(relative_path: &str) -> std::rc::Rc<syn::File> {
+    syntax::parse_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path))
+}
+
+/// Parse an inline guard fixture.
+fn fixture(source: &str) -> syn::File {
+    syn::parse_file(source).expect("geometry guard source must parse")
 }
 
 #[test]
@@ -173,7 +178,7 @@ fn cleaned_map_geometry_modules_do_not_reintroduce_generic_bboxes() {
         "src/position_interface.rs",
         "src/sound_source.rs",
     ] {
-        let src = read_src(path);
+        let src = parse_src(path);
         assert!(
             !references_geometry(&src, "BBox2D"),
             "{path} should keep public and stored geometry in domain bboxes such as MapBBox"
@@ -195,7 +200,7 @@ fn cleaned_vector_math_modules_do_not_reintroduce_raw_geo_points() {
         "src/path.rs",
         "src/material_sectors.rs",
     ] {
-        let src = read_src(path);
+        let src = parse_src(path);
         assert!(
             !references_geometry(&src, "geo2d"),
             "{path} should keep vector math in MapPoint/MapVec/ScreenPoint/ScreenVec"
@@ -205,25 +210,23 @@ fn cleaned_vector_math_modules_do_not_reintroduce_raw_geo_points() {
 
 #[test]
 fn robin_rs_does_not_reexport_generic_geometry() {
-    let lib = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
+    let lib = syntax::parse_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../robin_rs/src/lib.rs")
             .canonicalize()
             .expect("robin_rs lib path should exist"),
-    )
-    .expect("failed to read robin_rs/src/lib.rs");
+    );
     assert!(
         !references_geometry(&lib, "geo2d"),
         "robin_rs should not re-export generic geo2d; import low-level adapters explicitly"
     );
 
-    let mouse_way = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
+    let mouse_way = syntax::parse_path(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../robin_rs/src/mouse_way.rs")
             .canonicalize()
             .expect("mouse_way path should exist"),
-    )
-    .expect("failed to read robin_rs/src/mouse_way.rs");
+    );
     assert!(
         !exposes_generic_geometry(&mouse_way),
         "mouse_way should keep public and stored geometry in ScreenPoint/ScreenVec; generic segment helpers belong inside computations"
@@ -232,9 +235,9 @@ fn robin_rs_does_not_reexport_generic_geometry() {
 
 #[test]
 fn geometry_api_guard_allows_local_adapters_but_rejects_alias_leaks() {
-    assert!(!exposes_generic_geometry(
+    assert!(!exposes_generic_geometry(&fixture(
         "use engine::geo2d::Segment2D; pub fn crosses(p: ScreenPoint) -> bool { let segment = Segment2D::new(p.to_geo(), p.to_geo()); false }"
-    ));
+    )));
     for source in [
         "pub fn point() -> engine::geo2d::GeoPoint2D { todo!() }",
         "struct State { point: GeoPoint2D }",
@@ -246,7 +249,7 @@ fn geometry_api_guard_allows_local_adapters_but_rejects_alias_leaks() {
         "pub use engine::geo2d::GeoPoint2D as Point;",
     ] {
         assert!(
-            exposes_generic_geometry(source),
+            exposes_generic_geometry(&fixture(source)),
             "missed generic API: {source}"
         );
     }
@@ -255,19 +258,19 @@ fn geometry_api_guard_allows_local_adapters_but_rejects_alias_leaks() {
 #[test]
 fn geometry_guard_checks_paths_not_comments_or_string_literals() {
     assert!(!references_geometry(
-        "// BBox2D\nconst DOC: &str = \"geo2d::pt\";",
+        &fixture("// BBox2D\nconst DOC: &str = \"geo2d::pt\";"),
         "geo2d"
     ));
     assert!(!references_geometry(
-        "/// BBox2D is intentionally forbidden.\nstruct MapBBox;",
+        &fixture("/// BBox2D is intentionally forbidden.\nstruct MapBBox;"),
         "BBox2D"
     ));
     assert!(references_geometry(
-        "use crate::{geometry, geo2d::{pt as point}};",
+        &fixture("use crate::{geometry, geo2d::{pt as point}};"),
         "geo2d"
     ));
     assert!(references_geometry(
-        "struct State { bounds: crate::geo2d::BBox2D }",
+        &fixture("struct State { bounds: crate::geo2d::BBox2D }"),
         "BBox2D"
     ));
 }

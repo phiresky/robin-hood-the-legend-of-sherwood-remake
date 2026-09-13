@@ -22,6 +22,49 @@ pub enum Stature {
     Both,
 }
 
+/// Toolbar-slot state of an action on a PC's character profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PcActionSlotState {
+    /// The profile does not list the action (after the `Eat → Guzzle`
+    /// fallback of `inventory::find_action_slot`), so there is no toolbar
+    /// slot whose disabled bits could apply. This is a regular query
+    /// answer (e.g. a multi-selection where only some heroes own the armed
+    /// action), not a missing object; callers map it explicitly.
+    NotInProfile,
+    /// The slot exists and neither disabled bit is set.
+    Enabled,
+    /// The slot exists and `disabled_actions` or `disabled_actions_temp`
+    /// is set for it.
+    Disabled,
+}
+
+/// Shared policy for every "is this PC's toolbar action usable" query
+/// (`EngineInner::is_pc_action_available`,
+/// `sequence_validity::is_pc_action_enabled`).
+///
+/// A PC referencing a missing character profile is a data error: it is
+/// reported with `tracing::warn!` (prefixed by `context`) and yields
+/// `None`, so callers cannot silently treat it as a gameplay answer.
+pub(super) fn pc_action_slot_state(
+    profiles: &crate::profiles::ProfileManager,
+    pc: &crate::element::PcData,
+    action: Action,
+    context: &'static str,
+) -> Option<PcActionSlotState> {
+    let Some(profile) = profiles.get_character(pc.profile_index) else {
+        tracing::warn!(
+            profile_index = ?pc.profile_index,
+            "{context} references a missing character profile"
+        );
+        return None;
+    };
+    Some(match crate::inventory::find_action_slot(profile, action) {
+        None => PcActionSlotState::NotInProfile,
+        Some(idx) if pc.action_slot_disabled(idx) => PcActionSlotState::Disabled,
+        Some(_) => PcActionSlotState::Enabled,
+    })
+}
+
 impl EngineInner {
     // ─── Selection helpers ────────────────────────────────────────
 
@@ -1087,9 +1130,9 @@ impl EngineInner {
     /// fallback via `inventory::find_action_slot`.
     ///
     /// Returns `false` when the entity isn't a PC, the campaign profile is
-    /// unavailable, the profile doesn't list the action, or either
-    /// `disabled_actions` / `disabled_actions_temp` is set on the resolved
-    /// slot.
+    /// unavailable (warned by [`pc_action_slot_state`]), the profile doesn't
+    /// list the action, or either `disabled_actions` /
+    /// `disabled_actions_temp` is set on the resolved slot.
     pub fn is_pc_action_available(
         &self,
         profiles: &crate::profiles::ProfileManager,
@@ -1099,14 +1142,14 @@ impl EngineInner {
         let Some(pc) = self.get_entity(pc_id).and_then(|e| e.pc_data()) else {
             return false;
         };
-        let Some(profile) = profiles.get_character(pc.profile_index) else {
-            tracing::warn!(profile_index = ?pc.profile_index, "PC action selection references a missing character profile");
-            return false;
-        };
-        let Some(idx) = crate::inventory::find_action_slot(profile, action) else {
-            return false;
-        };
-        !pc.action_slot_disabled(idx)
+        match pc_action_slot_state(profiles, pc, action, "PC action selection") {
+            Some(PcActionSlotState::Enabled) => true,
+            // A selected hero whose profile lacks the armed action cannot
+            // perform it — this is exactly the multi-selection case the
+            // double-click pre-process aborts on.
+            Some(PcActionSlotState::NotInProfile | PcActionSlotState::Disabled) => false,
+            None => false,
+        }
     }
 
     pub(crate) fn select_pc_action_by_index_from_message(
