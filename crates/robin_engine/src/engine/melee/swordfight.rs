@@ -8,6 +8,70 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::SequenceElementData;
 
+impl EngineInner {
+    #[inline(never)]
+    fn trace_opponent_order_choose(
+        &self,
+        entity_id: EntityId,
+        opponents: &impl std::fmt::Debug,
+        candidates: &[usize],
+        pick: usize,
+        rng_before: impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase=choose owner={} before={opponents:?} candidates={candidates:?} pick={} rng_before={:?} rng_after={:?}",
+            self.control.frame_counter,
+            entity_id.index(),
+            candidates[pick],
+            rng_before,
+            self.control.rng.original_replay_cursor(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_opponent_order_choose_done(&self, entity_id: EntityId, new_principal: usize) {
+        let after = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::human_data)
+            .map(|human| human.opponents.ids());
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
+            self.control.frame_counter,
+            entity_id.index(),
+            new_principal,
+        );
+    }
+
+    /// `phase` is `enter_opponent` or `enter_initiator`.
+    #[inline(never)]
+    fn trace_opponent_order_enter(
+        &self,
+        phase: &str,
+        owner: EntityId,
+        other: EntityId,
+        before: impl std::fmt::Debug,
+        fresh: bool,
+    ) {
+        let after = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::human_data)
+            .map(|human| human.opponents.ids());
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase={phase} owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
+            self.control.frame_counter,
+            owner.index(),
+            other.index(),
+            before,
+            fresh,
+            self.control.rng.original_replay_cursor(),
+        );
+    }
+}
+
 thread_local! {
     /// The original game's swordfight preparation scope is a
     /// non-serialized synchronous call-stack guard. Key the equivalent
@@ -416,17 +480,10 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            let owner_human = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .unwrap_or_else(|| {
-                    panic!("opponent jump-line owner {entity_id:?} disappeared during refresh")
-                })
-                .human_data_mut()
-                .unwrap_or_else(|| {
-                    panic!("opponent jump-line owner {entity_id:?} stopped being human")
-                });
+            let owner_human = self.world.entities.expect_human_data_mut(
+                entity_id,
+                format_args!("opponent jump-line owner during refresh"),
+            );
             assert!(
                 owner_human.opponents.update_jump_line_at(i, this_jl),
                 "opponent slot {i} disappeared from {entity_id:?} during jump-line refresh"
@@ -437,12 +494,7 @@ impl EngineInner {
             // The analysis phase above is read-only,
             // so a missing record here is malformed state, not a race to hide.
             let opponent_human = self
-                .world
-                .entities
-                .get_mut(opp_id)
-                .unwrap_or_else(|| {
-                    panic!("opponent {opp_id:?} disappeared during jump-line refresh")
-                })
+                .expect_entity_mut(opp_id, "opponent during jump-line refresh")
                 .human_data_mut()
                 .unwrap_or_else(|| panic!("opponent {opp_id:?} is not human"));
             assert!(
@@ -623,13 +675,12 @@ impl EngineInner {
                 0..candidates.len(),
             );
             if debug {
-                eprintln!(
-                    "PARITY_OPPONENT_ORDER frame={} phase=choose owner={} before={opponents:?} candidates={candidates:?} pick={} rng_before={:?} rng_after={:?}",
-                    self.control.frame_counter,
-                    entity_id.index(),
-                    candidates[pick],
+                self.trace_opponent_order_choose(
+                    entity_id,
+                    &opponents,
+                    &candidates,
+                    pick,
                     rng_before.flatten(),
-                    self.control.rng.original_replay_cursor(),
                 );
             }
             candidates[pick]
@@ -656,18 +707,7 @@ impl EngineInner {
             self.take_smalltalk_initiative(entity_id);
         }
         if debug {
-            let after = self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
-                self.control.frame_counter,
-                entity_id.index(),
-                new_principal,
-            );
+            self.trace_opponent_order_choose_done(entity_id, new_principal);
         }
     }
 
@@ -896,20 +936,12 @@ impl EngineInner {
                             .entities
                             .get(opponent)
                             .expect("opponent existence checked above");
-                        crate::engine::ai::build_ai_context_from_entity(
+                        self.ai_context_from_entity(
                             entity,
                             self.control.frame_counter,
                             None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
+                            &scratch,
+                            assets,
                         )
                     };
                     let stimulus = crate::ai::Stimulus::with_human(
@@ -1242,20 +1274,12 @@ impl EngineInner {
             opponent_jump_line,
         );
         if debug_opponent {
-            let after = self
-                .world
-                .entities
-                .get(opponent)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=enter_opponent owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
-                self.control.frame_counter,
-                opponent.index(),
-                initiator.index(),
+            self.trace_opponent_order_enter(
+                "enter_opponent",
+                opponent,
+                initiator,
                 opponent_before.flatten(),
                 opponent_added,
-                self.control.rng.original_replay_cursor(),
             );
         }
         // The original game's opponent insertion owns these side effects and performs them
@@ -1274,20 +1298,12 @@ impl EngineInner {
             aggressor_jump_line,
         );
         if debug_initiator {
-            let after = self
-                .world
-                .entities
-                .get(initiator)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=enter_initiator owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
-                self.control.frame_counter,
-                initiator.index(),
-                opponent.index(),
+            self.trace_opponent_order_enter(
+                "enter_initiator",
+                initiator,
+                opponent,
                 initiator_before.flatten(),
                 initiator_added,
-                self.control.rng.original_replay_cursor(),
             );
         }
         if initiator_added {
@@ -1391,10 +1407,7 @@ impl EngineInner {
         // Snapshotting that list gives the same ownership without holding a
         // borrow across the synchronous callbacks.
         let opponents: Vec<EntityId> = self
-            .world
-            .entities
-            .get(entity_id)
-            .unwrap_or_else(|| panic!("swordfight exit owner {entity_id:?} is missing"))
+            .expect_entity(entity_id, "swordfight exit owner")
             .human_data()
             .unwrap_or_else(|| panic!("swordfight exit owner {entity_id:?} is not human"))
             .opponents

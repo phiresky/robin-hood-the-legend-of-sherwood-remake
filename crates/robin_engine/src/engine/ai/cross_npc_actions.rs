@@ -10,14 +10,10 @@ impl EngineInner {
         // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
         // AI-controlled hero therefore has to retain its ActorPc entity kind here.
         let target_id = self.expect_human_id_for_ai_handle(target, operation);
-        self.world
-            .entities
-            .get_mut(target_id)
-            .expect("validated cross-NPC human vanished")
-            .enemy_ai_mut()
-            .unwrap_or_else(|| {
-                panic!("cross-NPC {operation} target human {target} has no enemy AI")
-            })
+        self.world.entities.expect_enemy_ai_mut(
+            target_id,
+            format_args!("cross-NPC {operation} target human {target}"),
+        )
     }
 
     /// Execute the complete original-game patrol clearing made by the
@@ -39,14 +35,7 @@ impl EngineInner {
         let members = self
             .world
             .entities
-            .get(chief)
-            .and_then(Entity::ai_controller)
-            .unwrap_or_else(|| {
-                panic!(
-                    "RemoveAllSubordinates chief {} is not an NPC",
-                    chief.index()
-                )
-            })
+            .expect_ai_controller(chief, format_args!("RemoveAllSubordinates chief"))
             .theoretical_patrol
             .clone();
 
@@ -72,18 +61,10 @@ impl EngineInner {
             self.refresh_selected_default_wait_identity(member, &mut ctx);
             let tick_data = self.build_npc_tick_data(sim, member, assets);
             {
-                let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
-                    panic!(
-                        "RemoveAllSubordinates member {} vanished before forced return to duty",
-                        member.index()
-                    )
-                });
-                let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                    panic!(
-                        "RemoveAllSubordinates member {} has no AI actor data",
-                        member.index()
-                    )
-                });
+                let npc = self.world.entities.expect_ai_actor_data_mut(
+                    member,
+                    format_args!("RemoveAllSubordinates member before forced return to duty"),
+                );
                 match &mut npc.ai_brain {
                     crate::element::AiBrain::Enemy(ai) => {
                         ai.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data)
@@ -400,14 +381,10 @@ impl EngineInner {
 
     fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
         let target_id = self.expect_human_id_for_ai_handle(target, "register-synchronizing-actor");
-        let entity = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .expect("validated synchronization target vanished");
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("synchronization target human {target} has no AI controller")
-        });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            target_id,
+            format_args!("synchronization target human {target}"),
+        );
         // Registering a synchronizing AI actor is a direct,
         // unconditional append. In particular, the target can reach its
         // waypoint in a later element update slot in this same frame and
@@ -534,28 +511,14 @@ impl EngineInner {
                         let entity = self
                             .world
                             .entities
-                            .get_mut(target_id)
+                            .get(target_id)
                             .expect("validated gather-instruction target vanished");
-                        let ctx = build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
+                        let ctx =
+                            self.ai_context_from_entity(entity, frame, None, &scratch, assets);
+                        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
+                            target_id,
+                            format_args!("deferred gather-instruction target human {target}"),
                         );
-                        let enemy_ai = entity.enemy_ai_mut().unwrap_or_else(|| {
-                            panic!(
-                                "deferred gather-instruction target human {target} has no EnemyAi"
-                            )
-                        });
                         enemy_ai.gather_position = position;
                         enemy_ai.gather_direction = direction;
                         enemy_ai.gather_position_instructed = true;
@@ -610,21 +573,8 @@ impl EngineInner {
                                     })
                                     .filter(|(_, entity)| entity.ai_controller().is_some())
                             {
-                                let ctx = build_ai_context_from_entity(
-                                    entity,
-                                    frame,
-                                    None,
-                                    self.world.weather.is_forest_level,
-                                    self.world.weather.ambiance,
-                                    self.ai.standard_view_polygon_radius,
-                                    &scratch.ai_entity_views,
-                                    &scratch.ai_sight_obstacles,
-                                    &self.world.fast_grid,
-                                    &assets.navigation.hiking_paths,
-                                    &assets.navigation.hiking_waypoint_sectors,
-                                    &self.ai.global.all_soldier_handles,
-                                    self.control.sim_config.difficulty,
-                                );
+                                let ctx = self
+                                    .ai_context_from_entity(entity, frame, None, &scratch, assets);
                                 let fallback_tick =
                                     self.build_npc_tick_data(sim, sender_id, assets);
                                 self.dispatch_filtered_stimulus(
@@ -638,21 +588,7 @@ impl EngineInner {
                             }
                             continue;
                         };
-                        build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        )
+                        self.ai_context_from_entity(entity, frame, None, &scratch, assets)
                     };
                     let target_id = self.expect_human_id_for_ai_handle(
                         target,
@@ -680,21 +616,7 @@ impl EngineInner {
                             else {
                                 continue;
                             };
-                            build_ai_context_from_entity(
-                                entity,
-                                frame,
-                                None,
-                                self.world.weather.is_forest_level,
-                                self.world.weather.ambiance,
-                                self.ai.standard_view_polygon_radius,
-                                &scratch.ai_entity_views,
-                                &scratch.ai_sight_obstacles,
-                                &self.world.fast_grid,
-                                &assets.navigation.hiking_paths,
-                                &assets.navigation.hiking_waypoint_sectors,
-                                &self.ai.global.all_soldier_handles,
-                                self.control.sim_config.difficulty,
-                            )
+                            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
                         };
                         let fallback_tick = self.build_npc_tick_data(sim, sender_id, assets);
                         self.dispatch_filtered_stimulus(
@@ -957,18 +879,10 @@ impl EngineInner {
         );
         let mark_alerted = std::mem::take(&mut mark_alerted.outbox.detection.mark_alerted);
         if mark_alerted {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "accepted EVENT_VIEW recipient {} disappeared after its synchronous Think",
-                    npc_id.index()
-                )
-            });
-            let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!(
-                    "accepted EVENT_VIEW recipient {} lost its AI actor data after synchronous Think",
-                    npc_id.index()
-                )
-            });
+            let ai_actor = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("accepted EVENT_VIEW recipient after its synchronous Think"),
+            );
             ai_actor.alerted = true;
         }
 
@@ -997,18 +911,10 @@ impl EngineInner {
             // Re-enter Think for each self-stimulus (EventDone, MYTALK,
             // etc.).  This may queue more pending flags — loop again.
             let has_self_stimuli = {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "handled Think recipient {} disappeared before self-stimulus recheck",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller().unwrap_or_else(|| {
-                    panic!(
-                        "handled Think recipient {} lost its AI controller before self-stimulus recheck",
-                        npc_id.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller(
+                    npc_id,
+                    format_args!("handled Think recipient before self-stimulus recheck"),
+                );
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
@@ -1026,18 +932,10 @@ impl EngineInner {
             self.process_synchronous_reentrant_actions_for(sim, npc_id, assets);
 
             let still_pending = {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "handled Think recipient {} disappeared before fixed-point recheck",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller().unwrap_or_else(|| {
-                    panic!(
-                        "handled Think recipient {} lost its AI controller before fixed-point recheck",
-                        npc_id.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller(
+                    npc_id,
+                    format_args!("handled Think recipient before fixed-point recheck"),
+                );
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
@@ -1097,23 +995,10 @@ impl EngineInner {
             .orders
             .sequence_manager
             .actor_has_selected_movement(npc_id);
-        let ai = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous move owner {} disappeared before path-result delivery",
-                    npc_id.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous move owner {} lost AI before path-result delivery",
-                    npc_id.index()
-                )
-            });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            npc_id,
+            format_args!("synchronous move owner before path-result delivery"),
+        );
         // Only decision-tick completion delivers these latches, so one whose operation ran
         // outside a Think is discarded exactly as the next Think entry would.
         // Dispatching a completion also re-enters Think, whose entry gate
@@ -1132,18 +1017,15 @@ impl EngineInner {
         let engine_verdict_pending =
             ai.engine_deferred_end_think_frames != 0 && !ai.engine_completion_verdict_resolved;
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
+            Self::trace_surface_completion_enter(
                 self.control.frame_counter,
-                npc_id.index(),
-                ai.completion_latch_inside_think,
-                ai.couldnt_reachpoint,
-                ai.already_on_point,
-                ai.already_turned,
-                typed_tail_pending,
-                retain_couldnt_reachpoint,
-                engine_verdict_pending,
-                ai.outbox.reentrant.owner_work,
+                npc_id,
+                ai,
+                [
+                    typed_tail_pending,
+                    retain_couldnt_reachpoint,
+                    engine_verdict_pending,
+                ],
             );
         }
         let event = if !ai.completion_latch_inside_think {
@@ -1185,17 +1067,54 @@ impl EngineInner {
             ai.close_engine_deferred_end_think_frames();
         }
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
-                self.control.frame_counter,
-                npc_id.index(),
-                ai.couldnt_reachpoint,
-                ai.already_on_point,
-                ai.already_turned,
-                ai.outbox.reentrant.self_stimuli,
-                ai.outbox.reentrant.owner_work,
-            );
+            Self::trace_surface_completion_result(self.control.frame_counter, npc_id, event, ai);
         }
+    }
+
+    /// `[typed_tail_pending, retain_couldnt, engine_verdict_pending]`.
+    #[inline(never)]
+    fn trace_surface_completion_enter(
+        frame: u32,
+        npc_id: EntityId,
+        ai: &crate::ai::AiController,
+        [
+            typed_tail_pending,
+            retain_couldnt_reachpoint,
+            engine_verdict_pending,
+        ]: [bool; 3],
+    ) {
+        eprintln!(
+            "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
+            frame,
+            npc_id.index(),
+            ai.completion_latch_inside_think,
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.already_turned,
+            typed_tail_pending,
+            retain_couldnt_reachpoint,
+            engine_verdict_pending,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_surface_completion_result(
+        frame: u32,
+        npc_id: EntityId,
+        event: Option<crate::ai::StimulusType>,
+        ai: &crate::ai::AiController,
+    ) {
+        eprintln!(
+            "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
+            frame,
+            npc_id.index(),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.already_turned,
+            ai.outbox.reentrant.self_stimuli,
+            ai.outbox.reentrant.owner_work,
+        );
     }
 
     pub(in crate::engine) fn process_synchronous_reentrant_actions_for(
@@ -1208,15 +1127,8 @@ impl EngineInner {
             let actions = self
                 .world
                 .entities
-                .get_mut(source_id)
-                .and_then(Entity::ai_controller_mut)
-                .map(crate::ai::AiController::take_pending_synchronous_cross_npc_actions)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "synchronous action source {} has no AI controller",
-                        source_id.index()
-                    )
-                });
+                .expect_ai_controller_mut(source_id, format_args!("synchronous action source"))
+                .take_pending_synchronous_cross_npc_actions();
             if actions.is_empty() {
                 break;
             }
@@ -1262,13 +1174,10 @@ impl EngineInner {
                             || self
                                 .world
                                 .entities
-                                .get(source_id)
-                                .and_then(Entity::enemy_ai)
-                                .unwrap_or_else(|| {
-                                    panic!(
-                                        "alert InstructGatherPosition source {source_id:?} is not an enemy soldier"
-                                    )
-                                })
+                                .expect_enemy_ai(
+                                    source_id,
+                                    format_args!("alert InstructGatherPosition source"),
+                                )
                                 .alerted_us
                                 .contains(&target);
                         if still_alerted {
@@ -1299,14 +1208,7 @@ impl EngineInner {
                         let logical_think_depth = self
                             .world
                             .entities
-                            .get(source_id)
-                            .and_then(Entity::ai_controller)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "break-phalanx source {} lost its AI controller",
-                                    source_id.index()
-                                )
-                            })
+                            .expect_ai_controller(source_id, format_args!("break-phalanx source"))
                             .think_recursion_depth
                             .max(1);
                         self.process_synchronous_break_phalanx(
@@ -1560,21 +1462,8 @@ impl EngineInner {
             entity.enemy_ai().is_some(),
             "cross-NPC break-phalanx target human {target} has no EnemyAi"
         );
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            self.control.frame_counter,
-            None,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx =
+            self.ai_context_from_entity(entity, self.control.frame_counter, None, &scratch, assets);
         self.refresh_selected_default_wait_identity(target_id, &mut ctx);
         // This is a direct recursive `BreakPhalanx` call rather than a typed
         // AI dispatch, but its phalanx enemy-list rebuilding performs live
@@ -1757,11 +1646,7 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
         let mut ctx = {
-            let entity = self
-                .world
-                .entities
-                .get(source_id)
-                .unwrap_or_else(|| panic!("tower-guard caller {caller} disappeared"));
+            let entity = self.expect_entity(source_id, "tower-guard caller");
             self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
@@ -1841,11 +1726,7 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
         let mut ctx = {
-            let entity = self
-                .world
-                .entities
-                .get(source_id)
-                .unwrap_or_else(|| panic!("AlertSoldiers caller {caller} disappeared"));
+            let entity = self.expect_entity(source_id, "AlertSoldiers caller");
             self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
@@ -1926,13 +1807,10 @@ impl EngineInner {
             let target_position = self
                 .world
                 .entities
-                .get(target_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "look-there target {} disappeared during the registry walk",
-                        target_id.index()
-                    )
-                })
+                .expect_entity(
+                    target_id,
+                    format_args!("look-there target during the registry walk"),
+                )
                 .element_data()
                 .position();
             let dx = target_position.x - caller_position.x;
@@ -1990,11 +1868,7 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("look-there caller {caller} disappeared"));
         let mut ctx = {
-            let entity = self
-                .world
-                .entities
-                .get(source_id)
-                .unwrap_or_else(|| panic!("look-there caller {caller} disappeared"));
+            let entity = self.expect_entity(source_id, "look-there caller");
             self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
@@ -2086,23 +1960,12 @@ impl EngineInner {
             .get(target_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared"));
-        let ctx = build_ai_context_from_entity(
-            self.world
-                .entities
-                .get(target_id)
-                .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared")),
+        let ctx = self.ai_context_from_entity(
+            self.expect_entity(target_id, "gather-instruction target"),
             self.control.frame_counter,
             building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
+            &scratch,
+            assets,
         );
         let tick = self.build_npc_tick_data(sim, target_id, assets);
         self.dispatch_think_with_drain_without_forecast(
@@ -2124,15 +1987,8 @@ impl EngineInner {
         let actions = self
             .world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_synchronous_stimuli)
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous stimulus source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            .expect_ai_controller_mut(source_id, format_args!("synchronous stimulus source"))
+            .take_pending_synchronous_stimuli();
 
         for action in actions {
             let crate::ai::CrossNpcAction::SendStimulus {
@@ -2166,9 +2022,10 @@ impl EngineInner {
                     panic!("synchronous {stimulus_type:?} target {target} disappeared")
                 });
             let ctx = {
-                let entity = self.world.entities.get(target_id).unwrap_or_else(|| {
-                    panic!("synchronous {stimulus_type:?} target {target} disappeared")
-                });
+                let entity = self.world.entities.expect_entity(
+                    target_id,
+                    format_args!("synchronous {stimulus_type:?} target {target}"),
+                );
                 self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
@@ -2212,9 +2069,7 @@ impl EngineInner {
                     .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                     .unwrap_or_else(|| panic!("synchronous fallback sender {sender} disappeared"));
                 let sender_ctx = {
-                    let entity = self.world.entities.get(sender_id).unwrap_or_else(|| {
-                        panic!("synchronous fallback sender {sender} disappeared")
-                    });
+                    let entity = self.expect_entity(sender_id, "synchronous fallback sender");
                     self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,

@@ -4,6 +4,59 @@
 
 use super::*;
 
+impl EngineInner {
+    #[inline(never)]
+    fn trace_sword_damage_apply(
+        &self,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        strike: impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
+            self.control.frame_counter,
+            victim_id,
+            self.world.original_creation_order(victim_id),
+            attacker_id,
+            attacker_id.map(|id| self.world.original_creation_order(id)),
+            strike,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_good_strike_before_dispatch(
+        &self,
+        atk_id: EntityId,
+        creation_order: u32,
+        victim_id: EntityId,
+        result: impl std::fmt::Debug,
+        victim_died: bool,
+    ) {
+        let attacker = self.expect_entity(atk_id, "GOOD_STRIKE attacker");
+        let enemy = self
+            .world
+            .entities
+            .expect_enemy_ai(atk_id, format_args!("GOOD_STRIKE attacker"));
+        let victim = self.expect_entity(victim_id, "GOOD_STRIKE victim");
+        eprintln!(
+            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
+            self.control.frame_counter,
+            atk_id.index(),
+            creation_order,
+            victim_id.index(),
+            result,
+            victim_died,
+            victim.is_unconscious(),
+            victim.element_data().posture(),
+            enemy.base.current_state,
+            enemy.base.current_substate,
+            attacker
+                .actor_data()
+                .and_then(|actor| actor.installed_order),
+        );
+    }
+}
+
 #[inline]
 fn provoke_roll_succeeds(roll: u32, fighting_ability: u16) -> bool {
     (roll as f32) < 0.2_f32 * f32::from(fighting_ability)
@@ -99,22 +152,21 @@ pub(crate) struct TestSwordDamageObservation {
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SWORD_DAMAGE_OBSERVATIONS: std::cell::RefCell<Vec<TestSwordDamageObservation>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static SWORD_DAMAGE_PROBE: crate::engine::test_support::Probe<TestSwordDamageObservation> =
+        const { crate::engine::test_support::Probe::new() };
+}
+
+/// Run `operation` and return every dispatched sword-damage application it
+/// performed, in dispatch order.
+#[cfg(test)]
+pub(crate) fn capture_sword_damage_observations<T>(
+    operation: impl FnOnce() -> T,
+) -> (T, Vec<TestSwordDamageObservation>) {
+    SWORD_DAMAGE_PROBE.with(|probe| probe.capture(operation))
 }
 
 #[cfg(test)]
-pub(crate) fn clear_test_sword_damage_observations() {
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.borrow_mut().clear());
-}
-
-#[cfg(test)]
-pub(crate) fn take_test_sword_damage_observations() -> Vec<TestSwordDamageObservation> {
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.take())
-}
-
-#[cfg(test)]
-pub(crate) fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
+fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
     match entity {
         crate::element::Entity::Pc(pc) => Some(pc.pc.life_points),
         crate::element::Entity::Soldier(soldier) => Some(soldier.npc.life_points),
@@ -123,49 +175,119 @@ pub(crate) fn test_human_life_points(entity: &crate::element::Entity) -> Option<
     }
 }
 
-#[cfg(test)]
-pub(crate) fn record_test_sword_damage_observation(
-    engine: &EngineInner,
-    victim_id: EntityId,
-    attacker_id: EntityId,
-    strike: SwordStrike,
+/// Observation-only bracket around one `ReceiveSwordDamage` application.
+/// Outside test builds it is zero-sized and both halves compile to nothing,
+/// so the production dispatch arm carries no test-only branch.
+pub(super) struct SwordDamageProbe {
+    #[cfg(test)]
     life_points_before: i16,
-) {
-    let attacker = engine
-        .get_entity(attacker_id)
-        .expect("sword damage test attacker exists");
-    let actor = attacker
-        .actor_data()
-        .expect("sword damage attacker is actor");
-    let observation = TestSwordDamageObservation {
-        victim_id,
-        attacker_id,
-        strike,
-        attacker_direction: attacker.element_data().direction(),
-        active_rider_charge: actor.active_rider_charge.is_some(),
-        pending_victims: actor
-            .active_rider_charge
-            .as_ref()
-            .map(|charge| charge.pending_victims.clone())
-            .unwrap_or_default(),
-        life_points_before,
-        life_points_after: engine
-            .get_entity(victim_id)
-            .and_then(test_human_life_points)
-            .expect("sword damage test victim remains human"),
-        victim_direction_after: engine
-            .get_entity(victim_id)
-            .expect("sword damage test victim remains present")
-            .element_data()
-            .direction(),
-    };
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| {
-        observations.borrow_mut().push(observation);
-    });
+}
+
+impl SwordDamageProbe {
+    #[cfg(test)]
+    pub(super) fn before(engine: &EngineInner, victim_id: EntityId) -> Self {
+        Self {
+            life_points_before: engine
+                .get_entity(victim_id)
+                .and_then(test_human_life_points)
+                .expect("sword damage test victim is human"),
+        }
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn before(_engine: &EngineInner, _victim_id: EntityId) -> Self {
+        Self {}
+    }
+
+    #[cfg(test)]
+    pub(super) fn after(
+        self,
+        engine: &EngineInner,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        strike: Option<SwordStrike>,
+    ) {
+        let (Some(attacker_id), Some(strike)) = (attacker_id, strike) else {
+            return;
+        };
+        let attacker = engine
+            .get_entity(attacker_id)
+            .expect("sword damage test attacker exists");
+        let actor = attacker
+            .actor_data()
+            .expect("sword damage attacker is actor");
+        let observation = TestSwordDamageObservation {
+            victim_id,
+            attacker_id,
+            strike,
+            attacker_direction: attacker.element_data().direction(),
+            active_rider_charge: actor.active_rider_charge.is_some(),
+            pending_victims: actor
+                .active_rider_charge
+                .as_ref()
+                .map(|charge| charge.pending_victims.clone())
+                .unwrap_or_default(),
+            life_points_before: self.life_points_before,
+            life_points_after: engine
+                .get_entity(victim_id)
+                .and_then(test_human_life_points)
+                .expect("sword damage test victim remains human"),
+            victim_direction_after: engine
+                .get_entity(victim_id)
+                .expect("sword damage test victim remains present")
+                .element_data()
+                .direction(),
+        };
+        SWORD_DAMAGE_PROBE.with(|probe| probe.record(observation));
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn after(
+        self,
+        _engine: &EngineInner,
+        _victim_id: EntityId,
+        _attacker_id: Option<EntityId>,
+        _strike: Option<SwordStrike>,
+    ) {
+    }
 }
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
+
+/// Validated strike produced by [`EngineInner::sword_damage_prelude`] and
+/// read by every later phase of [`EngineInner::apply_sword_damage`].
+/// Transient per-call state, never persisted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SwordDamageStrike {
+    victim_id: EntityId,
+    attacker_id: Option<EntityId>,
+    damage_element: (crate::sequence::SequenceId, usize),
+    strike: SwordStrike,
+    gesture_quality: crate::player_command::GestureQuality,
+    attacker_profile: crate::profiles::HtHWeaponProfile,
+}
+
+/// Outcome of [`EngineInner::sword_damage_receive`] consumed by the later
+/// translation phases of [`EngineInner::apply_sword_damage`]. No serde:
+/// `SwordAttackerContext` has no serde derive, and this is transient
+/// per-call state that is never persisted.
+struct SwordDamageReception {
+    attacker_ctx: SwordAttackerContext,
+    defender_action: ActionState,
+    victim_was_unconscious: bool,
+    life_points_before: i16,
+    unconscious_before: bool,
+    result: combat::SwordDamageResult,
+    cutting_inflicted: u16,
+    coma_saved: bool,
+    life_points_after: i16,
+    push_strike: bool,
+    fresh_lethal_ordinary: bool,
+    victim_went_unconscious: bool,
+}
 
 /// The original game's receive-damage path sends the hit event only through the NPC
 /// override. PCs share the human concussion and translation work but have no
@@ -410,6 +532,51 @@ impl EngineInner {
         attacker_profile_idx: Option<u32>,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
+        let Some(strike) = self.sword_damage_prelude(
+            assets,
+            victim_id,
+            attacker_id,
+            sword_strike,
+            attacker_profile_idx,
+            damage_element,
+        ) else {
+            return;
+        };
+        let reception = self.sword_damage_receive(sim, assets, &strike);
+        if self
+            .sword_damage_learning_and_impact(assets, &strike, &reception)
+            .is_break()
+        {
+            return;
+        }
+        let (pushed, grounded_translation_terminates) =
+            self.sword_damage_push_and_grounded(sim, assets, &strike, &reception);
+        let victim_died = self.sword_damage_xp_and_speech(sim, assets, &strike, &reception, pushed);
+        self.sword_damage_hit_reaction(sim, assets, &strike, &reception, pushed);
+        self.sword_damage_inform_attacker(sim, assets, &strike, &reception, pushed, victim_died);
+        self.sword_damage_death_transitions(
+            sim,
+            assets,
+            &strike,
+            &reception,
+            pushed,
+            grounded_translation_terminates,
+            victim_died,
+        );
+    }
+
+    /// Strike/gesture validation, diplomacy gate, debug trace and attacker
+    /// weapon profile. `None` means the damage is dropped (missing strike
+    /// type, or diplomacy forbids it after terminating the element).
+    fn sword_damage_prelude(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        sword_strike: Option<SwordStrike>,
+        attacker_profile_idx: Option<u32>,
+        damage_element: (crate::sequence::SequenceId, usize),
+    ) -> Option<SwordDamageStrike> {
         // A scroll-carrying civilian is not short-circuited here: the
         // immunity lives in the wounding/concussion primitives
         // (`ConcussionContext::scroll_attached`), so the protection
@@ -418,7 +585,7 @@ impl EngineInner {
             Some(s) => s,
             None => {
                 tracing::warn!(?victim_id, "apply_sword_damage: no strike type");
-                return;
+                return None;
             }
         };
         let gesture_quality = self
@@ -448,7 +615,7 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_terminated(damage_element.0, damage_element.1);
-                return;
+                return None;
             }
         }
 
@@ -458,15 +625,7 @@ impl EngineInner {
         // `translate_ladder_wall_fall`.  Push strikes reach the same
         // helper through `apply_push_effect`.
         if super::strikes::sword_damage_debug_enabled() {
-            eprintln!(
-                "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
-                self.control.frame_counter,
-                victim_id,
-                self.world.original_creation_order(victim_id),
-                attacker_id,
-                attacker_id.map(|id| self.world.original_creation_order(id)),
-                strike,
-            );
+            self.trace_sword_damage_apply(victim_id, attacker_id, strike);
         }
 
         // Look up the attacker's weapon profile
@@ -489,6 +648,33 @@ impl EngineInner {
                 default_profile
             }
         };
+        Some(SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            gesture_quality,
+            attacker_profile,
+        })
+    }
+
+    /// Attacker/defender contexts, `combat::receive_sword_damage`, the PC
+    /// coma boundary, synchronous ordinary-lethal and knockout cascades, PC
+    /// life-point speech and the damage number.
+    fn sword_damage_receive(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+    ) -> SwordDamageReception {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            gesture_quality,
+            ref attacker_profile,
+        } = *strike_app;
 
         // Read attacker context — real fighting_ability from profile,
         // is_rank_soldier checks the RANK_SOLDIER flag from soldier
@@ -524,11 +710,13 @@ impl EngineInner {
         let victim = self.expect_entity(victim_id, "apply_sword_damage victim");
         let defender_dir = victim.element_data().direction();
         let defender_elevation = victim.element_data().position().z;
+        // The defender action state selects protection and hit
+        // animations; a non-actor victim must not decay to Waiting.
         let defender_action = victim
             .actor_data()
-            .map(|a| a.action_state)
-            .unwrap_or(ActionState::Waiting);
-        let victim_was_unconscious = victim.human_data().is_some_and(|human| human.unconscious);
+            .expect("apply_sword_damage victim must be an actor")
+            .action_state;
+        let victim_was_unconscious = victim.is_unconscious();
         self.trace_sword_damage_lifecycle(
             "apply-before",
             victim_id,
@@ -637,8 +825,7 @@ impl EngineInner {
         let victim_went_unconscious = !victim_was_unconscious
             && self
                 .expect_entity(victim_id, "sword-damage concussion victim")
-                .human_data()
-                .is_some_and(|human| human.unconscious);
+                .is_unconscious();
         if victim_went_unconscious {
             let attacker_is_pc = attacker_id
                 .map(|id| {
@@ -673,6 +860,43 @@ impl EngineInner {
             life_points_after,
             "Sword damage applied"
         );
+        SwordDamageReception {
+            attacker_ctx,
+            defender_action,
+            victim_was_unconscious,
+            life_points_before,
+            unconscious_before,
+            result,
+            cutting_inflicted,
+            coma_saved,
+            life_points_after,
+            push_strike,
+            fresh_lethal_ordinary,
+            victim_went_unconscious,
+        }
+    }
+
+    /// Soldier strike-memory learning and the impact/parry sound. `Break`
+    /// means an ordinary (non-push) parried strike ended the application.
+    fn sword_damage_learning_and_impact(
+        &mut self,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+    ) -> std::ops::ControlFlow<()> {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            defender_action,
+            result,
+            ..
+        } = *reception;
 
         // Soldier learning reads the attacker's *live* command, not the
         // strike stored in this damage payload. ReceiveSwordDamage can be
@@ -775,7 +999,7 @@ impl EngineInner {
                         Some(damage_element),
                         Some(result),
                     );
-                    return;
+                    return std::ops::ControlFlow::Break(());
                 }
             } else {
                 self.feedback
@@ -789,6 +1013,35 @@ impl EngineInner {
                     });
             }
         }
+        std::ops::ControlFlow::Continue(())
+    }
+
+    /// Carried-corpse drop, synchronous lethal-push cascade, push effect and
+    /// the grounded-posture termination. Returns
+    /// `(pushed, grounded_translation_terminates)`.
+    fn sword_damage_push_and_grounded(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+    ) -> (bool, bool) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            life_points_before,
+            result,
+            coma_saved,
+            life_points_after,
+            push_strike,
+            ..
+        } = *reception;
 
         // Player sword/push damage translation tests the *live*
         // posture after wound handling and the impact-sound prefix have
@@ -873,35 +1126,33 @@ impl EngineInner {
         // mmotionState=IN_PROGRESS epilogue. This is observably different
         // from a true accepted-empty translation such as an already-held
         // parry, which publishes InProgress before detaching the element.
-        let (grounded_translation_terminates, grounded_posture, is_rider) = if pushed
-            || result.is_empty()
-        {
-            (false, Posture::Upright, false)
-        } else {
-            let victim = self.get_entity(victim_id).unwrap_or_else(|| {
-                    panic!(
-                        "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
-                    )
-                });
-            let posture = victim.element_data().posture();
-            let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
-            let dead_rider = is_rider && life_points_after <= 0;
-            (
-                matches!(
+        let (grounded_translation_terminates, grounded_posture, is_rider) =
+            if pushed || result.is_empty() {
+                (false, Posture::Upright, false)
+            } else {
+                let victim = self.expect_entity(
+                    victim_id,
+                    "ReceiveSwordDamage victim before grounded-posture translation",
+                );
+                let posture = victim.element_data().posture();
+                let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
+                let dead_rider = is_rider && life_points_after <= 0;
+                (
+                    matches!(
+                        posture,
+                        Posture::Lying
+                            | Posture::StuckUnderNet
+                            | Posture::Flying
+                            | Posture::Carried
+                            | Posture::OnShoulders
+                            | Posture::Tied
+                            | Posture::Dead
+                            | Posture::DeadBack
+                    ) && !dead_rider,
                     posture,
-                    Posture::Lying
-                        | Posture::StuckUnderNet
-                        | Posture::Flying
-                        | Posture::Carried
-                        | Posture::OnShoulders
-                        | Posture::Tied
-                        | Posture::Dead
-                        | Posture::DeadBack
-                ) && !dead_rider,
-                posture,
-                is_rider,
-            )
-        };
+                    is_rider,
+                )
+            };
         if grounded_translation_terminates {
             // Sword-damage translation changes a dead, grounded non-rider to the
             // canonical Dead posture before falling through to the common
@@ -939,6 +1190,33 @@ impl EngineInner {
             // the victim with no selected recovery order.
             self.dispatch_condolations_for_owner_boundary(sim, victim_id, assets);
         }
+        (pushed, grounded_translation_terminates)
+    }
+
+    /// Kill XP, victim pain speech, attacker Provoke roll and PC attacker
+    /// hero speech. Returns `victim_died`.
+    fn sword_damage_xp_and_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+    ) -> bool {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            ref attacker_ctx,
+            result,
+            cutting_inflicted,
+            coma_saved,
+            ..
+        } = *reception;
 
         // Award XP if the victim died
         let victim_died =
@@ -1036,6 +1314,29 @@ impl EngineInner {
                 }
             }
         }
+        victim_died
+    }
+
+    /// Posture-based hit reaction: shoulder / ladder-wall translation or the
+    /// alive-and-conscious hit animation chain.
+    fn sword_damage_hit_reaction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            damage_element,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            result,
+            life_points_after,
+            ..
+        } = *reception;
 
         // Play posture-based hit reaction animation for non-lethal hits
         // (BeingHitSword / FallingBackBow / etc.) when there IS damage
@@ -1111,6 +1412,25 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    /// Soldier-attacker combat stimuli (EventLethalStrike /
+    /// EventGoodStrike) and the victim's synchronous swordfight exits.
+    fn sword_damage_inform_attacker(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+        victim_died: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            ..
+        } = *strike_app;
+        let SwordDamageReception { result, .. } = *reception;
 
         // Sword-damage translation dispatches combat stimuli to a soldier
         // attacker's AI: EventLethalStrike if the victim died, or
@@ -1197,30 +1517,12 @@ impl EngineInner {
                         self.control.frame_counter,
                         creation_order,
                     ) {
-                        let attacker = self
-                            .get_entity(atk_id)
-                            .unwrap_or_else(|| panic!("GOOD_STRIKE attacker {atk_id:?} vanished"));
-                        let enemy = attacker.enemy_ai().unwrap_or_else(|| {
-                            panic!("GOOD_STRIKE attacker {atk_id:?} has no enemy AI")
-                        });
-                        let victim = self
-                            .get_entity(victim_id)
-                            .unwrap_or_else(|| panic!("GOOD_STRIKE victim {victim_id:?} vanished"));
-                        eprintln!(
-                            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
-                            self.control.frame_counter,
-                            atk_id.index(),
+                        self.trace_good_strike_before_dispatch(
+                            atk_id,
                             creation_order,
-                            victim_id.index(),
+                            victim_id,
                             result,
                             victim_died,
-                            victim.human_data().is_some_and(|human| human.unconscious),
-                            victim.element_data().posture(),
-                            enemy.base.current_state,
-                            enemy.base.current_substate,
-                            attacker
-                                .actor_data()
-                                .and_then(|actor| actor.installed_order),
                         );
                     }
                 }
@@ -1237,12 +1539,42 @@ impl EngineInner {
             if !victim_died
                 && self
                     .expect_entity(victim_id, "sword-damage knockout victim")
-                    .human_data()
-                    .is_some_and(|human| human.unconscious)
+                    .is_unconscious()
             {
                 self.quit_swordfight(sim, assets, victim_id);
             }
         }
+    }
+
+    /// Death animation selector, repeated dying order for an already-dead
+    /// victim, post-damage state transitions and the final lifecycle trace.
+    fn sword_damage_death_transitions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+        grounded_translation_terminates: bool,
+        victim_died: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            victim_was_unconscious,
+            life_points_before,
+            unconscious_before,
+            result,
+            fresh_lethal_ordinary,
+            victim_went_unconscious,
+            ..
+        } = *reception;
 
         // Death push-vs-drop selector: a non-rider killed by a strike
         // with positive stunning effect falls on his back rather than
@@ -1445,7 +1777,7 @@ impl EngineInner {
         // runs in `engine/combat.rs`.
         if in_building && let Some(carried) = self.get_entity_mut(carried_id) {
             let is_dead = carried.is_dead();
-            let is_unconscious = carried.human_data().is_some_and(|h| h.unconscious);
+            let is_unconscious = carried.is_unconscious();
             if is_dead || is_unconscious {
                 crate::engine::door_pass::start_hulk_on(carried, 1.0);
                 let elem = carried.element_data_mut();
@@ -1495,10 +1827,8 @@ impl EngineInner {
             return;
         }
         if pre_posture.is_lying() {
-            let still_alive = self
-                .get_entity(victim_id)
-                .map(|e| get_life_points(e) > 0)
-                .unwrap_or(false);
+            let still_alive =
+                get_life_points(self.expect_entity(victim_id, "generic-damage lying victim")) > 0;
             let is_rider = matches!(
                 self.get_entity(victim_id),
                 Some(Entity::Soldier(s)) if s.soldier.rider
@@ -1573,30 +1903,27 @@ impl EngineInner {
         // `handle_death_with_damage_element` / `handle_knockout`,
         // which push their own animations.
         let (life_points_after, still_conscious, still_on_ground) = {
-            let victim = self.get_entity(victim_id);
+            let victim = self.expect_entity(victim_id, "generic-damage victim after say-ouch");
             (
-                victim.map(get_life_points).unwrap_or(0),
-                victim
-                    .and_then(|e| e.human_data())
-                    .map(|h| !h.unconscious)
-                    .unwrap_or(false),
-                victim
-                    .map(|e| !e.element_data().posture().is_lying())
-                    .unwrap_or(false),
+                get_life_points(victim),
+                !victim
+                    .human_data()
+                    .expect("generic-damage victim must be human")
+                    .unconscious,
+                !victim.element_data().posture().is_lying(),
             )
         };
         if life_points_after > 0 && still_conscious && still_on_ground {
-            let hit_anim = self
-                .get_entity(victim_id)
-                .and_then(|e| {
-                    let posture = e.element_data().posture();
-                    let action = e
-                        .actor_data()
-                        .expect("damage animation victim must be an actor")
-                        .action_state;
-                    select_combat_animations(posture, action)
-                })
-                .map(|a| a.simple_hit);
+            let hit_anim = {
+                let e = self.expect_entity(victim_id, "generic-damage hit animation victim");
+                let posture = e.element_data().posture();
+                let action = e
+                    .actor_data()
+                    .expect("damage animation victim must be an actor")
+                    .action_state;
+                select_combat_animations(posture, action)
+            }
+            .map(|a| a.simple_hit);
             if let Some(anim) = hit_anim {
                 self.push_translated_damage_order(damage_element, anim);
             }
@@ -1798,10 +2125,8 @@ impl EngineInner {
                 | Posture::Dead
                 | Posture::DeadBack
         ) {
-            let post_dead = self
-                .get_entity(victim_id)
-                .map(|e| get_life_points(e) <= 0)
-                .unwrap_or(false);
+            let post_dead =
+                get_life_points(self.expect_entity(victim_id, "piercing-damage lying victim")) <= 0;
             let is_rider = matches!(
                 self.get_entity(victim_id),
                 Some(Entity::Soldier(s)) if s.soldier.rider
@@ -1852,26 +2177,25 @@ impl EngineInner {
         // path below. An already-dead element cannot re-enter death processing, so it
         // authors that order here, followed by roll translation.
         let (life_points_after, still_conscious, still_on_ground) = {
-            let victim = self.get_entity(victim_id);
+            let victim = self.expect_entity(victim_id, "piercing-damage victim after damage");
             (
-                victim.map(get_life_points).unwrap_or(0),
-                victim
-                    .and_then(|e| e.human_data())
-                    .map(|h| !h.unconscious)
-                    .unwrap_or(false),
-                victim
-                    .map(|e| !e.element_data().posture().is_lying())
-                    .unwrap_or(false),
+                get_life_points(victim),
+                !victim
+                    .human_data()
+                    .expect("piercing-damage victim must be human")
+                    .unconscious,
+                !victim.element_data().posture().is_lying(),
             )
         };
-        let animations = self.get_entity(victim_id).and_then(|e| {
+        let animations = {
+            let e = self.expect_entity(victim_id, "piercing-damage animation victim");
             let posture = e.element_data().posture();
             let action = e
                 .actor_data()
                 .expect("damage animation victim must be an actor")
                 .action_state;
             select_combat_animations(posture, action)
-        });
+        };
         if still_on_ground {
             let translated_anim = if life_points_before <= 0 && life_points_after <= 0 {
                 animations.map(|a| a.dying_forward)
@@ -2246,9 +2570,7 @@ impl EngineInner {
             victim_dir,
             frames,
         ) = {
-            let victim = self
-                .get_entity(victim_id)
-                .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} is missing"));
+            let victim = self.expect_entity(victim_id, "falling-hit victim");
             let sprite_anim = crate::engine::animation::sprite_anim_for_order(
                 victim.sprite(),
                 anim,
@@ -2371,13 +2693,11 @@ impl EngineInner {
         // Obstacle assignment invalidates the lazy cache underneath it. Rust installs
         // obstacles eagerly, so preserve that captured point explicitly.
         let takeoff_position = self
-            .get_entity(victim_id)
-            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+            .expect_entity(victim_id, "falling-hit victim")
             .position_iface()
             .get_position();
         self.set_obstacle_and_material(assets, victim_id, goal_obstacle);
-        self.get_entity_mut(victim_id)
-            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+        self.expect_entity_mut(victim_id, "falling-hit victim")
             .position_iface_mut()
             .set_position(takeoff_position);
 
@@ -2468,9 +2788,8 @@ impl EngineInner {
         // dispatch EventNet to their own AI so they transition to
         // Substate::WonderingUnderNet.
         let victim_is_npc = self
-            .get_entity(victim_id)
-            .map(|e| e.is_npc())
-            .unwrap_or(false);
+            .expect_entity(victim_id, "apply_net victim after posture")
+            .is_npc();
         if victim_is_npc {
             self.broadcast_body_detectable(victim_id);
             self.dispatch_ai_stimulus(
@@ -3100,9 +3419,20 @@ impl EngineInner {
                 crate::sequence::SequenceElementData::Damage { origin, .. } => *origin,
                 _ => None,
             })
-            .and_then(|k| self.world.entities.get(k))
-            .map(|e| e.is_pc())
-            .unwrap_or(false);
+            // No origin (scripted damage) is legitimately not a PC kill. A
+            // recorded origin can have been removed since (e.g. a wasp), so
+            // a vanished origin is not a PC kill either, but is surfaced.
+            .is_some_and(|k| match self.world.entities.get(k) {
+                Some(killer) => killer.is_pc(),
+                None => {
+                    tracing::warn!(
+                        ?victim_id,
+                        origin = ?k,
+                        "death damage-element origin no longer exists; not counted as a PC kill"
+                    );
+                    false
+                }
+            });
 
         self.apply_nonvisual_death_cascade(sim, assets, victim_id, damage_element, killer_is_pc);
 
@@ -3304,8 +3634,7 @@ impl EngineInner {
             .world
             .entities
             .get(victim_id)
-            .and_then(|e| e.human_data())
-            .is_some_and(|h| h.unconscious);
+            .is_some_and(|e| e.is_unconscious());
         self.feedback.titbit_manager.remove_unconscious_stars_if(
             crate::titbit::ElementHandle(victim_id.index()),
             still_unconscious,
@@ -3322,10 +3651,8 @@ impl EngineInner {
         self.quit_swordfight(sim, assets, victim_id);
 
         // Mission-stat bump for Royalist soldier deaths.
-        let bump_killed_allied = self
-            .get_entity(victim_id)
-            .map(|e| e.is_soldier() && self.is_player_aligned_camp(e.camp()))
-            .unwrap_or(false);
+        let victim = self.expect_entity(victim_id, "death cascade mission-stat victim");
+        let bump_killed_allied = victim.is_soldier() && self.is_player_aligned_camp(victim.camp());
         if bump_killed_allied {
             self.mission_domain.mission_stat.add_killed_allied();
         }
@@ -3353,10 +3680,9 @@ impl EngineInner {
                 )
             })
             .unwrap_or(false);
-        let bump_lacklandist_score = self
-            .get_entity(victim_id)
-            .map(|e| e.is_soldier() && self.is_hostile_to_player_camp(e.camp()))
-            .unwrap_or(false);
+        let victim = self.expect_entity(victim_id, "death cascade score victim");
+        let bump_lacklandist_score =
+            victim.is_soldier() && self.is_hostile_to_player_camp(victim.camp());
         if bump_lacklandist_score && !projectile_death {
             self.add_campaign_value(
                 crate::campaign::CampaignValue::Score,
@@ -3577,11 +3903,7 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
     ) -> (ConcussionContext, i16, i16, bool) {
-        let victim = self
-            .world
-            .entities
-            .get(victim_id)
-            .unwrap_or_else(|| panic!("damage victim {victim_id:?} disappeared"));
+        let victim = self.expect_entity(victim_id, "damage victim");
         let unconscious = victim
             .human_data()
             .unwrap_or_else(|| panic!("damage victim {victim_id:?} is not human"))

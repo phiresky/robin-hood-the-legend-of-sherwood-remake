@@ -101,10 +101,7 @@ impl EngineInner {
         if is_map_move {
             self.world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("MAP movement owner {owner:?} disappeared during Instruct")
-                })
+                .expect_entity_mut(owner, format_args!("MAP movement owner during Instruct"))
                 .position_iface_mut()
                 .set_anti_collision_on(false);
         }
@@ -397,10 +394,10 @@ impl LiftWaitCommandContext<'_> {
         if authorized {
             let owner_is_pc = self
                 .entities
-                .get(owner)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
-                })
+                .expect_entity(
+                    owner,
+                    format_args!("WAIT_FREE_LIFT owner during reservation"),
+                )
                 .is_pc();
             let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
             if is_high {
@@ -408,14 +405,10 @@ impl LiftWaitCommandContext<'_> {
             } else {
                 lift.set_occupied_upwards(true, owner_is_pc);
             }
-            let actor = self
-                .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
-                })
-                .actor_data_mut()
-                .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} is not an actor"));
+            let actor = self.entities.expect_actor_data_mut(
+                owner,
+                format_args!("WAIT_FREE_LIFT owner during reservation"),
+            );
             actor.active_lift = Some(crate::element::ActiveLiftClimb {
                 sector_number: u16::from(target_sector),
                 upwards: !is_high,
@@ -430,7 +423,7 @@ impl LiftWaitCommandContext<'_> {
 pub(in crate::engine) struct SmalltalkCommandContext<'a> {
     pub(in crate::engine) entities: &'a crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
 }
 
 impl SmalltalkCommandContext<'_> {
@@ -461,11 +454,10 @@ impl SmalltalkCommandContext<'_> {
             .entities
             .get(owner)
             .unwrap_or_else(|| panic!("smalltalk command {command:?} owner {owner:?} is missing"));
-        let opponent = self.entities.get(antagonist).unwrap_or_else(|| {
-            panic!(
-                "smalltalk command {command:?} owner {owner:?} references missing antagonist {antagonist:?}"
-            )
-        });
+        let opponent = self.entities.expect_entity(
+            antagonist,
+            format_args!("smalltalk command {command:?} owner {owner:?} antagonist"),
+        );
         assert!(
             opponent.human_data().is_some(),
             "smalltalk command {command:?} owner {owner:?} antagonist {antagonist:?} is not human"
@@ -502,12 +494,7 @@ impl SmalltalkCommandContext<'_> {
             return OwnerActionBarrier::Skip;
         }
 
-        let mut order = crate::order::Order::new(
-            order_type,
-            0.0,
-            0.0,
-            crate::order::alloc_order_id(self.next_order_id),
-        );
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, self.orders.alloc_id());
         // Human-actor translation stores the interaction antagonist on
         // every smalltalk strike/parry order. Execute uses it for live strike
         // facing and later wound geometry; parry variants retain the same
@@ -528,7 +515,7 @@ impl SmalltalkCommandContext<'_> {
 struct BowTransitionContext<'a> {
     entities: &'a crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl BowTransitionContext<'_> {
@@ -608,28 +595,38 @@ impl BowTransitionContext<'_> {
             match command {
                 Command::EquipBow => {
                     if anonymous {
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionEquipBowAnonymous,
-                            0.0,
-                            0.0,
+                            (0.0, 0.0),
+                            false,
                         );
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionLoadingBowAnonymous,
-                            0.0,
-                            0.0,
+                            (0.0, 0.0),
+                            false,
                         );
                     } else {
-                        self.push_order(seq_id, elem_idx, OrderType::TransitionEquipBow, 0.0, 0.0);
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionEquipBow,
+                            (0.0, 0.0),
+                            false,
+                        );
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionLoadingBow,
-                            0.0,
-                            0.0,
+                            (0.0, 0.0),
+                            false,
                         );
                     }
                     self.set_action_state_after_transition(
@@ -639,14 +636,29 @@ impl BowTransitionContext<'_> {
                     );
                 }
                 Command::EquipBowDown => {
-                    self.push_order(seq_id, elem_idx, OrderType::TransitionEquipBow, 0.0, 0.0);
-                    self.push_order(seq_id, elem_idx, OrderType::TransitionLoadingBow, 0.0, 0.0);
-                    self.push_order(
+                    self.orders.push(
+                        self.sequence_manager,
+                        seq_id,
+                        elem_idx,
+                        OrderType::TransitionEquipBow,
+                        (0.0, 0.0),
+                        false,
+                    );
+                    self.orders.push(
+                        self.sequence_manager,
+                        seq_id,
+                        elem_idx,
+                        OrderType::TransitionLoadingBow,
+                        (0.0, 0.0),
+                        false,
+                    );
+                    self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         OrderType::TransitionLoweringBowLeaningOut,
-                        0.0,
-                        0.0,
+                        (0.0, 0.0),
+                        false,
                     );
                     self.set_action_state_after_transition(
                         seq_id,
@@ -657,28 +669,45 @@ impl BowTransitionContext<'_> {
                 Command::UnequipBow => {
                     let (x, y) = target_xy;
                     if anonymous {
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnloadBowAnonymous,
-                            x,
-                            y,
+                            (x, y),
+                            false,
                         );
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             OrderType::TransitionUnequipBowAnonymous,
-                            x,
-                            y,
+                            (x, y),
+                            false,
                         );
                     } else {
-                        self.push_order(seq_id, elem_idx, OrderType::TransitionUnloadBow, x, y);
-                        self.push_order(seq_id, elem_idx, OrderType::TransitionUnequipBow, x, y);
+                        self.orders.push(
+                            self.sequence_manager,
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionUnloadBow,
+                            (x, y),
+                            false,
+                        );
+                        self.orders.push(
+                            self.sequence_manager,
+                            seq_id,
+                            elem_idx,
+                            OrderType::TransitionUnequipBow,
+                            (x, y),
+                            false,
+                        );
                     }
                     self.set_action_state_after_transition(seq_id, elem_idx, ActionState::Waiting);
                 }
                 Command::RaiseBow => {
-                    self.push_order(
+                    self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         if anonymous {
@@ -686,8 +715,8 @@ impl BowTransitionContext<'_> {
                         } else {
                             OrderType::TransitionRaisingBow
                         },
-                        0.0,
-                        0.0,
+                        (0.0, 0.0),
+                        false,
                     );
                     self.set_action_state_after_transition(
                         seq_id,
@@ -696,7 +725,8 @@ impl BowTransitionContext<'_> {
                     );
                 }
                 Command::LowerBow => {
-                    self.push_order(
+                    self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         if anonymous {
@@ -704,8 +734,8 @@ impl BowTransitionContext<'_> {
                         } else {
                             OrderType::TransitionLoweringBow
                         },
-                        0.0,
-                        0.0,
+                        (0.0, 0.0),
+                        false,
                     );
                     self.set_action_state_after_transition(
                         seq_id,
@@ -728,20 +758,6 @@ impl BowTransitionContext<'_> {
         }
         OwnerActionBarrier::Reach
     }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-        target_x: f32,
-        target_y: f32,
-    ) {
-        let order =
-            new_translation_order(self.next_order_id, order_type, (target_x, target_y), false);
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-    }
-
     fn set_action_state_after_transition(
         &mut self,
         seq_id: crate::sequence::SequenceId,
@@ -798,7 +814,7 @@ impl TargetActivationContext<'_> {
 struct TargetAnimationContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
     preserve_trigger_visual: bool,
 }
 
@@ -833,7 +849,7 @@ impl TargetAnimationContext<'_> {
                 Command::PlayAnimFrozen => crate::order::OrderType::PlayCustomFrozen,
                 _ => unreachable!("non-animation command passed to target animation context"),
             };
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(wrapper, 0.0, 0.0, id);
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -900,7 +916,7 @@ impl TargetAnimationContext<'_> {
 struct TargetInteractionContext<'a> {
     entities: &'a crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl TargetInteractionContext<'_> {
@@ -930,7 +946,7 @@ impl TargetInteractionContext<'_> {
             } else {
                 crate::order::OrderType::Searching
             };
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
             order.compute_direction = false;
             order.antagonist = target;
@@ -967,7 +983,7 @@ impl TargetInteractionContext<'_> {
             _ => unreachable!("non-target command passed to target interaction context"),
         };
         for &order_type in order_types {
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
             order.compute_direction = false;
             if order_type == crate::order::OrderType::HittingTarget || order_types.len() == 1 {
@@ -985,7 +1001,7 @@ impl TargetInteractionContext<'_> {
 pub(in crate::engine) struct TurnCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
 }
 
 impl TurnCommandContext<'_> {
@@ -1056,7 +1072,14 @@ impl TurnCommandContext<'_> {
                             .set_map_goal(crate::coordinates::MapPoint::new(x, y));
                     }
                 }
-                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    crate::order::OrderType::Turning,
+                    (0.0, 0.0),
+                    false,
+                );
             }
             Command::TurnElement => {
                 let antagonist = self
@@ -1088,10 +1111,24 @@ impl TurnCommandContext<'_> {
                         entity.element_data_mut().set_direction_goal(direction);
                     }
                 }
-                self.push_order(seq_id, elem_idx, crate::order::OrderType::Turning, false);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    crate::order::OrderType::Turning,
+                    (0.0, 0.0),
+                    false,
+                );
             }
             Command::Freeze => {
-                self.push_order(seq_id, elem_idx, crate::order::OrderType::Freezing, true);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    crate::order::OrderType::Freezing,
+                    (0.0, 0.0),
+                    true,
+                );
             }
             Command::Point | Command::GatherSoldiers => {
                 let order_type = match command {
@@ -1099,28 +1136,19 @@ impl TurnCommandContext<'_> {
                     Command::GatherSoldiers => crate::order::OrderType::GatheringSoldiers,
                     _ => unreachable!(),
                 };
-                self.push_order(seq_id, elem_idx, order_type, false);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    order_type,
+                    (0.0, 0.0),
+                    false,
+                );
             }
             _ => unreachable!("non-turn command passed to turn command context"),
         }
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
         OwnerActionBarrier::Reach
-    }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-        compute_direction: bool,
-    ) {
-        let order = new_translation_order(
-            self.next_order_id,
-            order_type,
-            (0.0, 0.0),
-            compute_direction,
-        );
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
 
@@ -1129,7 +1157,7 @@ impl TurnCommandContext<'_> {
 pub(in crate::engine) struct WaitCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
     pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
 }
 
@@ -1186,11 +1214,12 @@ impl WaitCommandContext<'_> {
             is_stuck_under_net,
             carrier_is_vip,
         ) = {
-            let entity = self.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "Wait translation owner {owner:?} is missing for {command:?} at {seq_id:?}/{elem_idx}"
-                )
-            });
+            // Keep "Wait translation owner" in the context: asserted by
+            // `wait_context_rejects_stale_owner_contextually`.
+            let entity = self.entities.expect_entity(
+                owner,
+                format_args!("Wait translation owner for {command:?} at {seq_id:?}/{elem_idx}"),
+            );
             let actor = entity.actor_data().unwrap_or_else(|| {
                 panic!(
                     "Wait translation owner {owner:?} is not an actor for {command:?} at {seq_id:?}/{elem_idx}"
@@ -1204,9 +1233,7 @@ impl WaitCommandContext<'_> {
                 actor.action_state,
                 entity.enemy_ai().is_some_and(|enemy| enemy.attentive),
                 entity.is_dead(),
-                entity
-                    .human_data()
-                    .is_some_and(|human| human.unconscious),
+                entity.is_unconscious(),
                 entity
                     .human_data()
                     .is_some_and(|human| !human.opponents.is_empty()),
@@ -1214,11 +1241,12 @@ impl WaitCommandContext<'_> {
                     .human_data()
                     .is_some_and(|human| human.stuck_under_nets_counter > 0),
                 carrier.is_some_and(|carrier_id| {
-                    let carrier = self.entities.get(carrier_id).unwrap_or_else(|| {
-                        panic!(
-                            "Wait translation owner {owner:?} references missing carrier {carrier_id:?} at {seq_id:?}/{elem_idx}"
-                        )
-                    });
+                    let carrier = self.entities.expect_entity(
+                        carrier_id,
+                        format_args!(
+                            "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
+                        ),
+                    );
                     self.is_entity_vip(carrier)
                 }),
             )
@@ -1465,11 +1493,7 @@ impl WaitCommandContext<'_> {
             };
             let actor = self
                 .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_TIMER owner {owner:?} vanished during translation")
-                });
+                .expect_actor_data_mut(owner, format_args!("WAIT_TIMER owner during translation"));
             // The original game has one overloaded wait-time scalar. Keep the
             // seek-side Rust mirror synchronized with this WAIT_TIMER write:
             // if the timer is interrupted while dormant post-seek ownership
@@ -1484,17 +1508,16 @@ impl WaitCommandContext<'_> {
         {
             let actor = self
                 .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| panic!("Wait translation listening owner {owner:?} vanished"));
+                .expect_actor_data_mut(owner, format_args!("Wait translation listening owner"));
             const TIME_LISTEN_WAIT: u32 = 25;
             actor.seek_refresh_wait = 0;
             actor.wait_time = TIME_LISTEN_WAIT;
         }
         if set_posture_stuck_under_net {
-            let entity = self.entities.get_mut(owner).unwrap_or_else(|| {
-                panic!("Wait translation owner {owner:?} vanished while setting net posture")
-            });
+            let entity = self.entities.expect_entity_mut(
+                owner,
+                format_args!("Wait translation owner while setting net posture"),
+            );
             entity
                 .element_data_mut()
                 .set_posture(crate::element::Posture::StuckUnderNet);
@@ -1510,18 +1533,18 @@ impl WaitCommandContext<'_> {
                 "upright wait on a downed actor; collapsing"
             );
             self.sequence_manager.clear_orders_on(seq_id, elem_idx);
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(falling, 0.0, 0.0, id);
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
         }
 
         if human_wait_discards_preallocated_order {
-            let _discarded_original_order_id = crate::order::alloc_order_id(self.next_order_id);
+            let _discarded_original_order_id = self.orders.alloc_id();
         }
 
         if let Some(animation) = animation {
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
             // Human command translation deliberately delegates a plain dead-back wait
             // to base actor translation. The base translator leaves the order's
@@ -1557,7 +1580,7 @@ impl WaitCommandContext<'_> {
 /// Fixed NPC posture/action-state transition order translation.
 pub(in crate::engine) struct NpcStateCommandContext<'a> {
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
 }
 
 impl NpcStateCommandContext<'_> {
@@ -1577,7 +1600,14 @@ impl NpcStateCommandContext<'_> {
                     }
                     _ => unreachable!(),
                 };
-                self.push_order(seq_id, elem_idx, order_type);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    order_type,
+                    (0.0, 0.0),
+                    false,
+                );
                 self.sequence_manager.element_in_progress(seq_id, elem_idx);
             }
             Command::StartMenace
@@ -1587,43 +1617,64 @@ impl NpcStateCommandContext<'_> {
             | Command::RaiseBowLeanOut => {
                 match command {
                     Command::StartMenace => {
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionRaisingSword,
+                            (0.0, 0.0),
+                            false,
                         );
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionWaitingSwordMenacing,
+                            (0.0, 0.0),
+                            false,
                         );
                     }
                     Command::StopMenace => {
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionMenacingWaitingSword,
+                            (0.0, 0.0),
+                            false,
                         );
-                        self.push_order(
+                        self.orders.push(
+                            self.sequence_manager,
                             seq_id,
                             elem_idx,
                             crate::order::OrderType::TransitionLoweringSword,
+                            (0.0, 0.0),
+                            false,
                         );
                     }
-                    Command::StopSleep => self.push_order(
+                    Command::StopSleep => self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         crate::order::OrderType::TransitionSleepingWaitingUpright,
+                        (0.0, 0.0),
+                        false,
                     ),
-                    Command::LowerBowLeanOut => self.push_order(
+                    Command::LowerBowLeanOut => self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         crate::order::OrderType::TransitionLoweringBowLeaningOut,
+                        (0.0, 0.0),
+                        false,
                     ),
-                    Command::RaiseBowLeanOut => self.push_order(
+                    Command::RaiseBowLeanOut => self.orders.push(
+                        self.sequence_manager,
                         seq_id,
                         elem_idx,
                         crate::order::OrderType::TransitionRaisingBowLeaningOut,
+                        (0.0, 0.0),
+                        false,
                     ),
                     _ => unreachable!(),
                 }
@@ -1638,16 +1689,6 @@ impl NpcStateCommandContext<'_> {
         }
         OwnerActionBarrier::Reach
     }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-    ) {
-        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
-    }
 }
 
 /// NPC look/lean and attentive-mode translation against only entity state,
@@ -1659,7 +1700,7 @@ impl NpcStateCommandContext<'_> {
 pub(in crate::engine) struct NpcAttentionCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
 }
 
 impl NpcAttentionCommandContext<'_> {
@@ -1690,7 +1731,14 @@ impl NpcAttentionCommandContext<'_> {
                     }
                 });
                 if let Some(order_type) = order_type {
-                    self.push_order(seq_id, elem_idx, order_type);
+                    self.orders.push(
+                        self.sequence_manager,
+                        seq_id,
+                        elem_idx,
+                        order_type,
+                        (0.0, 0.0),
+                        false,
+                    );
                     self.sequence_manager.element_in_progress(seq_id, elem_idx);
                 } else {
                     self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -1751,7 +1799,14 @@ impl NpcAttentionCommandContext<'_> {
         // The officer salute-and-drop transition is unconditional in the
         // original translator and in the pre-split Rust path.
         if command == Command::LeaveAttentiveModeOfficer {
-            self.push_order(seq_id, elem_idx, animation);
+            self.orders.push(
+                self.sequence_manager,
+                seq_id,
+                elem_idx,
+                animation,
+                (0.0, 0.0),
+                false,
+            );
             return true;
         }
 
@@ -1781,7 +1836,14 @@ impl NpcAttentionCommandContext<'_> {
         );
 
         if can_play_transition {
-            self.push_order(seq_id, elem_idx, animation);
+            self.orders.push(
+                self.sequence_manager,
+                seq_id,
+                elem_idx,
+                animation,
+                (0.0, 0.0),
+                false,
+            );
             true
         } else {
             if let Some(enemy) = self.entities.get_mut(owner).and_then(Entity::enemy_ai_mut) {
@@ -1789,16 +1851,6 @@ impl NpcAttentionCommandContext<'_> {
             }
             false
         }
-    }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-    ) {
-        let order = new_translation_order(self.next_order_id, order_type, (0.0, 0.0), false);
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
 
@@ -1808,7 +1860,7 @@ impl NpcAttentionCommandContext<'_> {
 pub(in crate::engine) struct StealthCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
     pub(in crate::engine) titbit_manager: &'a mut crate::titbit::TitbitManager,
     pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
 }
@@ -1865,7 +1917,7 @@ impl StealthCommandContext<'_> {
                 std::slice::from_ref(&transition.animation)
             };
             for &animation in animations {
-                let id = crate::order::alloc_order_id(self.next_order_id);
+                let id = self.orders.alloc_id();
                 let mut order = crate::order::Order::new(animation, 0.0, 0.0, id);
                 order.compute_direction = false;
                 self.sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1879,7 +1931,7 @@ impl StealthCommandContext<'_> {
         // translating the command. Keep the element selected/in-progress so
         // The command query reports CROUCH_{DOWN,UP} during that interval.
         if matches!(command, Command::CrouchDown | Command::CrouchUp) {
-            let id = crate::order::alloc_order_id(self.next_order_id);
+            let id = self.orders.alloc_id();
             let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1916,7 +1968,7 @@ impl StealthCommandContext<'_> {
         if let Some(actor) = entity.actor_data_mut() {
             actor.action_state = transition.result_action_state;
         }
-        let id = crate::order::alloc_order_id(self.next_order_id);
+        let id = self.orders.alloc_id();
         let mut order = crate::order::Order::new(transition.animation, 0.0, 0.0, id);
         order.compute_direction = false;
         self.sequence_manager.push_order_on(seq_id, elem_idx, order);
@@ -1980,7 +2032,7 @@ impl StealthCommandContext<'_> {
 pub(in crate::engine) struct DirectAbilityCommandContext<'a> {
     pub(in crate::engine) entities: &'a mut crate::entities::Entities,
     pub(in crate::engine) sequence_manager: &'a mut crate::sequence::SequenceManager,
-    pub(in crate::engine) next_order_id: &'a mut u32,
+    pub(in crate::engine) orders: OrderEmitter<'a>,
     pub(in crate::engine) profiles: &'a crate::profiles::ProfileManager,
 }
 
@@ -2006,7 +2058,7 @@ impl DirectAbilityCommandContext<'_> {
                     target,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2022,7 +2074,7 @@ impl DirectAbilityCommandContext<'_> {
                     target,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2042,7 +2094,7 @@ impl DirectAbilityCommandContext<'_> {
                     target,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2053,7 +2105,7 @@ impl DirectAbilityCommandContext<'_> {
                     owner,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2068,7 +2120,7 @@ impl DirectAbilityCommandContext<'_> {
                     owner,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2085,7 +2137,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     Command::StrangleCmd => abilities::begin_strangle(
                         self.entities,
@@ -2094,7 +2146,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     _ => unreachable!(),
                 };
@@ -2107,7 +2159,7 @@ impl DirectAbilityCommandContext<'_> {
                     owner,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2119,7 +2171,7 @@ impl DirectAbilityCommandContext<'_> {
                     owner,
                     seq_id,
                     elem_idx,
-                    self.next_order_id,
+                    self.orders.counter(),
                 );
                 self.finish_begin(result, seq_id, elem_idx)
             }
@@ -2158,7 +2210,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     Command::ThrowPurse => abilities::begin_throw_purse(
                         self.entities,
@@ -2167,7 +2219,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     Command::ThrowWaspNest => abilities::begin_throw_wasp_nest(
                         self.entities,
@@ -2176,7 +2228,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     _ => unreachable!(),
                 };
@@ -2212,7 +2264,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     );
                     return self.finish_begin(result, seq_id, elem_idx);
                 }
@@ -2228,7 +2280,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     Command::ThrowStone => abilities::begin_throw_stone(
                         self.entities,
@@ -2237,7 +2289,7 @@ impl DirectAbilityCommandContext<'_> {
                         target,
                         seq_id,
                         elem_idx,
-                        self.next_order_id,
+                        self.orders.counter(),
                     ),
                     _ => unreachable!(),
                 };
@@ -2283,7 +2335,7 @@ impl DirectAbilityCommandContext<'_> {
 struct RecoveryCommandContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl RecoveryCommandContext<'_> {
@@ -2298,7 +2350,14 @@ impl RecoveryCommandContext<'_> {
 
         match command {
             Command::Fainted => {
-                self.push_order(seq_id, elem_idx, OrderType::BeingUnconsciousSword, None);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    OrderType::BeingUnconsciousSword,
+                    (0.0, 0.0),
+                    true,
+                );
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
             }
             Command::Recover | Command::StandUp => {
@@ -2332,7 +2391,14 @@ impl RecoveryCommandContext<'_> {
                             );
                             OrderType::StandingUp
                         });
-                    self.push_order(seq_id, elem_idx, standing_up, None);
+                    self.orders.push(
+                        self.sequence_manager,
+                        seq_id,
+                        elem_idx,
+                        standing_up,
+                        (0.0, 0.0),
+                        true,
+                    );
                 }
                 if self
                     .sequence_manager
@@ -2376,10 +2442,7 @@ impl RecoveryCommandContext<'_> {
                 };
                 let owner_position = self
                     .entities
-                    .get(owner)
-                    .unwrap_or_else(|| {
-                        panic!("WakeUp owner {owner:?} is missing before direction setup")
-                    })
+                    .expect_entity(owner, format_args!("WakeUp owner before direction setup"))
                     .element_data()
                     .position_map();
                 let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -2387,10 +2450,7 @@ impl RecoveryCommandContext<'_> {
                     target_position.y - owner_position.y,
                 );
                 self.entities
-                    .get_mut(owner)
-                    .unwrap_or_else(|| {
-                        panic!("WakeUp owner {owner:?} vanished during direction setup")
-                    })
+                    .expect_entity_mut(owner, format_args!("WakeUp owner during direction setup"))
                     .element_data_mut()
                     .set_direction_goal(direction);
 
@@ -2398,11 +2458,11 @@ impl RecoveryCommandContext<'_> {
                 // after setting the progressive direction goal toward the
                 // target, then appends the non-direction-computing WAKING_UP
                 // action.
-                let turn_id = crate::order::alloc_order_id(self.next_order_id);
+                let turn_id = self.orders.alloc_id();
                 let turn = crate::order::Order::new(OrderType::Turning, 0.0, 0.0, turn_id);
                 self.sequence_manager.push_order_on(seq_id, elem_idx, turn);
 
-                let id = crate::order::alloc_order_id(self.next_order_id);
+                let id = self.orders.alloc_id();
                 let mut order = crate::order::Order::new(
                     OrderType::WakingUp,
                     target_position.x,
@@ -2415,27 +2475,19 @@ impl RecoveryCommandContext<'_> {
                 self.sequence_manager.element_in_progress(seq_id, elem_idx);
             }
             Command::Knee => {
-                self.push_order(seq_id, elem_idx, OrderType::FallingBackSword, None);
+                self.orders.push(
+                    self.sequence_manager,
+                    seq_id,
+                    elem_idx,
+                    OrderType::FallingBackSword,
+                    (0.0, 0.0),
+                    true,
+                );
                 self.sequence_manager.element_terminated(seq_id, elem_idx);
             }
             _ => unreachable!("non-recovery command passed to recovery context"),
         }
         OwnerActionBarrier::Reach
-    }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-        antagonist: Option<EntityId>,
-    ) {
-        let id = crate::order::alloc_order_id(self.next_order_id);
-        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
-        if let Some(antagonist) = antagonist {
-            order = order.with_antagonist(antagonist);
-        }
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
     }
 }
 
@@ -2444,7 +2496,7 @@ impl RecoveryCommandContext<'_> {
 struct ObjectInteractionCommandContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl ObjectInteractionCommandContext<'_> {
@@ -2516,7 +2568,7 @@ impl ObjectInteractionCommandContext<'_> {
             Command::Take => crate::order::OrderType::Taking,
             _ => unreachable!(),
         };
-        let id = crate::order::alloc_order_id(self.next_order_id);
+        let id = self.orders.alloc_id();
         let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
         if let Some(antagonist) = antagonist {
             order = order.with_antagonist(antagonist);
@@ -3032,7 +3084,7 @@ mod sequence_phase_context_tests {
         let barrier = BowTransitionContext {
             entities: &engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
         }
         .dispatch(owner, Command::EquipBow, seq_id, 0);
 
@@ -3079,7 +3131,7 @@ mod sequence_phase_context_tests {
             ObjectInteractionCommandContext {
                 entities: &mut engine.world.entities,
                 sequence_manager: &mut engine.orders.sequence_manager,
-                next_order_id: &mut engine.orders.next_order_id,
+                orders: OrderEmitter::new(&mut engine.orders.next_order_id),
             }
             .dispatch(owner, command, seq_id, 0);
 
@@ -3129,7 +3181,7 @@ mod sequence_phase_context_tests {
         ObjectInteractionCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
         }
         .dispatch(owner, Command::Take, seq_id, 0);
         assert_eq!(
@@ -3169,7 +3221,7 @@ mod sequence_phase_context_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &crate::profiles::ProfileManager::default(),
         }
         .dispatch(owner, Command::Wait, sequence, 0);
@@ -3207,7 +3259,7 @@ mod sequence_phase_context_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &crate::profiles::ProfileManager::default(),
         }
         .dispatch(owner, Command::Wait, sequence, 0);
@@ -3255,7 +3307,7 @@ mod sequence_phase_context_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &crate::profiles::ProfileManager::default(),
         }
         .dispatch(owner, Command::Wait, sequence, 0);
@@ -3766,7 +3818,7 @@ mod sequence_phase_context_tests {
             RecoveryCommandContext {
                 entities: &mut engine.world.entities,
                 sequence_manager: &mut engine.orders.sequence_manager,
-                next_order_id: &mut engine.orders.next_order_id,
+                orders: OrderEmitter::new(&mut engine.orders.next_order_id),
             }
             .dispatch(owner, command, seq_id, 0);
 
@@ -3965,17 +4017,46 @@ mod canonical_door_invariant_tests {
     }
 }
 
-/// Allocate at the translator's exact emission point. Direction policy is
-/// explicit: recovery orders intentionally retain Order's ordinary policy,
-/// whereas these posture-local translators generally disable recomputation.
-pub(in crate::engine) fn new_translation_order(
-    next_order_id: &mut u32,
-    order_type: crate::order::OrderType,
-    target: (f32, f32),
-    compute_direction: bool,
-) -> crate::order::Order {
-    let id = crate::order::alloc_order_id(next_order_id);
-    let mut order = crate::order::Order::new(order_type, target.0, target.1, id);
-    order.compute_direction = compute_direction;
-    order
+/// The single emission point of command-translation orders. Every translation
+/// context owns one over the engine's deterministic order-id counter, so each
+/// order allocates its id at the translator's exact emission point.
+pub(in crate::engine) struct OrderEmitter<'a> {
+    next_order_id: &'a mut u32,
+}
+
+impl<'a> OrderEmitter<'a> {
+    pub(in crate::engine) fn new(next_order_id: &'a mut u32) -> Self {
+        Self { next_order_id }
+    }
+
+    /// Allocate the next order id.
+    pub(in crate::engine) fn alloc_id(&mut self) -> std::num::NonZeroU32 {
+        crate::order::alloc_order_id(self.next_order_id)
+    }
+
+    /// Raw counter for shared translation helpers in other modules that
+    /// allocate their own ids.
+    // TODO: route those helpers (abilities::begin_*, posture transitions) through
+    // `OrderEmitter` instead of the raw counter.
+    pub(in crate::engine) fn counter(&mut self) -> &mut u32 {
+        &mut *self.next_order_id
+    }
+
+    /// Allocate one order and append it to `(seq_id, elem_idx)`. Direction
+    /// policy is explicit: recovery orders keep `Order::new`'s ordinary `true`,
+    /// whereas posture-local translators disable recomputation.
+    pub(in crate::engine) fn push(
+        &mut self,
+        sequence_manager: &mut crate::sequence::SequenceManager,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+        target: (f32, f32),
+        compute_direction: bool,
+    ) {
+        let id = self.alloc_id();
+        let mut order = crate::order::Order::new(order_type, target.0, target.1, id);
+        order.compute_direction = compute_direction;
+        sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
 }

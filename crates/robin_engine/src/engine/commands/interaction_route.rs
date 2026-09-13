@@ -170,9 +170,10 @@ impl EngineInner {
         // The Pay click resolver has already validated that this target is the
         // eligible beggar. Preserve the existing direct Civilian + FriendlyAi
         // mutation semantics here.
-        let entity = self.get_entity_mut(target).unwrap_or_else(|| {
-            panic!("beggar cooldown stamp target {} is missing", target.index())
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(target, format_args!("beggar cooldown stamp target"));
         let crate::element::Entity::Civilian(civilian) = entity else {
             panic!(
                 "beggar cooldown stamp target {} is not a civilian",

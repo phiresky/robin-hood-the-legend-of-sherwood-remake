@@ -123,22 +123,20 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
     }
     let assets = assets_with_sword_profile(0, base_max_distance);
     let collect = |engine: &EngineInner, max_distance| {
-        collect_circle_warn_victims(
-            &engine.world.entities,
-            attacker,
-            (0.0, 0.0),
-            0,
-            max_distance,
-            180,
-            |target_id| engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword),
-            &assets.profile_manager,
-            &engine.world.fast_grid,
-            crate::sight_obstacle::ObstacleList {
+        StrikeVictimQuery {
+            entities: &engine.world.entities,
+            attacker_id: attacker,
+            profile_manager: &assets.profile_manager,
+            fast_grid: &engine.world.fast_grid,
+            obstacles: crate::sight_obstacle::ObstacleList {
                 static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &engine.world.dynamic_sight_obstacles,
                 static_active: &engine.world.static_sight_obstacle_active,
             },
-        )
+        }
+        .circle_warn_victims((0.0, 0.0), 0, max_distance, 180, |target_id| {
+            engine.live_actor_animation(target_id) == Some(OrderType::WalkingWithSword)
+        })
     };
     assert_eq!(collect(&engine, base_max_distance), vec![target]);
 
@@ -238,14 +236,7 @@ fn kill_experience_uses_exact_campaign_description_not_profile_number() {
 fn autonomous_vip_combatant_death_does_not_latch_party_failure() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let Entity::Pc(pc) = engine.get_entity_mut(victim).unwrap() else {
         unreachable!()
     };
@@ -270,14 +261,7 @@ fn autonomous_vip_combatant_death_does_not_latch_party_failure() {
 fn player_party_vip_death_still_latches_party_failure() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
 
     let mut profiles = crate::profiles::ProfileManager::new();
     profiles.characters.push(crate::profiles::CharacterProfile {
@@ -356,22 +340,8 @@ fn damage_dispatcher_disables_direction_on_live_reaction_orders() {
 #[test]
 fn hit_translation_defers_flight_facing_until_first_execute() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 30.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(30.0, 100.0), None));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.element_data_mut().set_layer(4);
@@ -470,14 +440,7 @@ fn hit_translation_without_animation_terminates_despite_retained_transition_orde
 fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 32.0,
-            y: 1.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(32.0, 1.0), None));
     authorize_test_hit_flight(&mut engine, victim);
     {
         let Entity::Soldier(attacker) = engine.get_entity_mut(attacker).unwrap() else {
@@ -509,14 +472,7 @@ fn charging_rider_falling_hit_normalizes_non_cardinal_sector_vector() {
 #[test]
 fn antagonistless_falling_hit_normalizes_opposite_non_cardinal_sector_vector() {
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 32.0,
-            y: 1.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(32.0, 1.0), None));
     authorize_test_hit_flight(&mut engine, victim);
     engine
         .get_entity_mut(victim)
@@ -543,22 +499,8 @@ fn antagonistless_falling_hit_normalizes_opposite_non_cardinal_sector_vector() {
 #[test]
 fn positioned_antagonist_falling_hit_keeps_radial_normalization() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: -2.0,
-            y: -4.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 1.0,
-            y: 1.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(-2.0, -4.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(1.0, 1.0), None));
     authorize_test_hit_flight(&mut engine, victim);
 
     engine.initialize_hit_flight(
@@ -675,14 +617,7 @@ fn conscious_hit_applies_ai_eye_status_synchronously() {
         .unwrap()
         .hth_weapon_id = 1;
     let attacker = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 20.0,
-            y: 0.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_soldier(wp(20.0, 0.0), None));
     engine
         .get_entity_mut(victim)
         .unwrap()
@@ -738,14 +673,7 @@ fn conscious_lying_hit_applies_concussion_and_got_hit_before_terminating() {
         .unwrap()
         .hth_weapon_id = 1;
     let attacker = engine.add_test_entity(make_pc(WorldPoint3D::default(), None));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 20.0,
-            y: 0.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_soldier(wp(20.0, 0.0), None));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
         victim_entity.set_posture(Posture::Lying);
@@ -1034,11 +962,7 @@ fn civilian_health_counts_toward_round_strike_and_warcry() {
         }]);
         sprite.conversion = std::sync::Arc::new(vec![0; crate::sprite_script::NONANIMATION_END]);
     }
-    engine.add_test_entity(make_civilian(WorldPoint3D {
-        x: 15.0,
-        y: 100.0,
-        z: 0.0,
-    }));
+    engine.add_test_entity(make_civilian(wp(15.0, 100.0)));
 
     let mut assets = assets_with_nonstraight_profile(
         SwordStrike::H,
@@ -1077,22 +1001,8 @@ fn completed_missed_sword_strike_adds_tiredness_once() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let target = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 500.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let target = engine.add_test_entity(make_soldier(wp(500.0, 100.0), None));
     let assets = assets_with_sword_profile(7, 30);
 
     install_test_melee_order(&mut engine, attacker, target, SwordStrike::A, true);
@@ -1114,22 +1024,8 @@ fn completed_missed_sword_strike_adds_tiredness_once() {
 #[test]
 fn circle_done_initialization_advances_without_rotating_or_hitting() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 90.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(0.0, 90.0), None));
     let assets = assets_with_nonstraight_profile(
         SwordStrike::F,
         crate::profiles::WeaponThrustKind::TrueHalfCircle,
@@ -1184,22 +1080,8 @@ fn lateral_done_initialization_does_not_advance_or_hit() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 90.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(0.0, 90.0), None));
     let assets =
         assets_with_nonstraight_profile(SwordStrike::D, crate::profiles::WeaponThrustKind::Lateral);
     let selected = install_test_melee_order(&mut engine, attacker, victim, SwordStrike::D, false);
@@ -1245,30 +1127,9 @@ fn push_victims_queue_damage_in_creation_fifo() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let first_victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 80.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let second_victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 60.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let first_victim = engine.add_test_entity(make_soldier(wp(0.0, 80.0), None));
+    let second_victim = engine.add_test_entity(make_soldier(wp(0.0, 60.0), None));
     for victim in [first_victim, second_victim] {
         engine
             .get_entity_mut(victim)
@@ -1313,22 +1174,8 @@ fn push_victims_queue_damage_in_creation_fifo() {
 #[test]
 fn launching_sword_damage_does_not_add_attacker_tiredness() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -1354,14 +1201,7 @@ fn launching_sword_damage_does_not_add_attacker_tiredness() {
 fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
     let sim = crate::sim_rng::SimulationContext::with_seed(0x183);
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     engine
         .get_entity_mut(victim)
         .expect("test victim must exist")
@@ -1467,22 +1307,8 @@ fn shoulder_damage_dispatches_partner_fall_without_direction_recompute() {
 fn parried_damage_still_learns_attackers_live_strike() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let assets = assets_with_sword_profile(7, 30);
 
     let mut attacker_sequence = crate::sequence::Sequence::new();
@@ -1551,22 +1377,8 @@ fn parried_damage_still_learns_attackers_live_strike() {
 fn push_damage_virtual_say_ouch_is_silent_for_pc() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     let assets = assets_with_nonstraight_profile(
         SwordStrike::H,
         crate::profiles::WeaponThrustKind::TrueCircle,
@@ -2808,20 +2620,9 @@ fn surviving_push_sword_knockout_applies_one_ko_callback_and_star() {
 fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
+        wp(10.0, 100.0),
         crate::position_interface::SectorHandle::new(0),
     ));
 
@@ -2979,14 +2780,7 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
 fn damage_to_already_dead_pc_does_not_repeat_virtual_kill() {
     let sim = crate::sim_rng::SimulationContext::with_seed(0x181);
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     let Entity::Pc(pc) = engine.get_entity_mut(victim).unwrap() else {
         unreachable!()
     };
@@ -3022,14 +2816,7 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
     let sim = crate::sim_rng::SimulationContext::with_seed(0x182);
     let mut engine = make_engine();
     let attacker = engine.add_test_entity(make_soldier(WorldPoint3D::ZERO, None));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -3115,30 +2902,9 @@ fn charge_hit_on_already_dead_pc_does_not_repeat_virtual_kill_rng() {
 fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
     let sim = crate::sim_rng::SimulationContext::with_seed(0x38);
     let mut engine = make_engine();
-    let attacker_a = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let attacker_b = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 20.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker_a = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let attacker_b = engine.add_test_entity(make_soldier(wp(20.0, 100.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     for attacker in [attacker_a, attacker_b] {
         let Entity::Soldier(attacker_entity) = engine.get_entity_mut(attacker).unwrap() else {
             unreachable!()
@@ -3247,22 +3013,8 @@ fn lethal_sword_hit_preserves_queued_second_damage_fifo() {
 fn sword_damage_on_dying_pc_preserves_the_fresh_sprite_start() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     let Entity::Soldier(attacker_entity) = engine.get_entity_mut(attacker).unwrap() else {
         unreachable!()
     };
@@ -3533,30 +3285,9 @@ fn grounded_sword_damage_resumes_same_sequence_successor_synchronously() {
 fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_translation() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let carried = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
+    let carried = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let Entity::Soldier(attacker_entity) = engine.get_entity_mut(attacker).unwrap() else {
         unreachable!()
     };
@@ -3661,22 +3392,8 @@ fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_transla
 #[test]
 fn melee_direction_uses_original_aspect_ratio_classifier() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 663.552_37,
-            y: 1_755.932_5,
-            z: 0.0,
-        },
-        None,
-    ));
-    let target = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 726.867_3,
-            y: 1_763.275_3,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(663.552_37, 1_755.932_5), None));
+    let target = engine.add_test_entity(make_soldier(wp(726.867_3, 1_763.275_3), None));
 
     assert_eq!(direction_to(&engine.world.entities, attacker, target), 5);
 }
@@ -3686,22 +3403,8 @@ fn enter_swordfight_instruct_queues_transition_without_execute_side_effects() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let owner = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let owner = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     engine
         .get_entity_mut(owner)
         .unwrap()
@@ -4025,14 +3728,7 @@ fn uncrowded_cross_sector_swordfight_enters_without_a_jump_line() {
 fn enter_swordfight_instruct_preserves_live_sprite_destination() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let owner = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let owner = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
     let retained_goal = crate::coordinates::MapPoint::new(768.0, 1796.0);
     engine
         .get_entity_mut(owner)
@@ -4064,22 +3760,8 @@ fn enter_swordfight_instruct_preserves_live_sprite_destination() {
 fn satisfied_enter_swordfight_skips_outer_instruct_epilogue() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let owner = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let owner = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     if let Some(actor) = engine.get_entity_mut(owner).unwrap().actor_data_mut() {
         actor.action_state = ActionState::WaitingSword;
     }
@@ -4131,30 +3813,9 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let existing_opponent = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: -10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let victim = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let existing_opponent = engine.add_test_entity(make_pc(wp(-10.0, 100.0), None));
+    let attacker = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let Entity::Soldier(attacker_soldier) = engine.get_entity_mut(attacker).unwrap() else {
         unreachable!()
     };
@@ -4303,22 +3964,8 @@ fn got_hit_direct_entry_authors_reciprocal_enter_on_attacker() {
 fn direct_enter_swordfight_accepts_typed_slot_zero_opponent() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let opponent = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let initiator = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let opponent = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let initiator = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     assert_eq!(opponent.index(), 0, "control requires typed slot zero");
 
     assert!(engine.direct_enter_swordfight(&sim, &LevelAssets::default(), initiator, opponent,));
@@ -4449,22 +4096,8 @@ fn selected_pc_entering_swordfight_does_not_restore_armed_action_on_quit() {
     let sim = crate::sim_rng::test_context();
     let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
     let mut engine = make_engine();
-    let pc = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     engine.players.seats[0].selection.push(pc);
     {
         let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
@@ -4494,22 +4127,8 @@ fn unselected_pc_entering_swordfight_saves_targeted_no_action() {
     let sim = crate::sim_rng::test_context();
     let assets = action_test_assets([Action::Bow, Action::Apple, Action::Purse]);
     let mut engine = make_engine();
-    let pc = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     {
         let pc_data = engine.get_entity_mut(pc).unwrap().pc_data_mut().unwrap();
         pc_data.current_action = Action::Bow;
@@ -4635,22 +4254,8 @@ fn preparing_swordfight_orders_done_enter_then_queues_reciprocal() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let initiator = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let initiator = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     {
         let Entity::Soldier(soldier) = engine.get_entity_mut(initiator).unwrap() else {
             unreachable!()

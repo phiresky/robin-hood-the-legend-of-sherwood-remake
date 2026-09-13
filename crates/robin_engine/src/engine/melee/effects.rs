@@ -186,6 +186,13 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
+        let query = StrikeVictimQuery {
+            entities: &self.world.entities,
+            attacker_id,
+            profile_manager: &assets.profile_manager,
+            fast_grid: &self.world.fast_grid,
+            obstacles,
+        };
 
         match thrust.kind {
             WeaponThrustKind::Straight | WeaponThrustKind::Assault => {
@@ -221,9 +228,7 @@ impl EngineInner {
                         angle_to_sector(dir_angle + strike_profile_angle(thrust.final_angle)),
                     ),
                 };
-                collect_lateral_warning_victims(
-                    &self.world.entities,
-                    attacker_id,
+                query.lateral_warning_victims(
                     (attacker_pos.x, attacker_pos.y),
                     min_dist,
                     max_dist,
@@ -231,22 +236,15 @@ impl EngineInner {
                     end_sector,
                 )
             }
-            WeaponThrustKind::PushAside => collect_push_victims(
-                &self.world.entities,
-                &PushStrikeParams {
-                    attacker_id,
-                    attacker_pos: (attacker_pos.x, attacker_pos.y),
-                    attacker_elevation: attacker.position_iface().get_elevation(),
-                    position_space: PushStrikePositionSpace::Map,
-                    attacker_direction: attacker_dir,
-                    min_distance: min_dist,
-                    max_distance: max_dist,
-                    half_width: push_strike_half_width(thrust.repulsion),
-                },
-                &assets.profile_manager,
-                &self.world.fast_grid,
-                obstacles,
-            ),
+            WeaponThrustKind::PushAside => query.push_victims(&PushStrikeParams {
+                attacker_pos: (attacker_pos.x, attacker_pos.y),
+                attacker_elevation: attacker.position_iface().get_elevation(),
+                position_space: PushStrikePositionSpace::Map,
+                attacker_direction: attacker_dir,
+                min_distance: min_dist,
+                max_distance: max_dist,
+                half_width: push_strike_half_width(thrust.repulsion),
+            }),
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
                 let dir_angle = sector_to_angle(attacker_dir);
                 let (begin_sector, end_sector) = match thrust.direction {
@@ -265,23 +263,16 @@ impl EngineInner {
                         )
                     }
                 };
-                collect_arc_victims(
-                    &self.world.entities,
-                    attacker_id,
+                query.arc_victims(
                     (attacker_pos.x, attacker_pos.y),
                     min_dist,
                     max_dist,
                     begin_sector,
                     end_sector,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
                 )
             }
-            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
-                collect_circle_warn_victims(
-                    &self.world.entities,
-                    attacker_id,
+            WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => query
+                .circle_warn_victims(
                     (attacker_pos.x, attacker_pos.y),
                     attacker_dir,
                     thrust.maximal_distance,
@@ -290,11 +281,7 @@ impl EngineInner {
                         self.live_actor_animation(target_id)
                             == Some(crate::order::OrderType::WalkingWithSword)
                     },
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                )
-            }
+                ),
         }
     }
 
@@ -404,10 +391,12 @@ impl EngineInner {
             .and_then(|a| a.active_lift);
         if let Some(lift) = active_lift {
             let victim_is_pc = self
-                .get_entity(victim_id)
-                .unwrap_or_else(|| {
-                    panic!("active-lift victim {victim_id:?} vanished before forced release")
-                })
+                .world
+                .entities
+                .expect_entity(
+                    victim_id,
+                    format_args!("active-lift victim before forced release"),
+                )
                 .is_pc();
             if let Some(grid_idx) = self
                 .world
@@ -522,9 +511,9 @@ impl EngineInner {
         elem_idx: usize,
     ) {
         let posture = self
-            .get_entity(owner)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(owner, "dispatch_fall owner")
+            .element_data()
+            .posture();
 
         // Pick the fall animation by current posture and insert it
         // as an order on the element.  The order is consumed by
@@ -852,9 +841,9 @@ impl EngineInner {
         // `translate_shoulder_damage` before falling through to the
         // base-class push-damage path.
         let victim_posture = self
-            .get_entity(victim_id)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
+            .expect_entity(victim_id, "push effect victim posture")
+            .element_data()
+            .posture();
         if matches!(
             victim_posture,
             Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
@@ -870,9 +859,9 @@ impl EngineInner {
         // selection sees the carrier's new Upright posture.
         let victim_posture = if victim_posture == Posture::CarryingCorpse {
             self.force_drop_carried_corpse_instant(victim_id);
-            self.get_entity(victim_id)
-                .map(|e| e.element_data().posture())
-                .unwrap_or_default()
+            self.expect_entity(victim_id, "push effect victim after corpse drop")
+                .element_data()
+                .posture()
         } else {
             victim_posture
         };
@@ -894,10 +883,10 @@ impl EngineInner {
             let posture = victim.element_data().posture();
             let action = victim
                 .actor_data()
-                .map(|a| a.action_state)
-                .unwrap_or_default();
+                .expect("damage effect animation victim must be an actor")
+                .action_state;
             let dead = victim.is_dead();
-            let unconscious = victim.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let unconscious = victim.is_unconscious();
             let conc = victim
                 .human_data()
                 .map(|h| h.concussion_of_the_brain)
@@ -1441,6 +1430,13 @@ impl EngineInner {
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
+        let query = StrikeVictimQuery {
+            entities: &self.world.entities,
+            attacker_id,
+            profile_manager: &assets.profile_manager,
+            fast_grid: &self.world.fast_grid,
+            obstacles,
+        };
 
         let mut victims = match kind {
             WeaponThrustKind::Straight | WeaponThrustKind::Assault => {
@@ -1464,22 +1460,17 @@ impl EngineInner {
                     }
                 };
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("lateral strike attacker {attacker_id:?} is missing")
-                    });
-                collect_lateral_strike_victims(
-                    &self.world.entities,
-                    attacker_id,
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("lateral strike attacker"))
+                    .element_data()
+                    .position();
+                query.lateral_strike_victims(
                     attacker_position,
                     min_dist,
                     max_dist,
                     begin_sector,
                     end_sector,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
                 )
             }
             WeaponThrustKind::PushAside => {
@@ -1495,22 +1486,15 @@ impl EngineInner {
                     .unwrap_or_else(|| panic!("push-strike attacker {attacker_id:?} is missing"));
                 let attacker_elevation = attacker.position_iface().get_elevation();
                 let attacker_ground = attacker.ground_position();
-                collect_push_victims(
-                    &self.world.entities,
-                    &PushStrikeParams {
-                        attacker_id,
-                        attacker_pos: (attacker_ground.x, attacker_ground.y),
-                        attacker_elevation,
-                        position_space: PushStrikePositionSpace::Ground,
-                        attacker_direction: attacker_dir,
-                        min_distance: min_dist,
-                        max_distance: max_dist,
-                        half_width,
-                    },
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                )
+                query.push_victims(&PushStrikeParams {
+                    attacker_pos: (attacker_ground.x, attacker_ground.y),
+                    attacker_elevation,
+                    position_space: PushStrikePositionSpace::Ground,
+                    attacker_direction: attacker_dir,
+                    min_distance: min_dist,
+                    max_distance: max_dist,
+                    half_width,
+                })
             }
             WeaponThrustKind::TrueHalfCircle | WeaponThrustKind::FalseHalfCircle => {
                 // Half circle: ±90° from facing direction
@@ -1529,41 +1513,27 @@ impl EngineInner {
                     }
                 };
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("half-circle strike attacker {attacker_id:?} is missing")
-                    });
-                collect_half_circle_strike_victims(
-                    &self.world.entities,
-                    attacker_id,
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("half-circle strike attacker"))
+                    .element_data()
+                    .position();
+                query.half_circle_strike_victims(
                     attacker_position,
                     min_dist,
                     max_dist,
                     begin_sector,
                     end_sector,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
                 )
             }
             WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("full-circle strike attacker {attacker_id:?} is missing")
-                    });
-                collect_full_circle_strike_victims(
-                    &self.world.entities,
-                    attacker_id,
-                    attacker_position,
-                    min_dist,
-                    max_dist,
-                    &assets.profile_manager,
-                    &self.world.fast_grid,
-                    obstacles,
-                )
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("full-circle strike attacker"))
+                    .element_data()
+                    .position();
+                query.full_circle_strike_victims(attacker_position, min_dist, max_dist)
             }
         };
 

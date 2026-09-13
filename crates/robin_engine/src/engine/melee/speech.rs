@@ -68,7 +68,7 @@ impl EngineInner {
             let entity = self.expect_entity(entity_id, "smalltalk speech owner");
             let pos = entity.element_data().position_map();
             let dead = entity.is_dead();
-            let unc = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let unc = entity.is_unconscious();
             // Brawling / looting NPCs (any take-money or
             // fight-for-money substate) skip the wounded remark
             // entirely — they're focused on the money / fight and
@@ -617,13 +617,10 @@ impl EngineInner {
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared while queueing {:?}",
-                entity_id.index(),
-                stimulus.stimulus_type
-            )
-        });
+        let entity = self.world.entities.expect_entity_mut(
+            entity_id,
+            format_args!("NPC while queueing {:?}", stimulus.stimulus_type),
+        );
         if matches!(entity, Entity::Pc(pc) if pc.pc.ai.is_none()) {
             return;
         }
@@ -660,12 +657,10 @@ impl EngineInner {
         if (frame & 63) != (creation_order & 31) {
             return;
         }
-        let entity = self.world.entities.get_mut(id).unwrap_or_else(|| {
-            panic!(
-                "tiredness owner {} disappeared from its legacy slot",
-                id.index()
-            )
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(id, format_args!("tiredness owner from its legacy slot"));
         assert!(
             entity.human_data().is_some(),
             "tiredness owner {} is not human",
@@ -685,11 +680,12 @@ impl EngineInner {
         let probe = crate::combat::tiredness_debug_matches(creation_order);
         if is_swordfighting || is_moving {
             if probe {
-                let tiredness = entity.human_data().map_or(0, |human| human.tiredness);
-                eprintln!(
-                    "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation_skipped \
-                     tiredness={tiredness} swordfighting={} moving={}",
-                    is_swordfighting as u8, is_moving as u8
+                Self::trace_tiredness_recuperation_skipped(
+                    frame,
+                    creation_order,
+                    entity,
+                    is_swordfighting,
+                    is_moving,
                 );
             }
             return;
@@ -702,12 +698,45 @@ impl EngineInner {
         let before = human.tiredness;
         human.tiredness = human.tiredness.saturating_sub(recuperation);
         if probe {
-            eprintln!(
-                "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation \
-                 before={before} after={} endurance={endurance} recuperation={recuperation}",
-                human.tiredness
+            Self::trace_tiredness_recuperation(
+                frame,
+                creation_order,
+                [before, human.tiredness],
+                endurance,
+                recuperation,
             );
         }
+    }
+
+    #[inline(never)]
+    fn trace_tiredness_recuperation_skipped(
+        frame: u32,
+        creation_order: u32,
+        entity: &Entity,
+        is_swordfighting: bool,
+        is_moving: bool,
+    ) {
+        let tiredness = entity.human_data().map_or(0, |human| human.tiredness);
+        eprintln!(
+            "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation_skipped \
+             tiredness={tiredness} swordfighting={} moving={}",
+            is_swordfighting as u8, is_moving as u8
+        );
+    }
+
+    /// `[before, after]` tiredness.
+    #[inline(never)]
+    fn trace_tiredness_recuperation<T: std::fmt::Display>(
+        frame: u32,
+        creation_order: u32,
+        [before, after]: [T; 2],
+        endurance: impl std::fmt::Display,
+        recuperation: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation \
+             before={before} after={after} endurance={endurance} recuperation={recuperation}",
+        );
     }
 
     // ─── Tie-up (public, called from natives/UI) ────────────────────

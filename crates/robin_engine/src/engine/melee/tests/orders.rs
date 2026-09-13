@@ -218,41 +218,13 @@ fn lateral_done_keeps_actor_scan_order_and_does_not_recover_out_of_arc_antagonis
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
     // Facing south (sector 8), thrust D covers sectors 4..=9. Keep the
     // valid victims on either side of the out-of-arc antagonist in actor
     // creation order so the assertion also guards the collector FIFO.
-    let first_in_arc = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 20.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let antagonist = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: -20.0,
-            y: 120.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let second_in_arc = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 120.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let first_in_arc = engine.add_test_entity(make_soldier(wp(20.0, 100.0), None));
+    let antagonist = engine.add_test_entity(make_soldier(wp(-20.0, 120.0), None));
+    let second_in_arc = engine.add_test_entity(make_soldier(wp(0.0, 120.0), None));
     engine
         .get_entity_mut(attacker)
         .unwrap()
@@ -297,22 +269,8 @@ fn interrupted_circle_sweep_preserves_geometry_before_replacement_action_point()
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     engine
         .get_entity_mut(victim)
         .and_then(Entity::enemy_ai_mut)
@@ -461,22 +419,8 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let assets = assets_with_nonstraight_profile(
         SwordStrike::G,
         crate::profiles::WeaponThrustKind::TrueHalfCircle,
@@ -520,22 +464,8 @@ fn replacement_true_circle_uses_current_direction_at_action_done() {
 #[test]
 fn saved_human_sweep_is_rehydrated_for_the_live_strike_order() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let assets =
         assets_with_nonstraight_profile(SwordStrike::E, crate::profiles::WeaponThrustKind::Lateral);
     install_test_melee_order(&mut engine, attacker, victim, SwordStrike::E, true);
@@ -862,30 +792,9 @@ fn reconsider_rebalance_updates_opponents_without_recursive_enter_command() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let owner = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let old_primary = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let replacement = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 20.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let owner = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let old_primary = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
+    let replacement = engine.add_test_entity(make_pc(wp(20.0, 100.0), None));
 
     if let Some(human) = engine.get_entity_mut(owner).unwrap().human_data_mut() {
         human.opponents = vec![old_primary, replacement].into();

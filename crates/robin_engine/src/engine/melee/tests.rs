@@ -3,6 +3,11 @@ use crate::ai::AiEntityHandle;
 use crate::coordinates::WorldPoint3D;
 use crate::element::ActiveFlight;
 
+/// Ground-level (`z == 0`) test position.
+fn wp(x: f32, y: f32) -> WorldPoint3D {
+    WorldPoint3D { x, y, z: 0.0 }
+}
+
 fn make_engine() -> EngineInner {
     let mut engine = EngineInner::new();
     // Every PC built by `make_pc` carries campaign-description index 0,
@@ -255,22 +260,8 @@ fn make_enemy_strike_pair(
     engine: &mut EngineInner,
     pending_consideration: bool,
 ) -> (EntityId, EntityId) {
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let target = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let target = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
 
     {
         let Entity::Soldier(soldier) = engine.get_entity_mut(attacker).unwrap() else {
@@ -314,22 +305,8 @@ fn make_enemy_strike_pair(
 }
 
 fn make_enemy_ai_hero_strike_pair(engine: &mut EngineInner) -> (EntityId, EntityId) {
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let target = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let target = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
 
     for (owner, opponent, camp, authorize_strike) in [
         (attacker, target, crate::element::Camp::Custom(2), true),
@@ -529,31 +506,11 @@ fn dispatch_crowded_cross_sector_swordfight(
     let opponent_sector = crate::position_interface::SectorHandle::new(2);
     assert_ne!(owner_sector, opponent_sector);
 
-    let owner = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        owner_sector,
-    ));
-    let opponent = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 60.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        opponent_sector,
-    ));
+    let owner = engine.add_test_entity(make_pc(wp(0.0, 100.0), owner_sector));
+    let opponent = engine.add_test_entity(make_soldier(wp(60.0, 100.0), opponent_sector));
     for index in 0..crowding {
-        let fighter = engine.add_test_entity(make_soldier(
-            WorldPoint3D {
-                x: index as f32 * 10.0,
-                y: 120.0,
-                z: 0.0,
-            },
-            owner_sector,
-        ));
+        let fighter =
+            engine.add_test_entity(make_soldier(wp(index as f32 * 10.0, 120.0), owner_sector));
         engine
             .get_entity_mut(opponent)
             .unwrap()

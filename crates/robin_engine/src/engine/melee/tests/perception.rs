@@ -70,22 +70,8 @@ fn deleting_final_opponent_synchronously_quits_enemy_ai_hero_ai() {
 
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let pc = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let opponent = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let pc = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let opponent = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
 
     let Entity::Pc(pc_entity) = engine.get_entity_mut(pc).unwrap() else {
         unreachable!()

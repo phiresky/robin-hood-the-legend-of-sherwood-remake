@@ -1,6 +1,37 @@
 use super::*;
 
 impl EngineInner {
+    /// Emit one `AIDECISION` line; `stage` holds the stage-specific payload.
+    #[inline(never)]
+    fn trace_ai_decision(frame: u32, owner: EntityId, stage: std::fmt::Arguments<'_>) {
+        eprintln!("AIDECISION frame={} owner={} {stage}", frame, owner.index());
+    }
+
+    #[inline(never)]
+    fn trace_post_seek_frozen_in_tolerance(&self, owner: EntityId, selected: impl std::fmt::Debug) {
+        eprintln!(
+            "[POST_SEEK frame={} owner={owner:?} stage=frozen_in_tolerance selected={:?} actors_frozen={}]",
+            self.control.frame_counter,
+            selected,
+            self.actors_frozen(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_post_seek_frozen_launch_done(
+        &self,
+        owner: EntityId,
+        launched: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "[POST_SEEK frame={} owner={owner:?} stage=frozen_launch_done launched={launched} current={:?}]",
+            self.control.frame_counter,
+            self.orders
+                .sequence_manager
+                .current_element_for_actor(owner),
+        );
+    }
+
     /// Enqueue an AI-initiated Move intent for this actor.
     ///
     /// Per-actor dedup: only one pending request per actor exists in
@@ -55,20 +86,22 @@ impl EngineInner {
                 entity_id.index(),
             );
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                intent.order_type,
-                intent.target_x.to_bits(),
-                intent.target_y.to_bits(),
-                intent.move_flags,
-                intent.tolerance.to_bits(),
-                intent.no_halt,
-                intent.reverse,
-                intent.find_accessible,
-                intent.ask_obstacle,
-                intent.compute_direction,
+                entity_id,
+                format_args!(
+                    "stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+                    intent.order_type,
+                    intent.target_x.to_bits(),
+                    intent.target_y.to_bits(),
+                    intent.move_flags,
+                    intent.tolerance.to_bits(),
+                    intent.no_halt,
+                    intent.reverse,
+                    intent.find_accessible,
+                    intent.ask_obstacle,
+                    intent.compute_direction,
+                ),
             );
         }
         // Upper-bound check.  `AiController::go_to` already rejects
@@ -89,14 +122,16 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        level_w.to_bits(),
-                        level_h.to_bits(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                            level_w.to_bits(),
+                            level_h.to_bits(),
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                        ),
                     );
                 }
                 return false;
@@ -105,19 +140,17 @@ impl EngineInner {
 
         if !intent.find_accessible && !intent.ask_obstacle {
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=preflight_result result=accepted_no_checks",
+                Self::trace_ai_decision(
                     self.control.frame_counter,
-                    entity_id.index(),
+                    entity_id,
+                    format_args!("stage=preflight_result result=accepted_no_checks"),
                 );
             }
             return true;
         }
 
         let (move_box, layer, position) = {
-            let entity = self
-                .get_entity(entity_id)
-                .unwrap_or_else(|| panic!("AI movement preflight owner {entity_id:?} disappeared"));
+            let entity = self.expect_entity(entity_id, "AI movement preflight owner");
             let pi = entity.position_iface();
             let pm = pi.map_position();
             (*pi.get_move_box(), entity.element_data().layer(), pm)
@@ -144,14 +177,16 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
-                        layer,
-                        move_box,
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            layer,
+                            move_box,
+                        ),
                     );
                 }
                 return false;
@@ -174,16 +209,18 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        position.x.to_bits(),
-                        position.y.to_bits(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
-                        layer,
-                        move_box,
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                            position.x.to_bits(),
+                            position.y.to_bits(),
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            layer,
+                            move_box,
+                        ),
                     );
                 }
                 return false;
@@ -191,12 +228,14 @@ impl EngineInner {
         }
 
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=preflight_result result=accepted target=({:08x},{:08x})",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                intent.target_x.to_bits(),
-                intent.target_y.to_bits(),
+                entity_id,
+                format_args!(
+                    "stage=preflight_result result=accepted target=({:08x},{:08x})",
+                    intent.target_x.to_bits(),
+                    intent.target_y.to_bits(),
+                ),
             );
         }
         true
@@ -213,21 +252,19 @@ impl EngineInner {
                 entity_id.index(),
             );
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=set_couldnt_reachpoint caller={}",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                std::panic::Location::caller(),
+                entity_id,
+                format_args!(
+                    "stage=set_couldnt_reachpoint caller={}",
+                    std::panic::Location::caller()
+                ),
             );
         }
-        let entity = self
+        let ai = self
             .world
             .entities
-            .get_mut(entity_id)
-            .unwrap_or_else(|| panic!("AI movement failure owner {entity_id:?} disappeared"));
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("AI movement failure owner {entity_id:?} has no AI controller")
-        });
+            .expect_ai_controller_mut(entity_id, format_args!("AI movement failure owner"));
         ai.couldnt_reachpoint = true;
     }
 
@@ -236,12 +273,10 @@ impl EngineInner {
     /// are synchronous in the original game; do not interpret an earlier nested drain with no result
     /// as a successful authorization.
     pub(in crate::engine) fn resolve_ai_engine_completion_verdict(&mut self, entity_id: EntityId) {
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!("AI order owner {entity_id:?} disappeared before its engine verdict")
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("AI order owner {entity_id:?} lost its controller before its engine verdict")
-        });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            entity_id,
+            format_args!("AI order owner before its engine verdict"),
+        );
         ai.resolve_engine_completion_verdict();
     }
 
@@ -272,9 +307,8 @@ impl EngineInner {
         }
         if intent.source_position.is_none() {
             let (raw_source, raw_sector, raw_layer, door_source) = {
-                let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                    panic!("AI movement source actor {entity_id:?} disappeared before enqueue")
-                });
+                let entity =
+                    self.expect_entity(entity_id, "AI movement source actor before enqueue");
                 let element = entity.element_data();
                 let door_source = current_door_for_route_source(entity);
                 (
@@ -815,9 +849,7 @@ impl EngineInner {
         entity_id: EntityId,
         intent: &crate::order::AiOrderIntent,
     ) -> bool {
-        let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-            panic!("AI gate-route authorization owner {entity_id:?} disappeared")
-        });
+        let entity = self.expect_entity(entity_id, "AI gate-route authorization owner");
         let ed = entity.element_data();
         let door_source = current_door_for_route_source(entity);
         let raw_source = ed.position_map();
@@ -962,14 +994,10 @@ impl EngineInner {
         if !intent.append_special_action_tail {
             return Vec::new();
         }
-        let ai = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(|entity| entity.ai_controller())
-            .unwrap_or_else(|| {
-                panic!("GOTO_SPECIAL_ACTION movement owner {entity_id:?} lost its AI controller")
-            });
+        let ai = self.world.entities.expect_ai_controller(
+            entity_id,
+            format_args!("GOTO_SPECIAL_ACTION movement owner"),
+        );
         let direction = ai.initial_view_direction;
 
         let mut turn = crate::sequence::SequenceElement::new_generic(
@@ -1199,11 +1227,10 @@ impl EngineInner {
                 "globally frozen seek owner {owner:?} has inconsistent actor/element targets"
             );
 
-            let target_entity = self.world.entities.get(seek_target).unwrap_or_else(|| {
-                panic!(
-                    "globally frozen seek owner {owner:?} references missing target {seek_target:?}"
-                )
-            });
+            let target_entity = self.world.entities.expect_entity(
+                seek_target,
+                format_args!("globally frozen seek owner {owner:?} target"),
+            );
             let target_position = target_entity.element_data().position_map();
             let target_sector = target_entity.element_data().sector();
             let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);
@@ -1238,11 +1265,9 @@ impl EngineInner {
             if in_tolerance {
                 if has_post_seek {
                     if debug_post_seek_handoff_enabled() {
-                        eprintln!(
-                            "[POST_SEEK frame={} owner={owner:?} stage=frozen_in_tolerance selected={:?} actors_frozen={}]",
-                            self.control.frame_counter,
+                        self.trace_post_seek_frozen_in_tolerance(
+                            owner,
                             (selected.seq_id, selected.elem_idx, selected.order_id),
-                            self.actors_frozen(),
                         );
                     }
                     let launched = self.start_post_seek_sequence(
@@ -1252,13 +1277,7 @@ impl EngineInner {
                         Some((selected.seq_id, selected.elem_idx)),
                     );
                     if debug_post_seek_handoff_enabled() {
-                        eprintln!(
-                            "[POST_SEEK frame={} owner={owner:?} stage=frozen_launch_done launched={launched} current={:?}]",
-                            self.control.frame_counter,
-                            self.orders
-                                .sequence_manager
-                                .current_element_for_actor(owner),
-                        );
+                        self.trace_post_seek_frozen_launch_done(owner, launched);
                     }
                     return order_action;
                 }
@@ -1296,10 +1315,7 @@ impl EngineInner {
         if !order_turns_before_motion(order_action) {
             return order_action;
         }
-        self.world
-            .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} disappeared"))
+        self.expect_entity_mut(owner, "globally frozen movement owner")
             .position_iface_mut()
             .turn();
         order_action

@@ -321,20 +321,21 @@ impl EngineInner {
         // `entity_building_sector` needs a `&self` borrow; compute it
         // up-front while we don't hold a mutable entity borrow.
         let building_sector = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
+            let entity = self.expect_entity(npc_id, "AI initialization owner after classification");
             self.entity_building_sector(entity.element_data().sector())
         };
 
         // Determine whether this NPC is a Merry-Man archer (Royalist
         // soldier, forest level, archer flag set by the level loader).
         let is_merry_man_archer = if is_enemy {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
-            let is_archer = entity.enemy_ai().map(|e| e.is_archer()).unwrap_or(false);
-            let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
+            let entity = self.expect_entity(npc_id, "AI initialization Merry-Man archer owner");
+            // `is_enemy` was classified from a present enemy brain above.
+            let is_archer = entity
+                .enemy_ai()
+                .expect("AI initialization enemy owner lost its enemy brain")
+                .is_archer();
+            // AI-driven PCs carry an enemy brain but no soldier data; they are never riders.
+            let is_rider = entity.soldier_data().is_some_and(|s| s.rider);
             self.is_player_aligned_camp(self_camp) && is_forest_level && is_archer && !is_rider
         } else {
             false
@@ -343,9 +344,7 @@ impl EngineInner {
         // Grab the (possibly corrected) map position / direction /
         // sector / layer before the write-back borrow.
         let (pos_map_final, direction_final, sector_final, layer_final, current_lp) = {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                return;
-            };
+            let entity = self.expect_entity(npc_id, "AI initialization owner before write-back");
             let elem = entity.element_data();
             let lp = entity.human_life_points();
             (
@@ -629,36 +628,22 @@ impl EngineInner {
             );
 
             {
-                let chief = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} disappeared during AI initialization",
-                        npc_id.index()
-                    )
-                });
-                let ai = chief.ai_controller_mut().unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} has no AI controller during initialization",
-                        npc_id.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("patrol chief during AI initialization"),
+                );
                 ai.patrol = sorted_patrol.clone();
                 ai.missed_patrol_members = missed;
                 ai.needs_patrol_reinit = false;
             }
             for member in sorted_patrol {
-                let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} admitted missing member {}",
-                        npc_id.index(),
-                        member.index()
-                    )
-                });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!(
-                        "patrol member {} has no AI controller during initialization",
-                        member.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    member,
+                    format_args!(
+                        "patrol chief {} member during AI initialization",
+                        npc_id.index()
+                    ),
+                );
                 ai.patrol_chief = Some(npc_id);
             }
         }

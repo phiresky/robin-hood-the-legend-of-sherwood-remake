@@ -245,17 +245,7 @@ impl EngineInner {
                 civ_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::from_u32(raw.material),
-                placement_obstacle,
-                placement_plane,
-            );
+            Self::place_raw_sprite(&mut sprite, raw, assets);
             prime_mission_start_sprite(
                 &mut sprite,
                 raw.action,
@@ -438,17 +428,8 @@ impl EngineInner {
             // `sprite.center` (loaded from the sprite info via
             // `load_frame_info` above) is the authoritative original-game sprite
             // anchor used by rendering and gameplay hotspot lookups.
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                initial_position,
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::from_u32(raw.material),
-                placement_obstacle,
-                placement_plane,
-            );
+            // `RawPcRescue::placement_map_position` is `initial_position`.
+            Self::place_raw_sprite(&mut sprite, raw, assets);
             prime_mission_start_sprite(
                 &mut sprite,
                 raw.action,
@@ -881,18 +862,8 @@ impl EngineInner {
                 soldier_half_diag,
                 MapPoint::new(raw.position_x as f32, raw.position_y as f32),
             );
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                // Apply initial facing from level data (0-15 sector).
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::from_u32(raw.material),
-                placement_obstacle,
-                placement_plane,
-            );
+            // Applies the initial facing from level data (0-15 sector).
+            Self::place_raw_sprite(&mut sprite, raw, assets);
             prime_mission_start_sprite(
                 &mut sprite,
                 raw.action,
@@ -1059,22 +1030,11 @@ impl EngineInner {
             } else {
                 crate::element::RenderingProperties::Blocky
             };
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                // First set the map position to the raw sprite position
-                // so the plane projection can derive a baseline 3D
-                // location. The map is later overwritten with the action
-                // point (see below).
-                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                // Apply initial facing from level data (0-15 sector).
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::default(),
-                placement_obstacle,
-                placement_plane,
-            );
+            // First set the map position to the raw sprite position so the
+            // plane projection can derive a baseline 3D location. The map is
+            // later overwritten with the action point (see below). Also
+            // applies the initial facing from level data (0-15 sector).
+            Self::place_raw_sprite(&mut sprite, raw, assets);
 
             // When the authored Z is non-negative, override the
             // plane-derived 3D with an explicit lift.  Elevated targets
@@ -1268,18 +1228,8 @@ impl EngineInner {
                     crate::sim_rng::RngSite::LevelBonusInitialFrame,
                 );
             }
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                // Apply initial facing from level data (0-15 sector).
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::default(),
-                placement_obstacle,
-                placement_plane,
-            );
+            // Applies the initial facing from level data (0-15 sector).
+            Self::place_raw_sprite(&mut sprite, raw, assets);
             // Original-game bonus loading computes the placed 3D
             // position, then copies both current coordinates into the old
             // coordinates before the element enters its first update. Without this the
@@ -1388,17 +1338,7 @@ impl EngineInner {
             } else {
                 raw.presence.get(difficulty_idx).copied().unwrap_or(false)
             };
-            let (placement_obstacle, placement_plane) =
-                super::entities::resolve_placement_obstacle(assets, raw.obstacle_index);
-            sprite.apply_placement(
-                MapPoint::new(raw.position_x as f32, raw.position_y as f32),
-                raw.layer,
-                Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
-                (raw.direction & 15) as i16,
-                crate::element::GameMaterial::default(),
-                placement_obstacle,
-                placement_plane,
-            );
+            Self::place_raw_sprite(&mut sprite, raw, assets);
             // Original-game scroll loading performs the same
             // current-to-old settlement immediately after recomputing position.
             let current_position = sprite.position_iface.get_position();
@@ -1479,6 +1419,118 @@ mod tests {
 
         assert!(ai.is_vip);
         assert!(ai.soldier_profile_vip);
+    }
+}
+
+/// A serialized level/mission record that carries an authored sprite
+/// placement (map position, layer, sparse sector slot, facing, serialized
+/// obstacle pointer, material policy).
+pub(super) trait RawPlacement {
+    fn placement_map_position(&self) -> MapPoint;
+    fn placement_layer(&self) -> u16;
+    /// Sparse position-sector slot, resolved via
+    /// `EngineInner::resolve_sparse_position_handle`.
+    fn placement_sector(&self) -> u16;
+    /// Raw authored direction; only the low nibble (0-15 sector) is applied.
+    fn placement_direction(&self) -> u32;
+    /// Serialized obstacle pointer (`0xFFFF` = none).
+    fn placement_obstacle(&self) -> u16;
+    /// Material handed to `Sprite::apply_placement`. Records without an
+    /// authored material keep the default.
+    fn placement_material(&self, _assets: &LevelAssets) -> crate::element::GameMaterial {
+        crate::element::GameMaterial::default()
+    }
+}
+
+/// Implements the field accessors of [`RawPlacement`] for records whose
+/// position is stored as `position_x`/`position_y` integers.
+macro_rules! impl_raw_placement_fields {
+    ($ty:ty, obstacle: $obstacle:ident $(, material($raw:ident, $assets:ident) => $material:expr)?) => {
+        impl RawPlacement for $ty {
+            fn placement_map_position(&self) -> MapPoint {
+                MapPoint::new(self.position_x as f32, self.position_y as f32)
+            }
+            fn placement_layer(&self) -> u16 {
+                self.layer
+            }
+            fn placement_sector(&self) -> u16 {
+                self.sector
+            }
+            fn placement_direction(&self) -> u32 {
+                self.direction
+            }
+            fn placement_obstacle(&self) -> u16 {
+                self.$obstacle
+            }
+            $(
+                fn placement_material(&self, $assets: &LevelAssets) -> crate::element::GameMaterial {
+                    let $raw = self;
+                    $material
+                }
+            )?
+        }
+    };
+}
+
+impl_raw_placement_fields!(crate::level_data::RawCivilian, obstacle: obstacle_index,
+    material(raw, _assets) => crate::element::GameMaterial::from_u32(raw.material));
+impl_raw_placement_fields!(crate::level_data::RawPcRescue, obstacle: obstacle_index,
+    material(raw, _assets) => crate::element::GameMaterial::from_u32(raw.material));
+impl_raw_placement_fields!(crate::level_data::RawSoldier, obstacle: obstacle_index,
+    material(raw, _assets) => crate::element::GameMaterial::from_u32(raw.material));
+impl_raw_placement_fields!(crate::level_data::RawTarget, obstacle: obstacle_index);
+impl_raw_placement_fields!(crate::level_data::RawBonus, obstacle: obstacle_index);
+impl_raw_placement_fields!(crate::level_data::RawScroll, obstacle: obstacle_index);
+
+impl RawPlacement for crate::level_data::BeamMe {
+    fn placement_map_position(&self) -> MapPoint {
+        self.position
+    }
+    fn placement_layer(&self) -> u16 {
+        self.layer
+    }
+    fn placement_sector(&self) -> u16 {
+        self.sector
+    }
+    fn placement_direction(&self) -> u32 {
+        self.direction
+    }
+    fn placement_obstacle(&self) -> u16 {
+        self.projection_area
+    }
+    /// Out-of-range material silently falls back to the grid default material.
+    fn placement_material(&self, assets: &LevelAssets) -> crate::element::GameMaterial {
+        crate::element::GameMaterial::from_u32_with_default(
+            self.material,
+            assets.environment.material_sectors.default_material,
+        )
+    }
+}
+
+impl EngineInner {
+    /// Apply a raw record's authored placement to `sprite`. The obstacle and
+    /// its plane resolve first, then the `apply_placement` arguments evaluate
+    /// left to right (map position, layer, sparse sector handle, facing,
+    /// material).
+    pub(super) fn place_raw_sprite(
+        sprite: &mut crate::sprite::Sprite,
+        raw: &impl RawPlacement,
+        assets: &LevelAssets,
+    ) {
+        let (placement_obstacle, placement_plane) =
+            resolve_placement_obstacle(assets, raw.placement_obstacle());
+        sprite.apply_placement(
+            raw.placement_map_position(),
+            raw.placement_layer(),
+            Some(Self::resolve_sparse_position_handle(
+                assets,
+                raw.placement_sector(),
+            )),
+            (raw.placement_direction() & 15) as i16,
+            raw.placement_material(assets),
+            placement_obstacle,
+            placement_plane,
+        );
     }
 }
 

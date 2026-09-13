@@ -109,12 +109,51 @@ impl EngineInner {
     /// frame and fire `EventDone`.  We replicate that here: set the
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
+    /// Run `f` and return the gallop dispatches (and test markers) it recorded.
     #[cfg(test)]
-    pub(in crate::engine) fn set_galopp_dispatch_observer(
-        observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
-    ) {
-        GALOPP_DISPATCH_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+    pub(in crate::engine) fn capture_galopp_dispatches<T>(
+        f: impl FnOnce() -> T,
+    ) -> (T, Vec<GalloppProbeEvent>) {
+        GALOPP_DISPATCH_PROBE.with(|probe| probe.capture(f))
     }
+
+    /// Record a test-authored ordering marker into an active gallop capture.
+    #[cfg(test)]
+    pub(in crate::engine) fn record_galopp_probe_marker(owner: EntityId) {
+        GALOPP_DISPATCH_PROBE.with(|probe| probe.record(GalloppProbeEvent::Marker(owner)));
+    }
+
+    #[cfg(test)]
+    fn observe_galopp_dispatch(&self, owner: EntityId) {
+        let owned_elements = self
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, element)| element.owner == Some(owner))
+                    .map(|(index, element)| GalloppOwnedElement {
+                        sequence: sequence.id,
+                        element: index,
+                        state: element.state,
+                        current_order: element.current_order().map(|order| order.order_id),
+                    })
+            })
+            .collect();
+        GALOPP_DISPATCH_PROBE.with(|probe| {
+            probe.record(GalloppProbeEvent::Dispatched {
+                owner,
+                owned_elements,
+            })
+        });
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn observe_galopp_dispatch(&self, _owner: EntityId) {}
 
     /// Dispatch the gallop-loop-end event to riders performing a charge
     /// flag that reached an intermediate waypoint during movement.
@@ -131,6 +170,7 @@ impl EngineInner {
     ) {
         let scratch = self.build_sim_scratch(assets);
         let current_frame = self.control.frame_counter;
+        // Panic text is asserted by `galopp_execute_callback_rejects_missing_selected_owner`.
         let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
             panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
         });
@@ -141,21 +181,7 @@ impl EngineInner {
             soldier.rider,
             "GALOPP Execute callback owner {entity_id:?} is not a rider"
         );
-        let ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            None,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let ctx = self.ai_context_from_entity(entity, current_frame, None, &scratch, assets);
 
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventGaloppLoopEnd);
         // EventGaloppLoopEnd fires on enemy riders mid-charge towards their
@@ -164,12 +190,7 @@ impl EngineInner {
         // the mutable legacy walk can advance to the next owner.
         let tick_data = self.build_npc_tick_data(sim, entity_id, assets);
         self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
-        #[cfg(test)]
-        GALOPP_DISPATCH_OBSERVER.with(|observer| {
-            if let Some(observer) = observer.borrow_mut().as_mut() {
-                observer(self, entity_id);
-            }
-        });
+        self.observe_galopp_dispatch(entity_id);
     }
 
     /// Map a PC's currently-executing animation (`OrderType`) to the
@@ -369,12 +390,7 @@ impl EngineInner {
         order_type: crate::order::OrderType,
     ) {
         let (material, in_building, active, previous, noise) = {
-            let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
-                panic!(
-                    "PC produced-noise owner {} disappeared from its legacy slot",
-                    pc_id.index()
-                )
-            });
+            let entity = self.expect_entity(pc_id, "PC produced-noise owner from its legacy slot");
             let Entity::Pc(pc) = entity else {
                 panic!("produced-noise owner {} is not a PC actor", pc_id.index());
             };
@@ -410,12 +426,9 @@ impl EngineInner {
         };
         let (volume, refresh_hear_box) =
             Self::pc_noise_volume(order_type, material, in_building, active, previous);
-        let Entity::Pc(pc) = self.world.entities.get_mut(pc_id).unwrap_or_else(|| {
-            panic!(
-                "PC produced-noise owner {} disappeared before write-back",
-                pc_id.index()
-            )
-        }) else {
+        let Entity::Pc(pc) =
+            self.expect_entity_mut(pc_id, "PC produced-noise owner before write-back")
+        else {
             panic!(
                 "produced-noise owner {} changed kind before write-back",
                 pc_id.index()
@@ -467,24 +480,13 @@ impl EngineInner {
     ) {
         self.with_simulation_context(|engine, sim| {
             for &(owner, raw_flags) in completions {
-                let (current_remark, current_flags) = engine
-                    .world
-                    .entities
-                    .get(owner)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "preflighted loaded-remark owner {} disappeared",
-                            owner.index()
-                        )
-                    })
-                    .ai_controller()
-                    .map(|ai| (ai.current_remark, ai.current_remark_flags))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "preflighted loaded-remark owner {} lost its AI",
-                            owner.index()
-                        )
-                    });
+                let (current_remark, current_flags) = {
+                    let ai = engine.world.entities.expect_ai_controller(
+                        owner,
+                        format_args!("preflighted loaded-remark owner"),
+                    );
+                    (ai.current_remark, ai.current_remark_flags)
+                };
                 assert_eq!(
                     current_remark,
                     crate::ai::Remark::TheSoundOfSilence,
@@ -505,25 +507,14 @@ impl EngineInner {
                 };
                 let scratch = engine.build_sim_scratch(assets);
                 let in_uninterruptible_command = engine.is_very_very_busy(owner);
-                let entity =
-                    engine.world.entities.get(owner).unwrap_or_else(|| {
-                        panic!("loaded-remark owner {} disappeared", owner.index())
-                    });
+                let entity = engine.expect_entity(owner, "loaded-remark owner");
                 let building_sector = engine.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = engine.ai_context_from_entity(
                     entity,
                     engine.control.frame_counter,
                     building_sector,
-                    engine.world.weather.is_forest_level,
-                    engine.world.weather.ambiance,
-                    engine.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &engine.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &engine.ai.global.all_soldier_handles,
-                    engine.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 let tick_data = engine.build_npc_tick_data(sim, owner, assets);
@@ -633,34 +624,18 @@ impl EngineInner {
         };
 
         {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared before its wakeup stimulus prefix",
-                    npc_id.index()
-                )
-            });
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "NPC {} lost its AI controller before its wakeup stimulus prefix",
-                    npc_id.index()
-                )
-            });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("NPC before its wakeup stimulus prefix"),
+            );
             ai.outbox.detection.stimuli = prefix_through_wake;
         }
         self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared after synchronous EVENT_FITAGAIN",
-                npc_id.index()
-            )
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!(
-                "NPC {} lost its AI controller after synchronous EVENT_FITAGAIN",
-                npc_id.index()
-            )
-        });
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("NPC after synchronous EVENT_FITAGAIN"));
         suffix.append(&mut ai.outbox.detection.stimuli);
         ai.outbox.detection.stimuli = suffix;
         true
@@ -927,6 +902,8 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
     ) {
+        // Panic text is asserted by the recovery-state should_panic tests in
+        // `engine/tests/ai_detection/{perception,state}.rs`.
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
                 "NPC {} disappeared while applying synchronous recovery state",
@@ -947,18 +924,10 @@ impl EngineInner {
             self.broadcast_resurrection(npc_id);
         }
         if let Some(status) = eye_status {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared while applying its pending eye status",
-                    npc_id.index()
-                )
-            });
-            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!(
-                    "entity {} lost its NPC data while applying its pending eye status",
-                    npc_id.index()
-                )
-            });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("NPC while applying its pending eye status"),
+            );
             crate::ai_vision::set_view_status(npc, status);
         }
     }
@@ -1046,7 +1015,7 @@ impl EngineInner {
                 .current_order_for_actor(npc_id)
                 .map(|(_, _, o)| o.order_type);
 
-            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let is_unconscious = entity.is_unconscious();
 
             let follow_target_position = npc.follow_target.and_then(|target_id| {
                 self.world.entities.get(target_id).map(|target| {
@@ -1133,20 +1102,15 @@ impl EngineInner {
 
     // ─── Owner-local NPC speech ─────────────────────────────────
 
+    #[inline(never)]
     pub(in crate::engine) fn debug_speech_lifecycle(
         &self,
         actor_id: u32,
         phase: &str,
         detail: impl std::fmt::Debug,
     ) {
-        let config = speech_lifecycle_debug_config();
-        if !config.enabled {
-            return;
-        }
         let frame = self.control.frame_counter;
-        if !config.frame.is_none_or(|expected| expected == frame)
-            || !config.actor.is_none_or(|expected| expected == actor_id)
-        {
+        if !speech_lifecycle_debug_gate().matches([Some(frame), Some(actor_id)]) {
             return;
         }
         let sound = &self.feedback.sound_sim;
@@ -1173,6 +1137,7 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     fn debug_speech_attempt_gate_snapshot(
         &self,
         assets: &LevelAssets,
@@ -1181,27 +1146,16 @@ impl EngineInner {
     ) {
         use crate::ai::RemarkTargetFlags;
 
-        let config = speech_lifecycle_debug_config();
-        if !config.enabled {
-            return;
-        }
         let frame = self.control.frame_counter;
-        if !config.frame.is_none_or(|expected| expected == frame)
-            || !config
-                .actor
-                .is_none_or(|expected| expected == owner.index())
-        {
+        if !speech_lifecycle_debug_gate().matches([Some(frame), Some(owner.index())]) {
             return;
         }
 
-        let entity = self
+        let entity = self.expect_entity(owner, "speech gate diagnostic owner");
+        let ai = self
             .world
             .entities
-            .get(owner)
-            .unwrap_or_else(|| panic!("speech gate diagnostic lost owner {owner:?}"));
-        let ai = entity
-            .ai_controller()
-            .unwrap_or_else(|| panic!("speech gate diagnostic owner {owner:?} lost AI"));
+            .expect_ai_controller(owner, format_args!("speech gate diagnostic owner"));
         let (is_soldier, speech_id) = match entity {
             Entity::Pc(pc) => {
                 let profile = assets
@@ -1310,20 +1264,7 @@ impl EngineInner {
         let ai = self
             .world
             .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} disappeared during rejection",
-                    owner.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} lost its AI during rejection",
-                    owner.index()
-                )
-            });
+            .expect_ai_controller_mut(owner, format_args!("speech owner during rejection"));
         ai.cached_frame = self.control.frame_counter;
         ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
         tracing::trace!(
@@ -1392,11 +1333,7 @@ impl EngineInner {
             script_forbidden,
             active_remark,
         ) = {
-            let entity = self
-                .world
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("queued speech owner {} is missing", owner.index()));
+            let entity = self.expect_entity(owner, "queued speech owner");
             let owner_profile = match entity {
                 Entity::Pc(pc) if entity.enemy_ai().is_some() => {
                     OwnerProfile::Character(pc.pc.profile_index)
@@ -1409,9 +1346,10 @@ impl EngineInner {
                     other.element_data().kind
                 ),
             };
-            let ai = entity.ai_controller().unwrap_or_else(|| {
-                panic!("queued speech owner {} has no AI controller", owner.index())
-            });
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("queued speech owner"));
             (
                 owner_profile,
                 entity.element_data().blipped,
@@ -1483,17 +1421,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "speech owner {} disappeared before Speak log",
-                        owner.index()
-                    )
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| {
-                    panic!("speech owner {} lost AI before Speak log", owner.index())
-                });
+                .expect_ai_controller_mut(owner, format_args!("speech owner before Speak log"));
             ai.cached_frame = self.control.frame_counter;
             ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
         }
@@ -1598,12 +1526,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("speech owner {} disappeared before latch", owner.index())
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("speech owner {} lost AI before latch", owner.index()));
+                .expect_ai_controller_mut(owner, format_args!("speech owner before latch"));
             ai.current_remark = attempt.remark;
             ai.current_remark_flags = attempt.flags;
         }
@@ -1704,23 +1627,10 @@ impl EngineInner {
                     10
                 };
                 let log_before_callback = !matches!(reason, 8 | 9);
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "speech owner {} disappeared after category rejection",
-                            owner.index()
-                        )
-                    })
-                    .ai_controller_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "speech owner {} lost AI after category rejection",
-                            owner.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    owner,
+                    format_args!("speech owner after category rejection"),
+                );
                 if log_before_callback {
                     ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
                 }
@@ -1810,23 +1720,10 @@ impl EngineInner {
     ) {
         use crate::ai::Remark;
 
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} disappeared during category-rejection tail",
-                    owner.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} lost AI during category-rejection tail",
-                    owner.index()
-                )
-            });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            owner,
+            format_args!("speech owner during category-rejection tail"),
+        );
         if let Some(reason) = finalization.reason_after_callback {
             ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
         }
@@ -1863,12 +1760,8 @@ impl EngineInner {
                     )
                 });
             let (active, expected_id, flags) = {
-                let entity = self.world.entities.get(actor_id).unwrap_or_else(|| {
-                    panic!(
-                        "speech completion owner {} vanished after slot resolution",
-                        actor_id.index()
-                    )
-                });
+                let entity =
+                    self.expect_entity(actor_id, "speech completion owner after slot resolution");
                 let Some(ai) = entity.ai_controller() else {
                     // Player-controlled PCs use the character speech path and
                     // do not own the NPC actor's completion latch.
@@ -1952,12 +1845,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(actor_id)
-                .unwrap_or_else(|| {
-                    panic!("speech completion owner {} disappeared", actor_id.index())
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("speech completion owner {} lost AI", actor_id.index()));
+                .expect_ai_controller_mut(actor_id, format_args!("speech completion owner"));
             ai.current_remark = Remark::TheSoundOfSilence;
             ai.current_remark_flags = 0;
             ai.register_log_line(crate::ai::LogLineType::SpeakFinished, 0);

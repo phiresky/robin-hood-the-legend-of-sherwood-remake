@@ -24,6 +24,46 @@ impl<const N: usize> ParityGate<N> {
             .unwrap_or_else(|error| panic!("invalid parity diagnostic configuration: {error}"))
     }
 
+    /// Like [`Self::from_env`], but every filter must be supplied once the
+    /// gate is enabled (an exact-owner selection without wildcards).
+    pub(crate) fn from_env_required(gate: &str, names: [&str; N]) -> Self {
+        Self::parse_required(gate, names, |name| std::env::var_os(name))
+            .unwrap_or_else(|error| panic!("invalid parity diagnostic configuration: {error}"))
+    }
+
+    fn parse_required(
+        gate: &str,
+        names: [&str; N],
+        get: impl Fn(&str) -> Option<OsString>,
+    ) -> Result<Self, String> {
+        let parsed = Self::parse(gate, names, get)?;
+        if parsed.enabled
+            && let Some((name, _)) = names
+                .iter()
+                .zip(&parsed.filters)
+                .find(|(_, filter)| filter.is_none())
+        {
+            return Err(format!(
+                "{name} is required when its diagnostic gate is enabled"
+            ));
+        }
+        Ok(parsed)
+    }
+
+    /// The configured value of filter `index`, `None` when absent or disabled.
+    pub(crate) fn filter(&self, index: usize) -> Option<u32> {
+        self.filters[index]
+    }
+
+    /// The configured value of a filter parsed by [`Self::from_env_required`].
+    /// Only call on an enabled gate.
+    #[track_caller]
+    pub(crate) fn required(&self, index: usize) -> u32 {
+        self.filters[index].unwrap_or_else(|| {
+            panic!("parity diagnostic filter {index} read from a disabled or optional gate")
+        })
+    }
+
     fn parse(
         gate: &str,
         names: [&str; N],
@@ -336,6 +376,27 @@ mod tests {
     }
 
     #[test]
+    fn required_gate_rejects_missing_filters_only_when_enabled() {
+        let gate = ParityGate::parse_required("enabled", ["frame", "owner"], |name| match name {
+            "enabled" => Some("".into()),
+            "frame" => Some("3".into()),
+            "owner" => Some("0".into()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!((gate.required(0), gate.required(1)), (3, 0));
+        assert_eq!(gate.filter(1), Some(0));
+        let missing = ParityGate::parse_required("enabled", ["frame", "owner"], |name| {
+            (name != "owner").then(|| "1".into())
+        });
+        assert!(missing.unwrap_err().contains("owner"));
+        let disabled =
+            ParityGate::<2>::parse_required("enabled", ["frame", "owner"], |_| None).unwrap();
+        assert!(!disabled.enabled());
+        assert_eq!(disabled.filter(0), None);
+    }
+
+    #[test]
     fn optional_gate_only_parses_enabled_filters() {
         assert!(
             ParityGate::parse("enabled", ["frame"], |name| {
@@ -494,59 +555,5 @@ mod tests {
                 .unwrap_err()
                 .contains("PARITY_DEBUG_PATH_OWNER_FRAME")
         );
-    }
-}
-
-/// Parse an optional diagnostic filter without treating malformed process
-/// configuration as an absent filter. Call only after the gate is enabled.
-pub(crate) fn optional_u32_env(name: &str) -> Option<u32> {
-    parse_u32_env_value(name, std::env::var(name))
-}
-
-pub(crate) fn required_u32_env(name: &str) -> u32 {
-    optional_u32_env(name).unwrap_or_else(|| panic!("missing required environment variable {name}"))
-}
-
-fn parse_u32_env_value(name: &str, value: Result<String, std::env::VarError>) -> Option<u32> {
-    match value {
-        Ok(value) => Some(
-            value
-                .parse()
-                .unwrap_or_else(|error| panic!("invalid {name}={value:?}: {error}")),
-        ),
-        Err(std::env::VarError::NotPresent) => None,
-        Err(std::env::VarError::NotUnicode(value)) => {
-            panic!("non-Unicode diagnostic filter {name}={value:?}")
-        }
-    }
-}
-
-#[cfg(test)]
-mod u32_filter_tests {
-    use super::parse_u32_env_value;
-
-    #[test]
-    fn optional_filters_distinguish_absence_from_zero() {
-        assert_eq!(
-            parse_u32_env_value("TEST", Err(std::env::VarError::NotPresent)),
-            None
-        );
-        assert_eq!(parse_u32_env_value("TEST", Ok("0".into())), Some(0));
-        assert_eq!(
-            parse_u32_env_value("TEST", Ok(u32::MAX.to_string())),
-            Some(u32::MAX)
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "invalid TEST")]
-    fn malformed_filter_is_not_absence() {
-        parse_u32_env_value("TEST", Ok("-1".into()));
-    }
-
-    #[test]
-    #[should_panic(expected = "non-Unicode diagnostic filter TEST")]
-    fn non_unicode_error_is_not_absence() {
-        parse_u32_env_value("TEST", Err(std::env::VarError::NotUnicode("opaque".into())));
     }
 }

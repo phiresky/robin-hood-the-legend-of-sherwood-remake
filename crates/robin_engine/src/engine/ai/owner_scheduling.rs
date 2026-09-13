@@ -192,12 +192,7 @@ impl EngineInner {
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "re-entrant self-decision NPC {} disappeared",
-                        npc_id.index()
-                    )
-                });
+                let entity = self.expect_entity(npc_id, "re-entrant self-decision NPC");
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
                 let mut ctx =
                     self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
@@ -432,9 +427,6 @@ impl EngineInner {
         // context only after its VM call returns.
         let scratch = self.build_sim_scratch(assets);
         let frame = self.control.frame_counter;
-        let is_forest_level = self.world.weather.is_forest_level;
-        let ambiance = self.world.weather.ambiance;
-        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         let script_driven = self
             .world
             .entities
@@ -448,21 +440,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            build_ai_context_from_entity(
-                entity,
-                frame,
-                None,
-                is_forest_level,
-                ambiance,
-                standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            )
+            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
         };
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
         let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
@@ -531,12 +509,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let mut ctx = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "route-arrival continuation owner {} disappeared",
-                    npc_id.index()
-                )
-            });
+            let entity = self.expect_entity(npc_id, "route-arrival continuation owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
@@ -599,9 +572,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let mut ctx = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("virtual ReturnToDuty owner {} disappeared", npc_id.index())
-            });
+            let entity = self.expect_entity(npc_id, "virtual ReturnToDuty owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
@@ -685,12 +656,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let mut ctx = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "return-to-duty continuation owner {} disappeared",
-                    npc_id.index()
-                )
-            });
+            let entity = self.expect_entity(npc_id, "return-to-duty continuation owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
@@ -738,9 +704,7 @@ impl EngineInner {
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
         let mut ctx = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("patrol-start macro owner {} disappeared", npc_id.index())
-            });
+            let entity = self.expect_entity(npc_id, "patrol-start macro owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
@@ -772,14 +736,10 @@ impl EngineInner {
         let theoretical = self
             .world
             .entities
-            .get(chief_id)
-            .and_then(Entity::ai_controller)
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} has no AI",
-                    chief_id.index()
-                )
-            })
+            .expect_ai_controller(
+                chief_id,
+                format_args!("synchronous patrol initialization owner"),
+            )
             .theoretical_patrol
             .clone();
         self.initialize_patrol_for_npc_over_members(assets, chief_id, &theoretical);
@@ -811,23 +771,16 @@ impl EngineInner {
             is_able_to_fight: bool,
         }
 
-        let chief_entity = self.world.entities.get(chief_id).unwrap_or_else(|| {
-            panic!(
-                "synchronous patrol initialization owner {} disappeared",
-                chief_id.index()
-            )
-        });
         // Patrol initialization admits members through omnidirectional detection,
         // whose distance gate is the post-view-refresh real radius, not the
         // pre-factor base radius the growing cone animates towards.
-        let chief_real_view_radius = chief_entity
-            .ai_actor_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} has no AI actor data",
-                    chief_id.index()
-                )
-            })
+        let chief_real_view_radius = self
+            .world
+            .entities
+            .expect_ai_actor_data(
+                chief_id,
+                format_args!("synchronous patrol initialization owner"),
+            )
             .view_radius;
 
         let live_views = build_entity_views_without_forecast(self);
@@ -839,13 +792,13 @@ impl EngineInner {
                     id.index()
                 )
             });
-            let entity = self.world.entities.get(id).unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} references missing member {}",
-                    chief_id.index(),
-                    id.index()
-                )
-            });
+            let entity = self.world.entities.expect_entity(
+                id,
+                format_args!(
+                    "synchronous patrol initialization owner {} member",
+                    chief_id.index()
+                ),
+            );
             PatrolSnap {
                 position: view.position,
                 raw_position_world: entity.element_data().position(),
@@ -854,15 +807,13 @@ impl EngineInner {
                 posture: entity.element_data().posture(),
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
-                ai_state: entity
-                    .ai_controller()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "patrol member {} referenced by owner {} has no AI controller",
-                            id.index(),
-                            chief_id.index()
-                        )
-                    })
+                ai_state: self
+                    .world
+                    .entities
+                    .expect_ai_controller(
+                        id,
+                        format_args!("patrol member referenced by owner {}", chief_id.index()),
+                    )
                     .current_state,
                 is_alive: !entity.is_dead(),
                 is_active: entity.is_active(),
@@ -1034,12 +985,7 @@ impl EngineInner {
                 let ai = self
                     .world
                     .entities
-                    .get(npc_id)
-                    .unwrap_or_else(|| panic!("direct-drain NPC {} disappeared", npc_id.index()))
-                    .ai_controller()
-                    .unwrap_or_else(|| {
-                        panic!("direct-drain NPC {} has no AI controller", npc_id.index())
-                    });
+                    .expect_ai_controller(npc_id, format_args!("direct-drain NPC"));
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
@@ -1050,12 +996,7 @@ impl EngineInner {
                 let ai = self
                     .world
                     .entities
-                    .get(npc_id)
-                    .unwrap_or_else(|| panic!("direct-drain NPC {} disappeared", npc_id.index()))
-                    .ai_controller()
-                    .unwrap_or_else(|| {
-                        panic!("direct-drain NPC {} has no AI controller", npc_id.index())
-                    });
+                    .expect_ai_controller(npc_id, format_args!("direct-drain NPC"));
                 ai.outbox.actor.has_boundary_work()
                     || !ai.outbox.reentrant.self_stimuli.is_empty()
                     || !ai.outbox.reentrant.owner_work.is_empty()
@@ -1119,11 +1060,7 @@ impl EngineInner {
     ) {
         let current_frame = self.control.frame_counter;
 
-        let entity = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
+        let entity = self.expect_entity(npc_id, "periodic NPC");
 
         // Exact original phase:
         //   (frame & 255) - ((register_number + 100) & 255)
@@ -1187,32 +1124,18 @@ impl EngineInner {
             .get(npc_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("periodic NPC {} disappeared", npc_id.index()));
-        let entity =
-            self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("periodic NPC {} disappeared before call", npc_id.index())
-            });
+        let entity = self.expect_entity(npc_id, "periodic NPC before call");
 
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
-        let entity =
-            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!("periodic NPC {} disappeared before call", npc_id.index())
-            });
+        // Split borrow: the AI tick below reads `self.ai.global` / `self.world.fast_grid`
+        // alongside the mutable entity, so the arena lookup stays explicit here.
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
 
         match entity {
             Entity::Pc(_) | Entity::Soldier(_) => {
@@ -1301,10 +1224,7 @@ impl EngineInner {
             .element_is_about_to_be_launched(npc_id, crate::element::Command::Null);
         self.world
             .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| panic!("periodic AI owner {} disappeared", npc_id.index()))
-            .enemy_ai_mut()
-            .unwrap_or_else(|| panic!("periodic AI owner {} lost enemy AI", npc_id.index()))
+            .expect_enemy_ai_mut(npc_id, format_args!("periodic AI owner"))
             .the_16th_frame_after_refresh(
                 frame_phase,
                 ctx,
@@ -1322,50 +1242,29 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         let current_frame = self.control.frame_counter;
-        let entity = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("random-speech NPC {} disappeared", npc_id.index()));
+        let entity = self.expect_entity(npc_id, "random-speech NPC");
         let Entity::Civilian(civilian) = entity else {
             return;
         };
         let register_number = civilian.npc.register_number;
         let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
         let debug_creation_order = {
-            let config = civilian_random_speech_debug_config();
-            if !config.enabled || config.frame != current_frame {
+            let gate = civilian_random_speech_debug_gate();
+            if !gate.matches([Some(current_frame), None]) {
                 None
             } else {
                 let creation_order = self.world.original_creation_order(npc_id);
-                (config.creation_order == creation_order).then_some(creation_order)
+                gate.matches([None, Some(creation_order)])
+                    .then_some(creation_order)
             }
         };
         if let Some(creation_order) = debug_creation_order {
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!(
-                    "random-speech civilian {} has non-friendly AI",
-                    npc_id.index()
-                )
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=eligibility register={register_number} frame_phase={frame_phase} human_hourglass_continued=true active={} profile={} civilian_type={:?} is_beggar={} dont_talk={} current_remark={:?} remark_flags={} ai_locks={:?} script_locked={} will_call={} will_draw_gate={}]",
-                npc_id.index(),
-                civilian.element.active,
-                civilian.civilian.civilian_profile_index.0,
-                civilian.civilian.cached_civilian_type,
-                civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
-                ai.beggar_dont_talk_counter,
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                ai.base.locks_flag_field,
-                ai.base.script_locked,
-                frame_phase == 0,
-                frame_phase == 0
-                    && civilian.civilian.cached_civilian_type
-                        == crate::profiles::CivilianType::Beggar
-                    && ai.beggar_dont_talk_counter == 0
-                    && ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence,
+            Self::trace_civilian_random_speech_eligibility(
+                [current_frame, creation_order],
+                npc_id,
+                entity,
+                register_number,
+                (frame_phase, frame_phase == 0),
             );
         }
         if frame_phase != 0 {
@@ -1374,47 +1273,15 @@ impl EngineInner {
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self.entity_building_sector(entity.element_data().sector());
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "random-speech NPC {} disappeared before call",
-                npc_id.index()
-            )
-        });
-        let ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
+        let entity = self.expect_entity_mut(npc_id, "random-speech NPC before call");
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) = &*entity else {
-                panic!(
-                    "random-speech civilian {} changed entity kind before call",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            let source_animation = ctx
-                .entity_view(ai.base.me)
-                .map(|view| view.current_animation);
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                source_animation == Some(crate::order::OrderType::Weeping),
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
+            Self::trace_civilian_random_speech_before_call(
+                [current_frame, creation_order],
+                npc_id,
+                entity,
+                &ctx,
             );
         }
         {
@@ -1424,29 +1291,7 @@ impl EngineInner {
                 .random_speech(sim, 0, &ctx);
         }
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) =
-                self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("random-speech civilian {} disappeared", npc_id.index())
-                })
-            else {
-                panic!(
-                    "random-speech civilian {} changed entity kind",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                ai.beggar_dont_talk_counter,
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
-            );
+            self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
         }
         // The original game's random speech runs synchronously before the following
         // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
@@ -1454,30 +1299,134 @@ impl EngineInner {
         // short-circuit the remainder of the actor update.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "random-speech civilian {} disappeared after drain",
-                    npc_id.index()
-                )
-            }) else {
-                panic!(
-                    "random-speech civilian {} changed entity kind after drain",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
-            );
+            self.trace_civilian_random_speech_after_drain(current_frame, creation_order, npc_id);
         }
+    }
+
+    /// `[frame, creation order]`; `frame_phase` pairs the phase with its
+    /// `== 0` call verdict.
+    #[inline(never)]
+    fn trace_civilian_random_speech_eligibility(
+        [current_frame, creation_order]: [u32; 2],
+        npc_id: EntityId,
+        entity: &Entity,
+        register_number: impl std::fmt::Display,
+        (frame_phase, will_call): (impl std::fmt::Display, bool),
+    ) {
+        let Entity::Civilian(civilian) = entity else {
+            panic!("random-speech NPC {} is not a civilian", npc_id.index())
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!(
+                "random-speech civilian {} has non-friendly AI",
+                npc_id.index()
+            )
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=eligibility register={register_number} frame_phase={frame_phase} human_hourglass_continued=true active={} profile={} civilian_type={:?} is_beggar={} dont_talk={} current_remark={:?} remark_flags={} ai_locks={:?} script_locked={} will_call={} will_draw_gate={}]",
+            npc_id.index(),
+            civilian.element.active,
+            civilian.civilian.civilian_profile_index.0,
+            civilian.civilian.cached_civilian_type,
+            civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
+            ai.beggar_dont_talk_counter,
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            ai.base.locks_flag_field,
+            ai.base.script_locked,
+            will_call,
+            will_call
+                && civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
+                && ai.beggar_dont_talk_counter == 0
+                && ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_before_call(
+        [current_frame, creation_order]: [u32; 2],
+        npc_id: EntityId,
+        entity: &Entity,
+        ctx: &crate::ai::AiContext,
+    ) {
+        let Entity::Civilian(civilian) = entity else {
+            panic!(
+                "random-speech civilian {} changed entity kind before call",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        let source_animation = ctx
+            .entity_view(ai.base.me)
+            .map(|view| view.current_animation);
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            source_animation == Some(crate::order::OrderType::Weeping),
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_after_call(
+        &self,
+        current_frame: u32,
+        creation_order: u32,
+        npc_id: EntityId,
+    ) {
+        let Entity::Civilian(civilian) = self.expect_entity(npc_id, "random-speech civilian")
+        else {
+            panic!(
+                "random-speech civilian {} changed entity kind",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            ai.beggar_dont_talk_counter,
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_after_drain(
+        &self,
+        current_frame: u32,
+        creation_order: u32,
+        npc_id: EntityId,
+    ) {
+        let Entity::Civilian(civilian) =
+            self.expect_entity(npc_id, "random-speech civilian after drain")
+        else {
+            panic!(
+                "random-speech civilian {} changed entity kind after drain",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
     }
 
     // ── Per-frame ambush-point peek scan ─────────
@@ -1504,11 +1453,7 @@ impl EngineInner {
         // Civilian ambush-point refresh is a no-op in the original game. Check
         // that before scratch construction, which can draw BuildingExitGate
         // RNG while forecasting unrelated door-passing actors.
-        let owner = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("ambush-refresh NPC {} disappeared", npc_id.index()));
+        let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
         if matches!(owner, Entity::Civilian(_)) {
             return;
         }
@@ -1520,16 +1465,9 @@ impl EngineInner {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         let frame = self.control.frame_counter;
-        let is_forest_level = self.world.weather.is_forest_level;
-        let ambiance = self.world.weather.ambiance;
-        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         // Phase 1: read-only — gather context + eyes point + LOS scope.
         let (ctx, eyes) = {
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("ambush-refresh NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "ambush-refresh NPC");
             assert!(
                 entity.enemy_ai().is_some(),
                 "soldier {} has no enemy AI for ambush refresh",
@@ -1542,21 +1480,7 @@ impl EngineInner {
                 )
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                is_forest_level,
-                ambiance,
-                standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             (ctx, eyes)
         };
 
@@ -1570,15 +1494,9 @@ impl EngineInner {
         };
         let ambush_points = self.ai.global.ambush_points.as_slice();
 
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "ambush-refresh NPC {} disappeared before apply",
-                npc_id.index()
-            )
-        });
-        entity
-            .enemy_ai_mut()
-            .unwrap_or_else(|| panic!("soldier {} lost enemy AI", npc_id.index()))
+        self.world
+            .entities
+            .expect_enemy_ai_mut(npc_id, format_args!("ambush-refresh NPC before apply"))
             .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
     }
@@ -1606,14 +1524,10 @@ impl EngineInner {
         // an elapsed macro timer even outside DefaultInMacro; only execution
         // is substate-gated.
         let (fire, execute) = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller().unwrap_or_else(|| {
-                panic!("macro-timer NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller(npc_id, format_args!("macro-timer NPC"));
             let fire = ai.macro_timer_is_running && ai.when_does_macro_timer_ring <= current_frame;
             (
                 fire,
@@ -1633,27 +1547,9 @@ impl EngineInner {
             .get(npc_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("macro-timer NPC {} disappeared", npc_id.index()));
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "macro-timer NPC {} disappeared before execute",
-                npc_id.index()
-            )
-        });
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let entity = self.expect_entity(npc_id, "macro-timer NPC before execute");
+        let mut ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
         // Stop the timer and resume the macro VM.  `execute_next_
@@ -1664,15 +1560,7 @@ impl EngineInner {
         let base = self
             .world
             .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "macro-timer NPC {} disappeared before execute",
-                    npc_id.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| panic!("macro-timer NPC {} lost its AI controller", npc_id.index()));
+            .expect_ai_controller_mut(npc_id, format_args!("macro-timer NPC before execute"));
         base.macro_timer_is_running = false;
         if execute {
             base.execute_next_macro_command(sim, &ctx);
@@ -1704,10 +1592,7 @@ impl EngineInner {
             return;
         }
         let (position, elevation) = {
-            let entity =
-                self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("deafness-refresh NPC {} disappeared", npc_id.index())
-                });
+            let entity = self.expect_entity(npc_id, "deafness-refresh NPC");
             assert!(
                 entity.ai_actor_data().is_some(),
                 "deafness-refresh owner {} has no AI data",
@@ -1723,28 +1608,19 @@ impl EngineInner {
             .sound_sim
             .sources
             .max_noise_covering_volume_for_3d(position.x, position.y, elevation);
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "deafness-refresh NPC {} disappeared before apply",
-                npc_id.index()
-            )
-        });
-        entity
-            .ai_actor_data_mut()
-            .unwrap_or_else(|| panic!("deafness-refresh owner {} lost AI data", npc_id.index()))
-            .get_deafness(self.control.frame_counter, cover_volume);
+        let current_frame = self.control.frame_counter;
+        self.world
+            .entities
+            .expect_ai_actor_data_mut(npc_id, format_args!("deafness-refresh NPC before apply"))
+            .get_deafness(current_frame, cover_volume);
     }
 
     pub(in crate::engine) fn tick_npc_lock_gate_for_npc(&mut self, npc_id: EntityId) -> bool {
         let frozen = self.actors_frozen();
-        let entity = self
+        let ai = self
             .world
             .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| panic!("lock-gate NPC {} disappeared", npc_id.index()));
-        let ai = entity
-            .ai_controller_mut()
-            .unwrap_or_else(|| panic!("lock-gate NPC {} has no AI controller", npc_id.index()));
+            .expect_ai_controller_mut(npc_id, format_args!("lock-gate NPC"));
         let locked = frozen || !ai.locks_flag_field.is_empty() || ai.script_locked;
         if locked {
             // The original game's unsigned increment wraps. Saturation would pin a deadline forever
@@ -1758,17 +1634,10 @@ impl EngineInner {
 
     pub(in crate::engine) fn tick_npc_emoticon_expiration_for_npc(&mut self, npc_id: EntityId) {
         let current_frame = self.control.frame_counter;
-        let entity = self
+        let ai = self
             .world
             .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| panic!("emoticon-expiry NPC {} disappeared", npc_id.index()));
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!(
-                "emoticon-expiry NPC {} has no AI controller",
-                npc_id.index()
-            )
-        });
+            .expect_ai_controller_mut(npc_id, format_args!("emoticon-expiry NPC"));
         if ai.emoticon_has_expiration_date && ai.emoticon_expiration_date <= current_frame {
             ai.set_emoticon(crate::ai::EmoticonType::None);
             assert!(!ai.emoticon_has_expiration_date);
@@ -1795,11 +1664,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         // Snapshot the gating predicates without holding a borrow.
-        let entity = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
+        let entity = self.expect_entity(npc_id, "ladder-tail NPC");
         let on_ladder = entity.element_data().posture() == crate::element::Posture::OnLadder;
         let cmd = self.actor_command(npc_id);
         let in_wait_or_move_waiting = matches!(
@@ -1815,15 +1680,10 @@ impl EngineInner {
 
         // Bump or reset the counter; remember whether to fire.
         let trigger = {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "ladder-tail NPC {} disappeared before counter",
-                    npc_id.index()
-                )
-            });
-            let npc = entity
-                .ai_actor_data_mut()
-                .unwrap_or_else(|| panic!("ladder-tail owner {} has no AI data", npc_id.index()));
+            let npc = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("ladder-tail NPC before counter"));
             if qualifies {
                 npc.stuck_on_ladder_emergency_counter =
                     npc.stuck_on_ladder_emergency_counter.saturating_add(1);
@@ -1855,21 +1715,11 @@ impl EngineInner {
             .get(npc_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "ladder-tail NPC {} disappeared before recovery",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(npc_id, "ladder-tail NPC before recovery");
         let mut ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
         ctx.in_uninterruptible_command = in_uninterruptible_command;
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "ladder-tail NPC {} disappeared before recovery",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity_mut(npc_id, "ladder-tail NPC before recovery");
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.return_to_duty(sim, crate::ai::DutyFlags::empty(), &ctx, &tick_data);
         } else if let Some(friendly) = entity.friendly_ai_mut() {

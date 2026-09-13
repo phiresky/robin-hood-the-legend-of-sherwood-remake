@@ -139,6 +139,7 @@ fn take_enemy_detection_tick_data(
 use crate::element::EntityId;
 
 impl EngineInner {
+    #[inline(never)]
     fn bored_owner_boundary_debug(&self, npc_id: EntityId, phase: &str) {
         let frame = self.control.frame_counter;
         let owner = npc_id.index();
@@ -147,13 +148,10 @@ impl EngineInner {
             return;
         }
         let command = self.actor_command(npc_id);
-        let entity =
-            self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("BORED_BOUNDARY owner {} disappeared during {phase}", owner)
-            });
-        let ai = entity
-            .ai_controller()
-            .unwrap_or_else(|| panic!("BORED_BOUNDARY owner {} has no AI during {phase}", owner));
+        let ai = self.world.entities.expect_ai_controller(
+            npc_id,
+            format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
+        );
         eprintln!(
             "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
             frame,
@@ -184,12 +182,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) {
         self.bored_owner_boundary_debug(npc_id, "entry");
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "creation-ordered post-detection owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(npc_id, "creation-ordered post-detection owner");
         assert!(
             entity.ai_actor_data().is_some(),
             "post-detection owner {} has no AI actor data",
@@ -261,14 +254,10 @@ impl EngineInner {
         // Snapshot the state we need (immut borrow).  `ai_controller`
         // returns the base controller for both soldiers and civilians.
         let timer_fires = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("normal-timer NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller().unwrap_or_else(|| {
-                panic!("normal-timer NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller(npc_id, format_args!("normal-timer NPC"));
 
             ai.timer_is_running
                 && (ai.when_does_timer_ring <= current_frame
@@ -297,26 +286,13 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("normal-timer NPC {} disappeared", npc_id.index()));
         let ctx = {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "normal-timer NPC {} disappeared before Think",
-                    npc_id.index()
-                )
-            });
-            let mut ctx = build_ai_context_from_entity(
+            let entity = self.expect_entity(npc_id, "normal-timer NPC before Think");
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 current_frame,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx.enter_swordfight_pending = self
@@ -328,12 +304,13 @@ impl EngineInner {
                 );
             // Clear `timer_is_running` before dispatching
             // `Think(EVENT_TIMER)`.
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "normal-timer NPC {} lost its AI controller before Think",
                     npc_id.index()
-                )
-            });
+                ),
+            );
             ai.timer_is_running = false;
             ctx
         };
@@ -412,18 +389,10 @@ impl EngineInner {
         stimulus: crate::ai::Stimulus,
     ) {
         let mut preexisting = {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "synchronous Think lost NPC {} before detaching its stimulus FIFO",
-                    npc_id.index()
-                )
-            });
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "synchronous Think requires an AI controller for NPC {}",
-                    npc_id.index()
-                )
-            });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("synchronous Think before detaching its stimulus FIFO"),
+            );
             std::mem::take(&mut ai.outbox.detection.stimuli)
         };
 
@@ -438,18 +407,10 @@ impl EngineInner {
                 .live_target()
                 .is_none_or(|target| self.world.entities.get_legacy_slot(target.get()).is_some())
         });
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "synchronous Think lost NPC {} before restoring its stimulus FIFO",
-                npc_id.index()
-            )
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!(
-                "synchronous Think lost the AI controller for NPC {} before restoring its stimulus FIFO",
-                npc_id.index()
-            )
-        });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            npc_id,
+            format_args!("synchronous Think before restoring its stimulus FIFO"),
+        );
         preexisting.append(&mut ai.outbox.detection.stimuli);
         ai.outbox.detection.stimuli = preexisting;
     }
@@ -666,24 +627,14 @@ impl EngineInner {
                 crate::ai::StimulusType::EventSeesShadow
             );
             if trace_shadow_delivery {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} disappeared before Think",
-                        npc_id.index()
-                    )
-                });
-                let npc = entity.ai_actor_data().unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} lost its NPC state before Think",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller().unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} lost its AI controller before Think",
-                        npc_id.index()
-                    )
-                });
+                let npc = self.world.entities.expect_ai_actor_data(
+                    npc_id,
+                    format_args!("shadow-event receiver before Think"),
+                );
+                let ai = self.world.entities.expect_ai_controller(
+                    npc_id,
+                    format_args!("shadow-event receiver before Think"),
+                );
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -713,24 +664,14 @@ impl EngineInner {
                 crate::engine::ai::OwnerBoundaryPolicy::Current,
             );
             if trace_shadow_delivery {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} disappeared after Think",
-                        npc_id.index()
-                    )
-                });
-                let npc = entity.ai_actor_data().unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} lost its NPC state after Think",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller().unwrap_or_else(|| {
-                    panic!(
-                        "shadow-event receiver {} lost its AI controller after Think",
-                        npc_id.index()
-                    )
-                });
+                let npc = self.world.entities.expect_ai_actor_data(
+                    npc_id,
+                    format_args!("shadow-event receiver after Think"),
+                );
+                let ai = self.world.entities.expect_ai_controller(
+                    npc_id,
+                    format_args!("shadow-event receiver after Think"),
+                );
                 tracing::trace!(
                     target: "shadow_delivery",
                     frame = self.control.frame_counter,
@@ -807,13 +748,10 @@ impl EngineInner {
         let mut processed = 0usize;
         loop {
             let stimulus = {
-                let entity =
-                    self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                        panic!("retained-FIFO NPC {} disappeared", npc_id.index())
-                    });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!("retained-FIFO NPC {} has no AI controller", npc_id.index())
-                });
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(npc_id, format_args!("retained-FIFO NPC"));
                 // A previous queued Think may acquire a new lock. The
                 // original loop stops immediately and preserves the rest.
                 if !ai.locks_flag_field.is_empty() || ai.script_locked {
@@ -831,12 +769,7 @@ impl EngineInner {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
-                let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "retained-FIFO NPC {} disappeared before Think",
-                        npc_id.index()
-                    )
-                });
+                let entity = self.expect_entity(npc_id, "retained-FIFO NPC before Think");
                 let building_sector = self.entity_building_sector(entity.element_data().sector());
                 let mut ctx = self.ai_context_from_entity(
                     entity,
@@ -925,18 +858,11 @@ impl EngineInner {
         tick_data: &mut crate::ai::AiPerTickData,
     ) {
         let (observer_position, visible_targets, latched_targets) = {
-            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared before live Enemy-list reconstruction",
-                    npc_id.index()
-                )
-            });
-            let npc = entity.ai_actor_data().unwrap_or_else(|| {
-                panic!(
-                    "entity {} has no NPC data for live Enemy-list reconstruction",
-                    npc_id.index()
-                )
-            });
+            let entity = self.expect_entity(npc_id, "NPC before live Enemy-list reconstruction");
+            let npc = self.world.entities.expect_ai_actor_data(
+                npc_id,
+                format_args!("NPC before live Enemy-list reconstruction"),
+            );
             let enemy_idx = crate::element::DetectableType::Enemy as usize;
             let (visible_targets, latched_targets) =
                 enemy_detection_handles(&npc.detectable_lists[enemy_idx], npc_id);

@@ -486,12 +486,12 @@ impl EngineInner {
                         return OwnerActionBarrier::Reach;
                     }
                     let target_position = self
-                        .get_entity(target)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "entity-target Seek owner {owner:?} requires missing target {target:?}"
-                            )
-                        })
+                        .world
+                        .entities
+                        .expect_entity(
+                            target,
+                            format_args!("entity-target Seek owner {owner:?} target"),
+                        )
                         .element_data()
                         .position_map();
                     if let Some(actor) = self
@@ -896,14 +896,10 @@ impl EngineInner {
                 .iter()
                 .filter(|pop| pop.owner == owner)
                 .any(|pop| {
-                    let actor = self
-                        .world
-                        .entities
-                        .get(owner)
-                        .and_then(crate::element::Entity::actor_data)
-                        .unwrap_or_else(|| {
-                            panic!("same-frame terminal movement pop owner {owner:?} disappeared")
-                        });
+                    let actor = self.world.entities.expect_actor_data(
+                        owner,
+                        format_args!("same-frame terminal movement pop owner"),
+                    );
                     assert_eq!(
                         actor.last_execute_order_id,
                         Some(pop.order_id),

@@ -422,11 +422,7 @@ impl EngineInner {
             &self.orders.sequence_manager,
             target_id,
             |position_id| {
-                let position_entity = self
-                    .world
-                    .entities
-                    .get(position_id)
-                    .unwrap_or_else(|| panic!("AI position owner {position_id:?} disappeared"));
+                let position_entity = self.expect_entity(position_id, "AI position owner");
                 let boundary = owner_boundary
                     .map(|(owner, positions)| {
                         self.boundary_position(
@@ -1145,18 +1141,10 @@ impl EngineInner {
     ) {
         use crate::element::DetectableType;
 
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared before its live detection target snapshot",
-                npc_id.index()
-            )
-        });
-        let npc = entity.ai_actor_data().unwrap_or_else(|| {
-            panic!(
-                "creation-ordered NPC {} has no NPC data for detection",
-                npc_id.index()
-            )
-        });
+        let npc = self.world.entities.expect_ai_actor_data(
+            npc_id,
+            format_args!("creation-ordered NPC before its live detection target snapshot"),
+        );
         let mut human_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
         let mut object_ids: std::collections::HashSet<EntityId> = std::collections::HashSet::new();
         for kind in [

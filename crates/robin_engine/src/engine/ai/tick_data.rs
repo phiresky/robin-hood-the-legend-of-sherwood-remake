@@ -67,6 +67,176 @@ fn observe_view_build(
 }
 
 impl EngineInner {
+    #[inline(never)]
+    fn trace_seek_area_owner_position(
+        &self,
+        frame: u32,
+        npc_id: EntityId,
+        creation_order: u32,
+        me_pos: crate::coordinates::MapPoint,
+        doors: &[crate::gate::Door],
+    ) {
+        let owner_selected_door =
+            selected_pass_door_movement(&self.orders.sequence_manager, npc_id);
+        let owner_effective_position = seek_area_friend_position_map(
+            me_pos,
+            owner_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
+            doors,
+        );
+        eprintln!(
+            "SEEKAREA {{\"event\":\"owner_position\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?}}}",
+            frame,
+            npc_id,
+            creation_order,
+            me_pos.x,
+            me_pos.y,
+            owner_effective_position.x,
+            owner_effective_position.y,
+            owner_selected_door,
+        );
+    }
+
+    /// `[frame, owner creation order]`. `contribution` is `None` for a green
+    /// (non-contributing) friend, otherwise the friend's contribution verdict.
+    #[inline(never)]
+    fn trace_seek_area_friend_contribution(
+        &self,
+        [frame, creation_order]: [u32; 2],
+        other_id: crate::entity_id::SoldierId,
+        alert_status: crate::ai::AlertLevel,
+        (friend_raw_position, doors): (crate::coordinates::MapPoint, &[crate::gate::Door]),
+        contribution: Option<Option<bool>>,
+    ) {
+        let friend_selected_door =
+            selected_pass_door_movement(&self.orders.sequence_manager, EntityId::Soldier(other_id));
+        let friend_effective_position = seek_area_friend_position_map(
+            friend_raw_position,
+            friend_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
+            doors,
+        );
+        let friend_creation_order = self
+            .world
+            .original_creation_order(EntityId::Soldier(other_id));
+        match contribution {
+            None => eprintln!(
+                "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":false,\"reason\":\"green\"}}",
+                frame,
+                creation_order,
+                other_id,
+                friend_creation_order,
+                alert_status,
+                friend_raw_position.x,
+                friend_raw_position.y,
+                friend_effective_position.x,
+                friend_effective_position.y,
+                friend_selected_door,
+            ),
+            Some(contribution) => eprintln!(
+                "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":{},\"clears_help\":{}}}",
+                frame,
+                creation_order,
+                other_id,
+                friend_creation_order,
+                alert_status,
+                friend_raw_position.x,
+                friend_raw_position.y,
+                friend_effective_position.x,
+                friend_effective_position.y,
+                friend_selected_door,
+                contribution.is_some(),
+                contribution.unwrap_or(false),
+            ),
+        }
+    }
+
+    #[inline(never)]
+    fn trace_seek_area_friend_summary(
+        [frame, creation_order]: [u32; 2],
+        visible_friends: impl std::fmt::Display,
+        clears_help: bool,
+    ) {
+        eprintln!(
+            "SEEKAREA {{\"event\":\"friend_summary\",\"frame\":{},\"owner_creation_order\":{},\"visible_friends\":{},\"clears_help\":{}}}",
+            frame, creation_order, visible_friends, clears_help,
+        );
+    }
+
+    /// Checks the reconsider-observation filters (the caller has checked the
+    /// gate is enabled) and dumps the observation fighter registry.
+    #[inline(never)]
+    fn trace_reconsider_observation_snapshot(
+        &self,
+        frame: u32,
+        npc_id: EntityId,
+        me_handle: u32,
+        ai_actor: &crate::element::AiActorData,
+        fighters: &[crate::ai::ReconsiderSwordfightObservationFighter],
+    ) {
+        let creation_order = self.world.original_creation_order(npc_id);
+        if !reconsider_observation_debug_matches(frame, creation_order, me_handle) {
+            return;
+        }
+        eprintln!(
+            "RECONSIDER {{\"event\":\"snapshot_begin\",\"frame\":{},\"owner\":{},\"owner_creation_order\":{},\"owner_state\":{:?},\"owner_substate\":{:?},\"registry_len\":{}}}",
+            frame,
+            me_handle,
+            creation_order,
+            ai_actor.ai_state(),
+            ai_actor.ai_substate(),
+            fighters.len(),
+        );
+        for (ordinal, fighter) in fighters.iter().enumerate() {
+            let fighter_id = self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
+                panic!(
+                    "RECONSIDER owner {npc_id:?} cannot resolve fighter {}",
+                    fighter.handle
+                )
+            });
+            let entity = self.world.entities.expect_entity(
+                fighter_id,
+                format_args!("RECONSIDER owner {npc_id:?} fighter"),
+            );
+            let current_sequence = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(fighter_id)
+                .and_then(|(sequence_id, element_index)| {
+                    self.orders
+                        .sequence_manager
+                        .get_element(sequence_id, element_index)
+                        .map(|element| (sequence_id, element_index, element.command, element.state))
+                });
+            let eligibility = match entity {
+                Entity::Soldier(other) => Some((
+                    other.npc.life_points <= 0,
+                    other.human.unconscious,
+                    other.element.posture() == crate::element::Posture::Tied,
+                    other.human.carrier.is_some(),
+                    other.element.active,
+                    other.npc.ai_state(),
+                    other.npc.ai_substate(),
+                )),
+                _ => None,
+            };
+            eprintln!(
+                "RECONSIDER {{\"event\":\"snapshot_fighter\",\"frame\":{},\"owner_creation_order\":{},\"ordinal\":{},\"fighter\":{},\"fighter_creation_order\":{},\"friendly\":{},\"able\":{},\"raw\":[{},{},{}],\"soldier_eligibility\":{:?},\"current_sequence\":{:?}}}",
+                frame,
+                creation_order,
+                ordinal,
+                fighter.handle,
+                self.world.original_creation_order(fighter_id),
+                fighter.is_friendly,
+                fighter.is_able_to_fight,
+                fighter.raw_world_position.x,
+                fighter.raw_world_position.y,
+                fighter.raw_world_position.z,
+                eligibility,
+                current_sequence,
+            );
+        }
+    }
+
+    #[inline(never)]
     pub(in crate::engine) fn debug_building_exit_wait_event_view(
         &self,
         owner: EntityId,
@@ -94,6 +264,7 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     pub(in crate::engine) fn debug_building_exit_wait_pc_route(
         &self,
         owner: EntityId,
@@ -113,32 +284,28 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     pub(in crate::engine) fn debug_refresh_view_lifecycle(
         &self,
         stage: &str,
         npc_id: EntityId,
         derived_tail_order_type: Option<crate::order::OrderType>,
     ) {
-        let config = refresh_view_lifecycle_debug_config();
-        if !config.enabled
-            || self.control.frame_counter < config.from_frame
-            || self.control.frame_counter > config.through_frame
+        let gate = refresh_view_lifecycle_debug_gate();
+        if !gate.enabled()
+            || self.control.frame_counter < gate.filter(0).unwrap_or(0)
+            || self.control.frame_counter > gate.filter(1).unwrap_or(u32::MAX)
         {
             return;
         }
         let creation_order = self.world.original_creation_order(npc_id);
-        if config
-            .creation_order
-            .is_some_and(|expected| creation_order != expected)
-        {
+        if !gate.matches([None, None, Some(creation_order)]) {
             return;
         }
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "RVLIFE owner {} disappeared at stage {stage}",
-                npc_id.index()
-            )
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity(npc_id, format_args!("RVLIFE owner at stage {stage}"));
         let Some(npc) = entity.ai_actor_data() else {
             return;
         };
@@ -275,14 +442,10 @@ impl EngineInner {
         let current = crate::entities::BoundaryPosition::of(
             self.world
                 .entities
-                .get(target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "owner {} requires position for missing entity {}",
-                        owner.index(),
-                        target.index()
-                    )
-                })
+                .expect_entity(
+                    target,
+                    format_args!("owner {} position target", owner.index()),
+                )
                 .element_data(),
         );
         let target_has_not_moved = self.world.original_creation_order(target)
@@ -543,12 +706,10 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
     ) -> crate::ai_friendly::FriendlyPerTickData {
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "owner-local friendly tick context owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self.world.entities.expect_entity(
+            npc_id,
+            format_args!("owner-local friendly tick context owner"),
+        );
         let Entity::Civilian(civilian) = entity else {
             panic!(
                 "owner-local friendly tick context owner {} is not a Civilian",
@@ -563,19 +724,15 @@ impl EngineInner {
         });
 
         if let Some(chief_id) = ai.base.patrol_chief {
-            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
-                panic!(
-                    "owner-local friendly tick context owner {} has stale patrol chief {}",
-                    npc_id.index(),
-                    chief_id.index()
-                )
-            });
-            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
-                panic!(
-                    "owner-local friendly tick context patrol chief {} has no AI",
-                    chief_id.index()
-                )
-            });
+            let chief =
+                self.expect_entity(chief_id, "owner-local friendly tick context patrol chief");
+            let chief_ai = self.world.entities.expect_ai_controller(
+                chief_id,
+                format_args!(
+                    "owner-local friendly tick context owner {} patrol chief",
+                    npc_id.index()
+                ),
+            );
             let point = chief.element_data().position_map();
             crate::ai_friendly::FriendlyPerTickData::with_patrol_chief(
                 crate::ai::Position {
@@ -675,13 +832,10 @@ impl EngineInner {
                 let Some(target_id) = detectable.element else {
                     continue;
                 };
-                let target = self.world.entities.get(target_id).unwrap_or_else(|| {
-                    panic!(
-                        "NPC {} has Enemy detectable for missing actor {}",
-                        npc_id.index(),
-                        target_id.index()
-                    )
-                });
+                let target = self.world.entities.expect_entity(
+                    target_id,
+                    format_args!("NPC {} Enemy detectable actor", npc_id.index()),
+                );
                 let input = extract_exact_forecast_input(
                     self,
                     target,
@@ -718,24 +872,7 @@ impl EngineInner {
         let seek_area_debug = seek_area_debug_enabled
             && seek_area_owner_position_debug_matches(frame, creation_order);
         if seek_area_debug {
-            let owner_selected_door =
-                selected_pass_door_movement(&self.orders.sequence_manager, npc_id);
-            let owner_effective_position = seek_area_friend_position_map(
-                me_pos,
-                owner_selected_door.map(|(door_index, direction)| (door_index, direction != 0)),
-                doors,
-            );
-            eprintln!(
-                "SEEKAREA {{\"event\":\"owner_position\",\"frame\":{},\"owner\":{:?},\"owner_creation_order\":{},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?}}}",
-                frame,
-                npc_id,
-                creation_order,
-                me_pos.x,
-                me_pos.y,
-                owner_effective_position.x,
-                owner_effective_position.y,
-                owner_selected_door,
-            );
+            self.trace_seek_area_owner_position(frame, npc_id, creation_order, me_pos, doors);
         }
         for (other_id, other) in self.world.entities.soldiers() {
             if other_id == npc_id {
@@ -752,29 +889,12 @@ impl EngineInner {
             let friend_raw_position = other.element.position_map();
             if alert_status == crate::ai::AlertLevel::Green {
                 if seek_area_debug {
-                    let friend_selected_door = selected_pass_door_movement(
-                        &self.orders.sequence_manager,
-                        EntityId::Soldier(other_id),
-                    );
-                    let friend_effective_position = seek_area_friend_position_map(
-                        friend_raw_position,
-                        friend_selected_door
-                            .map(|(door_index, direction)| (door_index, direction != 0)),
-                        doors,
-                    );
-                    eprintln!(
-                        "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":false,\"reason\":\"green\"}}",
-                        frame,
-                        creation_order,
+                    self.trace_seek_area_friend_contribution(
+                        [frame, creation_order],
                         other_id,
-                        self.world
-                            .original_creation_order(EntityId::Soldier(other_id)),
                         alert_status,
-                        friend_raw_position.x,
-                        friend_raw_position.y,
-                        friend_effective_position.x,
-                        friend_effective_position.y,
-                        friend_selected_door,
+                        (friend_raw_position, doors),
+                        None,
                     );
                 }
                 continue;
@@ -793,31 +913,12 @@ impl EngineInner {
                 friend_seeks_with_help,
             );
             if seek_area_debug {
-                let friend_selected_door = selected_pass_door_movement(
-                    &self.orders.sequence_manager,
-                    EntityId::Soldier(other_id),
-                );
-                let friend_effective_position = seek_area_friend_position_map(
-                    friend_raw_position,
-                    friend_selected_door
-                        .map(|(door_index, direction)| (door_index, direction != 0)),
-                    doors,
-                );
-                eprintln!(
-                    "SEEKAREA {{\"event\":\"friend_contribution\",\"frame\":{},\"owner_creation_order\":{},\"friend\":{:?},\"friend_creation_order\":{},\"alert\":{:?},\"raw\":[{},{}],\"effective\":[{},{}],\"selected_door\":{:?},\"contributes\":{},\"clears_help\":{}}}",
-                    frame,
-                    creation_order,
+                self.trace_seek_area_friend_contribution(
+                    [frame, creation_order],
                     other_id,
-                    self.world
-                        .original_creation_order(EntityId::Soldier(other_id)),
                     alert_status,
-                    friend_raw_position.x,
-                    friend_raw_position.y,
-                    friend_effective_position.x,
-                    friend_effective_position.y,
-                    friend_selected_door,
-                    contribution.is_some(),
-                    contribution.unwrap_or(false),
+                    (friend_raw_position, doors),
+                    Some(contribution),
                 );
             }
             let Some(clears_help) = contribution else {
@@ -829,10 +930,8 @@ impl EngineInner {
             }
         }
         if seek_area_debug {
-            eprintln!(
-                "SEEKAREA {{\"event\":\"friend_summary\",\"frame\":{},\"owner_creation_order\":{},\"visible_friends\":{},\"clears_help\":{}}}",
-                frame,
-                creation_order,
+            Self::trace_seek_area_friend_summary(
+                [frame, creation_order],
                 tick.visible_seeking_friends,
                 tick.friend_seek_clears_help_flag,
             );
@@ -928,14 +1027,14 @@ impl EngineInner {
                 let raw_world_position = self
                     .world
                     .entities
-                    .get(id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "NPC {} observation fighter {} has no live entity",
+                    .expect_entity(
+                        id,
+                        format_args!(
+                            "NPC {} observation fighter {}",
                             npc_id.index(),
                             fighter.handle
-                        )
-                    })
+                        ),
+                    )
                     .element_data()
                     .position();
                 crate::ai::ReconsiderSwordfightObservationFighter {
@@ -950,73 +1049,13 @@ impl EngineInner {
             })
             .collect();
         if reconsider_observation_debug_enabled() {
-            let creation_order = self.world.original_creation_order(npc_id);
-            if reconsider_observation_debug_matches(frame, creation_order, me_handle) {
-                eprintln!(
-                    "RECONSIDER {{\"event\":\"snapshot_begin\",\"frame\":{},\"owner\":{},\"owner_creation_order\":{},\"owner_state\":{:?},\"owner_substate\":{:?},\"registry_len\":{}}}",
-                    frame,
-                    me_handle,
-                    creation_order,
-                    ai_actor.ai_state(),
-                    ai_actor.ai_substate(),
-                    tick.reconsider_swordfight_observation_fighters.len(),
-                );
-                for (ordinal, fighter) in tick
-                    .reconsider_swordfight_observation_fighters
-                    .iter()
-                    .enumerate()
-                {
-                    let fighter_id =
-                        self.entity_id_for_index(fighter.handle).unwrap_or_else(|| {
-                            panic!(
-                                "RECONSIDER owner {npc_id:?} cannot resolve fighter {}",
-                                fighter.handle
-                            )
-                        });
-                    let entity = self.world.entities.get(fighter_id).unwrap_or_else(|| {
-                        panic!("RECONSIDER owner {npc_id:?} cannot read fighter {fighter_id:?}")
-                    });
-                    let current_sequence = self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(fighter_id)
-                        .and_then(|(sequence_id, element_index)| {
-                            self.orders
-                                .sequence_manager
-                                .get_element(sequence_id, element_index)
-                                .map(|element| {
-                                    (sequence_id, element_index, element.command, element.state)
-                                })
-                        });
-                    let eligibility = match entity {
-                        Entity::Soldier(other) => Some((
-                            other.npc.life_points <= 0,
-                            other.human.unconscious,
-                            other.element.posture() == crate::element::Posture::Tied,
-                            other.human.carrier.is_some(),
-                            other.element.active,
-                            other.npc.ai_state(),
-                            other.npc.ai_substate(),
-                        )),
-                        _ => None,
-                    };
-                    eprintln!(
-                        "RECONSIDER {{\"event\":\"snapshot_fighter\",\"frame\":{},\"owner_creation_order\":{},\"ordinal\":{},\"fighter\":{},\"fighter_creation_order\":{},\"friendly\":{},\"able\":{},\"raw\":[{},{},{}],\"soldier_eligibility\":{:?},\"current_sequence\":{:?}}}",
-                        frame,
-                        creation_order,
-                        ordinal,
-                        fighter.handle,
-                        self.world.original_creation_order(fighter_id),
-                        fighter.is_friendly,
-                        fighter.is_able_to_fight,
-                        fighter.raw_world_position.x,
-                        fighter.raw_world_position.y,
-                        fighter.raw_world_position.z,
-                        eligibility,
-                        current_sequence,
-                    );
-                }
-            }
+            self.trace_reconsider_observation_snapshot(
+                frame,
+                npc_id,
+                me_handle,
+                ai_actor,
+                &tick.reconsider_swordfight_observation_fighters,
+            );
         }
         // The sleeping-enemy scan walks the live opposing-camp fighter
         // registry synchronously at the battle-planning boundary. Populate
@@ -1047,19 +1086,10 @@ impl EngineInner {
         // general builder's stub origin here made every such member face
         // sector 15 even though the preceding approach used the real chief.
         if let Some(chief_id) = ai.patrol_chief {
-            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
-                panic!(
-                    "enemy tick context owner {} has stale patrol chief {}",
-                    npc_id.index(),
-                    chief_id.index()
-                )
-            });
-            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
-                panic!(
-                    "enemy tick context patrol chief {} has no AI",
-                    chief_id.index()
-                )
-            });
+            let chief_ai = self.world.entities.expect_ai_controller(
+                chief_id,
+                format_args!("enemy tick context owner {} patrol chief", npc_id.index()),
+            );
             // Patrol coordination subtracts the patrol chief's AI position, not the
             // chief's literal sprite position
             // in the original game.
@@ -1073,12 +1103,7 @@ impl EngineInner {
                 chief_id,
                 |position_id| {
                     let element = self
-                        .world
-                        .entities
-                        .get(position_id)
-                        .unwrap_or_else(|| {
-                            panic!("patrol-chief position owner {position_id:?} disappeared")
-                        })
+                        .expect_entity(position_id, "patrol-chief position owner")
                         .element_data();
                     crate::ai::Position {
                         x: element.position_map().x,
@@ -1160,11 +1185,7 @@ impl EngineInner {
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);
-            let target = self
-                .world
-                .entities
-                .get(target_id)
-                .unwrap_or_else(|| panic!("resolved primary target {target_id:?} disappeared"));
+            let target = self.expect_entity(target_id, "resolved primary target");
             let element = target.element_data();
             tick.primary_target_live_position = Some(crate::ai::Position {
                 x: element.position_map().x,
@@ -1488,11 +1509,7 @@ impl EngineInner {
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
 
-        let owner = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("fighter snapshot owner {npc_id:?} disappeared"));
+        let owner = self.expect_entity(npc_id, "fighter snapshot owner");
         let Some(enemy_ai) = owner.enemy_ai() else {
             // This registry is an enemy-brain capability. The public nearby
             // query also accepts civilians and PCs, for whom it is inapplicable.
@@ -1507,12 +1524,7 @@ impl EngineInner {
                 id,
                 |position_id| {
                     let element = self
-                        .world
-                        .entities
-                        .get(position_id)
-                        .unwrap_or_else(|| {
-                            panic!("fighter snapshot owner {position_id:?} disappeared")
-                        })
+                        .expect_entity(position_id, "fighter snapshot position owner")
                         .element_data();
                     Position {
                         x: element.position_map().x,
@@ -1885,10 +1897,9 @@ impl EngineInner {
     ) -> Vec<crate::ai::ReconsiderSwordfightFriend> {
         use crate::ai::ReconsiderSwordfightFriend;
 
-        let Some(me) = self.world.entities.get(npc_id) else {
-            return Vec::new();
-        };
+        let me = self.expect_entity(npc_id, "reconsider-swordfight friends owner");
         let Some(me_ai) = me.enemy_ai() else {
+            // Enemy-brain capability; inapplicable to civilians and PCs.
             return Vec::new();
         };
         let me_world = me.element_data().position();
@@ -1943,10 +1954,9 @@ impl EngineInner {
     ) -> Vec<crate::ai::PhalanxMemberThemList> {
         use crate::ai::{PhalanxEnemySnapshot, PhalanxMemberThemList, Position};
         use crate::element::Human;
-        let Some(owner) = self.world.entities.get(npc_id) else {
-            return Vec::new();
-        };
+        let owner = self.expect_entity(npc_id, "phalanx them-list owner");
         let Some(enemy_ai) = owner.enemy_ai() else {
+            // Enemy-brain capability; inapplicable to civilians and PCs.
             return Vec::new();
         };
 
@@ -1954,9 +1964,7 @@ impl EngineInner {
             let entity_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
                 panic!("phalanx member references missing enemy handle {handle}")
             });
-            let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
-                panic!("phalanx enemy handle {handle} resolved to a vacant entity slot")
-            });
+            let entity = self.expect_entity(entity_id, "phalanx enemy handle");
             let human = entity
                 .human_data()
                 .unwrap_or_else(|| panic!("phalanx enemy handle {handle} is not a human entity"));

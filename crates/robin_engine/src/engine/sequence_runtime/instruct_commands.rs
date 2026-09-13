@@ -736,18 +736,16 @@ impl EngineInner {
                 // of its re-entrant effects finish in this stack frame,
                 // before Perform's initialization acquires AILOCK_FREEZE.
                 let moving = self
-                .get_entity(target)
-                .unwrap_or_else(|| {
-                    panic!("Hit/Strangle victim {target:?} vanished after translation for {seq_id:?}/{elem_idx}")
-                })
-                .actor_data()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Hit/Strangle victim {target:?} lost actor state after translation"
+                    .world
+                    .entities
+                    .expect_actor_data(
+                        target,
+                        format_args!(
+                            "Hit/Strangle victim after translation for {seq_id:?}/{elem_idx}"
+                        ),
                     )
-                })
-                .action_state
-                .is_moving();
+                    .action_state
+                    .is_moving();
                 if moving {
                     self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                         sim,
@@ -790,7 +788,7 @@ impl EngineInner {
         let barrier = DirectAbilityCommandContext {
             entities: &mut self.world.entities,
             sequence_manager: &mut self.orders.sequence_manager,
-            next_order_id: &mut self.orders.next_order_id,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, cmd, ammo_available, seq_id, elem_idx);
@@ -1254,6 +1252,442 @@ impl EngineInner {
         self.orders
             .sequence_manager
             .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
+    pub(super) fn instruct_enter_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        satisfied_enter_swordfight_order: Option<crate::element::InstalledActorOrder>,
+    ) -> OwnerActionBarrier {
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("instructed sequence element disappeared");
+        let opponent = match elem.get_property(crate::sequence::Field::Opponent) {
+            Some(crate::sequence::FieldValue::Element(id)) => Some(*id),
+            _ => None,
+        };
+        let barrier =
+            self.dispatch_enter_swordfight(sim, assets, owner, opponent, seq_id, elem_idx);
+        if barrier == OwnerActionBarrier::Skip {
+            self.dispatch_condolations(sim, assets);
+            if let Some(retained_order) = satisfied_enter_swordfight_order {
+                let entity = self
+                    .get_entity_mut(owner)
+                    .expect("satisfied EnterSwordfight owner disappeared");
+                let actor = entity.actor_data_mut().unwrap();
+                actor.installed_order = Some(retained_order);
+                actor.retained_waiting_sword_order_id = Some(retained_order.order_id);
+            }
+            return OwnerActionBarrier::Skip;
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    pub(super) fn instruct_attentive_mode(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        cmd: Command,
+    ) -> OwnerActionBarrier {
+        self.trace_attentive_owner_handoff(
+            "translate_before",
+            owner,
+            Some((seq_id, elem_idx)),
+            format_args!("before attentive translator"),
+        );
+        let barrier = NpcAttentionCommandContext {
+            entities: &mut self.world.entities,
+            sequence_manager: &mut self.orders.sequence_manager,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
+        }
+        .dispatch(owner, cmd, seq_id, elem_idx);
+        self.trace_attentive_owner_handoff(
+            "translate_after",
+            owner,
+            Some((seq_id, elem_idx)),
+            format_args!(
+                "{}",
+                match barrier {
+                    OwnerActionBarrier::Reach => {
+                        "attentive translator queued transition"
+                    }
+                    OwnerActionBarrier::Skip => {
+                        "attentive translator terminalized inline"
+                    }
+                }
+            ),
+        );
+        if barrier == OwnerActionBarrier::Skip {
+            return OwnerActionBarrier::Skip;
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    pub(super) fn instruct_stealth_posture(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        cmd: Command,
+    ) -> OwnerActionBarrier {
+        if cmd == Command::EnterBeggar {
+            // "To avoid beggar & run bug": the beggar
+            // entry stops the actor from inside its own
+            // translation, so the stop runs after this
+            // element has already taken over and pushed
+            // whatever it replaced into its postponed
+            // slot. Walking that slot is the point — a
+            // move the beggar entry displaced is
+            // interrupted here and never resumes. The
+            // element is not the actor's selection yet on
+            // this side, so root the stop at it directly.
+            let resolver = Self::priority_resolver(&self.world.entities);
+            self.orders.sequence_manager.stop_owner_from_root(
+                owner,
+                Some((seq_id, elem_idx)),
+                crate::sequence::SequencePriority::Normal,
+                &resolver,
+            );
+        }
+        let barrier = StealthCommandContext {
+            entities: &mut self.world.entities,
+            sequence_manager: &mut self.orders.sequence_manager,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
+            titbit_manager: &mut self.feedback.titbit_manager,
+            profiles: &assets.profile_manager,
+        }
+        .dispatch(owner, cmd, seq_id, elem_idx);
+        debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
+        OwnerActionBarrier::Reach
+    }
+
+    /// SwordstrikeTired pushes a `BeingWeakSword`
+    /// animation order; the order is consumed by
+    /// `do_next_order` and (on a soldier)
+    /// `apply_combat_injury_side_effect`
+    /// dispatches `EventAfterCombatInjury` so the
+    /// AI can resume the fight.
+    pub(super) fn instruct_swordstrike_tired(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        if self.get_entity(owner).is_some() {
+            self.push_new_order(
+                seq_id,
+                elem_idx,
+                crate::order::OrderType::BeingWeakSword,
+                0.0,
+                0.0,
+            );
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+        } else {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    pub(super) fn instruct_climb_down_from_shoulders(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        // Owner is the climber; the carrier
+        // (helper) is read from the climber's
+        // `human.carrier` back-reference latched
+        // at climb-up time.
+        let carrier_id = self
+            .get_entity(owner)
+            .and_then(|e| e.human_data())
+            .and_then(|h| h.carrier);
+        match abilities::begin_climb_down_from_shoulders(
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+            owner,
+            seq_id,
+            elem_idx,
+            &mut self.orders.next_order_id,
+        ) {
+            AbilityBeginResult::Started => {
+                self.orders
+                    .sequence_manager
+                    .element_in_progress(seq_id, elem_idx);
+                // Helper is frozen for the
+                // duration of the climb-down so
+                // it can't acquire a fresh
+                // sequence element while playing
+                // the sync'd
+                // TRANSITION_HELPING_CLIMBING_DOWN.
+                if let Some(helper_id) = carrier_id {
+                    self.actor_freeze_execution(helper_id);
+                }
+            }
+            AbilityBeginResult::Impossible => {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+            }
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    /// Drop ale bottle.
+    pub(super) fn instruct_drop_ale(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let order_type = match self.get_entity(owner) {
+            Some(entity)
+                if entity.element_data().posture() == crate::element::Posture::Crouched =>
+            {
+                crate::order::OrderType::DroppingAleCrouched
+            }
+            Some(_) => crate::order::OrderType::DroppingAle,
+            None => {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                return OwnerActionBarrier::Skip;
+            }
+        };
+        self.push_new_order(seq_id, elem_idx, order_type, 0.0, 0.0);
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
+    /// Jump: build a step list covering the run-up,
+    /// airborne trajectory, and landing
+    /// transitions, then drive the actor through
+    /// them via `tick_active_jump_for`.  If the jump
+    /// can't be installed (missing data) the
+    /// element is terminated so the sequence
+    /// doesn't stall.
+    pub(super) fn instruct_jump(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        if self.start_jump(sim, assets, owner, seq_id, elem_idx) {
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+        } else {
+            tracing::warn!(
+                entity = ?owner,
+                seq = ?seq_id,
+                elem = elem_idx,
+                "Jump: failed to install ActiveJump — terminating element"
+            );
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    pub(super) fn instruct_activate_target(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        cmd: Command,
+    ) -> OwnerActionBarrier {
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("instructed sequence element disappeared");
+        let antagonist = match &elem.data {
+            crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+            _ => None,
+        };
+        let (target_handle, pc_handle, method) = TargetActivationContext {
+            entities: &self.world.entities,
+        }
+        .dispatch(owner, cmd, antagonist);
+        let key = crate::engine::ScriptVmKey::Target(target_handle);
+        let is_instantiated = self
+            .scripts
+            .mission
+            .as_ref()
+            .is_some_and(|script| script.has_script_vm(key));
+        if is_instantiated
+            && let Err(error) = self.call_script_vm(
+                sim,
+                assets,
+                key,
+                method,
+                &[pc_handle],
+                crate::natives::ScriptCallFrame::actor(target_handle),
+            )
+        {
+            tracing::warn!("{method} (target {target_handle}): {error}");
+        }
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
+    /// Script-recorded PlayAnim / PlayAnimLoop /
+    /// PlayAnimFreeze / PlayAnimFrozen. The original game translates these to
+    /// PLAY_CUSTOM non-animations for actors, which
+    /// then drive the stored animation identifier.
+    /// FX targets instead force the target sprite
+    /// animation/progression immediately.
+    pub(super) fn instruct_play_anim(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        cmd: Command,
+    ) -> OwnerActionBarrier {
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("instructed sequence element disappeared");
+        let animation = match elem.get_property(crate::sequence::Field::AnimationId) {
+            Some(crate::sequence::FieldValue::Animation(anim)) => Some(*anim),
+            Some(crate::sequence::FieldValue::Integer(v)) => {
+                crate::order::OrderType::try_from(*v).ok()
+            }
+            _ => None,
+        };
+        let preserve_trigger_visual = self.control.sim_config.reversible_background_patches
+            && self
+                .script_domains
+                .interactables
+                .patches
+                .iter()
+                .any(|patch| {
+                    patch.repeat_activation.as_ref().is_some_and(|(handle, _)| {
+                        *handle == crate::natives::ScriptHandleCodec::actor_handle(owner)
+                    })
+                });
+        let barrier = TargetAnimationContext {
+            entities: &mut self.world.entities,
+            sequence_manager: &mut self.orders.sequence_manager,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
+            preserve_trigger_visual,
+        }
+        .dispatch_play_animation(owner, cmd, animation, seq_id, elem_idx);
+        if barrier == OwnerActionBarrier::Skip {
+            return OwnerActionBarrier::Skip;
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    /// PC-side target interaction commands.  Each
+    /// enqueues a per-command animation order on
+    /// the PC (USING_LEVER / HITTING_TARGET /
+    /// HANDLING_TARGET / TAKING_TARGET /
+    /// SEARCHING), and on DONE the engine launches
+    /// the corresponding `Activate*` interaction
+    /// element on the target antagonist.
+    ///
+    /// The order driver plays the PC order first;
+    /// `apply_pc_target_interaction_side_effect`
+    /// launches the target activation when that
+    /// order reports `MotionState::Done`.
+    pub(super) fn instruct_target_interaction(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        cmd: Command,
+    ) -> OwnerActionBarrier {
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("instructed sequence element disappeared");
+        let target = match &elem.data {
+            crate::sequence::SequenceElementData::Interaction { antagonist } => *antagonist,
+            _ => None,
+        };
+        let barrier = TargetInteractionContext {
+            entities: &self.world.entities,
+            sequence_manager: &mut self.orders.sequence_manager,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
+        }
+        .dispatch(owner, cmd, target, seq_id, elem_idx);
+        if barrier == OwnerActionBarrier::Skip {
+            return OwnerActionBarrier::Skip;
+        }
+        OwnerActionBarrier::Reach
+    }
+
+    /// Internal carrier for a pre-built animation order.
+    /// `launch_single_order_sequence_stamped` normally
+    /// promotes these synchronously, but a postponed
+    /// carrier returns here as Todo when its blocker
+    /// completes.  The order is already attached; keep the
+    /// element alive so the actor animation driver can
+    /// consume it instead of dropping the visible action.
+    pub(super) fn instruct_generic(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let elem = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .expect("instructed sequence element disappeared");
+        if elem.orders.is_empty() {
+            // The carrier's animation may have completed
+            // while this element was postponed behind a
+            // higher-priority command.  There is no
+            // command-specific Translate body left to
+            // run. Original-game actor instruction handling nevertheless
+            // writes mmotionState=IN_PROGRESS immediately
+            // after Translate returns, before discovering
+            // that the current order is null and
+            // terminating the accepted element. Preserve
+            // that otherwise-invisible acceptance edge
+            // before the state change clears the selected element.
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .expect("accepted empty Generic lost its actor")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
+            self.orders.sequence_manager.set_translating_element(None);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+        } else {
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+        }
         OwnerActionBarrier::Reach
     }
 }

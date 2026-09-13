@@ -10,11 +10,7 @@ use crate::engine::sequence_runtime::required_canonical_door_mut;
 impl EngineInner {
     pub(in crate::engine) fn drain_waiting_upright(&mut self, owners: Vec<EntityId>) {
         for owner in owners {
-            let soldier = self
-                .world
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("WaitingUpright owner {owner:?} disappeared"));
+            let soldier = self.expect_entity(owner, "WaitingUpright owner");
             let enemy = match soldier {
                 Entity::Soldier(soldier) => soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
                     panic!("WaitingUpright soldier {owner:?} has no enemy AI state")
@@ -48,11 +44,7 @@ impl EngineInner {
         owners: Vec<EntityId>,
     ) {
         for owner in owners {
-            let soldier = self
-                .world
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("WaitingAlerted owner {owner:?} disappeared"));
+            let soldier = self.expect_entity(owner, "WaitingAlerted owner");
             let enemy = match soldier {
                 Entity::Soldier(soldier) => soldier.npc.ai_brain.enemy().unwrap_or_else(|| {
                     panic!("WaitingAlerted soldier {owner:?} has no enemy AI state")
@@ -82,10 +74,7 @@ impl EngineInner {
             // into a swordfight. The shipped game unconditionally tears
             // the relationship down.
             let still_swordfighting = !self
-                .world
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("WaitingAlerted owner {owner:?} disappeared"))
+                .expect_entity(owner, "WaitingAlerted owner")
                 .human_data()
                 .unwrap_or_else(|| panic!("WaitingAlerted soldier {owner:?} is not human"))
                 .opponents
@@ -139,9 +128,7 @@ impl EngineInner {
                 carrier_id,
             );
             let (target_id, drop_posture, carrier_pos, carrier_direction) = {
-                let carrier = self.get_entity(carrier_id).unwrap_or_else(|| {
-                    panic!("corpse-drop transition owner {carrier_id:?} disappeared")
-                });
+                let carrier = self.expect_entity(carrier_id, "corpse-drop transition owner");
                 let pc = carrier.pc_data().unwrap_or_else(|| {
                     panic!("corpse-drop transition owner {carrier_id:?} is not a PC")
                 });
@@ -472,9 +459,7 @@ impl EngineInner {
         for pc_id in drop_ale_done {
             let action = crate::profiles::Action::Ale;
             let (position, layer, sector, obstacle, direction, material, status_idx) = {
-                let pc = self
-                    .get_entity(pc_id)
-                    .unwrap_or_else(|| panic!("DropAle DONE references missing PC {pc_id:?}"));
+                let pc = self.expect_entity(pc_id, "DropAle DONE PC");
                 let position = pc.current_gameplay_point_map().unwrap_or_else(|| {
                     panic!("DropAle DONE PC {pc_id:?} has no current sprite action point")
                 });
@@ -666,23 +651,10 @@ impl EngineInner {
             // expose the captured pre-processing action state so nested
             // Swordfight reconsideration applies the original game's honour/action check.
             let action_state_after_perform = {
-                let actor = self
-                    .world
-                    .entities
-                    .get_mut(entity_id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "weak/stunned callback owner {} disappeared before drain",
-                            entity_id.index()
-                        )
-                    })
-                    .actor_data_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "weak/stunned callback owner {} is not an actor",
-                            entity_id.index()
-                        )
-                    });
+                let actor = self.world.entities.expect_actor_data_mut(
+                    entity_id,
+                    format_args!("weak/stunned callback owner before drain"),
+                );
                 std::mem::replace(&mut actor.action_state, action_state_before_perform)
             };
             self.add_weak_stunned_combat(
@@ -693,20 +665,10 @@ impl EngineInner {
             );
             self.world
                 .entities
-                .get_mut(entity_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "weak/stunned callback owner {} disappeared during drain",
-                        entity_id.index()
-                    )
-                })
-                .actor_data_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "weak/stunned callback owner {} lost actor data during drain",
-                        entity_id.index()
-                    )
-                })
+                .expect_actor_data_mut(
+                    entity_id,
+                    format_args!("weak/stunned callback owner during drain"),
+                )
                 .action_state = action_state_after_perform;
         }
     }
@@ -813,12 +775,8 @@ impl EngineInner {
     ) {
         for (actor_id, target_id, strike) in smalltalk_strikes {
             let wound_target = {
-                let attacker = self
-                    .get_entity(actor_id)
-                    .unwrap_or_else(|| panic!("smalltalk attacker {actor_id:?} disappeared"));
-                let target = self
-                    .get_entity(target_id)
-                    .unwrap_or_else(|| panic!("smalltalk antagonist {target_id:?} disappeared"));
+                let attacker = self.expect_entity(actor_id, "smalltalk attacker");
+                let target = self.expect_entity(target_id, "smalltalk antagonist");
                 // Original builds this relative vector from
                 // ground position, i.e. the stored world X/Y pair.
                 // Projected map Y differs by elevation, and using it here can
@@ -855,9 +813,7 @@ impl EngineInner {
             }
 
             let (position, weapon1) = {
-                let entity = self
-                    .get_entity(actor_id)
-                    .unwrap_or_else(|| panic!("smalltalk attacker {actor_id:?} disappeared"));
+                let entity = self.expect_entity(actor_id, "smalltalk attacker");
                 let target_mutual = self
                     .get_entity(target_id)
                     .and_then(|e| e.human_data())
@@ -944,11 +900,10 @@ impl EngineInner {
         waking_up_done: Vec<(EntityId, EntityId)>,
     ) {
         for (rescuer, target) in waking_up_done {
-            let target_entity = self.get_entity(target).unwrap_or_else(|| {
-                panic!(
-                    "WakingUp DONE from rescuer {rescuer:?} references missing required target {target:?}"
-                )
-            });
+            let target_entity = self.world.entities.expect_entity(
+                target,
+                format_args!("WakingUp DONE from rescuer {rescuer:?} required target"),
+            );
             if !target_entity.is_human() {
                 panic!(
                     "WakingUp DONE from rescuer {rescuer:?} requires human target {target:?}, found {:?}",
@@ -1040,8 +995,7 @@ impl EngineInner {
                     continue;
                 }
                 let taker_point = self
-                    .get_entity(tick.taker)
-                    .unwrap_or_else(|| panic!("TakingNet taker {:?} disappeared", tick.taker))
+                    .expect_entity(tick.taker, "TakingNet taker")
                     .current_gameplay_point_map()
                     .unwrap_or_else(|| {
                         panic!(
@@ -1050,9 +1004,7 @@ impl EngineInner {
                         )
                     });
                 let (net_position, crumpled, duration) = {
-                    let net = self.get_entity(tick.net).unwrap_or_else(|| {
-                        panic!("TakingNet antagonist {:?} disappeared", tick.net)
-                    });
+                    let net = self.expect_entity(tick.net, "TakingNet antagonist");
                     let Entity::Net(net) = net else {
                         panic!("TakingNet antagonist {:?} is not a net", tick.net);
                     };
@@ -1157,9 +1109,7 @@ impl EngineInner {
                         .expect("TakingNet taker disappeared during pull");
                     actor.wait_time = remaining;
                     actor.seek_refresh_wait = remaining;
-                    let net = self.get_entity_mut(tick.net).unwrap_or_else(|| {
-                        panic!("TakingNet net {:?} disappeared during pull", tick.net)
-                    });
+                    let net = self.expect_entity_mut(tick.net, "TakingNet net during pull");
                     net.position_iface_mut().update_position_map_scaled(1.0);
                 }
             }

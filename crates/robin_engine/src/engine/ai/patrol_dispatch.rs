@@ -17,15 +17,8 @@ impl EngineInner {
         let relays = self
             .world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_patrol_member_relays)
-            .unwrap_or_else(|| {
-                panic!(
-                    "patrol broadcast source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            .expect_ai_controller_mut(source_id, format_args!("patrol broadcast source"))
+            .take_pending_patrol_member_relays();
 
         for relay in relays {
             let crate::ai::CrossNpcAction::RelayStimulusToPatrolMembers {
@@ -58,9 +51,7 @@ impl EngineInner {
                         .unwrap_or_else(|| {
                             panic!("patrol broadcast chief {} disappeared", source_id.index())
                         });
-                    let entity = self.world.entities.get(source_id).unwrap_or_else(|| {
-                        panic!("patrol broadcast chief {} disappeared", source_id.index())
-                    });
+                    let entity = self.expect_entity(source_id, "patrol broadcast chief");
                     let chief_ctx = self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,
@@ -68,12 +59,10 @@ impl EngineInner {
                         &scratch,
                         assets,
                     );
-                    let chief_ai = entity.enemy_ai().unwrap_or_else(|| {
-                        panic!(
-                            "patrol broadcast chief {} is not an enemy soldier",
-                            source_id.index()
-                        )
-                    });
+                    let chief_ai = self
+                        .world
+                        .entities
+                        .expect_enemy_ai(source_id, format_args!("patrol broadcast chief"));
                     chief_ai.detects_patrol_member_360(member, &chief_ctx)
                 };
                 tracing::trace!(
@@ -95,10 +84,7 @@ impl EngineInner {
                     .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                     .unwrap_or_else(|| panic!("patrol broadcast member {member} disappeared"));
                 let ctx = {
-                    let entity =
-                        self.world.entities.get(member_id).unwrap_or_else(|| {
-                            panic!("patrol broadcast member {member} disappeared")
-                        });
+                    let entity = self.expect_entity(member_id, "patrol broadcast member");
                     self.ai_context_from_entity(
                         entity,
                         self.control.frame_counter,
@@ -134,15 +120,8 @@ impl EngineInner {
         let requests = self
             .world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_patrol_dispatch_requests)
-            .unwrap_or_else(|| {
-                panic!(
-                    "patrol-dispatch source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            .expect_ai_controller_mut(source_id, format_args!("patrol-dispatch source"))
+            .take_pending_patrol_dispatch_requests();
 
         for request in requests {
             let crate::ai::CrossNpcAction::RequestPatrolDispatch {
@@ -177,25 +156,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
             let mut chief_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(chief_id)
-                    .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(chief_id, "patrol chief");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     chief_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(chief_id, &mut chief_ctx);
@@ -246,25 +213,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
             let caller_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(source_id)
-                    .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(source_id, "patrol-dispatch caller");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     caller_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &caller_scratch.ai_entity_views,
-                    &caller_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &caller_scratch,
+                    assets,
                 )
             };
             let caller_tick = self.build_npc_tick_data(sim, source_id, assets);
@@ -287,30 +242,23 @@ impl EngineInner {
         source_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        let requests = self
-            .world
-            .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(|ai| {
-                let mut requests = Vec::new();
-                let mut deferred = Vec::new();
-                for action in ai.outbox.reentrant.cross_npc_actions.drain(..) {
-                    if matches!(action, crate::ai::CrossNpcAction::RequestThinkResult { .. }) {
-                        requests.push(action);
-                    } else {
-                        deferred.push(action);
-                    }
+        let requests = {
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller_mut(source_id, format_args!("Think-result source"));
+            let mut requests = Vec::new();
+            let mut deferred = Vec::new();
+            for action in ai.outbox.reentrant.cross_npc_actions.drain(..) {
+                if matches!(action, crate::ai::CrossNpcAction::RequestThinkResult { .. }) {
+                    requests.push(action);
+                } else {
+                    deferred.push(action);
                 }
-                ai.outbox.reentrant.cross_npc_actions = deferred;
-                requests
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "Think-result source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            }
+            ai.outbox.reentrant.cross_npc_actions = deferred;
+            requests
+        };
 
         for request in requests {
             let crate::ai::CrossNpcAction::RequestThinkResult {
@@ -352,20 +300,12 @@ impl EngineInner {
                     .entities
                     .get(target_id)
                     .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     target_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
@@ -388,25 +328,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
             let mut source_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(source_id)
-                    .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(source_id, "Think-result caller");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     source_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &source_scratch.ai_entity_views,
-                    &source_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &source_scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
@@ -468,15 +396,8 @@ impl EngineInner {
         let requests = self
             .world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_alert_requests)
-            .unwrap_or_else(|| {
-                panic!(
-                    "CALL_ALERT source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            .expect_ai_controller_mut(source_id, format_args!("CALL_ALERT source"))
+            .take_pending_alert_requests();
 
         for request in requests {
             let crate::ai::CrossNpcAction::RequestAlert {
@@ -510,25 +431,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
             let target_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(target_id)
-                    .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(target_id, "CALL_ALERT target");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     target_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
@@ -549,25 +458,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
             let mut source_ctx = {
-                let entity = self
-                    .world
-                    .entities
-                    .get(source_id)
-                    .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(source_id, "CALL_ALERT caller");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     source_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &source_scratch.ai_entity_views,
-                    &source_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &source_scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
@@ -604,15 +501,8 @@ impl EngineInner {
         let reports = self
             .world
             .entities
-            .get_mut(source_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(crate::ai::AiController::take_pending_officer_reports)
-            .unwrap_or_else(|| {
-                panic!(
-                    "officer-report source {} has no AI controller",
-                    source_id.index()
-                )
-            });
+            .expect_ai_controller_mut(source_id, format_args!("officer-report source"))
+            .take_pending_officer_reports();
 
         for report in reports {
             let crate::ai::CrossNpcAction::ReportBackToOfficer { officer, charly } = report else {
@@ -634,23 +524,13 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("reporting Charly requires missing officer {officer}"));
             let officer_ctx = {
-                let entity = self.world.entities.get(officer_id).unwrap_or_else(|| {
-                    panic!("reporting Charly requires missing officer {officer}")
-                });
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(officer_id, "reporting Charly's officer");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     officer_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let officer_tick = self.build_npc_tick_data(sim, officer_id, assets);
@@ -675,36 +555,21 @@ impl EngineInner {
                 .map(|entity| self.entity_building_sector(entity.element_data().sector()))
                 .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
             let mut charly_ctx = {
-                let entity =
-                    self.world.entities.get(charly_id).unwrap_or_else(|| {
-                        panic!("officer response requires missing Charly {charly}")
-                    });
-                build_ai_context_from_entity(
+                let entity = self.expect_entity(charly_id, "officer response Charly");
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     charly_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(charly_id, &mut charly_ctx);
             let charly_tick = self.build_npc_tick_data(sim, charly_id, assets);
-            let entity = self
+            let enemy = self
                 .world
                 .entities
-                .get_mut(charly_id)
-                .unwrap_or_else(|| panic!("officer response requires missing Charly {charly}"));
-            let enemy = entity
-                .enemy_ai_mut()
-                .unwrap_or_else(|| panic!("reporting Charly {charly} requires enemy AI"));
+                .expect_enemy_ai_mut(charly_id, format_args!("reporting Charly {charly}"));
             enemy.resolve_charly_officer_report(sim, accepted, &charly_ctx, &charly_tick);
         }
     }

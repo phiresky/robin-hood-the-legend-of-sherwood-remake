@@ -9,8 +9,271 @@ use super::*;
 /// test) so a divergent hit frame can be attributed to a concrete attacker,
 /// victim list and sweep angle.
 pub(crate) fn sword_damage_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_SWORD_DAMAGE").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_SWORD_DAMAGE", []))
+        .enabled()
+}
+
+impl EngineInner {
+    /// `[started, hit, completed]`; `sprite` is `(frame, frame_count,
+    /// action_done_frame, action_done_counter)`.
+    #[inline(never)]
+    fn trace_strike_effect_pulse(
+        &self,
+        [attacker_id, target_id]: [EntityId; 2],
+        [strike, animation, motion]: [&dyn std::fmt::Debug; 3],
+        [started, hit, completed]: [bool; 3],
+        sprite: [&dyn std::fmt::Display; 4],
+    ) {
+        let frame = self.control.frame_counter;
+        let attacker_creation_order = self.world.original_creation_order(attacker_id);
+        let victim_creation_order = self.world.original_creation_order(target_id);
+        if !strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+            return;
+        }
+        let [
+            current_frame,
+            frame_count,
+            action_done_frame,
+            action_done_counter,
+        ] = sprite;
+        eprintln!(
+            "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=pulse strike={strike:?} animation={animation:?} motion={motion:?} started={started} hit={hit} completed={completed} sprite_frame={current_frame} frame_count={frame_count} action_done_frame={action_done_frame} action_done_counter={action_done_counter}]",
+            attacker_id.index(),
+            target_id.index(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_strike_effect_candidate(
+        &self,
+        [attacker_id, victim_id]: [EntityId; 2],
+        strike: SwordStrike,
+        distance: f32,
+        in_range: bool,
+        profile_idx: Option<u32>,
+    ) {
+        let frame = self.control.frame_counter;
+        let attacker_creation_order = self.world.original_creation_order(attacker_id);
+        let victim_creation_order = self.world.original_creation_order(victim_id);
+        if !strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
+            return;
+        }
+        let attacker = self.expect_entity(attacker_id, "strike-effect diagnostic attacker");
+        let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
+        let attacker_direction = attacker.element_data().direction();
+        let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
+        let angle_delta = (attacker_direction - victim_direction).rem_euclid(16);
+        let attacker_has_victim = attacker
+            .human_data()
+            .is_some_and(|human| human.opponents.contains(&victim_id));
+        let victim_has_attacker = victim
+            .human_data()
+            .is_some_and(|human| human.opponents.contains(&attacker_id));
+        let non_mutual = attacker_has_victim != victim_has_attacker;
+        let already_hit = attacker
+            .human_data()
+            .is_some_and(|human| human.sword_sweep.victims.contains(&victim_id));
+        let queued = in_range && profile_idx.is_some();
+        eprintln!(
+            "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=candidate strike={strike:?} attacker_sector={:?} victim_sector={:?} attacker_direction={attacker_direction} victim_direction={victim_direction} angle_delta={angle_delta} distance_bits={:#010x} in_range={in_range} attacker_has_victim={attacker_has_victim} victim_has_attacker={victim_has_attacker} non_mutual={non_mutual} already_hit={already_hit} profile_idx={profile_idx:?} queue={queued}]",
+            attacker_id.index(),
+            victim_id.index(),
+            attacker.element_data().sector(),
+            victim.element_data().sector(),
+            distance.to_bits(),
+        );
+    }
+
+    /// `[before, after]` tiredness.
+    #[inline(never)]
+    fn trace_tiredness_strike_energy<T: std::fmt::Display>(
+        frame: u32,
+        creation_order: u32,
+        [before, after]: [T; 2],
+        strike: SwordStrike,
+        energy: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "RUST_TIREDNESS frame={frame} co={creation_order} site=strike_energy \
+             before={before} after={after} strike={} energy={energy}",
+            strike as u32
+        );
+    }
+
+    #[inline(never)]
+    fn trace_sweep_phase(&self, attacker_id: EntityId, phase: SweepTickPhase) {
+        eprintln!(
+            "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} sweep_state={:?} human_victims={:?}]",
+            self.control.frame_counter,
+            attacker_id,
+            self.world.original_creation_order(attacker_id),
+            phase,
+            self.get_entity(attacker_id)
+                .and_then(Entity::actor_data)
+                .and_then(|a| a.sweep_state.as_ref())
+                .map(|s| s.pending_victims.len()),
+            self.get_entity(attacker_id)
+                .and_then(Entity::human_data)
+                .map(|h| h.sword_sweep.victims.len()),
+        );
+    }
+
+    /// `angles` is `[initial, current, final, signed rotation]`.
+    #[inline(never)]
+    fn trace_sweep_init(
+        &self,
+        attacker_id: EntityId,
+        strike: SwordStrike,
+        strike_kind: WeaponThrustKind,
+        victims: &[EntityId],
+        [initial, current, final_angle, rotation]: [f32; 4],
+    ) {
+        eprintln!(
+            "[SWEEPINIT f={} attacker={:?} (co {}) strike={:?} kind={:?} victims={:?} init={} cur={} fin={} rot={}]",
+            self.control.frame_counter,
+            attacker_id,
+            self.world.original_creation_order(attacker_id),
+            strike,
+            strike_kind,
+            victims
+                .iter()
+                .map(|&v| self.world.original_creation_order(v))
+                .collect::<Vec<_>>(),
+            initial,
+            current,
+            final_angle,
+            rotation,
+        );
+    }
+
+    /// `sectors` is `[initial, current]`.
+    #[inline(never)]
+    fn trace_sweep_tick(
+        frame: u32,
+        attacker_id: EntityId,
+        strike_kind: WeaponThrustKind,
+        sectors: [impl std::fmt::Display; 2],
+        current_angle: f32,
+        pending: usize,
+    ) {
+        let [initial_sector, current_sector] = sectors;
+        eprintln!(
+            "[SWEEPTICK f={} attacker={:?} kind={:?} init_sec={} cur_sec={} cur_angle={} pending={}]",
+            frame, attacker_id, strike_kind, initial_sector, current_sector, current_angle, pending,
+        );
+    }
+
+    /// One `SPECIAL_STRIKE` line; the owner's selected-element snapshot is appended.
+    #[inline(never)]
+    fn trace_special_strike(&self, frame: u32, owner: EntityId, detail: std::fmt::Arguments<'_>) {
+        eprintln!(
+            "SPECIAL_STRIKE frame={} owner={} {detail} selected={}",
+            frame,
+            owner.index(),
+            special_strike_selected_snapshot(&self.orders.sequence_manager, owner),
+        );
+    }
+
+    /// `phase` is `after_begin`, `after_begin_drain` or `after_launch`.
+    #[inline(never)]
+    fn trace_special_strike_state(&self, frame: u32, owner: EntityId, phase: &str) {
+        let ai = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::enemy_ai)
+            .unwrap_or_else(|| panic!("special-strike owner lost Enemy AI at {phase}"));
+        self.trace_special_strike(
+            frame,
+            owner,
+            format_args!(
+                "phase={phase} pending_special={} state={:?} substate={:?}",
+                ai.pending_special_strike, ai.base.current_state, ai.base.current_substate,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_special_strike_authorization_consumed(&self, frame: u32, owner: EntityId) {
+        let ai = self
+            .world
+            .entities
+            .expect_enemy_ai(owner, format_args!("special-strike owner"));
+        self.trace_special_strike(
+            frame,
+            owner,
+            format_args!(
+                "phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?}",
+                ai.pending_sword_strike_consideration,
+                ai.pending_special_strike,
+                ai.base.current_state,
+                ai.base.current_substate,
+            ),
+        );
+    }
+
+    /// `[owner, target]` ids and creation orders.
+    #[inline(never)]
+    fn trace_opponent_sprite_timing(
+        frame: u32,
+        [owner, target]: [EntityId; 2],
+        [owner_creation_order, target_creation_order]: [u32; 2],
+        only_owner: Option<EntityId>,
+        animation: crate::order::OrderType,
+        target_entity: &Entity,
+    ) {
+        let sprite = &target_entity.element_data().sprite;
+        let script_len = sprite
+            .current_scripts_opt()
+            .and_then(|scripts| scripts.get(sprite.current_row as usize))
+            .map(|script| script.frame_ids.len());
+        eprintln!(
+            "OPPONENT_SPRITE_TIMING frame={} owner={} owner_co={} target={} target_co={} caller={:?} animation={animation:?} profile={:?} primary={:?} alternate={:?} use_alternate={} row={} sprite_frame={} frame_count={} action_done_frame={} action_done_counter={} script_len={script_len:?}",
+            frame,
+            owner.index(),
+            owner_creation_order,
+            target.index(),
+            target_creation_order,
+            only_owner.map(EntityId::index),
+            sprite.frame_profile_name,
+            sprite.profile_cache_key,
+            sprite.alternate_profile_cache_key,
+            sprite.use_alternate_profile,
+            sprite.current_row,
+            sprite.current_frame,
+            sprite.frame_count,
+            sprite.action_done_frame,
+            sprite.action_done_counter,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_sword_enemy_principal(
+        &self,
+        debug: crate::combat::SwordStrikeProposalDebug,
+        target_id: EntityId,
+        opponent_time_limit: Option<i16>,
+    ) {
+        let target_animation = self.live_actor_animation(target_id);
+        let target_raw_frames = self.get_entity(target_id).map(|target| {
+            target
+                .element_data()
+                .sprite
+                .frames_from_now_till_action_done()
+        });
+        super::evaluate::trace_reactive_sword_for(
+            debug,
+            format_args!(
+                "phase=enemy_principal target={} animation={:?} raw_frames_from_now={:?} time_limit={:?}",
+                target_id.index(),
+                target_animation,
+                target_raw_frames,
+                opponent_time_limit,
+            ),
+        );
+    }
 }
 
 fn strike_effect_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
@@ -316,9 +579,7 @@ impl EngineInner {
             })
             .gesture_quality;
         let profile_idx = {
-            let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
-                panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
-            });
+            let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
             entity.set_posture(Posture::Upright);
             let actor = entity.actor_data_mut().unwrap_or_else(|| {
@@ -568,28 +829,18 @@ impl EngineInner {
         target_id: EntityId,
         is_left: bool,
     ) {
-        let target = self.get_entity(target_id).unwrap_or_else(|| {
-            panic!("smalltalk attacker {attacker_id:?} tried to hint missing target {target_id:?}")
-        });
-        let target_human = target.human_data().unwrap_or_else(|| {
-            panic!(
-                "smalltalk attacker {attacker_id:?} tried to hint non-human target {target_id:?}"
-            )
-        });
+        let target_human = self.world.entities.expect_human_data(
+            target_id,
+            format_args!("smalltalk attacker {attacker_id:?} hint target"),
+        );
         let is_principal = target_human.opponents.first().copied() == Some(attacker_id);
         if !is_principal {
             return;
         }
-        let human = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .and_then(Entity::human_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "smalltalk attacker {attacker_id:?} target {target_id:?} vanished while receiving hint"
-                )
-            });
+        let human = self.world.entities.expect_human_data_mut(
+            target_id,
+            format_args!("smalltalk attacker {attacker_id:?} hint target while receiving hint"),
+        );
         human.smalltalk_hint = if is_left {
             crate::element::SmalltalkHint::Left
         } else {
@@ -601,9 +852,7 @@ impl EngineInner {
     pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(&mut self, entity_id: I) -> bool {
         let entity_id = entity_id.into();
         let (hint, hint_opponent) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("smalltalk-hint evaluation owner {entity_id:?} is missing")
-            });
+            let entity = self.expect_entity(entity_id, "smalltalk-hint evaluation owner");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("smalltalk-hint evaluation owner {entity_id:?} is not human")
             });
@@ -622,24 +871,19 @@ impl EngineInner {
                 "smalltalk-hint evaluation owner {entity_id:?} has {hint:?} without a hint opponent"
             )
         });
-        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-            panic!(
-                "smalltalk-hint evaluation owner {entity_id:?} references missing hint opponent {opponent_id:?}"
-            )
-        });
+        let opponent = self.world.entities.expect_entity(
+            opponent_id,
+            format_args!("smalltalk-hint evaluation owner {entity_id:?} hint opponent"),
+        );
         assert!(
             opponent.human_data().is_some(),
             "smalltalk-hint evaluation owner {entity_id:?} hint opponent {opponent_id:?} is not human"
         );
 
-        let human = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .and_then(Entity::human_data_mut)
-            .unwrap_or_else(|| {
-                panic!("smalltalk-hint evaluation owner {entity_id:?} vanished while clearing hint")
-            });
+        let human = self.world.entities.expect_human_data_mut(
+            entity_id,
+            format_args!("smalltalk-hint evaluation owner while clearing hint"),
+        );
         human.smalltalk_hint = crate::element::SmalltalkHint::None;
         human.smalltalk_hint_opponent = None;
 
@@ -736,9 +980,7 @@ impl EngineInner {
             return;
         }
 
-        let entity = self
-            .get_entity_mut(attacker_id)
-            .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
+        let entity = self.expect_entity_mut(attacker_id, "selected melee attacker");
         let direction = entity.element_data().direction() as u16;
         let motion = entity.element_data_mut().sprite.perform_action(
             sim,
@@ -774,16 +1016,17 @@ impl EngineInner {
         );
 
         if strike_effect_debug_gate().enabled() {
-            let frame = self.control.frame_counter;
-            let attacker_creation_order = self.world.original_creation_order(attacker_id);
-            let victim_creation_order = self.world.original_creation_order(target_id);
-            if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
-                eprintln!(
-                    "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=pulse strike={strike:?} animation={animation:?} motion={motion:?} started={started} hit={hit} completed={completed} sprite_frame={current_frame} frame_count={frame_count} action_done_frame={action_done_frame} action_done_counter={action_done_counter}]",
-                    attacker_id.index(),
-                    target_id.index(),
-                );
-            }
+            self.trace_strike_effect_pulse(
+                [attacker_id, target_id],
+                [&strike, &animation, &motion],
+                [started, hit, completed],
+                [
+                    &current_frame,
+                    &frame_count,
+                    &action_done_frame,
+                    &action_done_counter,
+                ],
+            );
         }
 
         if started {
@@ -845,35 +1088,13 @@ impl EngineInner {
             .map(|profile| combat::is_strike_in_range(profile, strike, distance))
             .unwrap_or(distance <= 50.0);
         if strike_effect_debug_gate().enabled() {
-            let frame = self.control.frame_counter;
-            let attacker_creation_order = self.world.original_creation_order(attacker_id);
-            let victim_creation_order = self.world.original_creation_order(victim_id);
-            if strike_effect_debug_matches(frame, attacker_creation_order, victim_creation_order) {
-                let attacker = self.expect_entity(attacker_id, "strike-effect diagnostic attacker");
-                let victim = self.expect_entity(victim_id, "strike-effect diagnostic victim");
-                let attacker_direction = attacker.element_data().direction();
-                let victim_direction = direction_to(&self.world.entities, attacker_id, victim_id);
-                let angle_delta = (attacker_direction - victim_direction).rem_euclid(16);
-                let attacker_has_victim = attacker
-                    .human_data()
-                    .is_some_and(|human| human.opponents.contains(&victim_id));
-                let victim_has_attacker = victim
-                    .human_data()
-                    .is_some_and(|human| human.opponents.contains(&attacker_id));
-                let non_mutual = attacker_has_victim != victim_has_attacker;
-                let already_hit = attacker
-                    .human_data()
-                    .is_some_and(|human| human.sword_sweep.victims.contains(&victim_id));
-                let queued = in_range && profile_idx.is_some();
-                eprintln!(
-                    "[STRIKE_EFFECT frame={frame} attacker={} attacker_co={attacker_creation_order} victim={} victim_co={victim_creation_order} phase=candidate strike={strike:?} attacker_sector={:?} victim_sector={:?} attacker_direction={attacker_direction} victim_direction={victim_direction} angle_delta={angle_delta} distance_bits={:#010x} in_range={in_range} attacker_has_victim={attacker_has_victim} victim_has_attacker={victim_has_attacker} non_mutual={non_mutual} already_hit={already_hit} profile_idx={profile_idx:?} queue={queued}]",
-                    attacker_id.index(),
-                    victim_id.index(),
-                    attacker.element_data().sector(),
-                    victim.element_data().sector(),
-                    distance.to_bits(),
-                );
-            }
+            self.trace_strike_effect_candidate(
+                [attacker_id, victim_id],
+                strike,
+                distance,
+                in_range,
+                profile_idx,
+            );
         }
         if in_range {
             if let Some(profile_idx) = profile_idx {
@@ -952,16 +1173,8 @@ impl EngineInner {
             Vec::new()
         };
         for victim_id in pending_swordfights {
-            let attacker = self
-                .world
-                .entities
-                .get(actor_id)
-                .unwrap_or_else(|| panic!("push completion attacker {actor_id:?} disappeared"));
-            let victim = self
-                .world
-                .entities
-                .get(victim_id)
-                .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
+            let attacker = self.expect_entity(actor_id, "push completion attacker");
+            let victim = self.expect_entity(victim_id, "push completion victim");
             let should_enter = should_enter_swordfight_after_strike(
                 attacker,
                 victim,
@@ -977,17 +1190,24 @@ impl EngineInner {
             Some(profile) => {
                 let energy = combat::strike_energy_cost(profile, strike);
                 let frame = self.control.frame_counter;
-                let creation_order = self.world.original_creation_order(actor_id);
+                // Resolve identity only for the enabled diagnostic; the write
+                // below holds the entity borrow.
+                let tiredness_debug_creation_order = combat::tiredness_debug_enabled()
+                    .then(|| self.world.original_creation_order(actor_id));
                 if let Some(entity) = self.get_entity_mut(actor_id)
                     && let Some(human) = entity.human_data_mut()
                 {
                     let before = human.tiredness;
                     human.tiredness = combat::add_strike_tiredness(human.tiredness, energy);
-                    if combat::tiredness_debug_matches(creation_order) {
-                        eprintln!(
-                            "RUST_TIREDNESS frame={frame} co={creation_order} site=strike_energy \
-                             before={before} after={} strike={} energy={energy}",
-                            human.tiredness, strike as u32
+                    if let Some(creation_order) = tiredness_debug_creation_order
+                        && combat::tiredness_debug_matches(creation_order)
+                    {
+                        Self::trace_tiredness_strike_energy(
+                            frame,
+                            creation_order,
+                            [before, human.tiredness],
+                            strike,
+                            energy,
                         );
                     }
                 }
@@ -1397,20 +1617,7 @@ impl EngineInner {
         phase: SweepTickPhase,
     ) {
         if sword_damage_debug_enabled() {
-            eprintln!(
-                "[SWEEPPHASE f={} attacker={:?} (co {}) phase={:?} sweep_state={:?} human_victims={:?}]",
-                self.control.frame_counter,
-                attacker_id,
-                self.world.original_creation_order(attacker_id),
-                phase,
-                self.get_entity(attacker_id)
-                    .and_then(Entity::actor_data)
-                    .and_then(|a| a.sweep_state.as_ref())
-                    .map(|s| s.pending_victims.len()),
-                self.get_entity(attacker_id)
-                    .and_then(Entity::human_data)
-                    .map(|h| h.sword_sweep.victims.len()),
-            );
+            self.trace_sweep_phase(attacker_id, phase);
         }
         match phase {
             SweepTickPhase::Dormant | SweepTickPhase::Start => {}
@@ -1439,9 +1646,8 @@ impl EngineInner {
                             "selected non-straight melee attacker {attacker_id:?} lost its strike order"
                         )
                     });
-                let entity = self.get_entity(attacker_id).unwrap_or_else(|| {
-                    panic!("selected non-straight melee attacker {attacker_id:?} disappeared")
-                });
+                let entity =
+                    self.expect_entity(attacker_id, "selected non-straight melee attacker");
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
                     .unwrap_or_else(|| {
                         panic!(
@@ -1792,21 +1998,12 @@ impl EngineInner {
 
         let num_victims = victims.len();
         if sword_damage_debug_enabled() {
-            eprintln!(
-                "[SWEEPINIT f={} attacker={:?} (co {}) strike={:?} kind={:?} victims={:?} init={} cur={} fin={} rot={}]",
-                self.control.frame_counter,
+            self.trace_sweep_init(
                 attacker_id,
-                self.world.original_creation_order(attacker_id),
                 strike,
                 strike_kind,
-                victims
-                    .iter()
-                    .map(|&v| self.world.original_creation_order(v))
-                    .collect::<Vec<_>>(),
-                initial,
-                dir_angle,
-                final_a,
-                signed_rotation,
+                &victims,
+                [initial, dir_angle, final_a, signed_rotation],
             );
         }
         let sweep = crate::movement::SweepState {
@@ -1950,13 +2147,11 @@ impl EngineInner {
             let initial_sector = angle_to_sector(active.sweep.initial_angle);
             let current_sector = angle_to_sector(active.sweep.current_angle);
             if sword_damage_debug_enabled() {
-                eprintln!(
-                    "[SWEEPTICK f={} attacker={:?} kind={:?} init_sec={} cur_sec={} cur_angle={} pending={}]",
+                Self::trace_sweep_tick(
                     self.control.frame_counter,
                     active.attacker_id,
                     active.sweep.strike_kind,
-                    initial_sector,
-                    current_sector,
+                    [initial_sector, current_sector],
                     active.sweep.current_angle,
                     active.sweep.pending_victims.len(),
                 );
@@ -3056,22 +3251,7 @@ impl EngineInner {
         }
         for &owner in &pending_considerations {
             if special_strike_lifecycle_debug_matches(current_frame, owner.index()) {
-                let ai = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .and_then(Entity::enemy_ai)
-                    .unwrap_or_else(|| panic!("special-strike owner {owner:?} lost Enemy AI"));
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?} selected={}",
-                    current_frame,
-                    owner.index(),
-                    ai.pending_sword_strike_consideration,
-                    ai.pending_special_strike,
-                    ai.base.current_state,
-                    ai.base.current_substate,
-                    special_strike_selected_snapshot(&self.orders.sequence_manager, owner),
-                );
+                self.trace_special_strike_authorization_consumed(current_frame, owner);
             }
         }
 
@@ -3093,10 +3273,7 @@ impl EngineInner {
 
         let mut attacks: Vec<PendingAttack> = Vec::new();
         for npc_id in pending_considerations.iter().copied() {
-            let attacker =
-                self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("authorized sword-strike owner {npc_id:?} disappeared")
-                });
+            let attacker = self.expect_entity(npc_id, "authorized sword-strike owner");
             if !pending_considerations.contains(&npc_id) {
                 continue;
             }
@@ -3130,9 +3307,7 @@ impl EngineInner {
                         target_handle
                     )
                 });
-            let target = self
-                .get_entity(target_id)
-                .unwrap_or_else(|| panic!("resolved principal opponent {target_id:?} disappeared"));
+            let target = self.expect_entity(target_id, "resolved principal opponent");
             assert!(
                 target.is_human(),
                 "authorized sword-strike principal opponent {target_id:?} is not human"
@@ -3143,11 +3318,9 @@ impl EngineInner {
             // two separate checks: animation for visual recovery, then
             // action state for logical sword readiness.
             let target_in_sword = self
-                .get_entity(target_id)
-                .and_then(|e| e.actor_data())
-                .unwrap_or_else(|| {
-                    panic!("sword-strike principal opponent {target_id:?} requires actor data")
-                })
+                .world
+                .entities
+                .expect_actor_data(target_id, format_args!("sword-strike principal opponent"))
                 .action_state
                 .is_sword();
             let target_in_recovery = self.actor_is_in_sword_recovery(target_id);
@@ -3165,12 +3338,10 @@ impl EngineInner {
             // that specialized original-game query rather than reading the raw
             // soldier-profile capacity.
             let fa = fighting_ability_from_profile(
-                self.get_entity(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "authorized sword-strike owner {:?} disappeared before ability lookup",
-                        npc_id
-                    )
-                }),
+                self.expect_entity(
+                    npc_id,
+                    "authorized sword-strike owner before ability lookup",
+                ),
                 &assets.profile_manager,
                 sim.config().difficulty,
                 &self.mission_domain.diplomacy,
@@ -3215,15 +3386,10 @@ impl EngineInner {
             let special_debug =
                 special_strike_lifecycle_debug_matches(current_frame, attack.soldier_id.index());
             if special_debug {
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=before_proposal target={} selected={}",
+                self.trace_special_strike(
                     current_frame,
-                    attack.soldier_id.index(),
-                    attack.target_id.index(),
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
-                    ),
+                    attack.soldier_id,
+                    format_args!("phase=before_proposal target={}", attack.target_id.index()),
                 );
             }
             let distance =
@@ -3265,31 +3431,16 @@ impl EngineInner {
             let opponent_time_limit: Option<i16> =
                 self.get_entity(attack.target_id).and_then(|e| {
                     let animation = self.live_actor_animation(attack.target_id)?;
-                    let sprite = &e.element_data().sprite;
                     if let Some((owner_creation_order, target_creation_order)) =
                         sprite_timing_creation_orders
                     {
-                        let script_len = sprite
-                            .current_scripts_opt()
-                            .and_then(|scripts| scripts.get(sprite.current_row as usize))
-                            .map(|script| script.frame_ids.len());
-                        eprintln!(
-                            "OPPONENT_SPRITE_TIMING frame={} owner={} owner_co={} target={} target_co={} caller={:?} animation={animation:?} profile={:?} primary={:?} alternate={:?} use_alternate={} row={} sprite_frame={} frame_count={} action_done_frame={} action_done_counter={} script_len={script_len:?}",
+                        Self::trace_opponent_sprite_timing(
                             current_frame,
-                            attack.soldier_id.index(),
-                            owner_creation_order,
-                            attack.target_id.index(),
-                            target_creation_order,
-                            only_owner.map(EntityId::index),
-                            sprite.frame_profile_name,
-                            sprite.profile_cache_key,
-                            sprite.alternate_profile_cache_key,
-                            sprite.use_alternate_profile,
-                            sprite.current_row,
-                            sprite.current_frame,
-                            sprite.frame_count,
-                            sprite.action_done_frame,
-                            sprite.action_done_counter,
+                            [attack.soldier_id, attack.target_id],
+                            [owner_creation_order, target_creation_order],
+                            only_owner,
+                            animation,
+                            e,
                         );
                     }
                     selected_opponent_time_limit
@@ -3360,22 +3511,9 @@ impl EngineInner {
                 })
                 .flatten();
             if let Some(debug) = debug {
-                let target_animation = self.live_actor_animation(attack.target_id);
-                let target_raw_frames = self.get_entity(attack.target_id).map(|target| {
-                    target
-                        .element_data()
-                        .sprite
-                        .frames_from_now_till_action_done()
-                });
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=enemy_principal target={} animation={:?} raw_frames_from_now={:?} time_limit={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
-                    attack.target_id.index(),
-                    target_animation,
-                    target_raw_frames,
+                self.trace_reactive_sword_enemy_principal(
+                    debug,
+                    attack.target_id,
                     opponent_time_limit,
                 );
             }
@@ -3393,27 +3531,18 @@ impl EngineInner {
             );
             self.apply_strike_selection_sweep_rebase(assets, attack.soldier_id, sweep_rebase);
             if special_debug {
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=after_proposal result={:?} selected={}",
+                self.trace_special_strike(
                     current_frame,
-                    attack.soldier_id.index(),
-                    proposed,
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
-                    ),
+                    attack.soldier_id,
+                    format_args!("phase=after_proposal result={:?}", proposed),
                 );
             }
             if let Some(debug) = debug {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=enemy_reconsider rng_before={:?} rng_after={:?} result={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
+                self.trace_reactive_sword_proposal_boundary(
+                    debug,
+                    "enemy_reconsider",
                     rng_before,
-                    self.control.rng.original_replay_cursor(),
-                    proposed,
+                    &proposed,
                 );
             }
             let strike = match proposed {
@@ -3424,16 +3553,10 @@ impl EngineInner {
             // Strike selection mutates its boredom history even when no
             // viable strike is selected, so persist it before branching on
             // the proposal result.
-            let owner = self
-                .world
-                .entities
-                .get_mut(attack.soldier_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "sword-strike proposal owner {:?} disappeared during selection",
-                        attack.soldier_id
-                    )
-                });
+            let owner = self.expect_entity_mut(
+                attack.soldier_id,
+                "sword-strike proposal owner during selection",
+            );
             owner
                 .human_data_mut()
                 .unwrap_or_else(|| {
@@ -3482,16 +3605,12 @@ impl EngineInner {
             };
 
             if special_debug {
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=before_begin strike={:?} command={:?} wait_time={} selected={}",
+                self.trace_special_strike(
                     current_frame,
-                    attack.soldier_id.index(),
-                    strike,
-                    command,
-                    wait_time,
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
+                    attack.soldier_id,
+                    format_args!(
+                        "phase=before_begin strike={:?} command={:?} wait_time={}",
+                        strike, command, wait_time,
                     ),
                 );
             }
@@ -3502,60 +3621,23 @@ impl EngineInner {
             // observable legacy special-strike substate; the
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
-            let ai = self
-                .world
-                .entities
-                .get_mut(attack.soldier_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "special-strike owner {:?} lost Enemy AI before begin",
-                        attack.soldier_id
-                    )
-                });
+            let ai = self.world.entities.expect_enemy_ai_mut(
+                attack.soldier_id,
+                format_args!("special-strike owner before begin"),
+            );
             ai.begin_special_strike();
             ai.base.stop_all();
             if special_debug {
-                let ai = self
-                    .world
-                    .entities
-                    .get(attack.soldier_id)
-                    .and_then(Entity::enemy_ai)
-                    .expect("special-strike owner lost Enemy AI after begin");
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin pending_special={} state={:?} substate={:?} selected={}",
-                    current_frame,
-                    attack.soldier_id.index(),
-                    ai.pending_special_strike,
-                    ai.base.current_state,
-                    ai.base.current_substate,
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
-                    ),
-                );
+                self.trace_special_strike_state(current_frame, attack.soldier_id, "after_begin");
             }
             self.drain_ai_owner_work_for(sim, assets, attack.soldier_id);
             self.apply_pending_ai_halt(attack.soldier_id);
             self.dispatch_condolations_for_owner_boundary(sim, attack.soldier_id, assets);
             if special_debug {
-                let ai = self
-                    .world
-                    .entities
-                    .get(attack.soldier_id)
-                    .and_then(Entity::enemy_ai)
-                    .expect("special-strike owner lost Enemy AI after drain");
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=after_begin_drain pending_special={} state={:?} substate={:?} selected={}",
+                self.trace_special_strike_state(
                     current_frame,
-                    attack.soldier_id.index(),
-                    ai.pending_special_strike,
-                    ai.base.current_state,
-                    ai.base.current_substate,
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
-                    ),
+                    attack.soldier_id,
+                    "after_begin_drain",
                 );
             }
 
@@ -3565,15 +3647,12 @@ impl EngineInner {
                 strike,
                 SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
             ) {
-                let owner = self
+                let owner = self.expect_entity(attack.soldier_id, "warcry owner");
+                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
+                let ai = self
                     .world
                     .entities
-                    .get_mut(attack.soldier_id)
-                    .unwrap_or_else(|| panic!("warcry owner {:?} disappeared", attack.soldier_id));
-                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
-                let ai = owner.enemy_ai_mut().unwrap_or_else(|| {
-                    panic!("warcry owner {:?} lost Enemy AI", attack.soldier_id)
-                });
+                    .expect_enemy_ai_mut(attack.soldier_id, format_args!("warcry owner"));
                 ai.base.say(if is_vip {
                     crate::ai::Remark::VipWarcry
                 } else {
@@ -3610,24 +3689,7 @@ impl EngineInner {
             self.launch_sequence(seq);
 
             if special_debug {
-                let ai = self
-                    .world
-                    .entities
-                    .get(attack.soldier_id)
-                    .and_then(Entity::enemy_ai)
-                    .expect("special-strike owner lost Enemy AI after launch");
-                eprintln!(
-                    "SPECIAL_STRIKE frame={} owner={} phase=after_launch pending_special={} state={:?} substate={:?} selected={}",
-                    current_frame,
-                    attack.soldier_id.index(),
-                    ai.pending_special_strike,
-                    ai.base.current_state,
-                    ai.base.current_substate,
-                    special_strike_selected_snapshot(
-                        &self.orders.sequence_manager,
-                        attack.soldier_id
-                    ),
-                );
+                self.trace_special_strike_state(current_frame, attack.soldier_id, "after_launch");
             }
 
             tracing::debug!(
@@ -3706,14 +3768,14 @@ impl EngineInner {
             let healing_speed =
                 concussion_healing_speed_for_entity(entity, &assets.profile_manager);
 
-            let was_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let was_unconscious = entity.is_unconscious();
 
             if let Some(human) = entity.human_data_mut() {
                 combat::concussion_healing_tick(human, healing_speed, life_points, &ctx);
             }
 
             // Check if entity woke up
-            let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
+            let is_unconscious = entity.is_unconscious();
             if was_unconscious && !is_unconscious {
                 // Wake up: restore posture and play standup
                 // animation.  The standup path chains standup +
@@ -3723,10 +3785,12 @@ impl EngineInner {
                 // play them in sequence.
                 let standing_anim = {
                     let posture = entity.element_data().posture();
+                    // Only reached for a human that was unconscious, so
+                    // the actor state is required.
                     let action = entity
                         .actor_data()
-                        .map(|a| a.action_state)
-                        .unwrap_or_default();
+                        .expect("waking concussion owner must be an actor")
+                        .action_state;
                     select_combat_animations(posture, action).map(|a| a.standing_up)
                 };
                 let concussion = entity
@@ -3806,12 +3870,10 @@ impl EngineInner {
         let mut recover = None;
         let is_sherwood = self.is_sherwood(&assets.profile_manager);
         let naturally_woke = {
-            let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
-                panic!(
-                    "concussion owner {} disappeared from its legacy slot",
-                    owner.index()
-                )
-            });
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("concussion owner from its legacy slot"));
             assert!(
                 entity.human_data().is_some(),
                 "concussion owner {} is not human",

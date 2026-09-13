@@ -3850,7 +3850,9 @@ fn leave_attentive_translation_keeps_transition_after_attentive_was_already_clea
     let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(soldier_id, Command::LeaveAttentiveMode, sequence, 0);
 
@@ -3887,7 +3889,9 @@ fn leave_attentive_translation_keeps_transition_after_attentive_was_already_clea
     let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(soldier_id, Command::LeaveAttentiveMode, non_upright, 0);
     assert_eq!(
@@ -3938,7 +3942,9 @@ fn enter_attentive_translation_still_suppresses_an_already_satisfied_enter() {
     let barrier = crate::engine::sequence_runtime::NpcAttentionCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(soldier_id, Command::EnterAttentiveMode, sequence, 0);
 

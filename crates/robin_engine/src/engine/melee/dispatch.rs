@@ -4,48 +4,157 @@
 
 use super::*;
 use crate::element::{ActionState, Command, EntityId};
-use crate::engine::sequence_runtime::OwnerActionBarrier;
+use crate::engine::sequence_runtime::{OrderEmitter, OwnerActionBarrier};
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
-struct OpponentCallerDebugConfig {
-    frame: u32,
-    participant: u32,
+use crate::engine::diagnostics::ParityGate;
+use std::sync::OnceLock;
+
+/// `[frame, owner slot]`, both required.
+fn thrust_admission_debug_gate() -> &'static ParityGate<2> {
+    static GATE: OnceLock<ParityGate<2>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_THRUST_A_ADMISSION",
+            [
+                "PARITY_DEBUG_THRUST_A_ADMISSION_FRAME",
+                "PARITY_DEBUG_THRUST_A_ADMISSION_OWNER",
+            ],
+        )
+    })
 }
 
-struct ThrustAdmissionDebugConfig {
-    frame: u32,
-    owner: u32,
+/// `[frame, participant slot]`, both required.
+fn opponent_caller_debug_gate() -> &'static ParityGate<2> {
+    static GATE: OnceLock<ParityGate<2>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_OPPONENT_CALLER",
+            [
+                "PARITY_DEBUG_OPPONENT_CALLER_FRAME",
+                "PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT",
+            ],
+        )
+    })
 }
 
-fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<ThrustAdmissionDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
-            let parse = crate::engine::diagnostics::required_u32_env;
-            Some(ThrustAdmissionDebugConfig {
-                frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
-                owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
-            })
-        })
-        .as_ref()
-}
+impl EngineInner {
+    #[inline(never)]
+    fn trace_thrust_a_admission(
+        &self,
+        assets: &LevelAssets,
+        [owner, target]: [EntityId; 2],
+        can_enter: bool,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let owner_entity = self
+            .world
+            .entities
+            .get(owner)
+            .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} vanished"));
+        let target_entity = self
+            .world
+            .entities
+            .get(target)
+            .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} vanished"));
+        let owner_human = owner_entity
+            .human_data()
+            .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} is not human"));
+        let target_human = target_entity
+            .human_data()
+            .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
+        let owner_sector = owner_entity.element_data().sector();
+        let target_sector = target_entity.element_data().sector();
+        let selected = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner);
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .unwrap_or_else(|| panic!("diagnosed thrust element {seq_id:?}/{elem_idx} vanished"));
+        eprintln!(
+            "PARITY_THRUST_A_ADMISSION frame={} owner={} target={} can_enter={} seq={} elem={} element_id={} state={:?} priority={:?} selected={selected:?} owner_dead={} owner_unconscious={} owner_net={} owner_soldier={} owner_vip={} owner_robin={} owner_sector={owner_sector:?} owner_building={} owner_wall_ladder={} target_dead={} target_unconscious={} target_net={} target_soldier={} target_vip={} target_robin={} target_sector={target_sector:?} target_building={} target_wall_ladder={}",
+            self.control.frame_counter,
+            owner.index(),
+            target.index(),
+            can_enter,
+            seq_id.0,
+            elem_idx,
+            element.id,
+            element.state,
+            element.priority,
+            owner_entity.is_dead(),
+            owner_human.unconscious,
+            owner_human.stuck_under_nets_counter,
+            owner_entity.is_soldier(),
+            is_vip_from_profile(owner_entity, &assets.profile_manager),
+            owner_entity.pc_data().is_some_and(|pc| pc.robin),
+            is_in_building_sector(owner_sector, &self.world.fast_grid),
+            is_on_wall_or_ladder(owner_sector, &self.world.fast_grid),
+            target_entity.is_dead(),
+            target_human.unconscious,
+            target_human.stuck_under_nets_counter,
+            target_entity.is_soldier(),
+            is_vip_from_profile(target_entity, &assets.profile_manager),
+            target_entity.pc_data().is_some_and(|pc| pc.robin),
+            is_in_building_sector(target_sector, &self.world.fast_grid),
+            is_on_wall_or_ladder(target_sector, &self.world.fast_grid),
+        );
+    }
 
-fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<OpponentCallerDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
-            let parse = crate::engine::diagnostics::required_u32_env;
-            Some(OpponentCallerDebugConfig {
-                frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
-                participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
-            })
-        })
-        .as_ref()
+    #[inline(never)]
+    fn trace_opponent_caller(
+        &self,
+        owner: EntityId,
+        opponent: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let selected_owner = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(owner);
+        let selected_opponent =
+            opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
+        let sequence = self
+            .orders
+            .sequence_manager
+            .get_sequence(seq_id)
+            .unwrap_or_else(|| panic!("diagnosed EnterSwordfight sequence {seq_id:?} vanished"));
+        let counters = sequence.parity_counters();
+        eprintln!(
+            "PARITY_OPPONENT_CALLER frame={} phase=dispatch owner={} opponent={:?} seq={} elem={} selected_owner={selected_owner:?} selected_opponent={selected_opponent:?} counters={counters:?} elements={}",
+            self.control.frame_counter,
+            owner.index(),
+            opponent.map(|id| id.index()),
+            seq_id.0,
+            elem_idx,
+            sequence.elements.len(),
+        );
+        for (index, element) in sequence.elements.iter().enumerate() {
+            eprintln!(
+                "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
+                self.control.frame_counter,
+                seq_id.0,
+                index,
+                element.id,
+                element.owner.map(|id| id.index()),
+                element.command,
+                element.command_level,
+                element.state,
+                element.priority,
+                element.script_driven,
+                element.legacy_v48.is_some(),
+                element.postponed_element_index,
+                element.cross_postponed,
+                element.data,
+            );
+        }
+    }
 }
 
 impl EngineInner {
@@ -76,11 +185,9 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        let admission_debug = thrust_admission_debug_config().is_some_and(|config| {
-            strike == SwordStrike::A
-                && config.frame == self.control.frame_counter
-                && config.owner == owner.index()
-        });
+        let admission_debug = strike == SwordStrike::A
+            && thrust_admission_debug_gate()
+                .matches([Some(self.control.frame_counter), Some(owner.index())]);
         // Validate attacker
         let owner_ok = self
             .get_entity(owner)
@@ -117,63 +224,7 @@ impl EngineInner {
                 &self.world.fast_grid,
             );
             if admission_debug {
-                let owner_entity = self
-                    .world
-                    .entities
-                    .get(owner)
-                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} vanished"));
-                let target_entity = self
-                    .world
-                    .entities
-                    .get(target)
-                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} vanished"));
-                let owner_human = owner_entity
-                    .human_data()
-                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} is not human"));
-                let target_human = target_entity
-                    .human_data()
-                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
-                let owner_sector = owner_entity.element_data().sector();
-                let target_sector = target_entity.element_data().sector();
-                let selected = self
-                    .orders
-                    .sequence_manager
-                    .current_element_for_actor(owner);
-                let element = self
-                    .orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .unwrap_or_else(|| {
-                        panic!("diagnosed thrust element {seq_id:?}/{elem_idx} vanished")
-                    });
-                eprintln!(
-                    "PARITY_THRUST_A_ADMISSION frame={} owner={} target={} can_enter={} seq={} elem={} element_id={} state={:?} priority={:?} selected={selected:?} owner_dead={} owner_unconscious={} owner_net={} owner_soldier={} owner_vip={} owner_robin={} owner_sector={owner_sector:?} owner_building={} owner_wall_ladder={} target_dead={} target_unconscious={} target_net={} target_soldier={} target_vip={} target_robin={} target_sector={target_sector:?} target_building={} target_wall_ladder={}",
-                    self.control.frame_counter,
-                    owner.index(),
-                    target.index(),
-                    can_enter,
-                    seq_id.0,
-                    elem_idx,
-                    element.id,
-                    element.state,
-                    element.priority,
-                    owner_entity.is_dead(),
-                    owner_human.unconscious,
-                    owner_human.stuck_under_nets_counter,
-                    owner_entity.is_soldier(),
-                    is_vip_from_profile(owner_entity, &assets.profile_manager),
-                    owner_entity.pc_data().is_some_and(|pc| pc.robin),
-                    is_in_building_sector(owner_sector, &self.world.fast_grid),
-                    is_on_wall_or_ladder(owner_sector, &self.world.fast_grid),
-                    target_entity.is_dead(),
-                    target_human.unconscious,
-                    target_human.stuck_under_nets_counter,
-                    target_entity.is_soldier(),
-                    is_vip_from_profile(target_entity, &assets.profile_manager),
-                    target_entity.pc_data().is_some_and(|pc| pc.robin),
-                    is_in_building_sector(target_sector, &self.world.fast_grid),
-                    is_on_wall_or_ladder(target_sector, &self.world.fast_grid),
-                );
+                self.trace_thrust_a_admission(assets, [owner, target], can_enter, seq_id, elem_idx);
             }
             if can_enter {
                 self.set_as_new_principal_opponent(assets, owner, target);
@@ -259,54 +310,12 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> OwnerActionBarrier {
-        let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
-            config.frame == self.control.frame_counter
-                && (config.participant == owner.index()
-                    || opponent.is_some_and(|id| config.participant == id.index()))
-        });
+        let caller_gate = opponent_caller_debug_gate();
+        let caller_debug = caller_gate.matches([Some(self.control.frame_counter), None])
+            && (caller_gate.required(1) == owner.index()
+                || opponent.is_some_and(|id| caller_gate.required(1) == id.index()));
         if caller_debug {
-            let selected_owner = self
-                .orders
-                .sequence_manager
-                .current_element_for_actor(owner);
-            let selected_opponent =
-                opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
-            let sequence = self
-                .orders
-                .sequence_manager
-                .get_sequence(seq_id)
-                .unwrap_or_else(|| {
-                    panic!("diagnosed EnterSwordfight sequence {seq_id:?} vanished")
-                });
-            let counters = sequence.parity_counters();
-            eprintln!(
-                "PARITY_OPPONENT_CALLER frame={} phase=dispatch owner={} opponent={:?} seq={} elem={} selected_owner={selected_owner:?} selected_opponent={selected_opponent:?} counters={counters:?} elements={}",
-                self.control.frame_counter,
-                owner.index(),
-                opponent.map(|id| id.index()),
-                seq_id.0,
-                elem_idx,
-                sequence.elements.len(),
-            );
-            for (index, element) in sequence.elements.iter().enumerate() {
-                eprintln!(
-                    "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
-                    self.control.frame_counter,
-                    seq_id.0,
-                    index,
-                    element.id,
-                    element.owner.map(|id| id.index()),
-                    element.command,
-                    element.command_level,
-                    element.state,
-                    element.priority,
-                    element.script_driven,
-                    element.legacy_v48.is_some(),
-                    element.postponed_element_index,
-                    element.cross_postponed,
-                    element.data,
-                );
-            }
+            self.trace_opponent_caller(owner, opponent, seq_id, elem_idx);
         }
         {
             let Some(entity) = self.world.entities.get_mut(owner) else {
@@ -800,10 +809,16 @@ impl EngineInner {
 /// a refreshed danger/protectee command. The follow-up is returned so the
 /// sequence-phase owner can launch it through the normal instruction path before
 /// performing the after-action synchronous splice.
+///
+/// All four Original shield translators explicitly disable direction
+/// recomputation (`compute_direction = false`). These are posture-local
+/// animations: facing is controlled by Focus/the shield danger point before
+/// translation, and selecting the new order must not derive a fresh goal from
+/// its zero-valued destination.
 pub(crate) struct ShieldCommandContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl<'a> ShieldCommandContext<'a> {
@@ -815,7 +830,7 @@ impl<'a> ShieldCommandContext<'a> {
         Self {
             entities,
             sequence_manager,
-            next_order_id,
+            orders: OrderEmitter::new(next_order_id),
         }
     }
 
@@ -1034,7 +1049,14 @@ impl<'a> ShieldCommandContext<'a> {
             // `engine/animation.rs` gates advance on TERMINATED only
             // so the upright / holding-shield state-change side effect
             // on Done doesn't also pop the order mid-play.
-            self.push_order(seq_id, elem_idx, crate::order::OrderType::RaisingShield);
+            self.orders.push(
+                self.sequence_manager,
+                seq_id,
+                elem_idx,
+                crate::order::OrderType::RaisingShield,
+                (0.0, 0.0),
+                false,
+            );
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -1058,7 +1080,14 @@ impl<'a> ShieldCommandContext<'a> {
             }
             entity.set_posture(Posture::Upright);
         }
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::WaitingShield);
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::WaitingShield,
+            (0.0, 0.0),
+            false,
+        );
         // Original-game instant-raise-shield translation leaves the
         // WAITING_SHIELD order installed. Actor instruction handling then marks the
         // accepted, still-selected element IN_PROGRESS; it does not terminate
@@ -1091,7 +1120,14 @@ impl<'a> ShieldCommandContext<'a> {
         // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
         // actor has no LOWERING_SHIELD anim is applied by the animation
         // driver. The order itself remains LOWERING_SHIELD.
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::LoweringShield,
+            (0.0, 0.0),
+            false,
+        );
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
@@ -1122,28 +1158,15 @@ impl<'a> ShieldCommandContext<'a> {
             .get(owner)
             .and_then(crate::element::Entity::actor_data)
             .unwrap_or_else(|| panic!("ParryShield owner {owner:?} is not a live actor"));
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
-    }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-    ) {
-        // All four Original shield translators explicitly disable direction
-        // recomputation. These are
-        // posture-local animations: facing is controlled by Focus/the shield
-        // danger point before translation, and selecting the new order must
-        // not derive a fresh goal from its zero-valued destination.
-        let order = crate::engine::sequence_runtime::new_translation_order(
-            self.next_order_id,
-            order_type,
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::ParryingShield,
             (0.0, 0.0),
             false,
         );
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 }
 
@@ -1284,11 +1307,7 @@ impl EngineInner {
                         .element_terminated(seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
-                #[cfg(test)]
-                let test_life_before = self
-                    .get_entity(victim_id)
-                    .and_then(super::damage::test_human_life_points)
-                    .expect("sword damage test victim is human");
+                let damage_probe = super::damage::SwordDamageProbe::before(self, victim_id);
                 self.apply_sword_damage(
                     sim,
                     assets,
@@ -1298,16 +1317,7 @@ impl EngineInner {
                     sword_profile_idx,
                     (seq_id, elem_idx),
                 );
-                #[cfg(test)]
-                if let (Some(attacker_id), Some(strike)) = (origin, sword_strike) {
-                    super::damage::record_test_sword_damage_observation(
-                        self,
-                        victim_id,
-                        attacker_id,
-                        strike,
-                        test_life_before,
-                    );
-                }
+                damage_probe.after(self, victim_id, origin, sword_strike);
                 // Pushed falling or rolling marks the
                 // damage element NonInterruptable directly when those
                 // anims start.  Here, `queue_damage_anim` does the
@@ -1522,38 +1532,6 @@ mod shield_order_tests {
     use crate::sequence::{Sequence, SequenceElement, SequenceManager};
     use crate::{element::Command, sequence::SequenceState};
 
-    #[test]
-    fn translated_shield_orders_never_recompute_facing() {
-        for order_type in [
-            OrderType::RaisingShield,
-            OrderType::WaitingShield,
-            OrderType::LoweringShield,
-            OrderType::ParryingShield,
-        ] {
-            let mut sequence_manager = SequenceManager::new();
-            let mut sequence = Sequence::new();
-            sequence.append_element(SequenceElement::new_generic(1, Command::Wait, None));
-            let sequence_id = sequence_manager.launch_sequence(sequence);
-            let mut entities = Entities::new();
-            let mut next_order_id = 1;
-
-            ShieldCommandContext {
-                entities: &mut entities,
-                sequence_manager: &mut sequence_manager,
-                next_order_id: &mut next_order_id,
-            }
-            .push_order(sequence_id, 0, order_type);
-
-            let element = sequence_manager
-                .get_element(sequence_id, 0)
-                .expect("shield test sequence element");
-            assert_eq!(element.state, SequenceState::Todo);
-            assert_eq!(element.orders.len(), 1);
-            assert_eq!(element.orders[0].order_type, order_type);
-            assert!(!element.orders[0].compute_direction);
-        }
-    }
-
     fn lying_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {
             element: {
@@ -1588,7 +1566,14 @@ mod shield_order_tests {
         // The posture transition has already prepended this order. Translation
         // may append RaisingShield, but Original does not stand the actor up
         // until StandingUp itself executes and returns MotionState::Start.
-        context.push_order(sequence_id, 0, OrderType::StandingUp);
+        context.orders.push(
+            context.sequence_manager,
+            sequence_id,
+            0,
+            OrderType::StandingUp,
+            (0.0, 0.0),
+            false,
+        );
         context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
 
         assert_eq!(
@@ -1604,6 +1589,14 @@ mod shield_order_tests {
                 .map(|order| order.order_type)
                 .collect::<Vec<_>>(),
             [OrderType::StandingUp, OrderType::RaisingShield]
+        );
+        assert!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .all(|order| !order.compute_direction)
         );
     }
 
@@ -1644,6 +1637,15 @@ mod shield_order_tests {
                 .collect::<Vec<_>>(),
             [OrderType::WaitingShield]
         );
+        // Shield translation never recomputes facing.
+        assert!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .all(|order| !order.compute_direction)
+        );
     }
 
     #[test]
@@ -1678,6 +1680,7 @@ mod shield_order_tests {
                 .collect::<Vec<_>>(),
             [OrderType::ParryingShield]
         );
+        assert!(element.orders.iter().all(|order| !order.compute_direction));
         assert_eq!(
             entities
                 .get(owner)

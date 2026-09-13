@@ -1,6 +1,56 @@
 use super::*;
 
 impl EngineInner {
+    #[inline(never)]
+    fn trace_primary_swap_friend_apply(
+        frame: u32,
+        npc_id: EntityId,
+        friend_id: EntityId,
+        old_target: impl std::fmt::Debug,
+        new_target: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
+            frame,
+            npc_id.index(),
+            friend_id,
+            old_target,
+            new_target,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_consider_report_drain_start(
+        frame: u32,
+        npc_id: EntityId,
+        pending_mutations: &impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_mutations\":{:?}}}",
+            frame,
+            npc_id.index(),
+            pending_mutations,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_consider_report_drain_end(
+        frame: u32,
+        npc_id: EntityId,
+        bodies: &[crate::element::Detectable],
+    ) {
+        let body_ids = bodies
+            .iter()
+            .map(|detectable| detectable.element.map(EntityId::index))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "CONSIDERREPORT {{\"stage\":\"drain_end\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+            frame,
+            npc_id.index(),
+            body_ids
+        );
+    }
+
     #[cfg(test)]
     pub(in crate::engine) fn tick_enemy_ai(
         &mut self,
@@ -68,12 +118,7 @@ impl EngineInner {
         npc_id: EntityId,
     ) {
         self.debug_refresh_view_lifecycle("npc_tail_enter", npc_id, None);
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC owner {} disappeared before its fused legacy-slot envelope",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(npc_id, "NPC owner before its fused legacy-slot envelope");
         assert!(
             entity.ai_actor_data().is_some(),
             "fused AI owner {} has no AI actor data",
@@ -225,6 +270,32 @@ impl EngineInner {
         policy: crate::engine::ai::OwnerBoundaryPolicy,
         completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
+        let Some(mut drain) =
+            self.drain_pending_owner_prelude(sim, npc_id, assets, policy, completion_boundary)
+        else {
+            return;
+        };
+        self.drain_pending_swordfight_effects(sim, npc_id, assets, &mut drain);
+        self.drain_pending_focus_and_orders(sim, npc_id, assets, &mut drain);
+        self.drain_pending_guard_and_archery(npc_id, &drain);
+        self.drain_pending_unalert_charly_seekers(sim, npc_id, assets);
+        self.drain_pending_launches(sim, npc_id, assets, &mut drain);
+        self.drain_pending_detectable_mutations(npc_id, &drain);
+        self.drain_pending_coins_posture_and_alerts(sim, npc_id, assets, &drain);
+        self.drain_pending_panic_and_overview(sim, npc_id, assets, policy, &drain);
+    }
+
+    /// Owner work, direction goal, halt barrier, and the first post-Think
+    /// channel takes. `None` means the owner or its AI controller vanished
+    /// before the halt barrier; the drain then stops.
+    fn drain_pending_owner_prelude(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        completion_boundary: crate::engine::ai::CompletionBoundary,
+    ) -> Option<PendingDrainBarrier> {
         // Direct engine-owned AI calls also enter this drain. Close the
         // state-change callback boundary before consuming halt/effect/order work.
         self.drain_ai_owner_work_for_boundary_mode(
@@ -241,10 +312,10 @@ impl EngineInner {
         // Turn element; the subsequently selected action performs the turn.
         let direction_goal = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
+                return None;
             };
             let Some(ai) = entity.ai_controller_mut() else {
-                return;
+                return None;
             };
             ai.outbox.actor.take_direction_goal()
         };
@@ -273,10 +344,10 @@ impl EngineInner {
         // — the visual "stuck in running pose" symptom.
         let halt_count = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                return;
+                return None;
             };
             let Some(ai) = entity.ai_controller_mut() else {
-                return;
+                return None;
             };
             ai.outbox.actor.take_halt_count()
         };
@@ -298,14 +369,10 @@ impl EngineInner {
         // The halt application above is a real same-frame barrier: only now
         // take the prefixes that the original `go_to` path launches next.
         let preemption = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             ai.outbox.actor.take_movement_prefixes()
         };
 
@@ -314,14 +381,10 @@ impl EngineInner {
         // still enqueue effects that this pass observes at their Original
         // application point.
         let (effects, finish_lost_enemy_overview) = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             (
                 ai.outbox.actor.take_core(),
                 ai.outbox.actor.take_lost_enemy_overview_after_quit(),
@@ -336,6 +399,28 @@ impl EngineInner {
             "pending-drain owner {} queued a swordfight jump line without an engagement",
             npc_id.index()
         );
+        Some(PendingDrainBarrier {
+            halt_count,
+            preemption,
+            effects,
+            finish_lost_enemy_overview,
+        })
+    }
+
+    /// Swordfight exit, movement preemption prefixes, target stop,
+    /// attentive-mode requests and swordfight entry.
+    fn drain_pending_swordfight_effects(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        drain: &mut PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier {
+            preemption,
+            effects,
+            ..
+        } = drain;
 
         // Swordfight exit launches an explicit QUIT_SWORDFIGHT element. Do
         // not tear down the relationship directly here: the command owns
@@ -563,6 +648,24 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    /// Principal opponent, friend primary-target swaps, bow shot, focus,
+    /// eye reopening, instant direction, and the Face split around the
+    /// pending order launch.
+    fn drain_pending_focus_and_orders(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        drain: &mut PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier {
+            halt_count,
+            effects,
+            ..
+        } = drain;
+        let halt_count = *halt_count;
 
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = effects.set_principal {
@@ -577,14 +680,11 @@ impl EngineInner {
         // improving friend in the pass, not just the last one — so we
         // apply the whole queue here after the owner's AI tick ran.
         let debug_primary_swap = crate::ai_enemy::primary_swap_debug_enabled();
-        for (friend_id, new_target) in effects.friend_primary_target_swaps {
-            let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
-                panic!(
-                    "pending-drain NPC {} primary-target friend {} disappeared",
-                    npc_id.index(),
-                    friend_id.index()
-                )
-            });
+        for (friend_id, new_target) in std::mem::take(&mut effects.friend_primary_target_swaps) {
+            let friend = self.world.entities.expect_entity_mut(
+                friend_id,
+                format_args!("pending-drain NPC {} primary-target friend", npc_id.index()),
+            );
             let Entity::Soldier(friend) = friend else {
                 panic!(
                     "pending-drain NPC {} primary-target friend {} is not a soldier",
@@ -605,10 +705,9 @@ impl EngineInner {
                     npc_id.index(),
                 )
             {
-                eprintln!(
-                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
+                Self::trace_primary_swap_friend_apply(
                     self.control.frame_counter,
-                    npc_id.index(),
+                    npc_id,
                     friend_id,
                     friend_ai.primary_target,
                     new_target.get(),
@@ -762,6 +861,16 @@ impl EngineInner {
             // those draws by a frame.
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
         }
+    }
+
+    /// Guarded-PC reciprocity, deactivation, reported-to-officer writes,
+    /// bow-ammo refill and archery-reservation release.
+    fn drain_pending_guard_and_archery(
+        &mut self,
+        npc_id: crate::element::EntityId,
+        drain: &PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier { effects, .. } = drain;
 
         // Process pending guarded-PC assignment — `set_guarded_pc`. The AI
         // wrote its own `guarded_pc` field already; here we flip the
@@ -837,13 +946,15 @@ impl EngineInner {
         // `charly.set_reported_to_officer(false)` call inside
         // `missed_charly_alert`.  Writes the other NPC's
         // `EnemyAi::reported_to_officer` flag.
-        let reported_updates = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(|ai| std::mem::take(&mut ai.outbox.actor.set_reported_to_officer))
-            .unwrap_or_else(|| panic!("report-update owner {} lost its AI", npc_id.index()));
+        let reported_updates = std::mem::take(
+            &mut self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("report-update owner"))
+                .outbox
+                .actor
+                .set_reported_to_officer,
+        );
         for (target_handle, value) in reported_updates {
             let target_id = self.expect_human_id_for_ai_handle(
                 target_handle.get(),
@@ -928,7 +1039,15 @@ impl EngineInner {
                 sector.decrement_owner_counter();
             }
         }
+    }
 
+    /// Nearby-searcher stand-down (`CALL_CHARLY_IS_BACK` delivery).
+    fn drain_pending_unalert_charly_seekers(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+    ) {
         // Process pending nearby-searcher stand-down — walks all
         // soldier NPCs in the same camp and for each candidate that
         //   - is alive / active / not the seeker / not the charly,
@@ -1018,28 +1137,20 @@ impl EngineInner {
                     let detects_charly = self
                         .world
                         .entities
-                        .get(other_id)
-                        .and_then(Entity::enemy_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "nearby-searcher stand-down candidate {} lost EnemyAi",
-                                other_id.index()
-                            )
-                        })
+                        .expect_enemy_ai(
+                            other_id,
+                            format_args!("nearby-searcher stand-down candidate"),
+                        )
                         .is_detecting_180_degrees(charly_handle, &other_ctx);
                     let detects_me_branch = !detects_charly
                         && !charly_is_self
                         && self
                             .world
                             .entities
-                            .get(other_id)
-                            .and_then(Entity::enemy_ai)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "nearby-searcher stand-down candidate {} lost EnemyAi",
-                                    other_id.index()
-                                )
-                            })
+                            .expect_enemy_ai(
+                                other_id,
+                                format_args!("nearby-searcher stand-down candidate"),
+                            )
                             .is_detecting_180_degrees(npc_id.index(), &other_ctx);
                     other_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
                     if !(detects_charly || detects_me_branch) {
@@ -1060,10 +1171,22 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    /// Sequence/element launches, cross-actor speech, shield refresh,
+    /// sideways looks, and beggar detectable stripping.
+    fn drain_pending_launches(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        drain: &mut PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier { effects, .. } = drain;
 
         // Process pending launch commands — create and launch
         // sequence elements for commands the AI wants to execute.
-        for cmd in effects.launch_commands {
+        for cmd in std::mem::take(&mut effects.launch_commands) {
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(npc_id));
             let mut sequence = crate::sequence::Sequence::new();
             sequence.append_element(elem);
@@ -1078,7 +1201,7 @@ impl EngineInner {
         // Equivalent to a `launch_sequence_element(cmd,
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
-        for (target_handle, cmd) in effects.launch_on_target {
+        for (target_handle, cmd) in std::mem::take(&mut effects.launch_on_target) {
             let target_id =
                 self.expect_human_id_for_ai_handle(target_handle.get(), "AI command target");
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
@@ -1090,23 +1213,12 @@ impl EngineInner {
         // then synchronously calls Say on that civilian. Queue through the
         // target AI's ordinary owner-work path so all Say gates, sound
         // requests, and automatic forbids remain authoritative.
-        for (target_handle, remark) in effects.say_on_target {
+        for (target_handle, remark) in std::mem::take(&mut effects.say_on_target) {
             let target_id =
                 self.expect_human_id_for_ai_handle(target_handle.get(), "AI speech target");
-            let target = self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                panic!(
-                    "AI speech target {} disappeared before Say",
-                    target_id.index()
-                )
-            });
-            target
-                .ai_controller_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI speech target {} has no AI controller",
-                        target_id.index()
-                    )
-                })
+            self.world
+                .entities
+                .expect_ai_controller_mut(target_id, format_args!("AI speech target before Say"))
                 .say(remark);
             self.drain_ai_owner_work_for(sim, assets, target_id);
         }
@@ -1120,7 +1232,7 @@ impl EngineInner {
         // Close that exact boundary for each sequence: batching the drain
         // until after the NPC tail lets a Timer/LockUser successor escape the
         // owner's legacy update slot.
-        for seq in effects.launch_sequences {
+        for seq in std::mem::take(&mut effects.launch_sequences) {
             self.launch_sequence(seq);
             self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
                 .unwrap_or_else(|error| {
@@ -1132,11 +1244,7 @@ impl EngineInner {
         }
 
         if effects.raise_shield_immediately {
-            let entity = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("instant shield owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity_mut(npc_id, "instant shield owner");
             entity.set_posture(crate::element::Posture::Upright);
             entity
                 .actor_data_mut()
@@ -1194,13 +1302,10 @@ impl EngineInner {
         // drops the PC and stops firing duplicate `EventSeesBeggar`
         // stimuli on subsequent frames.
         let delete_beggar_requests: Vec<EntityId> = {
-            let entity =
-                self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!("pending-drain AI owner {} disappeared", npc_id.index())
-                });
-            let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!("pending-drain owner {} lost AI actor data", npc_id.index())
-            });
+            let ai_actor = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("pending-drain AI owner"));
             match ai_actor.ai_brain.base_mut() {
                 Some(ai) => std::mem::take(&mut ai.outbox.actor.delete_beggar_for_all_npc),
                 None => Vec::new(),
@@ -1209,6 +1314,15 @@ impl EngineInner {
         for beggar_id in delete_beggar_requests {
             self.delete_beggar_detectable_for_all_npc(beggar_id);
         }
+    }
+
+    /// Detectable-list mutations with their DETMUT / consider-report traces.
+    fn drain_pending_detectable_mutations(
+        &mut self,
+        npc_id: crate::element::EntityId,
+        drain: &PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier { effects, .. } = drain;
 
         // Apply detectable mutations in statement order without introducing a
         // new owner/reentrant barrier. Classification is read before borrowing
@@ -1218,11 +1332,10 @@ impl EngineInner {
             use crate::element::DetectableType;
             if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
             {
-                eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_mutations\":{:?}}}",
+                Self::trace_consider_report_drain_start(
                     self.control.frame_counter,
-                    npc_id.index(),
-                    effects.detectable_mutations,
+                    npc_id,
+                    &effects.detectable_mutations,
                 );
             }
             let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
@@ -1298,9 +1411,7 @@ impl EngineInner {
                 })
                 .collect::<Vec<_>>();
             let (npc_camp, npc_uses_enemy_combat_ai) = {
-                let owner = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("pending-drain owner {} disappeared", npc_id.index())
-                });
+                let owner = self.expect_entity(npc_id, "pending-drain owner");
                 (owner.camp(), owner.enemy_ai().is_some())
             };
             let npc = self.world.entities.expect_ai_actor_data_mut(
@@ -1393,18 +1504,25 @@ impl EngineInner {
             }
             if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
             {
-                let body_ids = npc.detectable_lists[DetectableType::Body as usize]
-                    .iter()
-                    .map(|detectable| detectable.element.map(EntityId::index))
-                    .collect::<Vec<_>>();
-                eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_end\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+                Self::trace_consider_report_drain_end(
                     self.control.frame_counter,
-                    npc_id.index(),
-                    body_ids
+                    npc_id,
+                    &npc.detectable_lists[DetectableType::Body as usize],
                 );
             }
         }
+    }
+
+    /// Nearby-coin forgetting, posture change, enemy blink reset, and the
+    /// indoor enemy alert.
+    fn drain_pending_coins_posture_and_alerts(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        drain: &PendingDrainBarrier,
+    ) {
+        let PendingDrainBarrier { effects, .. } = drain;
 
         // Process pending nearby-coin forgetting request — the first
         // half of `forget_all_nearby_coins`: walk the
@@ -1494,14 +1612,10 @@ impl EngineInner {
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
         let blink_all = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("pending-drain NPC {} lost its AI", npc_id.index()));
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             std::mem::take(&mut ai.outbox.actor.blink_all_enemies)
         };
         if blink_all {
@@ -1542,6 +1656,19 @@ impl EngineInner {
         if in_house_alert {
             self.dispatch_enemy_in_house_alert(sim, npc_id, assets);
         }
+    }
+
+    /// Synchronous panic startup/continuation, panic seek fallback,
+    /// script-driven area search, and the lost-enemy battle overview.
+    fn drain_pending_panic_and_overview(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        npc_id: crate::element::EntityId,
+        assets: &LevelAssets,
+        policy: crate::engine::ai::OwnerBoundaryPolicy,
+        drain: &PendingDrainBarrier,
+    ) {
+        let finish_lost_enemy_overview = drain.finish_lost_enemy_overview;
 
         // Drain any pending panic request from the enemy AI — the
         // analogue of the civilian-side drain that runs inside
@@ -1563,11 +1690,7 @@ impl EngineInner {
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1582,11 +1705,7 @@ impl EngineInner {
 
         if observe_after_panic {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity(npc_id, "panic continuation owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1621,11 +1740,7 @@ impl EngineInner {
             // Panic startup above can mutate the owner and world; do not reuse
             // its context snapshot at this later synchronous boundary.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1658,11 +1773,7 @@ impl EngineInner {
             // world. Script-driven area search gets a fresh owner snapshot and tick
             // data at its own original-game evaluation boundary.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1682,11 +1793,7 @@ impl EngineInner {
             // condolence. Resume the outer EVENT_OUTOFVIEW handler at the
             // following battle-overview evaluation with a fresh live view.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity(npc_id, "lost-enemy overview owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1707,4 +1814,15 @@ impl EngineInner {
             self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
         }
     }
+}
+
+/// Locals taken at the first post-Think barrier of
+/// [`EngineInner::drain_pending_for_npc_boundary_mode`] that its later phases
+/// consume. Transient per-drain state (no serde: the effect channels it holds
+/// are runtime-only and never persisted).
+struct PendingDrainBarrier {
+    halt_count: u8,
+    preemption: crate::ai::AiActorPreemptionEffects,
+    effects: crate::ai::AiActorCoreEffects,
+    finish_lost_enemy_overview: bool,
 }

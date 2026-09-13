@@ -264,7 +264,9 @@ fn turn_context_sets_goal_without_snapping_and_books_turning() {
     let barrier = TurnCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(owner, Command::Turn, seq_id, 0);
 
@@ -312,7 +314,9 @@ fn wait_timer_context_arms_actor_and_books_upright_idle() {
     let barrier = WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -487,7 +491,9 @@ fn frozen_all_wait_timer_still_completes_in_owner_slot() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -832,7 +838,9 @@ fn npc_state_context_preserves_menace_order_and_reaches_splice_barrier() {
 
     let barrier = NpcStateCommandContext {
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(Command::StartMenace, seq_id, 0);
 
@@ -881,7 +889,9 @@ fn npc_attention_context_uses_alerted_look_and_reaches_splice_barrier() {
     let barrier = NpcAttentionCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
     }
     .dispatch(owner, Command::LookLeft, seq_id, 0);
 
@@ -912,7 +922,9 @@ fn stealth_context_crouches_and_preserves_terminated_order() {
     let barrier = StealthCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         titbit_manager: &mut engine.feedback.titbit_manager,
         profiles: &assets.profile_manager,
     }
@@ -954,7 +966,9 @@ fn wait_timer_context_rejects_missing_timer_contextually() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -973,7 +987,9 @@ fn wait_context_rejects_stale_owner_contextually() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::Wait, seq_id, 0);
@@ -1033,7 +1049,9 @@ fn direct_ability_context_starts_whistle_and_reaches_splice_barrier() {
     let barrier = DirectAbilityCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WhistleCmd, true, seq_id, 0);
@@ -1075,7 +1093,9 @@ fn direct_ability_context_preserves_eat_no_ammo_skip_barrier() {
     let barrier = DirectAbilityCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::EatCmd, false, seq_id, 0);
@@ -1103,7 +1123,9 @@ fn direct_ability_context_preserves_missing_throw_target_skip_barrier() {
     let barrier = DirectAbilityCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::ThrowApple, true, seq_id, 0);
@@ -1238,7 +1260,9 @@ fn lift_wait_context_keeps_blocked_lift_in_progress_and_reaches_splice() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -1305,7 +1329,9 @@ fn lift_wait_context_rejects_crenel_lift_type_contextually() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -1349,7 +1375,9 @@ fn lift_wait_context_reserves_direction_before_terminating() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -1447,7 +1475,9 @@ fn lift_wait_reservation_is_consumed_by_production_leave_callback() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -1534,7 +1564,9 @@ fn frozen_all_lift_wait_rechecks_and_promotes_successor_in_authorizing_slot() {
     WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(owner, Command::WaitFreeLift, seq_id, 0);

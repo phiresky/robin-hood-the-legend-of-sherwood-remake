@@ -38,6 +38,18 @@ fn is_within_smalltalk_strike_range(maximal_range: u16, squared_distance: f32) -
     maximal_range * maximal_range >= squared_distance as u32
 }
 
+/// Victim state produced by [`EngineInner::parade_propose_counter_action`]
+/// and read by the reaction phases of
+/// [`EngineInner::consider_to_begin_parade`]. Transient per-call state,
+/// never persisted.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct ParadeVictim {
+    victim_fighting_ability: u16,
+    victim_pos: crate::coordinates::MapPoint,
+    victim_layer: u16,
+    principal_opponent: Option<EntityId>,
+}
+
 #[derive(Clone, Copy)]
 struct ReactiveStepBackDebug {
     frame: u32,
@@ -45,14 +57,20 @@ struct ReactiveStepBackDebug {
 }
 
 fn reactive_step_back_debug_config() -> Option<ReactiveStepBackDebug> {
-    static CONFIG: std::sync::OnceLock<Option<ReactiveStepBackDebug>> = std::sync::OnceLock::new();
-    *CONFIG.get_or_init(|| {
-        std::env::var_os("PARITY_DEBUG_REACTIVE_STEP_BACK")?;
-        let parse_required = crate::engine::diagnostics::required_u32_env;
-        Some(ReactiveStepBackDebug {
-            frame: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME"),
-            creation_order: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER"),
-        })
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_REACTIVE_STEP_BACK",
+            [
+                "PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME",
+                "PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled().then(|| ReactiveStepBackDebug {
+        frame: gate.required(0),
+        creation_order: gate.required(1),
     })
 }
 
@@ -76,6 +94,371 @@ pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
 
 pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
     reactive_sword_debug_gate().matches([None, Some(creation_order)])
+}
+
+/// `[REACTIVE_SWORD frame co victim attacker <detail>]`.
+#[inline(never)]
+fn trace_reactive_sword(
+    frame: u32,
+    creation_order: u32,
+    [victim, attacker]: [EntityId; 2],
+    detail: std::fmt::Arguments<'_>,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} {detail}]",
+        frame,
+        creation_order,
+        victim.index(),
+        attacker.index(),
+    );
+}
+
+/// Same line shape as [`trace_reactive_sword`], labelled by a proposal debug.
+#[inline(never)]
+pub(super) fn trace_reactive_sword_for(
+    debug: crate::combat::SwordStrikeProposalDebug,
+    detail: std::fmt::Arguments<'_>,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} {detail}]",
+        debug.frame, debug.victim_creation_order, debug.victim, debug.attacker,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_sword_nearby_owner(
+    debug: crate::combat::SwordStrikeProposalDebug,
+    index: usize,
+    target_index: u32,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby_owner index={} target={}]",
+        debug.frame, debug.victim_creation_order, debug.victim, index, target_index,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_step_back_goal_result(
+    debug: ReactiveStepBackDebug,
+    [victim_id, attacker_id]: [EntityId; 2],
+    [victim_ai_pos, attacker_ai_pos]: [crate::ai::Position; 2],
+    [good_dist, min_dist]: [u16; 2],
+    step_back_goal: impl std::fmt::Debug,
+) {
+    eprintln!(
+        "REACTIVE_STEP_BACK frame={} co={} phase=goal_result victim={} attacker={} victim_position=({:08x},{:08x},sector={:?},level={}) attacker_position=({:08x},{:08x}) good_distance={} min_distance={} result={:?}",
+        debug.frame,
+        debug.creation_order,
+        victim_id.index(),
+        attacker_id.index(),
+        victim_ai_pos.x.to_bits(),
+        victim_ai_pos.y.to_bits(),
+        victim_ai_pos.sector,
+        victim_ai_pos.level,
+        attacker_ai_pos.x.to_bits(),
+        attacker_ai_pos.y.to_bits(),
+        good_dist,
+        min_dist,
+        step_back_goal,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_step_back_after_goto(
+    debug: ReactiveStepBackDebug,
+    victim_id: EntityId,
+    ai: &crate::ai_enemy::EnemyAi,
+    step_back_goal: crate::ai::Position,
+    flags: impl std::fmt::Debug,
+) {
+    eprintln!(
+        "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
+        debug.frame,
+        debug.creation_order,
+        victim_id.index(),
+        ai.base.current_state,
+        ai.base.current_substate,
+        step_back_goal.x.to_bits(),
+        step_back_goal.y.to_bits(),
+        step_back_goal.sector,
+        step_back_goal.level,
+        flags,
+        ai.base.couldnt_reachpoint,
+        ai.base.already_on_point,
+        ai.base.completion_latch_inside_think,
+        ai.base.outbox.actor.orders.len(),
+        ai.base.outbox.reentrant.owner_work,
+    );
+}
+
+impl EngineInner {
+    /// The victim's creation order when the reactive-sword diagnostic selects
+    /// it on `frame`. The frame filter is tested before identity is resolved.
+    fn reactive_sword_debug_creation_order(&self, frame: u32, victim: EntityId) -> Option<u32> {
+        if !reactive_sword_debug_frame_matches(frame) {
+            return None;
+        }
+        let creation_order = self.world.original_creation_order(victim);
+        reactive_sword_debug_creation_order_matches(creation_order).then_some(creation_order)
+    }
+
+    #[inline(never)]
+    pub(super) fn trace_reactive_sword_proposal_boundary(
+        &self,
+        debug: crate::combat::SwordStrikeProposalDebug,
+        caller: &str,
+        rng_before: impl std::fmt::Debug,
+        proposed: impl std::fmt::Debug,
+    ) {
+        trace_reactive_sword_for(
+            debug,
+            format_args!(
+                "phase=proposal_boundary caller={caller} rng_before={:?} rng_after={:?} result={:?}",
+                rng_before,
+                self.control.rng.original_replay_cursor(),
+                proposed,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_tiredness_weak_threshold_read(
+        &self,
+        entity_id: EntityId,
+        tiredness: impl std::fmt::Display,
+        tired: bool,
+    ) {
+        let creation_order = self.world.original_creation_order(entity_id);
+        if !crate::combat::tiredness_debug_matches(creation_order) {
+            return;
+        }
+        eprintln!(
+            "RUST_TIREDNESS frame={} co={creation_order} site=weak_threshold_read \
+             tiredness={tiredness} verdict={}",
+            self.control.frame_counter,
+            if tired { "tired" } else { "ok" }
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_sword_warning(
+        &self,
+        [frame, creation_order]: [u32; 2],
+        [victim_id, attacker_id]: [EntityId; 2],
+        strike: impl std::fmt::Debug,
+        npc_substate: Option<crate::ai::Substate>,
+        [is_swordfighting, in_swordfight_substate]: [bool; 2],
+    ) {
+        let known = self
+            .get_entity(victim_id)
+            .and_then(Entity::enemy_ai)
+            .map(|ai| {
+                [
+                    ai.known_enemy_strike_1,
+                    ai.known_enemy_strike_2,
+                    ai.known_enemy_strike_3,
+                ]
+            });
+        let attacker_command_strike = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(attacker_id)
+            .and_then(|(seq_id, elem_idx)| {
+                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+            })
+            .and_then(|element| SwordStrike::from_command(element.command));
+        trace_reactive_sword(
+            frame,
+            creation_order,
+            [victim_id, attacker_id],
+            format_args!(
+                "phase=warning strike={:?} attacker_command_strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}",
+                strike,
+                attacker_command_strike,
+                npc_substate,
+                is_swordfighting,
+                in_swordfight_substate,
+                known,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_sword_parry_timing(
+        &self,
+        debug: crate::combat::SwordStrikeProposalDebug,
+        victim_id: EntityId,
+    ) {
+        let sprite = &self
+            .get_entity(victim_id)
+            .expect("reactive sword timing debug victim disappeared")
+            .element_data()
+            .sprite;
+        let action = crate::order::OrderType::TransitionWaitingSwordParryingSword;
+        let timing = |conversion: &[u16], scripts: &[crate::sprite_script::SpriteScript]| {
+            let row = conversion.get(action as usize).copied()?;
+            if row == crate::sprite_script::UNMAPPED {
+                return None;
+            }
+            let script = scripts.get(row as usize)?;
+            let frame_count = script.frame_ids.len();
+            let waits = script
+                .delays
+                .iter()
+                .copied()
+                .take((script.action_done as usize + 1).min(frame_count))
+                .collect::<Vec<_>>();
+            let startup = waits.iter().copied().fold(0u16, u16::saturating_add);
+            Some((row, script.action_done, frame_count, waits, startup))
+        };
+        let primary = timing(&sprite.conversion, &sprite.scripts);
+        let alternate = sprite
+            .alternate_conversion
+            .as_deref()
+            .zip(sprite.alternate_scripts.as_deref())
+            .and_then(|(conversion, scripts)| timing(conversion, scripts));
+        trace_reactive_sword_for(
+            debug,
+            format_args!(
+                "phase=parry_timing active_alternate={} primary_key={:?} alternate_key={:?} current={:?} primary={:?} alternate={:?}",
+                sprite.use_alternate_profile,
+                sprite.profile_cache_key,
+                sprite.alternate_profile_cache_key,
+                if sprite.use_alternate_profile {
+                    alternate.as_ref()
+                } else {
+                    primary.as_ref()
+                },
+                primary,
+                alternate,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_step_back_parry_selected(
+        &self,
+        debug: ReactiveStepBackDebug,
+        [victim_id, attacker_id]: [EntityId; 2],
+        victim_fighting_ability: impl std::fmt::Display,
+        push_back_distance: u16,
+    ) {
+        let victim = self.expect_entity(victim_id, "reactive step-back diagnostic victim");
+        let ai = self.world.entities.expect_ai_controller(
+            victim_id,
+            format_args!("reactive step-back diagnostic victim"),
+        );
+        eprintln!(
+            "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
+            debug.frame,
+            debug.creation_order,
+            victim_id.index(),
+            attacker_id.index(),
+            victim_fighting_ability,
+            push_back_distance,
+            ai.current_state,
+            ai.current_substate,
+            victim.element_data().position_map().x.to_bits(),
+            victim.element_data().position_map().y.to_bits(),
+            victim.element_data().sector(),
+            victim.element_data().layer(),
+            victim
+                .actor_data()
+                .and_then(|actor| actor.installed_order)
+                .map(|order| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd),
+            self.actor_command(victim_id),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.completion_latch_inside_think,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_step_back_after_drain(
+        &self,
+        debug: ReactiveStepBackDebug,
+        victim_id: EntityId,
+    ) {
+        let victim = self.expect_entity(
+            victim_id,
+            "reactive step-back diagnostic victim after drain",
+        );
+        let ai = self.world.entities.expect_ai_controller(
+            victim_id,
+            format_args!("reactive step-back diagnostic victim after drain"),
+        );
+        eprintln!(
+            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
+            debug.frame,
+            debug.creation_order,
+            victim_id.index(),
+            ai.current_state,
+            ai.current_substate,
+            victim
+                .actor_data()
+                .and_then(|actor| actor.installed_order)
+                .map(|order| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd),
+            self.actor_command(victim_id),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.completion_latch_inside_think,
+            ai.outbox.reentrant.self_stimuli,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    /// `[attacker frames, ring-in frames]`.
+    #[inline(never)]
+    fn trace_parade_timer(
+        &self,
+        [victim_id, attacker_id]: [EntityId; 2],
+        animation_strike: SwordStrike,
+        [attacker_anim_frames, strike_frames]: [u32; 2],
+    ) {
+        let anim = strike_to_animation(animation_strike);
+        let sprite = &self
+            .expect_entity(attacker_id, "parade timer diagnostic attacker")
+            .element_data()
+            .sprite;
+        let row = sprite.current_conversion()[anim as usize];
+        let waits = |r: u16| {
+            (0..sprite.num_frames_for_row(r))
+                .map(|i| sprite.wait_time(r, i))
+                .collect::<Vec<_>>()
+        };
+        eprintln!(
+            "[PARADE_TIMER] frame={} victim_co={:?} attacker_co={:?} animation={anim:?} conversion_row={row} action_done={} num_frames={} waits={:?} live_row={} live_frame={} frames={attacker_anim_frames} ring_in={strike_frames}",
+            self.control.frame_counter,
+            self.world.original_creation_order(victim_id),
+            self.world.original_creation_order(attacker_id),
+            sprite.action_done_for_row(row),
+            sprite.num_frames_for_row(row),
+            waits(row),
+            sprite.current_row,
+            sprite.current_frame,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_bad_experience(
+        &self,
+        soldier_id: EntityId,
+        strike: SwordStrike,
+        fighting_ability: impl std::fmt::Display,
+    ) {
+        let creation_order = self.world.original_creation_order(soldier_id);
+        eprintln!(
+            "[BAD_EXPERIENCE frame={} co={} soldier={} strike={:?} ability={}]",
+            self.control.frame_counter,
+            creation_order,
+            soldier_id.index(),
+            strike,
+            fighting_ability,
+        );
+    }
 }
 
 pub(super) fn opponent_sword_strike_time_limit(
@@ -405,9 +788,7 @@ impl EngineInner {
         // Read all the geometry / profile data we need without holding
         // a borrow into self.world.entities.
         let snapshot = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation distance owner {entity_id:?} is missing")
-            });
+            let entity = self.expect_entity(entity_id, "swordfight evaluation distance owner");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("swordfight evaluation distance owner {entity_id:?} is not human")
             });
@@ -539,11 +920,10 @@ impl EngineInner {
         }
 
         // ── Distance branch ───────────────────────────────────────
-        let opp = self.get_entity(principal_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation distance owner {entity_id:?} references missing principal {principal_id:?}"
-            )
-        });
+        let opp = self.world.entities.expect_entity(
+            principal_id,
+            format_args!("swordfight evaluation distance owner {entity_id:?} principal"),
+        );
         let opp_pos_3d = opp.element_data().position();
         let opp_pos_map = opp.element_data().position_map();
         let opp_sector = opp
@@ -709,9 +1089,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let entity = self
-            .get_entity(entity_id)
-            .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is missing"));
+        let entity = self.expect_entity(entity_id, "WaitingSword Execute owner");
         let human = entity
             .human_data()
             .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is not human"));
@@ -802,18 +1180,16 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         let opponents = self
-            .get_entity(entity_id)
-            .unwrap_or_else(|| panic!("swordfight evaluation owner {entity_id:?} is missing"))
+            .expect_entity(entity_id, "swordfight evaluation owner")
             .human_data()
             .unwrap_or_else(|| panic!("swordfight evaluation owner {entity_id:?} is not human"))
             .opponents
             .clone();
         for opponent_id in opponents.iter().copied() {
-            let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} references missing opponent {opponent_id:?}"
-                )
-            });
+            let opponent = self.world.entities.expect_entity(
+                opponent_id,
+                format_args!("swordfight evaluation owner {entity_id:?} opponent"),
+            );
             assert!(
                 opponent.human_data().is_some(),
                 "swordfight evaluation owner {entity_id:?} opponent {opponent_id:?} is not human"
@@ -831,18 +1207,12 @@ impl EngineInner {
 
         let first_principal = opponents[0];
         let principal_is_swordfighting = !self
-            .get_entity(first_principal)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} vanished"
-                )
-            })
-            .human_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} is not human"
-                )
-            })
+            .world
+            .entities
+            .expect_human_data(
+                first_principal,
+                format_args!("swordfight evaluation owner {entity_id:?} principal"),
+            )
             .opponents
             .is_empty();
         if !principal_is_swordfighting {
@@ -850,9 +1220,8 @@ impl EngineInner {
         }
 
         let (self_pos, self_sector, self_uber, tiredness, is_pc, num_opponents) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation owner {entity_id:?} vanished before snapshot")
-            });
+            let entity =
+                self.expect_entity(entity_id, "swordfight evaluation owner before snapshot");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("swordfight evaluation owner {entity_id:?} lost human data")
             });
@@ -879,11 +1248,12 @@ impl EngineInner {
             )
         };
         let (principal_pos, principal_sector, principal_uber) = {
-            let principal = self.get_entity(first_principal).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} vanished before range check"
-                )
-            });
+            let principal = self.world.entities.expect_entity(
+                first_principal,
+                format_args!(
+                    "swordfight evaluation owner {entity_id:?} principal before range check"
+                ),
+            );
             let uber = required_hth_weapon_profile(
                 principal,
                 first_principal,
@@ -958,20 +1328,12 @@ impl EngineInner {
             return;
         }
 
-        {
-            let creation_order = self.world.original_creation_order(entity_id);
-            if crate::combat::tiredness_debug_matches(creation_order) {
-                eprintln!(
-                    "RUST_TIREDNESS frame={} co={creation_order} site=weak_threshold_read \
-                     tiredness={tiredness} verdict={}",
-                    self.control.frame_counter,
-                    if tiredness >= TIREDNESS_WEAK_THRESHOLD {
-                        "tired"
-                    } else {
-                        "ok"
-                    }
-                );
-            }
+        if crate::combat::tiredness_debug_enabled() {
+            self.trace_tiredness_weak_threshold_read(
+                entity_id,
+                tiredness,
+                tiredness >= TIREDNESS_WEAK_THRESHOLD,
+            );
         }
         if tiredness >= TIREDNESS_WEAK_THRESHOLD {
             self.launch_element(crate::sequence::SequenceElement::new(
@@ -1000,11 +1362,10 @@ impl EngineInner {
                     "swordfight evaluation owner {entity_id:?} lost its principal after selection"
                 )
             });
-        let principal = self.get_entity(principal_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation owner {entity_id:?} selected missing principal {principal_id:?}"
-            )
-        });
+        let principal = self.world.entities.expect_entity(
+            principal_id,
+            format_args!("swordfight evaluation owner {entity_id:?} selected principal"),
+        );
         let principal_human = principal.human_data().unwrap_or_else(|| {
             panic!(
                 "swordfight evaluation owner {entity_id:?} selected non-human principal {principal_id:?}"
@@ -1029,35 +1390,33 @@ impl EngineInner {
                 });
             if has_initiative {
                 if received {
-                    self.get_entity_mut(entity_id)
-                        .and_then(Entity::human_data_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "swordfight evaluation owner {entity_id:?} vanished while consuming initiative"
-                            )
-                        })
+                    self.world
+                        .entities
+                        .expect_human_data_mut(
+                            entity_id,
+                            format_args!("swordfight evaluation owner while consuming initiative"),
+                        )
                         .received_smalltalk_initiative = false;
                 } else {
                     let loses =
                         crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
                             <= u32::from(relative_ability);
                     if loses || self.can_he_kill_me_but_me_not(entity_id, principal_id, assets) {
-                        self.get_entity_mut(entity_id)
-                            .and_then(Entity::human_data_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "swordfight evaluation owner {entity_id:?} vanished during initiative transfer"
-                                )
-                            })
+                        self.world
+                            .entities
+                            .expect_human_data_mut(
+                                entity_id,
+                                format_args!(
+                                    "swordfight evaluation owner during initiative transfer"
+                                ),
+                            )
                             .smalltalk_initiative = false;
-                        let opponent_human = self
-                            .get_entity_mut(principal_id)
-                            .and_then(Entity::human_data_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "swordfight evaluation owner {entity_id:?} principal {principal_id:?} vanished during initiative transfer"
-                                )
-                            });
+                        let opponent_human = self.world.entities.expect_human_data_mut(
+                            principal_id,
+                            format_args!(
+                                "swordfight evaluation owner {entity_id:?} principal during initiative transfer"
+                            ),
+                        );
                         opponent_human.smalltalk_initiative = true;
                         opponent_human.received_smalltalk_initiative = true;
                         return;
@@ -1073,29 +1432,30 @@ impl EngineInner {
             nonmutual_gate_roll = Some(roll);
             if roll >= 10 {
                 let frame = self.control.frame_counter;
-                if reactive_sword_debug_frame_matches(frame) {
-                    let creation_order = self.world.original_creation_order(entity_id);
-                    if reactive_sword_debug_creation_order_matches(creation_order) {
-                        eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}]",
-                            frame,
-                            creation_order,
-                            entity_id.index(),
-                            principal_id.index(),
+                if let Some(creation_order) =
+                    self.reactive_sword_debug_creation_order(frame, entity_id)
+                {
+                    trace_reactive_sword(
+                        frame,
+                        creation_order,
+                        [entity_id, principal_id],
+                        format_args!(
+                            "phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}",
                             roll,
                             is_pc,
                             is_pc && self.selected_hero_ids().contains(&entity_id),
-                        );
-                    }
+                        ),
+                    );
                 }
                 return;
             }
         }
 
         let (self_pos, self_max, selected_pc) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation owner {entity_id:?} vanished before strike selection")
-            });
+            let entity = self.expect_entity(
+                entity_id,
+                "swordfight evaluation owner before strike selection",
+            );
             let max = required_hth_weapon_profile(
                 entity,
                 entity_id,
@@ -1110,12 +1470,14 @@ impl EngineInner {
             )
         };
         let principal_pos = self
-            .get_entity(principal_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {principal_id:?} vanished before strike selection"
-                )
-            })
+            .world
+            .entities
+            .expect_entity(
+                principal_id,
+                format_args!(
+                    "swordfight evaluation owner {entity_id:?} principal before strike selection"
+                ),
+            )
             .element_data()
             .position();
         let dx = principal_pos.x - self_pos.x;
@@ -1123,22 +1485,16 @@ impl EngineInner {
         let dz = principal_pos.z - self_pos.z;
         let near = is_within_smalltalk_strike_range(self_max, dx * dx + dy * dy + dz * dz);
         let frame = self.control.frame_counter;
-        if reactive_sword_debug_frame_matches(frame) {
-            let creation_order = self.world.original_creation_order(entity_id);
-            if reactive_sword_debug_creation_order_matches(creation_order) {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}]",
-                    frame,
-                    creation_order,
-                    entity_id.index(),
-                    principal_id.index(),
-                    mutual,
-                    nonmutual_gate_roll,
-                    near,
-                    is_pc,
-                    selected_pc,
-                );
-            }
+        if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, entity_id) {
+            trace_reactive_sword(
+                frame,
+                creation_order,
+                [entity_id, principal_id],
+                format_args!(
+                    "phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}",
+                    mutual, nonmutual_gate_roll, near, is_pc, selected_pc,
+                ),
+            );
         }
         if !near {
             self.update_swordfight_distance(sim, assets, entity_id);
@@ -1156,10 +1512,7 @@ impl EngineInner {
 
         if let Some(destination) = self.is_step_back_needed(sim, entity_id, assets) {
             let layer = self
-                .get_entity(entity_id)
-                .unwrap_or_else(|| {
-                    panic!("swordfight evaluation step-back owner {entity_id:?} is missing")
-                })
+                .expect_entity(entity_id, "swordfight evaluation step-back owner")
                 .element_data()
                 .layer();
             // Do not publish `last_motion_was_step_back_in_combat` merely
@@ -1228,9 +1581,7 @@ impl EngineInner {
         target_id: EntityId,
     ) -> bool {
         // Skip if PC already has an active strike in flight.
-        let pc = self.get_entity(pc_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation strike proposal PC {pc_id:?} is missing")
-        });
+        let pc = self.expect_entity(pc_id, "swordfight evaluation strike proposal PC");
         let already_striking = self
             .orders
             .sequence_manager
@@ -1295,18 +1646,10 @@ impl EngineInner {
                     crate::order::OrderType::TransitionWaitingSwordParryingSword,
                 ) as i16
             });
-        self.get_entity(target_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation strike proposal PC {pc_id:?} references missing target {target_id:?}"
-                )
-            })
-            .actor_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
-                )
-            });
+        self.world.entities.expect_actor_data(
+            target_id,
+            format_args!("swordfight evaluation strike proposal PC {pc_id:?} target"),
+        );
         let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(pc_id, target_id);
 
         // Build the nearby-victim list (same shape as the soldier path).
@@ -1362,15 +1705,11 @@ impl EngineInner {
         );
         self.apply_strike_selection_sweep_rebase(assets, pc_id, sweep_rebase);
         if let Some(debug) = debug {
-            eprintln!(
-                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_evaluate rng_before={:?} rng_after={:?} result={:?}]",
-                debug.frame,
-                debug.victim_creation_order,
-                debug.victim,
-                debug.attacker,
+            self.trace_reactive_sword_proposal_boundary(
+                debug,
+                "pc_evaluate",
                 rng_before,
-                self.control.rng.original_replay_cursor(),
-                proposed,
+                &proposed,
             );
         }
 
@@ -1428,9 +1767,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
         let entity_id = entity_id.into();
-        let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation step-back owner {entity_id:?} is missing")
-        });
+        let entity = self.expect_entity(entity_id, "swordfight evaluation step-back owner");
 
         if entity.is_pc() && self.selected_hero_ids().contains(&entity_id) {
             return None;
@@ -1460,28 +1797,23 @@ impl EngineInner {
 
         // Friend ability comes from the principal opponent's opposing-fighter ability.
         let friends = self
-            .get_entity(principal_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back owner {entity_id:?} references missing principal {principal_id:?}"
-                )
-            })
-            .human_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back principal {principal_id:?} for {entity_id:?} is not human"
-                )
-            })
+            .world
+            .entities
+            .expect_human_data(
+                principal_id,
+                format_args!("swordfight evaluation step-back owner {entity_id:?} principal"),
+            )
             .opponents
             .ids();
         let friends_ability: u16 = friends
             .iter()
             .map(|id| {
-                self.get_entity(*id).unwrap_or_else(|| {
-                    panic!(
-                        "swordfight evaluation step-back principal {principal_id:?} references missing friend {id:?}"
-                    )
-                })
+                self.world.entities.expect_entity(
+                    *id,
+                    format_args!(
+                        "swordfight evaluation step-back principal {principal_id:?} friend"
+                    ),
+                )
             })
             .map(|e| {
                 fighting_ability_from_profile(
@@ -1511,11 +1843,10 @@ impl EngineInner {
 
         let mut opponents_ability: u16 = 0;
         for opp_id in opponents.iter().copied() {
-            let opp = self.get_entity(opp_id).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back owner {entity_id:?} references missing opponent {opp_id:?}"
-                )
-            });
+            let opp = self.world.entities.expect_entity(
+                opp_id,
+                format_args!("swordfight evaluation step-back owner {entity_id:?} opponent"),
+            );
             let opp_pos = opp.element_data().position();
             let rel_x = opp_pos.x - my_pos.x;
             let rel_y = (opp_pos.y - my_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1593,14 +1924,11 @@ impl EngineInner {
     ) -> bool {
         let me_id = me_id.into();
         let opponent_id = opponent_id.into();
-        let me = self.get_entity(me_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation range comparison owner {me_id:?} is missing")
-        });
-        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation range comparison opponent {opponent_id:?} for {me_id:?} is missing"
-            )
-        });
+        let me = self.expect_entity(me_id, "swordfight evaluation range comparison owner");
+        let opponent = self.world.entities.expect_entity(
+            opponent_id,
+            format_args!("swordfight evaluation range comparison opponent for {me_id:?}"),
+        );
         let me_pos = me.element_data().position();
         let opp_pos = opponent.element_data().position();
 
@@ -1646,7 +1974,6 @@ impl EngineInner {
         strike: SwordStrike,
     ) {
         for &victim_id in victims {
-            #[cfg(test)]
             record_strike_warning(attacker_id, victim_id);
             // Check what kind of victim this is and their state
             let victim_info = {
@@ -1708,41 +2035,14 @@ impl EngineInner {
                             .then_some(creation_order)
                     })
                     .flatten();
-                if reactive_sword_debug_frame_matches(frame) {
-                    let creation_order = self.world.original_creation_order(victim_id);
-                    if reactive_sword_debug_creation_order_matches(creation_order) {
-                        let known =
-                            self.get_entity(victim_id)
-                                .and_then(Entity::enemy_ai)
-                                .map(|ai| {
-                                    [
-                                        ai.known_enemy_strike_1,
-                                        ai.known_enemy_strike_2,
-                                        ai.known_enemy_strike_3,
-                                    ]
-                                });
-                        let attacker_command_strike = self
-                            .orders
-                            .sequence_manager
-                            .current_element_for_actor(attacker_id)
-                            .and_then(|(seq_id, elem_idx)| {
-                                self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                            })
-                            .and_then(|element| SwordStrike::from_command(element.command));
-                        eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning strike={:?} attacker_command_strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}]",
-                            frame,
-                            creation_order,
-                            victim_id.index(),
-                            attacker_id.index(),
-                            strike,
-                            attacker_command_strike,
-                            npc_substate,
-                            is_swordfighting,
-                            in_swordfight_substate,
-                            known,
-                        );
-                    }
+                if let Some(creation_order) = debug {
+                    self.trace_reactive_sword_warning(
+                        [frame, creation_order],
+                        [victim_id, attacker_id],
+                        strike,
+                        npc_substate,
+                        [is_swordfighting, in_swordfight_substate],
+                    );
                 }
                 let scratch = self.build_owner_context_scratch_without_forecast(assets);
                 let victim = self
@@ -1750,20 +2050,12 @@ impl EngineInner {
                     .entities
                     .get(victim_id)
                     .expect("sword-strike warning victim disappeared");
-                let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     victim,
                     frame,
                     self.entity_building_sector(victim.element_data().sector()),
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
                 let tick = self.build_npc_tick_data_without_forecasts(sim, victim_id, assets);
@@ -1776,14 +2068,15 @@ impl EngineInner {
                     sim, assets, victim_id, &stimulus, &ctx, &tick,
                 );
                 if let Some(creation_order) = debug {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning_return rng_before={:?} rng_after={:?}]",
+                    trace_reactive_sword(
                         frame,
                         creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
-                        rng_before,
-                        self.control.rng.original_replay_cursor(),
+                        [victim_id, attacker_id],
+                        format_args!(
+                            "phase=warning_return rng_before={:?} rng_after={:?}",
+                            rng_before,
+                            self.control.rng.original_replay_cursor(),
+                        ),
                     );
                 }
                 continue;
@@ -1899,52 +2192,7 @@ impl EngineInner {
                 })
                 .flatten();
             if let Some(debug) = debug {
-                let sprite = &self
-                    .get_entity(victim_id)
-                    .expect("reactive sword timing debug victim disappeared")
-                    .element_data()
-                    .sprite;
-                let action = crate::order::OrderType::TransitionWaitingSwordParryingSword;
-                let timing =
-                    |conversion: &[u16], scripts: &[crate::sprite_script::SpriteScript]| {
-                        let row = conversion.get(action as usize).copied()?;
-                        if row == crate::sprite_script::UNMAPPED {
-                            return None;
-                        }
-                        let script = scripts.get(row as usize)?;
-                        let frame_count = script.frame_ids.len();
-                        let waits = script
-                            .delays
-                            .iter()
-                            .copied()
-                            .take((script.action_done as usize + 1).min(frame_count))
-                            .collect::<Vec<_>>();
-                        let startup = waits.iter().copied().fold(0u16, u16::saturating_add);
-                        Some((row, script.action_done, frame_count, waits, startup))
-                    };
-                let primary = timing(&sprite.conversion, &sprite.scripts);
-                let alternate = sprite
-                    .alternate_conversion
-                    .as_deref()
-                    .zip(sprite.alternate_scripts.as_deref())
-                    .and_then(|(conversion, scripts)| timing(conversion, scripts));
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=parry_timing active_alternate={} primary_key={:?} alternate_key={:?} current={:?} primary={:?} alternate={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
-                    sprite.use_alternate_profile,
-                    sprite.profile_cache_key,
-                    sprite.alternate_profile_cache_key,
-                    if sprite.use_alternate_profile {
-                        alternate.as_ref()
-                    } else {
-                        primary.as_ref()
-                    },
-                    primary,
-                    alternate,
-                );
+                self.trace_reactive_sword_parry_timing(debug, victim_id);
             }
 
             // Human-actor strike selection always limits a
@@ -1954,11 +2202,10 @@ impl EngineInner {
             // Original rejects every strike and falls back to ParrySword.
             let target_id_for_nearby = principal_opponent.unwrap_or(attacker_id);
             let opponent_time_limit = {
-                let opponent = self.get_entity(target_id_for_nearby).unwrap_or_else(|| {
-                    panic!(
-                        "strike warning PC {victim_id:?} references missing principal opponent {target_id_for_nearby:?}"
-                    )
-                });
+                let opponent = self.world.entities.expect_entity(
+                    target_id_for_nearby,
+                    format_args!("strike warning PC {victim_id:?} principal opponent"),
+                );
                 opponent.actor_data().unwrap_or_else(|| {
                     panic!(
                         "strike warning PC {victim_id:?} principal opponent {target_id_for_nearby:?} is not an actor"
@@ -1971,16 +2218,15 @@ impl EngineInner {
                     .opponent_sword_strike_time_limit_for_actor(victim_id, target_id_for_nearby)
                     .unwrap_or(1000);
                 if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}]",
-                        debug.frame,
-                        debug.victim_creation_order,
-                        debug.victim,
-                        debug.attacker,
-                        target_id_for_nearby.index(),
-                        principal_animation,
-                        raw_frames,
-                        time_limit,
+                    trace_reactive_sword_for(
+                        debug,
+                        format_args!(
+                            "phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}",
+                            target_id_for_nearby.index(),
+                            principal_animation,
+                            raw_frames,
+                            time_limit,
+                        ),
                     );
                 }
                 Some(time_limit)
@@ -2027,15 +2273,11 @@ impl EngineInner {
             );
             self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
             if let Some(debug) = debug {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
+                self.trace_reactive_sword_proposal_boundary(
+                    debug,
+                    "pc_reactive_warning",
                     rng_before,
-                    self.control.rng.original_replay_cursor(),
-                    proposed,
+                    &proposed,
                 );
             }
 
@@ -2128,32 +2370,100 @@ impl EngineInner {
         // Keep the disabled diagnostic path ahead of every new simulation
         // read. Both filters are required and parsed eagerly when enabled.
         let step_back_debug = reactive_step_back_debug_config();
+        let Some(command_strike) = self.parade_recognize_strike(
+            victim_id,
+            attacker_id,
+            attacker_command_strike,
+            animation_strike,
+        ) else {
+            return;
+        };
+
+        // ── 2. Record this strike experience (promote to head of list).
+        self.make_bad_sword_strike_experience(assets, victim_id, command_strike, true);
+
+        let push_back_distance =
+            self.parade_push_back_distance(assets, attacker_id, animation_strike);
+
+        let Some((victim, proposed)) =
+            self.parade_propose_counter_action(sim, assets, victim_id, attacker_id)
+        else {
+            return;
+        };
+
+        // ── 5. Handle the proposed action ────────────────────────────
+        match proposed {
+            Some(crate::combat::ProposedCombatAction::Parry) => {
+                if self
+                    .parade_try_step_back(
+                        sim,
+                        assets,
+                        victim_id,
+                        attacker_id,
+                        victim,
+                        push_back_distance,
+                        step_back_debug,
+                    )
+                    .is_break()
+                {
+                    return;
+                }
+                self.parade_launch_parry(sim, assets, victim_id, attacker_id, animation_strike);
+            }
+
+            Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
+                self.parade_counter_strike(
+                    sim,
+                    assets,
+                    victim_id,
+                    attacker_id,
+                    victim.principal_opponent,
+                    counter_strike,
+                );
+            }
+
+            None => {
+                // Do nothing.
+            }
+        }
+    }
+
+    /// Phase 1 of [`Self::consider_to_begin_parade`]: strike recognition
+    /// against the victim's known-strike memory. `None` means the victim
+    /// does not react (no selected strike, not an enemy-AI soldier, or an
+    /// unknown strike).
+    fn parade_recognize_strike(
+        &mut self,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+        attacker_command_strike: Option<SwordStrike>,
+        animation_strike: SwordStrike,
+    ) -> Option<SwordStrike> {
         // ── 1. Check if the victim recognizes this strike ────────────
         // The original game compares the hitter's command with the three command-valued
         // memory slots. It does not use the animation-derived strike here.
         let Some(command_strike) = attacker_command_strike else {
             let frame = self.control.frame_counter;
-            if reactive_sword_debug_frame_matches(frame) {
-                let creation_order = self.world.original_creation_order(victim_id);
-                if reactive_sword_debug_creation_order_matches(creation_order) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=no_selected_strike animation_strike={:?}]",
-                        frame,
-                        creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
+            if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id)
+            {
+                trace_reactive_sword(
+                    frame,
+                    creation_order,
+                    [victim_id, attacker_id],
+                    format_args!(
+                        "phase=recognition accepted=false reason=no_selected_strike animation_strike={:?}",
                         animation_strike,
-                    );
-                }
+                    ),
+                );
             }
-            return;
+            return None;
         };
         let is_known = {
             let Some(Entity::Soldier(s)) = self.world.entities.get(victim_id) else {
-                return;
+                return None;
             };
             let Some(ai) = s.npc.ai_brain.enemy() else {
-                return;
+                return None;
             };
             Some(command_strike) == ai.known_enemy_strike_1
                 || Some(command_strike) == ai.known_enemy_strike_2
@@ -2161,41 +2471,43 @@ impl EngineInner {
         };
         if !is_known {
             let frame = self.control.frame_counter;
-            if reactive_sword_debug_frame_matches(frame) {
-                let creation_order = self.world.original_creation_order(victim_id);
-                if reactive_sword_debug_creation_order_matches(creation_order) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=unknown command_strike={:?} animation_strike={:?}]",
-                        frame,
-                        creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
-                        command_strike,
-                        animation_strike,
-                    );
-                }
-            }
-            return;
-        }
-        let frame = self.control.frame_counter;
-        if reactive_sword_debug_frame_matches(frame) {
-            let creation_order = self.world.original_creation_order(victim_id);
-            if reactive_sword_debug_creation_order_matches(creation_order) {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=true command_strike={:?} animation_strike={:?}]",
+            if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id)
+            {
+                trace_reactive_sword(
                     frame,
                     creation_order,
-                    victim_id.index(),
-                    attacker_id.index(),
-                    command_strike,
-                    animation_strike,
+                    [victim_id, attacker_id],
+                    format_args!(
+                        "phase=recognition accepted=false reason=unknown command_strike={:?} animation_strike={:?}",
+                        command_strike, animation_strike,
+                    ),
                 );
             }
+            return None;
         }
+        let frame = self.control.frame_counter;
+        if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id) {
+            trace_reactive_sword(
+                frame,
+                creation_order,
+                [victim_id, attacker_id],
+                format_args!(
+                    "phase=recognition accepted=true command_strike={:?} animation_strike={:?}",
+                    command_strike, animation_strike,
+                ),
+            );
+        }
+        Some(command_strike)
+    }
 
-        // ── 2. Record this strike experience (promote to head of list).
-        self.make_bad_sword_strike_experience(assets, victim_id, command_strike, true);
-
+    /// Phase 3 of [`Self::consider_to_begin_parade`]: push-back distance
+    /// from the attacker's weapon thrust.
+    fn parade_push_back_distance(
+        &self,
+        assets: &LevelAssets,
+        attacker_id: EntityId,
+        animation_strike: SwordStrike,
+    ) -> u16 {
         // ── 3. Determine push-back distance from attacker's weapon ──
         // PushAside, FalseCircle, TrueCircle → strike's maximal
         // distance; others → 0.
@@ -2218,7 +2530,20 @@ impl EngineInner {
                 })
                 .unwrap_or(0)
         };
+        push_back_distance
+    }
 
+    /// Phase 4 of [`Self::consider_to_begin_parade`]: collect the victim
+    /// state and nearby humans, run the reactive strike proposal and write
+    /// back the victim's boredom. `None` means the victim is not an
+    /// enemy-AI soldier and does not react.
+    fn parade_propose_counter_action(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+    ) -> Option<(ParadeVictim, Option<crate::combat::ProposedCombatAction>)> {
         // ── 4. Build context and call
         //   `propose_good_sword_strike(sim, also_parade=true)`. ──
         // Collect victim state for strike selection
@@ -2237,11 +2562,11 @@ impl EngineInner {
         ) = {
             let Some(victim_entity @ Entity::Soldier(s)) = self.world.entities.get(victim_id)
             else {
-                return;
+                return None;
             };
             let ai = match &s.npc.ai_brain {
                 crate::element::AiBrain::Enemy(ai) => ai,
-                _ => return,
+                _ => return None,
             };
             let spi = s.soldier.soldier_profile_index;
             let sp = assets.profile_manager.get_soldier(spi).unwrap_or_else(|| {
@@ -2382,14 +2707,7 @@ impl EngineInner {
                     is_walking_with_sword,
                 };
                 if let (Some(debug), Some(index)) = (debug, nearby_debug_index.as_mut()) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby_owner index={} target={}]",
-                        debug.frame,
-                        debug.victim_creation_order,
-                        debug.victim,
-                        *index,
-                        eid.index(),
-                    );
+                    trace_reactive_sword_nearby_owner(debug, *index, eid.index());
                     *index += 1;
                 }
                 Some(nearby)
@@ -2465,15 +2783,11 @@ impl EngineInner {
         );
         self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
         if let Some(debug) = debug {
-            eprintln!(
-                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
-                debug.frame,
-                debug.victim_creation_order,
-                debug.victim,
-                debug.attacker,
+            self.trace_reactive_sword_proposal_boundary(
+                debug,
+                "reactive_warning",
                 rng_before,
-                self.control.rng.original_replay_cursor(),
-                proposed,
+                &proposed,
             );
         }
 
@@ -2481,430 +2795,363 @@ impl EngineInner {
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id) {
             s.human.sword_strike_boredom = victim_boredom;
         }
+        Some((
+            ParadeVictim {
+                victim_fighting_ability,
+                victim_pos,
+                victim_layer,
+                principal_opponent,
+            },
+            proposed,
+        ))
+    }
 
-        // ── 5. Handle the proposed action ────────────────────────────
-        match proposed {
-            Some(crate::combat::ProposedCombatAction::Parry) => {
-                const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
+    /// Parry arm of [`Self::consider_to_begin_parade`], first half: the
+    /// action stop and, for skilled victims of push-back strikes, the
+    /// step-back dodge. `Break` means the step-back dodge was requested and
+    /// the parade must not be launched.
+    #[allow(clippy::too_many_arguments)]
+    fn parade_try_step_back(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+        victim: ParadeVictim,
+        push_back_distance: u16,
+        step_back_debug: Option<ReactiveStepBackDebug>,
+    ) -> std::ops::ControlFlow<()> {
+        let ParadeVictim {
+            victim_fighting_ability,
+            victim_pos,
+            victim_layer,
+            ..
+        } = victim;
+        const MIN_CAPACITY_AVOID_PUSH_BACK: u16 = 50;
 
-                let step_back_debug = step_back_debug.filter(|debug| {
-                    debug.frame == self.control.frame_counter
-                        && debug.creation_order == self.world.original_creation_order(victim_id)
-                });
-                if let Some(debug) = step_back_debug {
-                    let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                        panic!("reactive step-back diagnostic victim {victim_id:?} disappeared")
-                    });
-                    let ai = victim.ai_controller().unwrap_or_else(|| {
-                        panic!("reactive step-back diagnostic victim {victim_id:?} lost AI")
-                    });
-                    eprintln!(
-                        "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
-                        debug.frame,
-                        debug.creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
-                        victim_fighting_ability,
-                        push_back_distance,
-                        ai.current_state,
-                        ai.current_substate,
-                        victim.element_data().position_map().x.to_bits(),
-                        victim.element_data().position_map().y.to_bits(),
-                        victim.element_data().sector(),
-                        victim.element_data().layer(),
-                        victim
-                            .actor_data()
-                            .and_then(|actor| actor.installed_order)
-                            .map(|order| order.order_type)
-                            .unwrap_or(crate::order::OrderType::NonanimationEnd),
-                        self.actor_command(victim_id),
-                        ai.couldnt_reachpoint,
-                        ai.already_on_point,
-                        ai.completion_latch_inside_think,
-                        ai.outbox.reentrant.owner_work,
-                    );
-                }
+        let step_back_debug = step_back_debug.filter(|debug| {
+            debug.frame == self.control.frame_counter
+                && debug.creation_order == self.world.original_creation_order(victim_id)
+        });
+        if let Some(debug) = step_back_debug {
+            self.trace_reactive_step_back_parry_selected(
+                debug,
+                [victim_id, attacker_id],
+                victim_fighting_ability,
+                push_back_distance,
+            );
+        }
 
-                // Stopping actions interrupts the selected element, but the original game does
-                // not install an idle sprite order before this method's
-                // following movement reads the animation/action state. Rust's
-                // halt cleanup normalizes that actor state eagerly, so retain
-                // the complete live owner context across the narrow barrier.
-                let mut step_back_ctx = if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK
-                    && push_back_distance != 0
-                {
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
-                    let victim_sector = self
-                        .world
-                        .entities
-                        .get(victim_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "ConsiderToBeginParade step-back victim {} disappeared",
-                                victim_id.index()
-                            )
-                        })
-                        .element_data()
-                        .sector();
-                    let building_sector = self.entity_building_sector(victim_sector);
-                    let mut ctx = {
-                        let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                            panic!(
-                                "ConsiderToBeginParade step-back victim {} disappeared",
-                                victim_id.index()
-                            )
-                        });
-                        self.ai_context_from_entity(
-                            victim,
-                            self.control.frame_counter,
-                            building_sector,
-                            &scratch,
-                            assets,
-                        )
-                    };
-                    self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
-                    Some(ctx)
-                } else {
-                    None
-                };
-
-                // Stop the victim's current actions.
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                    && let Some(ai) = s.npc.ai_brain.base_mut()
-                {
-                    ai.stop_all();
-                    // Stopping movement only preserves the three ordinary
-                    // upright/crouched locomotion actions. Sword movement and
-                    // every other interruptible order are cleared, so the
-                    // immediately following original-game movement observes
-                    // the end-of-animation state rather than the pre-stop animation.
-                    // Rust installs its fallback Wait eagerly during the halt
-                    // drain, so project that narrow null-order boundary onto
-                    // the retained call-site context before using it below.
-                    if let Some(ctx) = step_back_ctx.as_mut()
-                        && ai.pending_halt_exposes_goto_idle(ctx)
-                    {
-                        ctx.self_animation = crate::order::OrderType::NonanimationEnd;
-                    }
-                }
-                // Enemy parry consideration performs
-                // an action stop synchronously before either movement or the parry
-                // sequence launch. Close the callback boundary and then apply
-                // that narrow halt barrier now, so it cannot interrupt the
-                // replacement work below.
-                self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
-
-                // Step-back dodge for push-back strikes if
-                // fighting ability is high enough.
-                if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK
-                    && push_back_distance != 0
-                {
-                    let attacker_pos_map = self
-                        .get_entity(attacker_id)
-                        .map(|e| e.element_data().position_map())
-                        .unwrap_or(victim_pos);
-                    let (victim_sector, victim_move_box) = self
-                        .get_entity(victim_id)
-                        .map(|e| {
-                            let sector = e.element_data().sector();
-                            let mbox = if e.actor_data().is_some() {
-                                *e.position_iface().get_move_box()
-                            } else {
-                                Default::default()
-                            };
-                            (sector, mbox)
-                        })
-                        .unwrap_or((None, Default::default()));
-                    let victim_ai_pos = crate::ai::Position {
-                        x: victim_pos.x,
-                        y: victim_pos.y,
-                        sector: victim_sector,
-                        level: victim_layer,
-                    };
-                    let attacker_ai_pos = crate::ai::Position {
-                        x: attacker_pos_map.x,
-                        y: attacker_pos_map.y,
-                        sector: None,
-                        level: victim_layer,
-                    };
-                    let good_dist = push_back_distance + 20;
-                    let min_dist = push_back_distance + 10;
-                    // The push-back geometry is resolved in
-                    // un-isometric sword-fight space, so pass
-                    // `SWORDFIGHT_ASPECT_RATIO` (= 1.0) instead of
-                    // the default `ASPECT_RATIO` (0.5735).
-                    let step_back_goal = crate::ai_enemy::propose_good_step_back_goal(
-                        victim_ai_pos,
-                        &victim_move_box,
-                        attacker_ai_pos,
-                        good_dist,
-                        min_dist,
-                        Some(&self.world.fast_grid),
-                        crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
-                    );
-                    if let Some(debug) = step_back_debug {
-                        eprintln!(
-                            "REACTIVE_STEP_BACK frame={} co={} phase=goal_result victim={} attacker={} victim_position=({:08x},{:08x},sector={:?},level={}) attacker_position=({:08x},{:08x}) good_distance={} min_distance={} result={:?}",
-                            debug.frame,
-                            debug.creation_order,
-                            victim_id.index(),
-                            attacker_id.index(),
-                            victim_ai_pos.x.to_bits(),
-                            victim_ai_pos.y.to_bits(),
-                            victim_ai_pos.sector,
-                            victim_ai_pos.level,
-                            attacker_ai_pos.x.to_bits(),
-                            attacker_ai_pos.y.to_bits(),
-                            good_dist,
-                            min_dist,
-                            step_back_goal,
-                        );
-                    }
-                    if let Some(step_back_goal) = step_back_goal {
-                        let ctx = step_back_ctx.take().unwrap_or_else(|| {
-                            panic!(
-                                "parry-consideration step-back victim {} has no retained movement context",
-                                victim_id.index()
-                            )
-                        });
-
-                        // Step back to avoid strike.
-                        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                            && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-                        {
-                            let flags = if ctx.self_is_rider {
-                                crate::ai::GotoFlags::SWORD
-                            } else {
-                                crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
-                            };
-                            ai.go_to(
-                                crate::ai::AiState::Attacking,
-                                crate::ai::Substate::AttackingSwordfightStepBack,
-                                step_back_goal,
-                                flags,
-                                &ctx,
-                            );
-                            if let Some(debug) = step_back_debug {
-                                eprintln!(
-                                    "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
-                                    debug.frame,
-                                    debug.creation_order,
-                                    victim_id.index(),
-                                    ai.base.current_state,
-                                    ai.base.current_substate,
-                                    step_back_goal.x.to_bits(),
-                                    step_back_goal.y.to_bits(),
-                                    step_back_goal.sector,
-                                    step_back_goal.level,
-                                    flags,
-                                    ai.base.couldnt_reachpoint,
-                                    ai.base.already_on_point,
-                                    ai.base.completion_latch_inside_think,
-                                    ai.base.outbox.actor.orders.len(),
-                                    ai.base.outbox.reentrant.owner_work,
-                                );
-                            }
-                        }
-                        // This branch returns immediately after requesting movement; close the
-                        // owner-local callback boundary before the caller resumes.
-                        self.drain_direct_ai_owner_boundary_without_forecast(
-                            sim, victim_id, assets,
-                        );
-                        if let Some(debug) = step_back_debug {
-                            let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                                panic!(
-                                    "reactive step-back diagnostic victim {victim_id:?} disappeared after drain"
-                                )
-                            });
-                            let ai = victim.ai_controller().unwrap_or_else(|| {
-                                panic!(
-                                    "reactive step-back diagnostic victim {victim_id:?} lost AI after drain"
-                                )
-                            });
-                            eprintln!(
-                                "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
-                                debug.frame,
-                                debug.creation_order,
-                                victim_id.index(),
-                                ai.current_state,
-                                ai.current_substate,
-                                victim
-                                    .actor_data()
-                                    .and_then(|actor| actor.installed_order)
-                                    .map(|order| order.order_type)
-                                    .unwrap_or(crate::order::OrderType::NonanimationEnd),
-                                self.actor_command(victim_id),
-                                ai.couldnt_reachpoint,
-                                ai.already_on_point,
-                                ai.completion_latch_inside_think,
-                                ai.outbox.reentrant.self_stimuli,
-                                ai.outbox.reentrant.owner_work,
-                            );
-                        }
-                        tracing::debug!(
-                            ?victim_id,
-                            ?attacker_id,
-                            ?step_back_goal,
-                            "ConsiderToBeginParade: step-back dodge"
-                        );
-                        return;
-                    }
-                }
-
-                // Normal parade.  Launch parry sequence element.
-                let mut seq = crate::sequence::Sequence::new();
-                let parry_elem =
-                    crate::sequence::SequenceElement::new(1, Command::ParrySword, Some(victim_id));
-                seq.append_element(parry_elem);
-                self.launch_sequence(seq);
-
-                // Timer: attacker's strike duration + 10-frame
-                // buffer.  Hoist the sprite read before the mutable
-                // borrow below.
-                let attacker_anim_frames: u16 = match self
-                    .get_entity(attacker_id)
-                    .map(|e| &e.element_data().sprite)
-                    .map(|sprite| {
-                        sprite.frames_from_start_till_action_done(strike_to_animation(
-                            animation_strike,
-                        ))
-                    }) {
-                    Some(f) => f,
-                    None => {
-                        tracing::warn!(
-                            ?attacker_id,
-                            ?animation_strike,
-                            "ConsiderToBeginParade: no sprite data for attacker, using estimated strike frames for parade timer"
-                        );
-                        crate::combat::STRIKE_STARTUP_FRAMES
-                            .get(animation_strike as usize)
-                            .copied()
-                            .unwrap_or(25) as u16
-                    }
-                };
-                let strike_frames = attacker_anim_frames as u32 + 10;
-
-                // Opt-in trace for the reactive-parade heartbeat timer.
-                //
-                // `SUBSTATE_ATTACKING_SWORDFIGHT_PARADE` is only left again on
-                // `EVENT_TIMER`, so this single duration decides how long a
-                // parrying soldier stays out of the ordinary
-                // swordfight-reconsideration heartbeat. When a parity frontier
-                // shows one fighter running (or skipping) a reconsideration
-                // group, this dumps every operand of
-                // the frames-from-start-until-action-done query
-                // in the original game for the attacker so the
-                // ring frame can be reconstructed by hand.
-                if parade_timer_debug_enabled() {
-                    let anim = strike_to_animation(animation_strike);
-                    let sprite = &self
-                        .get_entity(attacker_id)
-                        .unwrap_or_else(|| {
-                            panic!("parade timer diagnostic attacker {attacker_id:?} disappeared")
-                        })
-                        .element_data()
-                        .sprite;
-                    let row = sprite.current_conversion()[anim as usize];
-                    let waits = |r: u16| {
-                        (0..sprite.num_frames_for_row(r))
-                            .map(|i| sprite.wait_time(r, i))
-                            .collect::<Vec<_>>()
-                    };
-                    eprintln!(
-                        "[PARADE_TIMER] frame={} victim_co={:?} attacker_co={:?} animation={anim:?} conversion_row={row} action_done={} num_frames={} waits={:?} live_row={} live_frame={} frames={attacker_anim_frames} ring_in={strike_frames}",
+        // Stopping actions interrupts the selected element, but the original game does
+        // not install an idle sprite order before this method's
+        // following movement reads the animation/action state. Rust's
+        // halt cleanup normalizes that actor state eagerly, so retain
+        // the complete live owner context across the narrow barrier.
+        let mut step_back_ctx =
+            if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
+                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let victim_sector = self
+                    .expect_entity(victim_id, "ConsiderToBeginParade step-back victim")
+                    .element_data()
+                    .sector();
+                let building_sector = self.entity_building_sector(victim_sector);
+                let mut ctx = {
+                    let victim =
+                        self.expect_entity(victim_id, "ConsiderToBeginParade step-back victim");
+                    self.ai_context_from_entity(
+                        victim,
                         self.control.frame_counter,
-                        self.world.original_creation_order(victim_id),
-                        self.world.original_creation_order(attacker_id),
-                        sprite.action_done_for_row(row),
-                        sprite.num_frames_for_row(row),
-                        waits(row),
-                        sprite.current_row,
-                        sprite.current_frame,
-                    );
-                }
-
-                // Set substate to parade
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-                {
-                    ai.set_state(
-                        crate::ai::AiState::Attacking,
-                        crate::ai::Substate::AttackingSwordfightParade,
-                    );
-                }
-                self.drain_ai_owner_work_for(sim, assets, victim_id);
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-                {
-                    ai.base
-                        .launch_timer(strike_frames, self.control.frame_counter);
-                }
-
-                tracing::debug!(
-                    ?victim_id,
-                    ?attacker_id,
-                    ?animation_strike,
-                    "ConsiderToBeginParade: parrying"
-                );
-            }
-
-            Some(crate::combat::ProposedCombatAction::Strike(counter_strike)) => {
-                // Counter-strike.  Order:
-                //   mark special strike → change state → stop all →
-                //   Launch.
-                // Special-strike preparation sets the X-mark emoticon and
-                // routes the state transition through
-                // `begin_special_strike` (single owner for the
-                // transition); the action stop is applied immediately before
-                // the counter-strike sequence is queued.
-                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
-                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
-                {
-                    ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
-                    ai.begin_special_strike();
-                    ai.base.stop_all();
-                }
-                self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
-
-                // Launch counter-strike sequence
-                let counter_cmd = counter_strike.to_command();
-                // The counter always goes to the principal opponent. A
-                // victim with an empty opponent list cannot reach this arm
-                // in the Original — the proposal refuses outright for an
-                // actor that is not swordfighting — so there is no
-                // substitute target to fall back to here.
-                let Some(target) = principal_opponent else {
-                    tracing::warn!(
-                        ?victim_id,
-                        ?attacker_id,
-                        ?counter_strike,
-                        "ConsiderToBeginParade: counter-strike proposed for a victim with no principal opponent; dropping it"
-                    );
-                    return;
+                        building_sector,
+                        &scratch,
+                        assets,
+                    )
                 };
+                self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
+                Some(ctx)
+            } else {
+                None
+            };
 
-                let mut seq = crate::sequence::Sequence::new();
-                let strike_elem = crate::sequence::SequenceElement::new_interaction(
-                    1,
-                    counter_cmd,
-                    Some(victim_id),
-                    Some(target),
-                );
-                seq.append_element(strike_elem);
-                self.launch_sequence(seq);
-
-                tracing::debug!(
-                    ?victim_id,
-                    ?attacker_id,
-                    ?counter_strike,
-                    "ConsiderToBeginParade: counter-strike"
-                );
-            }
-
-            None => {
-                // Do nothing.
+        // Stop the victim's current actions.
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+            && let Some(ai) = s.npc.ai_brain.base_mut()
+        {
+            ai.stop_all();
+            // Stopping movement only preserves the three ordinary
+            // upright/crouched locomotion actions. Sword movement and
+            // every other interruptible order are cleared, so the
+            // immediately following original-game movement observes
+            // the end-of-animation state rather than the pre-stop animation.
+            // Rust installs its fallback Wait eagerly during the halt
+            // drain, so project that narrow null-order boundary onto
+            // the retained call-site context before using it below.
+            if let Some(ctx) = step_back_ctx.as_mut()
+                && ai.pending_halt_exposes_goto_idle(ctx)
+            {
+                ctx.self_animation = crate::order::OrderType::NonanimationEnd;
             }
         }
+        // Enemy parry consideration performs
+        // an action stop synchronously before either movement or the parry
+        // sequence launch. Close the callback boundary and then apply
+        // that narrow halt barrier now, so it cannot interrupt the
+        // replacement work below.
+        self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
+
+        // Step-back dodge for push-back strikes if
+        // fighting ability is high enough.
+        if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
+            let attacker_pos_map = self
+                .get_entity(attacker_id)
+                .map(|e| e.element_data().position_map())
+                .unwrap_or(victim_pos);
+            let (victim_sector, victim_move_box) = self
+                .get_entity(victim_id)
+                .map(|e| {
+                    let sector = e.element_data().sector();
+                    let mbox = if e.actor_data().is_some() {
+                        *e.position_iface().get_move_box()
+                    } else {
+                        Default::default()
+                    };
+                    (sector, mbox)
+                })
+                .unwrap_or((None, Default::default()));
+            let victim_ai_pos = crate::ai::Position {
+                x: victim_pos.x,
+                y: victim_pos.y,
+                sector: victim_sector,
+                level: victim_layer,
+            };
+            let attacker_ai_pos = crate::ai::Position {
+                x: attacker_pos_map.x,
+                y: attacker_pos_map.y,
+                sector: None,
+                level: victim_layer,
+            };
+            let good_dist = push_back_distance + 20;
+            let min_dist = push_back_distance + 10;
+            // The push-back geometry is resolved in
+            // un-isometric sword-fight space, so pass
+            // `SWORDFIGHT_ASPECT_RATIO` (= 1.0) instead of
+            // the default `ASPECT_RATIO` (0.5735).
+            let step_back_goal = crate::ai_enemy::propose_good_step_back_goal(
+                victim_ai_pos,
+                &victim_move_box,
+                attacker_ai_pos,
+                good_dist,
+                min_dist,
+                Some(&self.world.fast_grid),
+                crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
+            );
+            if let Some(debug) = step_back_debug {
+                trace_reactive_step_back_goal_result(
+                    debug,
+                    [victim_id, attacker_id],
+                    [victim_ai_pos, attacker_ai_pos],
+                    [good_dist, min_dist],
+                    step_back_goal,
+                );
+            }
+            if let Some(step_back_goal) = step_back_goal {
+                let ctx = step_back_ctx.take().unwrap_or_else(|| {
+                    panic!(
+                        "parry-consideration step-back victim {} has no retained movement context",
+                        victim_id.index()
+                    )
+                });
+
+                // Step back to avoid strike.
+                if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+                    && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
+                {
+                    let flags = if ctx.self_is_rider {
+                        crate::ai::GotoFlags::SWORD
+                    } else {
+                        crate::ai::GotoFlags::RUN | crate::ai::GotoFlags::SWORD
+                    };
+                    ai.go_to(
+                        crate::ai::AiState::Attacking,
+                        crate::ai::Substate::AttackingSwordfightStepBack,
+                        step_back_goal,
+                        flags,
+                        &ctx,
+                    );
+                    if let Some(debug) = step_back_debug {
+                        trace_reactive_step_back_after_goto(
+                            debug,
+                            victim_id,
+                            ai,
+                            step_back_goal,
+                            flags,
+                        );
+                    }
+                }
+                // This branch returns immediately after requesting movement; close the
+                // owner-local callback boundary before the caller resumes.
+                self.drain_direct_ai_owner_boundary_without_forecast(sim, victim_id, assets);
+                if let Some(debug) = step_back_debug {
+                    self.trace_reactive_step_back_after_drain(debug, victim_id);
+                }
+                tracing::debug!(
+                    ?victim_id,
+                    ?attacker_id,
+                    ?step_back_goal,
+                    "ConsiderToBeginParade: step-back dodge"
+                );
+                return std::ops::ControlFlow::Break(());
+            }
+        }
+        std::ops::ControlFlow::Continue(())
+    }
+
+    /// Parry arm of [`Self::consider_to_begin_parade`], second half: launch
+    /// the parry sequence and arm the parade heartbeat timer.
+    fn parade_launch_parry(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+        animation_strike: SwordStrike,
+    ) {
+        // Normal parade.  Launch parry sequence element.
+        let mut seq = crate::sequence::Sequence::new();
+        let parry_elem =
+            crate::sequence::SequenceElement::new(1, Command::ParrySword, Some(victim_id));
+        seq.append_element(parry_elem);
+        self.launch_sequence(seq);
+
+        // Timer: attacker's strike duration + 10-frame
+        // buffer.  Hoist the sprite read before the mutable
+        // borrow below.
+        let attacker_anim_frames: u16 = match self
+            .get_entity(attacker_id)
+            .map(|e| &e.element_data().sprite)
+            .map(|sprite| {
+                sprite.frames_from_start_till_action_done(strike_to_animation(animation_strike))
+            }) {
+            Some(f) => f,
+            None => {
+                tracing::warn!(
+                    ?attacker_id,
+                    ?animation_strike,
+                    "ConsiderToBeginParade: no sprite data for attacker, using estimated strike frames for parade timer"
+                );
+                crate::combat::STRIKE_STARTUP_FRAMES
+                    .get(animation_strike as usize)
+                    .copied()
+                    .unwrap_or(25) as u16
+            }
+        };
+        let strike_frames = attacker_anim_frames as u32 + 10;
+
+        // Opt-in trace for the reactive-parade heartbeat timer.
+        //
+        // `SUBSTATE_ATTACKING_SWORDFIGHT_PARADE` is only left again on
+        // `EVENT_TIMER`, so this single duration decides how long a
+        // parrying soldier stays out of the ordinary
+        // swordfight-reconsideration heartbeat. When a parity frontier
+        // shows one fighter running (or skipping) a reconsideration
+        // group, this dumps every operand of
+        // the frames-from-start-until-action-done query
+        // in the original game for the attacker so the
+        // ring frame can be reconstructed by hand.
+        if parade_timer_debug_enabled() {
+            self.trace_parade_timer(
+                [victim_id, attacker_id],
+                animation_strike,
+                [u32::from(attacker_anim_frames), strike_frames],
+            );
+        }
+
+        // Set substate to parade
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+            && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
+        {
+            ai.set_state(
+                crate::ai::AiState::Attacking,
+                crate::ai::Substate::AttackingSwordfightParade,
+            );
+        }
+        self.drain_ai_owner_work_for(sim, assets, victim_id);
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+            && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
+        {
+            ai.base
+                .launch_timer(strike_frames, self.control.frame_counter);
+        }
+
+        tracing::debug!(
+            ?victim_id,
+            ?attacker_id,
+            ?animation_strike,
+            "ConsiderToBeginParade: parrying"
+        );
+    }
+
+    /// Counter-strike arm of [`Self::consider_to_begin_parade`]. The early
+    /// `return` for a missing principal opponent ends this arm exactly as it
+    /// ended the original method: nothing follows the arm's `match`.
+    fn parade_counter_strike(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+        principal_opponent: Option<EntityId>,
+        counter_strike: SwordStrike,
+    ) {
+        // Counter-strike.  Order:
+        //   mark special strike → change state → stop all →
+        //   Launch.
+        // Special-strike preparation sets the X-mark emoticon and
+        // routes the state transition through
+        // `begin_special_strike` (single owner for the
+        // transition); the action stop is applied immediately before
+        // the counter-strike sequence is queued.
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim_id)
+            && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
+        {
+            ai.base.set_emoticon(crate::ai::EmoticonType::XMark);
+            ai.begin_special_strike();
+            ai.base.stop_all();
+        }
+        self.drain_ai_owner_halt_boundary(sim, assets, victim_id);
+
+        // Launch counter-strike sequence
+        let counter_cmd = counter_strike.to_command();
+        // The counter always goes to the principal opponent. A
+        // victim with an empty opponent list cannot reach this arm
+        // in the Original — the proposal refuses outright for an
+        // actor that is not swordfighting — so there is no
+        // substitute target to fall back to here.
+        let Some(target) = principal_opponent else {
+            tracing::warn!(
+                ?victim_id,
+                ?attacker_id,
+                ?counter_strike,
+                "ConsiderToBeginParade: counter-strike proposed for a victim with no principal opponent; dropping it"
+            );
+            return;
+        };
+
+        let mut seq = crate::sequence::Sequence::new();
+        let strike_elem = crate::sequence::SequenceElement::new_interaction(
+            1,
+            counter_cmd,
+            Some(victim_id),
+            Some(target),
+        );
+        seq.append_element(strike_elem);
+        self.launch_sequence(seq);
+
+        tracing::debug!(
+            ?victim_id,
+            ?attacker_id,
+            ?counter_strike,
+            "ConsiderToBeginParade: counter-strike"
+        );
     }
 
     /// Soldier AI learning: record a sword strike that hit them so they
@@ -3013,15 +3260,7 @@ impl EngineInner {
 
         let bad_experience_debug = bad_experience_debug_enabled();
         if bad_experience_debug {
-            let creation_order = self.world.original_creation_order(soldier_id);
-            eprintln!(
-                "[BAD_EXPERIENCE frame={} co={} soldier={} strike={:?} ability={}]",
-                self.control.frame_counter,
-                creation_order,
-                soldier_id.index(),
-                strike,
-                fighting_ability,
-            );
+            self.trace_bad_experience(soldier_id, strike, fighting_ability);
         }
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(soldier_id)
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
@@ -3268,11 +3507,15 @@ mod tests {
 }
 
 fn parade_timer_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_PARADE_TIMER").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_PARADE_TIMER", []))
+        .enabled()
 }
 
 fn bad_experience_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BAD_EXPERIENCE").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_BAD_EXPERIENCE", []))
+        .enabled()
 }
