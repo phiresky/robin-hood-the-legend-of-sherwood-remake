@@ -19,7 +19,6 @@
 //! and per-slot tooltips are delayed the same ~750 ms the button
 //! tooltips use.
 
-use crate::gfx_types::Keycode;
 use crate::ingame_menu::resources::SealButton;
 use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use robin_engine::campaign::CampaignValue;
@@ -30,7 +29,6 @@ use robin_engine::engine::{
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
 
-use crate::gfx_types::GameEvent;
 use crate::ingame_menu::layout::center_horizontally_x;
 use crate::renderer::Renderer;
 use crate::ui_screens::{
@@ -44,12 +42,11 @@ use robin_assets::resource_manager::ResourceManager;
 use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsModalState, BuyBlazonsOutcome};
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_clipped_text_in_box_font,
-    render_clipped_text_in_box_with_drop_cap_font,
+    MENU_H, MENU_W, TextAlign, TooltipState, VAlign, draw_background,
+    render_clipped_text_in_box_font, render_clipped_text_in_box_with_drop_cap_font,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ScreenFrame, ScreenKey};
 
 /// Widget IDs within the [`crate::widget::FrameWnd`].  Mapped back to
 /// [`MissionDescriptionButton`] via [`button_for_widget`] / vice versa.
@@ -156,10 +153,6 @@ impl MissionDescriptionModalState {
         };
         let picture = resources.picture_from(renderer, text_resources, screen.picture_id);
         let (pic_w, pic_h) = picture.map(|p| (p.width, p.height)).unwrap_or((0, 0));
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
         let win_x = (MENU_W - layout_consts::WINDOW_WIDTH) / 2;
         let win_y = (MENU_H - layout_consts::WINDOW_HEIGHT) / 2;
         let pic_x = layout_consts::PICTURE_FRAME_RIGHT_EDGE - pic_w;
@@ -215,7 +208,7 @@ impl MissionDescriptionModalState {
                 as u32;
         let blazon_box_h =
             (layout_consts::BLAZON_BOX_BOTTOM - layout_consts::BLAZON_BOX_Y).max(0) as u32;
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(event_pump, renderer);
         Self {
             mission_index,
             screen,
@@ -283,22 +276,14 @@ impl MissionDescriptionModalState {
 
     pub fn tick(
         &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &mut IngameMenuResources,
-        cursor: Option<ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         engine: &mut Engine,
         assets: &LevelAssets,
         admitted_actions: &mut Vec<ExternalAction>,
         profiles: &engine_profiles::ProfileManager,
     ) -> Option<(MissionChoice, bool)> {
         if let Some(child) = self.buy_blazons.as_mut() {
-            if let Some(outcome) = child.tick(&mut ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor: cursor.as_ref(),
-            }) {
+            if let Some(outcome) = child.tick(io) {
                 self.buy_blazons = None;
                 self.apply_buy_outcome(outcome, engine, assets, admitted_actions, profiles);
             }
@@ -308,25 +293,20 @@ impl MissionDescriptionModalState {
                 .then_some((self.screen.user_choice, self.screen.men_to_blazon_mode));
         }
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => self.screen.activate(MissionDescriptionButton::Cancel),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => self.screen.activate(MissionDescriptionButton::StartMission),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.screen.activate(MissionDescriptionButton::Cancel),
-                _ => {}
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => {
+                    self.screen.activate(MissionDescriptionButton::Cancel)
+                }
+                ScreenKey::Confirm => self.screen.activate(MissionDescriptionButton::StartMission),
+                ScreenKey::Next => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
+        // `end_frame` inside `dispatch` only clears one-shot clicks/text, so
+        // the tooltip trackers below still see this frame's mouse position.
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
         let mouse_virt =
             engine_coordinates::ScreenPoint::new(self.input_state.virt_x, self.input_state.virt_y);
         self.tooltip.update(&self.frame, mouse_virt);
@@ -351,9 +331,8 @@ impl MissionDescriptionModalState {
                 mouse_virt.y as i32,
             );
         }
-        self.input_state.end_frame();
 
-        if let Some(id) = widget_bridge::find_activated(&events)
+        if let Some(id) = activated
             && let Some(button) = button_for_widget(id)
         {
             if button == MissionDescriptionButton::ConvertMoney
@@ -363,12 +342,7 @@ impl MissionDescriptionModalState {
             {
                 let mission = &engine.campaign().missions[self.mission_index];
                 self.buy_blazons = Some(BuyBlazonsModalState::new(
-                    &ModalScreenIo {
-                        window: event_pump,
-                        renderer,
-                        resources,
-                        cursor: None,
-                    },
+                    io,
                     self.mission_index,
                     mission.get_blazon_price() as u32,
                     engine.campaign().get_value(CampaignValue::Ransom).max(0) as u32,
@@ -378,8 +352,10 @@ impl MissionDescriptionModalState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        let transform = screen.transform;
+        screen.begin_draw(renderer);
         if let Some(parchment) = resources.parchment_huge {
             draw_background(
                 renderer,
@@ -493,10 +469,7 @@ impl MissionDescriptionModalState {
                 );
             }
         }
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.input_state);
-        }
-        renderer.present();
+        screen.finish(io, &self.input_state);
 
         self.screen
             .closed

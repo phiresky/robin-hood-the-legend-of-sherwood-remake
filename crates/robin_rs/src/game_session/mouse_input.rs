@@ -2192,13 +2192,15 @@ impl SherwoodCtx<'_> {
                     let Some(resources) = menu_resources.as_mut() else {
                         panic!("mission-description resources disappeared while the modal was open")
                     };
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
                     let mut frame_actions = Vec::new();
                     let outcome = state.tick(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor,
+                        &mut ModalScreenIo {
+                            window: event_pump,
+                            renderer,
+                            resources,
+                            cursor: Some(&cursor),
+                        },
                         engine,
                         assets,
                         &mut frame_actions,

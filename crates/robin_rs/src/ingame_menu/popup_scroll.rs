@@ -20,14 +20,9 @@ use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::player_command as engine_player_command;
 use robin_engine::player_command::DialogResult;
-use robin_engine::sound_cache::SampleLoader;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::gfx_types::Keycode;
-
 use crate::game_session::ModalContext;
-use crate::gfx_types::GameEvent;
-use crate::renderer::Renderer;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::{FrameWnd, WidgetPicture};
 use robin_engine::resource_ids;
@@ -36,8 +31,10 @@ use super::layout::{
     MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, dim_screen, draw_background,
     enter_modal_gpu_phase, render_text_in_box_with_drop_cap_font, render_text_virt_font,
 };
-use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_OK, MenuSurface};
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::resources::{MT_INFOBULLE_BUTTON_OK, MenuSurface};
+use super::widget_bridge::{
+    self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame, ScreenKey,
+};
 
 /// Virtual window geometry: `(0, 0, 496, 463)`.
 pub const WIN_W: i32 = 496;
@@ -144,36 +141,23 @@ pub(crate) async fn show_popup_scroll(
     let resources = menu_resources
         .as_mut()
         .expect("show_popup_scroll requires ingame menu resources");
-    let mut state = PopupScrollModalState::new(
+    let cursor = super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
+    let io = &mut ModalScreenIo {
         window,
         renderer,
         resources,
-        item.title,
-        item.picture,
-        item.body,
-        item.body_font_name,
-        item.align,
-        item.universal_frame,
-    );
-    let cursor = super::widget_bridge::default_modal_cursor(cursor_renderer, cursor_res, renderer);
-    loop {
-        let result = state.tick(
-            &mut ModalScreenIo {
-                window,
-                renderer,
-                resources,
-                cursor: Some(&cursor),
-            },
-            sound,
-            audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend),
-            *sample_loader,
-            modal_net.as_ref(),
-        );
-        if let Some(result) = result {
-            return result;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
+        cursor: Some(&cursor),
+    };
+    let mut state = PopupScrollModalState::new(io, item);
+    widget_bridge::run_modal(io, |io| {
+        let audio = ScreenAudio {
+            sound: Some(&mut *sound),
+            backend: audio_backend.as_mut().map(|b| b as &mut dyn AudioBackend),
+            sample_loader: Some(*sample_loader),
+        };
+        state.tick(io, audio, modal_net.as_ref())
+    })
+    .await
 }
 
 /// One-frame popup-scroll modal state.
@@ -213,20 +197,22 @@ pub struct PopupScrollModalState {
 }
 
 impl PopupScrollModalState {
-    pub fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &mut IngameMenuResources,
-        title: Option<String>,
-        picture: Option<MenuSurface>,
-        body: String,
-        body_font_name: Option<String>,
-        align: TextAlign,
-        universal_frame: u32,
-    ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+    /// Open the parchment for `item`'s content. `item.kind` and
+    /// `item.replay_result` belong to the batch driver and are not read here.
+    pub fn new(io: &ModalScreenIo<'_, '_>, item: PopupScrollItem) -> Self {
+        let PopupScrollItem {
+            title,
+            picture,
+            body,
+            body_font_name,
+            align,
+            universal_frame,
+            kind: _,
+            replay_result: _,
+        } = item;
+        let resources = io.resources;
+        let renderer = &*io.renderer;
+        let transform = MenuTransform::for_renderer(renderer);
 
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
@@ -253,7 +239,7 @@ impl PopupScrollModalState {
         }
         widget_bridge::attach_alpha_masks(&mut frame, resources, renderer);
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(io.window, transform);
 
         let mut state = Self {
             title,
@@ -287,54 +273,38 @@ impl PopupScrollModalState {
     pub fn tick(
         &mut self,
         io: &mut ModalScreenIo<'_, '_>,
-        sound: &mut SoundManager,
-        audio_backend: Option<&mut dyn AudioBackend>,
-        sample_loader: &SampleLoader,
+        audio: ScreenAudio<'_>,
         modal_net: Option<&super::ModalNet<'_>>,
     ) -> Option<DialogResult> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         let mut dismissed = false;
         let remote_result = self.dismissal.poll(modal_net);
         if remote_result.is_some() {
             dismissed = true;
         }
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        for event in events {
-            self.input_state.update_from_event(&event, self.transform);
-            if self.dismissal.is_pending() {
-                continue;
-            }
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        self.transform = screen.transform;
+        if !self.dismissal.is_pending() {
+            for key in screen.keys() {
+                match key {
+                    ScreenKey::Quit | ScreenKey::Confirm | ScreenKey::Cancel => dismissed = true,
+                    ScreenKey::Next => {}
                 }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => dismissed = true,
-                _ => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = if self.dismissal.is_pending() {
-            Vec::new()
+        let (events, activated) = if self.dismissal.is_pending() {
+            self.input_state.end_frame();
+            (Vec::new(), None)
         } else {
-            self.frame.process_input(&widget_input)
+            ScreenFrame::dispatch(&mut self.input_state, &mut self.frame)
         };
-        self.input_state.end_frame();
-        if let Some(backend) = audio_backend {
+        if let ScreenAudio {
+            sound: Some(sound),
+            backend: Some(backend),
+            sample_loader: Some(sample_loader),
+        } = audio
+        {
             widget_bridge::play_frame_widget_noise(
                 &events,
                 &self.frame,
@@ -345,12 +315,11 @@ impl PopupScrollModalState {
                 &mut self.noise_tracker,
             );
         }
-        if widget_bridge::find_activated(&events).is_some() {
+        if activated.is_some() {
             dismissed = true;
         }
 
-        self.render(renderer, resources, cursor);
-        renderer.present();
+        self.render(io, &screen);
 
         if let Some(result) = remote_result {
             return Some(self.finish(result));
@@ -406,17 +375,10 @@ impl PopupScrollModalState {
     }
 
     /// Keep replay presentation responsive without publishing a local outcome.
-    pub(crate) fn render_replay_wait(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
-        let (_, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        self.render(renderer, resources, cursor);
-        renderer.present();
+    pub(crate) fn render_replay_wait(&mut self, io: &mut ModalScreenIo<'_, '_>) {
+        let screen = ScreenFrame::poll(io);
+        self.transform = screen.transform;
+        self.render(io, &screen);
     }
 
     fn finish(&self, result: DialogResult) -> DialogResult {
@@ -424,12 +386,12 @@ impl PopupScrollModalState {
         result
     }
 
-    fn render(
-        &mut self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
+    /// Draw the parchment page, then the cursor, and present.
+    fn render(&mut self, io: &mut ModalScreenIo<'_, '_>, screen: &ScreenFrame) {
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        // Back-to-back popups in one engine frame reuse the dimmed scene, so
+        // `ScreenFrame::begin_draw`'s unconditional dim does not apply here.
         enter_modal_gpu_phase(renderer);
         if self.colorize {
             dim_screen(renderer);
@@ -498,8 +460,6 @@ impl PopupScrollModalState {
                 .draw(renderer, font, self.transform, &self.frame, mouse_pt);
         }
 
-        if let Some(c) = cursor {
-            c.draw(renderer, self.transform, &self.input_state);
-        }
+        screen.finish(io, &self.input_state);
     }
 }

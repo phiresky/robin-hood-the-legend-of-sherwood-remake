@@ -10,8 +10,8 @@ use crate::game::Game;
 use crate::host::Host;
 use crate::host::HostSignal;
 use crate::ingame_menu::modal_net::ModalDismissalGate;
-use crate::ingame_menu::widget_bridge::ModalScreenIo;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
+use crate::ingame_menu::widget_bridge::{ModalScreenIo, ScreenAudio};
 use crate::ingame_menu::{
     self, DebriefingModalState, DebriefingOutcome, DialogueModalState, DialogueSentence,
     IngameMenuResources, MissionStatePopupState, ModalNet, PopupScrollItem, PopupScrollModalState,
@@ -395,15 +395,13 @@ impl ModalScreen for PopupScrollModalState {
             .as_mut()
             .expect("ModalBatch::tick verified menu resources before begin");
         PopupScrollModalState::new(
-            window,
-            renderer,
-            resources,
-            item.title,
-            item.picture,
-            item.body,
-            item.body_font_name,
-            item.align,
-            item.universal_frame,
+            &ModalScreenIo {
+                window,
+                renderer,
+                resources,
+                cursor: None,
+            },
+            item,
         )
     }
 
@@ -441,11 +439,13 @@ impl ModalScreen for PopupScrollModalState {
                 resources,
                 cursor: Some(&cursor),
             },
-            &mut host.audio.sound,
-            audio_backend
-                .as_mut()
-                .map(|b| b as &mut dyn crate::sound::AudioBackend),
-            *sample_loader,
+            ScreenAudio {
+                sound: Some(&mut host.audio.sound),
+                backend: audio_backend
+                    .as_mut()
+                    .map(|b| b as &mut dyn crate::sound::AudioBackend),
+                sample_loader: Some(*sample_loader),
+            },
             modal_net.as_ref(),
         )
     }
@@ -456,12 +456,12 @@ impl ModalScreen for PopupScrollModalState {
 
     fn render_replay_wait(&mut self, _host: &mut Host, ctx: &mut ModalContext<'_>) {
         let cursor = default_modal_cursor(ctx.cursor_renderer, ctx.cursor_res, ctx.renderer);
-        self.render_replay_wait(
-            ctx.window,
-            ctx.renderer,
-            ctx.menu_resources.as_ref().expect("active popup resources"),
-            Some(&cursor),
-        );
+        self.render_replay_wait(&mut ModalScreenIo {
+            window: ctx.window,
+            renderer: ctx.renderer,
+            resources: ctx.menu_resources.as_ref().expect("active popup resources"),
+            cursor: Some(&cursor),
+        });
     }
 }
 
