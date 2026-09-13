@@ -1192,12 +1192,10 @@ impl EngineInner {
             self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
-        // Split borrow: the AI tick below reads `self.ai.global` / `self.world.fast_grid`
-        // alongside the mutable entity, so the arena lookup stays explicit here.
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
+        // The AI tick below reads the AI domain and the world's spatial grid
+        // beside the mutable entity.
+        let (entities, _, fast_grid) = self.world.entities_mut_with_sight(assets);
+        let entity = entities.expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
 
         match entity {
             Entity::Pc(_) | Entity::Soldier(_) => {
@@ -1207,12 +1205,7 @@ impl EngineInner {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
                     .the_16th_frame_before_stuck(
-                        crate::ai_enemy::ThinkEnv::new(
-                            sim,
-                            &ctx,
-                            &tick_data,
-                            Some(&self.world.fast_grid),
-                        ),
+                        crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, Some(fast_grid)),
                         frame_phase,
                         &self.ai.global,
                         is_idle,
