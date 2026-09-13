@@ -2617,7 +2617,12 @@ impl SherwoodCtx<'_> {
                         });
                         *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
                             state: ingame_menu::DebriefingModalState::new(
-                                resources, text, None, 0, won, false, None, false, false,
+                                resources,
+                                ingame_menu::DebriefingContent {
+                                    body: text,
+                                    won,
+                                    ..Default::default()
+                                },
                             ),
                         });
                         return Ok(HandlerAction::Proceed);

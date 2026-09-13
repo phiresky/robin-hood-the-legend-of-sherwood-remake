@@ -487,7 +487,12 @@ impl ModalScreen for DebriefingModalState {
             .as_ref()
             .expect("ModalBatch::tick verified menu resources before begin");
         DebriefingModalState::new(
-            resources, item.body, None, 0, item.won, false, None, false, false,
+            resources,
+            ingame_menu::DebriefingContent {
+                body: item.body,
+                won: item.won,
+                ..Default::default()
+            },
         )
     }
 
@@ -527,14 +532,15 @@ impl ModalScreen for DebriefingModalState {
 
     fn render_replay_wait(&mut self, _host: &mut Host, ctx: &mut ModalContext<'_>) {
         let cursor = default_modal_cursor(ctx.cursor_renderer, ctx.cursor_res, ctx.renderer);
-        self.render_scripted_replay_wait(
-            ctx.window,
-            ctx.renderer,
-            ctx.menu_resources
+        self.render_scripted_replay_wait(&mut ModalScreenIo {
+            window: ctx.window,
+            renderer: ctx.renderer,
+            resources: ctx
+                .menu_resources
                 .as_ref()
                 .expect("active debriefing resources"),
-            Some(&cursor),
-        );
+            cursor: Some(&cursor),
+        });
     }
 }
 
@@ -1403,12 +1409,20 @@ pub(super) async fn drain_pending_debriefings(
                         ..
                     } = &mut *ctx;
                     let resources = menu_resources.as_ref().expect("checked above");
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+                    // Cheat path passes no restart, so the quick-load
+                    // translator is never enabled.
                     ingame_menu::show_debriefing(
-                        window, renderer, resources, cursor, &text, None, 0, false, false,
-                        // Cheat path passes no restart, so the
-                        // quick-load translator is never enabled.
-                        None, false, false,
+                        &mut ModalScreenIo {
+                            window,
+                            renderer,
+                            resources,
+                            cursor: Some(&cursor),
+                        },
+                        ingame_menu::DebriefingContent {
+                            body: text,
+                            ..Default::default()
+                        },
                     )
                     .await
                 };
@@ -1454,10 +1468,19 @@ pub(super) async fn drain_pending_debriefings(
                         ..
                     } = &mut *ctx;
                     let resources = menu_resources.as_ref().expect("checked above");
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
                     ingame_menu::show_debriefing(
-                        window, renderer, resources, cursor, &text, None, 0, true, false, None,
-                        false, false,
+                        &mut ModalScreenIo {
+                            window,
+                            renderer,
+                            resources,
+                            cursor: Some(&cursor),
+                        },
+                        ingame_menu::DebriefingContent {
+                            body: text,
+                            won: true,
+                            ..Default::default()
+                        },
                     )
                     .await
                 };

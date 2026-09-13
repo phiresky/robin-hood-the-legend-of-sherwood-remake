@@ -8,7 +8,7 @@
 
 use crate::application::require;
 use crate::host::ApplicationContext;
-use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::widget_bridge::{ModalCursor, ModalScreenIo};
 use crate::ingame_menu::{IngameMenuResources, SaveLoadOutcome, show_load_picker};
 use crate::main_menu::MainMenuChoice;
 use crate::renderer::Renderer;
@@ -30,10 +30,12 @@ pub(crate) async fn run_main_menu_load(
         "Load Game screen",
     );
     let outcome = show_load_picker(
-        event_pump,
-        renderer,
-        resources,
-        Some(cursor),
+        &mut ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: Some(&cursor),
+        },
         save_manager,
         detailed_metadata,
     )

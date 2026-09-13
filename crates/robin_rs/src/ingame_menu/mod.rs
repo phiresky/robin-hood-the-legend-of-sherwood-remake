@@ -53,7 +53,7 @@ pub mod widget_bridge;
 pub mod yesno;
 
 pub use buy_blazons::BuyBlazonsOutcome;
-pub use debriefing::{DebriefingModalState, DebriefingOutcome, show_debriefing};
+pub use debriefing::{DebriefingContent, DebriefingModalState, DebriefingOutcome, show_debriefing};
 pub(crate) use dialogue::show_dialogue_batch;
 pub use dialogue::{
     BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueModalState, DialogueSentence, show_dialogue,

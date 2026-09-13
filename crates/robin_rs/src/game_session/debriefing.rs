@@ -138,14 +138,10 @@ pub(super) fn drive_lost_sherwood_gate(
         });
         state.modal = Some(crate::ingame_menu::DebriefingModalState::new(
             menu_resources,
-            text,
-            None,
-            0,
-            false,
-            false,
-            None,
-            false,
-            false,
+            crate::ingame_menu::DebriefingContent {
+                body: text,
+                ..Default::default()
+            },
         ));
     }
     let cursor = default_modal_cursor(
