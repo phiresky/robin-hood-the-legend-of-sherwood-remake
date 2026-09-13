@@ -2578,7 +2578,8 @@ fn rejected_shield_cover_keeps_computed_seek_position_before_shoot_fallback() {
         .shield_bearer_cover_position(73, &tick)
         .expect("fixture shield bearer must produce a cover position");
     assert!(
-        square_norm(pos_diff(&target_position, &expected_cover)) >= ctx.sq_standard_view_radius,
+        (target_position.map_point() - expected_cover.map_point()).square_norm()
+            >= ctx.sq_standard_view_radius,
         "fixture must reject the computed cover point at the subsequent view-radius gate"
     );
 

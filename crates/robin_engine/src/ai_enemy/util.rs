@@ -4,7 +4,9 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
+use super::map_vec_ext::AiMapVec;
 use crate::ai::*;
+use crate::coordinates::MapVec;
 use crate::element::EntityId;
 use crate::position_interface::INVERSE_ASPECT_RATIO;
 
@@ -677,50 +679,8 @@ impl FighterSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Combat vector math helpers
+// Combat distance helpers (2-D vector math lives in `super::map_vec_ext`)
 // ---------------------------------------------------------------------------
-
-/// Convert a 0–15 compass sector to a unit direction vector.
-/// Sector 0 = north (0, -1), increasing clockwise.
-pub(super) fn sector_to_vector(sector: u16) -> (f32, f32) {
-    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
-    (x, y)
-}
-
-/// Dot product of two 2D vectors.
-pub(super) fn dot2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    crate::geo2d::dot(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
-}
-
-/// 2D determinant (cross product Z component): positive if b is to the left of a.
-pub(super) fn det2(a: (f32, f32), b: (f32, f32)) -> f32 {
-    crate::geo2d::cross(crate::geo2d::pt(a.0, a.1), crate::geo2d::pt(b.0, b.1))
-}
-
-/// Max-norm (Chebyshev distance) of a 2D vector.
-pub(super) fn max_norm(v: (f32, f32)) -> f32 {
-    v.0.abs().max(v.1.abs())
-}
-
-/// Squared Euclidean norm of a 2D vector.
-pub(super) fn square_norm(v: (f32, f32)) -> f32 {
-    v.0 * v.0 + v.1 * v.1
-}
-
-/// Perpendicular vector (90° counter-clockwise rotation, left normal).
-pub(super) fn get_normal(v: (f32, f32)) -> (f32, f32) {
-    (-v.1, v.0)
-}
-
-/// Perpendicular vector (90° clockwise rotation, right normal).
-pub(super) fn get_normal_right(v: (f32, f32)) -> (f32, f32) {
-    (v.1, -v.0)
-}
-
-/// Position difference as a 2D vector.
-pub(super) fn pos_diff(a: &Position, b: &Position) -> (f32, f32) {
-    (a.x - b.x, a.y - b.y)
-}
 
 /// The AI's own squared distance metric: a stretched **3D** norm.
 ///
@@ -832,44 +792,6 @@ pub(super) fn vec_to_sector(dx: f32, dy: f32) -> u16 {
     crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy) as u16
 }
 
-/// Aspect-corrected Euclidean norm. Most callers pass
-/// `aspect_ratio = ASPECT_RATIO` for ordinary map-space AI geometry. A few
-/// sword-fight call sites deliberately pass `SWORDFIGHT_ASPECT_RATIO` instead.
-pub(super) fn iso_norm(v: (f32, f32), aspect_ratio: f32) -> f32 {
-    let yi = v.1 / aspect_ratio;
-    (v.0 * v.0 + yi * yi).sqrt()
-}
-
-/// Match original-game vector normalization, including its unchecked division
-/// when assertions are disabled in the shipping build.
-///
-/// In particular, a zero vector becomes `(NaN, NaN)`.  That behavior is
-/// observable when two sword-fight observers occupy the same point: Original
-/// starts a movement with a NaN goal instead of treating the zero vector as an
-/// already-reached destination.
-pub(super) fn iso_normalize(v: (f32, f32), aspect_ratio: f32) -> (f32, f32) {
-    let norm = iso_norm(v, aspect_ratio);
-    (v.0 / norm, v.1 / norm)
-}
-
-/// Sector to unit vector with the caller's Y aspect scaling.
-pub(super) fn sector_to_vector_iso(sector: u16, aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::shadow_polygon::sector_to_direction(sector as i16);
-    (x, y * aspect_ratio)
-}
-
-/// Vector to sector using the caller's aspect ratio.
-pub(super) fn vec_to_sector_ar(dx: f32, dy: f32, aspect_ratio: f32) -> u16 {
-    crate::position_interface::vector_to_sector_0_to_15_with_aspect(dx, dy, aspect_ratio) as u16
-}
-
-/// Perpendicular vector in isometric space.  Thin alias over
-/// [`crate::position_interface::vector_normal_iso`].
-pub(super) fn get_normal_iso(v: (f32, f32), direct: bool, _aspect_ratio: f32) -> (f32, f32) {
-    let [x, y] = crate::position_interface::vector_normal_iso(v.0, v.1, direct);
-    (x, y)
-}
-
 /// Direction offsets for retreat scanning: 0, 1, -1, 2, -2, 3, -3.
 /// Tests center first, then alternating sides outward.
 const DIRECTION_SPIRAL: [i16; 7] = [0, 1, -1, 2, -2, 3, -3];
@@ -944,15 +866,15 @@ pub fn propose_good_step_back_goal(
     grid: Option<&crate::fast_find_grid::FastFindGrid>,
     aspect_ratio: f32,
 ) -> Option<Position> {
-    let v = pos_diff(&pos_me, &pos_enemy);
-    let actual_distance = iso_norm(v, aspect_ratio);
+    let v = pos_me.map_point() - pos_enemy.map_point();
+    let actual_distance = v.iso_norm(aspect_ratio);
 
     // Already far enough away.
     if actual_distance >= good_distance as f32 {
         return Some(pos_me);
     }
 
-    let direction = vec_to_sector_ar(v.0, v.1, aspect_ratio);
+    let direction = v.sector_with_aspect(aspect_ratio);
     let minimal_run_distance = 10.0f32.max(min_distance as f32 - actual_distance);
 
     // Try to run away as far as possible, reducing distance by 10 each
@@ -964,10 +886,10 @@ pub fn propose_good_step_back_goal(
             // signed-promotion and UBYTE-conversion details are intentional
             // parity requirements. Keep them local to this source call site.
             let sector = step_back_direction_sector(direction, rel_dir);
-            let dir_vec = sector_to_vector_iso(sector, aspect_ratio);
+            let dir_vec = MapVec::from_sector_with_aspect(sector, aspect_ratio);
             let goal = Position {
-                x: pos_me.x + dir_vec.0 * distance,
-                y: pos_me.y + dir_vec.1 * distance,
+                x: pos_me.x + dir_vec.x * distance,
+                y: pos_me.y + dir_vec.y * distance,
                 sector: pos_me.sector,
                 level: pos_me.level,
             };
@@ -1274,8 +1196,8 @@ fn estimate_damage(
     // From-behind bonus/malus: gated on the *evaluator's* IQ (the
     // AI of `me`, not the attacker). The dot product uses the
     // Y-stretched strike vector; `dy_iso` is that stretched value.
-    let target_look = sector_to_vector(cp.target_direction);
-    let from_behind = dot2(target_look, (dx, dy_iso)) > 0.0;
+    let target_look = MapVec::from_sector(cp.target_direction);
+    let from_behind = target_look.dot(MapVec::new(dx, dy_iso)) > 0.0;
     if from_behind {
         if attacker.is_friendly {
             if iq > combat::ATTACK_FROM_BEHIND_MIN_IQ {
@@ -1340,7 +1262,7 @@ pub(super) fn evaluate_combat_position_full(
     let distance: u16 = if cp.change_position {
         // The original game truncates the maximum norm to 16 bits before applying the
         // fractional distance penalty.
-        max_norm(pos_diff(me_pos, &cp.attacker_position)) as u16
+        (me_pos.map_point() - cp.attacker_position.map_point()).max_norm() as u16
     } else {
         0
     };
@@ -1438,7 +1360,7 @@ pub(super) fn calculate_opponent_nearest_to_rene<'a>(
         // The original game subtracts raw map-space positions and stores the 2D
         // maximum norm in an unsigned 16-bit value before the strict comparison. Fractional
         // ties therefore retain Maurice's first opponent.
-        let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
+        let dist = (rene_pos.map_point() - opp.position.map_point()).max_norm() as u16;
         if dist < min_dist {
             min_dist = dist;
             nearest = Some(AiEntityHandle::new(opp_handle));

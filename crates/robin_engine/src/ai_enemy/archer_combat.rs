@@ -4,8 +4,9 @@
 use crate::ai::*;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
-use super::util::{det2, dot2, pos_diff, sector_to_vector, square_norm, vec_to_sector_ar};
+use super::map_vec_ext::AiMapVec;
 use super::{EnemyAi, ThinkEnv, archer};
+use crate::coordinates::MapVec;
 
 /// The angle convention used by the original game.
 ///
@@ -13,9 +14,9 @@ use super::{EnemyAi, ThinkEnv, archer};
 /// determinant first and returns PI when the dot product is non-positive.
 /// Consequently, the angle from a nonzero facing vector to a coincident point
 /// is PI, not the zero returned by Rust's `atan2(0, 0)`.
-fn legacy_vector_angle(from: (f32, f32), to: (f32, f32)) -> f32 {
-    let dot = dot2(from, to);
-    let det = det2(from, to);
+fn legacy_vector_angle(from: MapVec, to: MapVec) -> f32 {
+    let dot = from.dot(to);
+    let det = from.det(to);
     if det == 0.0 {
         if dot > 0.0 { 0.0 } else { std::f32::consts::PI }
     } else {
@@ -90,7 +91,7 @@ impl EnemyAi {
         let ThinkEnv { sim, ctx, tick, .. } = env;
         let my_pos = &ctx.position;
         // Nose direction vector (not Y-stretched).
-        let nose = sector_to_vector(ctx.direction);
+        let nose = MapVec::from_sector(ctx.direction);
 
         // Get my bow max range from the fighter snapshot.
         let my_bow_max_range = self
@@ -125,8 +126,8 @@ impl EnemyAi {
             let friend_position = self.archer_enemy_position(friend_handle, ctx);
             let dx = friend_position.x - my_pos.x;
             let dy = (friend_position.y - my_pos.y) * INVERSE_ASPECT_RATIO;
-            let to_friend = (dx, dy);
-            let sq_dist = square_norm(to_friend);
+            let to_friend = MapVec::new(dx, dy);
+            let sq_dist = to_friend.square_norm();
             let angle = legacy_vector_angle(nose, to_friend);
             friends.push(FriendInfo {
                 sq_distance: sq_dist,
@@ -216,7 +217,7 @@ impl EnemyAi {
             }
 
             // Check all friends for friendly fire.
-            let angle_to_enemy = legacy_vector_angle(nose, (dx, dy));
+            let angle_to_enemy = legacy_vector_angle(nose, MapVec::new(dx, dy));
             let friend_in_the_way = friends.iter().any(|fri| {
                 // Friend must be closer than enemy.
                 if fri.sq_distance > sq_distance {
@@ -295,14 +296,14 @@ impl EnemyAi {
         // subtracting the enemy position from our position gives the vector pointing
         // from the enemy toward me).
         let enemy_position = self.archer_enemy_position(enemy_handle, ctx);
-        let v_enemy_to_me = pos_diff(pos_me, &enemy_position);
+        let v_enemy_to_me = pos_me.map_point() - enemy_position.map_point();
         let sq_norm =
-            crate::position_interface::vector_square_norm_iso(v_enemy_to_me.0, v_enemy_to_me.1);
+            crate::position_interface::vector_square_norm_iso(v_enemy_to_me.x, v_enemy_to_me.y);
 
         // Sector of enemy→me, expressed relative to the
         // enemy's facing direction.  Sector 0 = directly in front of
         // the enemy.
-        let sector = vec_to_sector_ar(v_enemy_to_me.0, v_enemy_to_me.1, ASPECT_RATIO);
+        let sector = v_enemy_to_me.sector_with_aspect(ASPECT_RATIO);
         let relative = (sector as i32 - enemy.direction as i32).rem_euclid(16) as u16;
 
         let action_state = enemy.action_state;
@@ -361,6 +362,7 @@ mod tests {
     use crate::ai::{AiContext, AiEntityHandle, Position};
     use crate::ai_enemy::{EnemyAi, FighterSnapshot, ThinkEnv, archer};
     use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
+    use crate::coordinates::MapVec;
     use crate::element::{ActionState, ActorPc, Entity};
     use crate::sim_rng::SimulationContext;
 
@@ -394,15 +396,16 @@ mod tests {
     #[test]
     fn legacy_angle_treats_a_coincident_point_as_opposite() {
         assert_eq!(
-            legacy_vector_angle((1.0, 0.0), (0.0, 0.0)),
+            legacy_vector_angle(MapVec::new(1.0, 0.0), MapVec::new(0.0, 0.0)),
             std::f32::consts::PI
         );
     }
 
     #[test]
     fn coincident_friend_does_not_block_a_near_forward_archery_target() {
-        let friend_angle = legacy_vector_angle((1.0, 0.0), (0.0, 0.0));
-        let target_angle = legacy_vector_angle((1.0, 0.0), (100.0, -3.0));
+        let forward = MapVec::new(1.0, 0.0);
+        let friend_angle = legacy_vector_angle(forward, MapVec::new(0.0, 0.0));
+        let target_angle = legacy_vector_angle(forward, MapVec::new(100.0, -3.0));
         assert!((target_angle - friend_angle).abs() >= archer::MIN_TARGET_FRIEND_ANGLE);
     }
 

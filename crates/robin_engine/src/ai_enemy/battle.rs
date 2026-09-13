@@ -13,13 +13,13 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sim_rng::SimulationContext;
 
-use super::util::{
-    dot2, iso_norm, max_norm, pos_diff, sector_to_vector_iso, square_norm, vec_to_sector,
-};
+use super::map_vec_ext::AiMapVec;
+use super::util::vec_to_sector;
 use super::{
     EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, SeekFlags, ThinkEnv,
     UNDEFINED_DIRECTION, archer, combat,
 };
+use crate::coordinates::MapVec;
 
 /// Keep the battle-side decision trace independently gated from the engine
 /// context trace. This diagnostic is process-local and stderr-only, so its
@@ -1295,8 +1295,8 @@ impl EnemyAi {
                 if let Some(cover_pos) =
                     self.shield_bearer_cover_position(self.shield_bearer_before_me, tick)
                 {
-                    let diff = pos_diff(&ctx.position, &cover_pos);
-                    if max_norm(diff) < archer::COVER_POINT_TOLERANCE as f32 {
+                    let diff = ctx.position.map_point() - cover_pos.map_point();
+                    if diff.max_norm() < archer::COVER_POINT_TOLERANCE as f32 {
                         // Still in cover — shoot
                         decision = Decision::Shoot;
                     } else {
@@ -3079,9 +3079,9 @@ impl EnemyAi {
                 // like a UBYTE cast.
                 let raw = ((my_dir as i32) + (rel_dir as i32)) % 15;
                 let dir = (raw as u16) & 15;
-                let v = sector_to_vector_iso(dir, ASPECT_RATIO);
-                let gx = my_pos.x + v.0 * distance;
-                let gy = my_pos.y + v.1 * distance;
+                let v = MapVec::from_sector_iso(dir);
+                let gx = my_pos.x + v.x * distance;
+                let gy = my_pos.y + v.y * distance;
 
                 // straight-movement authorization.
                 let clear = match grid {
@@ -3286,10 +3286,10 @@ pub(crate) fn rider_charge_goal_geometry(
     );
 
     // Facing-sector vector — default aspect 1.0.
-    let nose_sy = sector_to_vector_iso(my_dir, 1.0);
+    let nose_sy = MapVec::from_sector_with_aspect(my_dir, 1.0);
 
     // Is the enemy before me?
-    let forward_dot = dot2(nose_sy, me_to_enemy_sy);
+    let forward_dot = nose_sy.dot(MapVec::new(me_to_enemy_sy.0, me_to_enemy_sy.1));
     if forward_dot < 0.0 {
         return Err(RiderChargeReject::Behind { forward_dot });
     }
@@ -3522,8 +3522,8 @@ impl EnemyAi {
                 .map(|f| f.position)
                 .or_else(|| ctx.entity_view(target).map(|view| view.position))
             {
-                let d = pos_diff(&target_pos, &ctx.position);
-                let dir = vec_to_sector(d.0, d.1);
+                let d = target_pos.map_point() - ctx.position.map_point();
+                let dir = vec_to_sector(d.x, d.y);
                 self.base.outbox.actor.set_direction_instantly = Some(dir as i16);
             }
         } else {
@@ -3976,8 +3976,8 @@ impl EnemyAi {
                 })
                 .position
         };
-        let d = pos_diff(&target_pos, &ctx.position);
-        let distance = iso_norm(d, ASPECT_RATIO);
+        let d = target_pos.map_point() - ctx.position.map_point();
+        let distance = d.iso_norm(ASPECT_RATIO);
 
         if distance < parameters_ai::PROUD_OBSERVER_MIN_DISTANCE as f32 {
             // Too close — step back.
@@ -4217,7 +4217,7 @@ impl EnemyAi {
                         self.base.primary_target
                     )
                 });
-            let d = pos_diff(&target_pos, &cover_pos);
+            let d = target_pos.map_point() - cover_pos.map_point();
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 crate::ai_enemy::parity_trace::cover_arm(
                     &(ctx.frame),
@@ -4226,12 +4226,12 @@ impl EnemyAi {
                     &(cover_pos),
                     &(self.base.primary_target),
                     &(target_pos),
-                    &(square_norm(d)),
+                    &(d.square_norm()),
                     &(ctx.sq_standard_view_radius),
                     &(grid.is_some()),
                 );
             }
-            if square_norm(d) >= ctx.sq_standard_view_radius {
+            if d.square_norm() >= ctx.sq_standard_view_radius {
                 // Cover point too far from target — fall back to shoot
                 self.update_shield_bearer_before_me(None);
                 return std::ops::ControlFlow::Continue(Decision::Shoot);

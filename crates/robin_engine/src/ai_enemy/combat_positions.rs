@@ -11,18 +11,17 @@ use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 use crate::sim_rng::SimulationContext;
 
+use super::map_vec_ext::AiMapVec;
 use super::util::{
     FighterView, ai_max_norm_distance, ai_square_distance, ai_square_distance_world,
-    calculate_opponent_nearest_to_rene, check_straight_movement, det2, dot2,
-    evaluate_combat_position_full, get_normal, get_normal_iso, get_normal_right,
-    is_observing_combat_substate, is_walking_running_charging_substate, iso_norm, iso_normalize,
-    max_norm, pos_diff, sector_to_vector, sector_to_vector_iso, square_norm, vec_to_sector,
-    vec_to_sector_ar,
+    calculate_opponent_nearest_to_rene, check_straight_movement, evaluate_combat_position_full,
+    is_observing_combat_substate, is_walking_running_charging_substate, vec_to_sector,
 };
 use super::{
     CombatPosition, EnemyAi, FighterSnapshot, PrimaryTargetFlags, ProfileRank, Question, SeekFlags,
     ThinkEnv, UNDEFINED_DIRECTION, archer, combat, propose_good_step_back_goal,
 };
+use crate::coordinates::MapVec;
 
 /// Us / them aggregates built by `reconsider_swordfight`.
 #[derive(Clone, Copy)]
@@ -120,8 +119,8 @@ fn shield_danger_point(
         })
 }
 
-fn original_uword_norm(delta: (f32, f32)) -> u16 {
-    (delta.0 * delta.0 + delta.1 * delta.1).sqrt() as u16
+fn original_uword_norm(delta: MapVec) -> u16 {
+    (delta.x * delta.x + delta.y * delta.y).sqrt() as u16
 }
 
 fn nearest_phalanx_enemy_index(distances: impl IntoIterator<Item = (usize, f32)>) -> Option<usize> {
@@ -145,20 +144,17 @@ fn nearest_phalanx_enemy_index(distances: impl IntoIterator<Item = (usize, f32)>
 /// particular, an aspect-corrected counterclockwise normal is not a plain screen-space
 /// clockwise rotation: it rotates in stretched world space, then projects
 /// the result back to map space.
-fn phalanx_advance_vectors(to_target: (f32, f32)) -> ((f32, f32), (f32, f32)) {
-    let forward = iso_normalize(to_target, ASPECT_RATIO);
-    let forward_step = (
-        forward.0 * archer::PHALANX_FORWARD_STEP as f32,
-        forward.1 * archer::PHALANX_FORWARD_STEP as f32,
+fn phalanx_advance_vectors(to_target: MapVec) -> (MapVec, MapVec) {
+    let forward = to_target.iso_normalize(ASPECT_RATIO);
+    let forward_step = MapVec::new(
+        forward.x * archer::PHALANX_FORWARD_STEP as f32,
+        forward.y * archer::PHALANX_FORWARD_STEP as f32,
     );
 
-    let right = iso_normalize(
-        get_normal_iso(forward_step, true, ASPECT_RATIO),
-        ASPECT_RATIO,
-    );
-    let right_step = (
-        right.0 * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
-        right.1 * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+    let right = forward_step.normal_iso(true).iso_normalize(ASPECT_RATIO);
+    let right_step = MapVec::new(
+        right.x * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
+        right.y * archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32,
     );
 
     (forward_step, right_step)
@@ -519,14 +515,14 @@ impl EnemyAi {
         if neighbour.is_pc || neighbour.rank != ProfileRank::Soldier {
             return false;
         }
-        let my_nose = sector_to_vector(ctx.direction);
-        let his_nose = sector_to_vector(neighbour.direction);
-        if dot2(my_nose, his_nose) < 0.0 {
+        let my_nose = MapVec::from_sector(ctx.direction);
+        let his_nose = MapVec::from_sector(neighbour.direction);
+        if my_nose.dot(his_nose) < 0.0 {
             return false;
         }
-        let mut to_friend = pos_diff(&neighbour.position, &ctx.position);
-        to_friend.1 *= INVERSE_ASPECT_RATIO;
-        det2(my_nose, to_friend) < 0.0
+        let mut to_friend = neighbour.position.map_point() - ctx.position.map_point();
+        to_friend.y *= INVERSE_ASPECT_RATIO;
+        my_nose.det(to_friend) < 0.0
     }
 
     /// Right-neighbour eligibility.
@@ -534,14 +530,14 @@ impl EnemyAi {
         if neighbour.is_pc || neighbour.rank != ProfileRank::Soldier {
             return false;
         }
-        let my_nose = sector_to_vector(ctx.direction);
-        let his_nose = sector_to_vector(neighbour.direction);
-        if dot2(my_nose, his_nose) < 0.0 {
+        let my_nose = MapVec::from_sector(ctx.direction);
+        let his_nose = MapVec::from_sector(neighbour.direction);
+        if my_nose.dot(his_nose) < 0.0 {
             return false;
         }
-        let mut to_friend = pos_diff(&neighbour.position, &ctx.position);
-        to_friend.1 *= INVERSE_ASPECT_RATIO;
-        det2(my_nose, to_friend) > 0.0
+        let mut to_friend = neighbour.position.map_point() - ctx.position.map_point();
+        to_friend.y *= INVERSE_ASPECT_RATIO;
+        my_nose.det(to_friend) > 0.0
     }
 
     /// Picks the nearest friendly soldier as a left or right neighbour
@@ -619,7 +615,7 @@ impl EnemyAi {
         &self,
         list: &mut Vec<CombatPosition>,
         there: Position,
-        direction: (f32, f32),
+        direction: MapVec,
         left_neighbour: Option<AiEntityHandle>,
         right_neighbour: Option<AiEntityHandle>,
         env: ThinkEnv<'_>,
@@ -647,14 +643,14 @@ impl EnemyAi {
             let Some(enemy) = self.find_fighter(*enemy_handle, tick) else {
                 continue;
             };
-            let v = pos_diff(&enemy.position, &there);
-            if max_norm(v) >= weapon_distance {
+            let v = enemy.position.map_point() - there.map_point();
+            if v.max_norm() >= weapon_distance {
                 continue;
             }
-            if square_norm(v) >= weapon_sq {
+            if v.square_norm() >= weapon_sq {
                 continue;
             }
-            if dot2(v, direction) <= 0.0 {
+            if v.dot(direction) <= 0.0 {
                 continue;
             }
             let me_pos = ctx.position;
@@ -664,7 +660,7 @@ impl EnemyAi {
                 target: Some(AiEntityHandle::new(*enemy_handle)),
                 target_position: enemy.position,
                 target_direction: enemy.direction,
-                change_position: max_norm(pos_diff(&there, &me_pos)) > 3.0,
+                change_position: (there.map_point() - me_pos.map_point()).max_norm() > 3.0,
                 line_position: true,
                 left_neighbour,
                 right_neighbour,
@@ -691,18 +687,18 @@ impl EnemyAi {
             return;
         }
 
-        let mut nose_friend = sector_to_vector(right.direction);
-        let sidewards_raw = get_normal(nose_friend);
-        let mut sidewards = (
-            sidewards_raw.0 * combat::STANDARD_LINE_DISTANCE as f32,
-            sidewards_raw.1 * combat::STANDARD_LINE_DISTANCE as f32,
+        let mut nose_friend = MapVec::from_sector(right.direction);
+        let sidewards_raw = nose_friend.normal_left();
+        let mut sidewards = MapVec::new(
+            sidewards_raw.x * combat::STANDARD_LINE_DISTANCE as f32,
+            sidewards_raw.y * combat::STANDARD_LINE_DISTANCE as f32,
         );
-        nose_friend.1 *= ASPECT_RATIO;
-        sidewards.1 *= ASPECT_RATIO;
+        nose_friend.y *= ASPECT_RATIO;
+        sidewards.y *= ASPECT_RATIO;
 
         let new_pos = Position {
-            x: right.position.x - sidewards.0,
-            y: right.position.y - sidewards.1,
+            x: right.position.x - sidewards.x,
+            y: right.position.y - sidewards.y,
             ..right.position
         };
         self.propose_line_positions_there(
@@ -731,18 +727,18 @@ impl EnemyAi {
             return;
         }
 
-        let mut nose_friend = sector_to_vector(left.direction);
-        let sidewards_raw = get_normal(nose_friend);
-        let mut sidewards = (
-            sidewards_raw.0 * combat::STANDARD_LINE_DISTANCE as f32,
-            sidewards_raw.1 * combat::STANDARD_LINE_DISTANCE as f32,
+        let mut nose_friend = MapVec::from_sector(left.direction);
+        let sidewards_raw = nose_friend.normal_left();
+        let mut sidewards = MapVec::new(
+            sidewards_raw.x * combat::STANDARD_LINE_DISTANCE as f32,
+            sidewards_raw.y * combat::STANDARD_LINE_DISTANCE as f32,
         );
-        nose_friend.1 *= ASPECT_RATIO;
-        sidewards.1 *= ASPECT_RATIO;
+        nose_friend.y *= ASPECT_RATIO;
+        sidewards.y *= ASPECT_RATIO;
 
         let new_pos = Position {
-            x: left.position.x + sidewards.0,
-            y: left.position.y + sidewards.1,
+            x: left.position.x + sidewards.x,
+            y: left.position.y + sidewards.y,
             ..left.position
         };
         self.propose_line_positions_there(
@@ -775,14 +771,14 @@ impl EnemyAi {
             return;
         }
 
-        let sidewards = pos_diff(&right.position, &left.position);
+        let sidewards = right.position.map_point() - left.position.map_point();
         let new_pos = Position {
-            x: left.position.x + 0.5 * sidewards.0,
-            y: left.position.y + 0.5 * sidewards.1,
+            x: left.position.x + 0.5 * sidewards.x,
+            y: left.position.y + 0.5 * sidewards.y,
             ..left.position
         };
         // Clockwise normal for the facing.
-        let direction = get_normal_right(sidewards);
+        let direction = sidewards.normal_right();
         self.propose_line_positions_there(
             list,
             new_pos,
@@ -920,14 +916,14 @@ impl EnemyAi {
             if direction_index == forbidden_direction {
                 continue;
             }
-            let mut vec_enemy = sector_to_vector(direction_index);
-            vec_enemy.0 *= sword_distance;
-            vec_enemy.1 *= sword_distance;
-            vec_enemy.1 *= ASPECT_RATIO;
+            let mut vec_enemy = MapVec::from_sector(direction_index);
+            vec_enemy.x *= sword_distance;
+            vec_enemy.y *= sword_distance;
+            vec_enemy.y *= ASPECT_RATIO;
 
             let new_pos = Position {
-                x: enemy.position.x - vec_enemy.0,
-                y: enemy.position.y - vec_enemy.1,
+                x: enemy.position.x - vec_enemy.x,
+                y: enemy.position.y - vec_enemy.y,
                 ..enemy.position
             };
 
@@ -1121,8 +1117,8 @@ impl EnemyAi {
                 return false;
             }
 
-            let d_to_me = pos_diff(&pt.position, &ctx.position);
-            let mut sq_dist = square_norm(d_to_me);
+            let d_to_me = pt.position.map_point() - ctx.position.map_point();
+            let mut sq_dist = d_to_me.square_norm();
             // Penalty for sector changes.
             let pt_sector =
                 crate::position_interface::SectorHandle::new(u16::from(pt.sector_index));
@@ -1394,26 +1390,26 @@ impl EnemyAi {
         let distance = archer::DISTANCE_SHIELD_BEARER_SHIELD_BEARER as f32;
 
         // Left slot: anchor's forward vector, clockwise normal.
-        let left_forward = sector_to_vector(left_dir);
-        let mut left_side = get_normal_right(left_forward);
-        left_side.0 *= distance;
-        left_side.1 *= distance;
-        left_side.1 *= ASPECT_RATIO;
+        let left_forward = MapVec::from_sector(left_dir);
+        let mut left_side = left_forward.normal_right();
+        left_side.x *= distance;
+        left_side.y *= distance;
+        left_side.y *= ASPECT_RATIO;
         let pos_left = Position {
-            x: left_pos.x + left_side.0,
-            y: left_pos.y + left_side.1,
+            x: left_pos.x + left_side.x,
+            y: left_pos.y + left_side.y,
             ..left_pos
         };
 
         // Right slot: anchor's forward vector, counter-clockwise normal.
-        let right_forward = sector_to_vector(right_dir);
-        let mut right_side = get_normal(right_forward);
-        right_side.0 *= distance;
-        right_side.1 *= distance;
-        right_side.1 *= ASPECT_RATIO;
+        let right_forward = MapVec::from_sector(right_dir);
+        let mut right_side = right_forward.normal_left();
+        right_side.x *= distance;
+        right_side.y *= distance;
+        right_side.y *= ASPECT_RATIO;
         let pos_right = Position {
-            x: right_pos.x + right_side.0,
-            y: right_pos.y + right_side.1,
+            x: right_pos.x + right_side.x,
+            y: right_pos.y + right_side.y,
             ..right_pos
         };
 
@@ -1434,8 +1430,8 @@ impl EnemyAi {
         });
 
         let me_pos = ctx.position;
-        let sq_left = square_norm(pos_diff(&pos_left, &me_pos));
-        let sq_right = square_norm(pos_diff(&pos_right, &me_pos));
+        let sq_left = (pos_left.map_point() - me_pos.map_point()).square_norm();
+        let sq_right = (pos_right.map_point() - me_pos.map_point()).square_norm();
         let left_crosses_identity = inherited_position_crosses_sector_identity(&me_pos, &left_pos);
         let right_crosses_identity =
             inherited_position_crosses_sector_identity(&me_pos, &right_pos);
@@ -1504,7 +1500,7 @@ impl EnemyAi {
         } else {
             (snap.position, snap.direction)
         };
-        let forward = sector_to_vector(bearer_dir);
+        let forward = MapVec::from_sector(bearer_dir);
         let distance = archer::DISTANCE_SHIELD_BEARER_ARCHER as f32;
         // Original first authors the aspect-corrected vector through
         // aspect-corrected direction-sector assignment and only then applies
@@ -1512,9 +1508,9 @@ impl EnemyAi {
         // roundings in that order: reassociating this as
         // `(forward.y * distance) * ASPECT_RATIO` changes the cover point by
         // one ULP for diagonal sectors.
-        let vertical_offset = (forward.1 * ASPECT_RATIO) * distance;
+        let vertical_offset = (forward.y * ASPECT_RATIO) * distance;
         Some(Position {
-            x: bearer_pos.x - forward.0 * distance,
+            x: bearer_pos.x - forward.x * distance,
             y: bearer_pos.y - vertical_offset,
             ..bearer_pos
         })
@@ -2222,21 +2218,21 @@ impl EnemyAi {
                 // Original normalizes both the forward vector and its
                 // aspect-corrected counterclockwise normal in isometric space.
                 let (fwd_step, right_scaled) =
-                    phalanx_advance_vectors(pos_diff(&primary_pos, &phalanx_center));
+                    phalanx_advance_vectors(primary_pos.map_point() - phalanx_center.map_point());
 
                 let new_center = Position {
-                    x: phalanx_center.x + fwd_step.0,
-                    y: phalanx_center.y + fwd_step.1,
+                    x: phalanx_center.x + fwd_step.x,
+                    y: phalanx_center.y + fwd_step.y,
                     ..phalanx_center
                 };
                 let new_left = Position {
-                    x: new_center.x - half as f32 * right_scaled.0,
-                    y: new_center.y - half as f32 * right_scaled.1,
+                    x: new_center.x - half as f32 * right_scaled.x,
+                    y: new_center.y - half as f32 * right_scaled.y,
                     ..new_center
                 };
                 let new_right = Position {
-                    x: new_left.x + (phalanx_size - 1) as f32 * right_scaled.0,
-                    y: new_left.y + (phalanx_size - 1) as f32 * right_scaled.1,
+                    x: new_left.x + (phalanx_size - 1) as f32 * right_scaled.x,
+                    y: new_left.y + (phalanx_size - 1) as f32 * right_scaled.y,
                     ..new_left
                 };
 
@@ -2274,8 +2270,8 @@ impl EnemyAi {
                 // uniformly for all members.
                 for (i, &guy) in phalanx_members.iter().enumerate() {
                     let new_pos = Position {
-                        x: new_left.x + i as f32 * right_scaled.0,
-                        y: new_left.y + i as f32 * right_scaled.1,
+                        x: new_left.x + i as f32 * right_scaled.x,
+                        y: new_left.y + i as f32 * right_scaled.y,
                         ..new_left
                     };
                     self.base.outbox.reentrant.cross_npc_actions.push(
@@ -2296,10 +2292,10 @@ impl EnemyAi {
 
             // Compute right vector for the ideal direction
             let ideal_right_sector = (ideal_direction + 4) & 15;
-            let right_vec = sector_to_vector(ideal_right_sector);
+            let right_vec = MapVec::from_sector(ideal_right_sector);
             let right_scaled = (
-                right_vec.0 * distance_sb,
-                right_vec.1 * distance_sb * ASPECT_RATIO,
+                right_vec.x * distance_sb,
+                right_vec.y * distance_sb * ASPECT_RATIO,
             );
 
             // Try all phalanx members as pivot points, starting from the
@@ -2825,7 +2821,8 @@ impl EnemyAi {
             list[i].change_adversary = list[i].target != self.base.primary_target;
 
             let cant_leave_target = lock_to_target.is_some() && list[i].target != lock_to_target;
-            let too_far = square_norm(pos_diff(&list[i].attacker_position, &me_pos))
+            let too_far = (list[i].attacker_position.map_point() - me_pos.map_point())
+                .square_norm()
                 > combat::SQR_MAX_NEW_POS_DIST as f32;
             // The original game uses pure VIP rules. Bake the "still
             // engageable" checks (friendly / down) in here explicitly so
@@ -2850,7 +2847,8 @@ impl EnemyAi {
                     let Some(enemy) = self.find_fighter(*enemy_handle, tick) else {
                         continue;
                     };
-                    let dist = max_norm(pos_diff(&enemy.position, &list[i].attacker_position));
+                    let dist = (enemy.position.map_point() - list[i].attacker_position.map_point())
+                        .max_norm();
                     if dist < combat::MIN_ENEMY_DIST as f32 {
                         clean_me = true;
                         break;
@@ -2872,7 +2870,8 @@ impl EnemyAi {
                         let Some(friend) = self.find_fighter(*friend_handle, tick) else {
                             continue;
                         };
-                        if max_norm(pos_diff(&friend.position, &list[i].attacker_position))
+                        if (friend.position.map_point() - list[i].attacker_position.map_point())
+                            .max_norm()
                             < combat::MIN_FRIEND_DIST as f32
                         {
                             clean_me = true;
@@ -3403,7 +3402,7 @@ impl EnemyAi {
             }
             return std::ops::ControlFlow::Break(());
         };
-        let to_target = pos_diff(&primary.position, &ctx.position);
+        let to_target = primary.position.map_point() - ctx.position.map_point();
         // The original game stores the norm in an unsigned 16-bit value before every following range
         // comparison. Preserve that truncation: a target at 90.7 units is
         // compared as 90, and is therefore still within a 90-unit maximal
@@ -3618,7 +3617,7 @@ impl EnemyAi {
         // Combat-trainer recall to post.
         if self.combat_trainer {
             let initial = self.base.initial_position;
-            if max_norm(pos_diff(&initial, &ctx.position)) > 20.0 {
+            if (initial.map_point() - ctx.position.map_point()).max_norm() > 20.0 {
                 self.go_to(
                     AiState::Attacking,
                     Substate::AttackingMovingAroundOldEnemy,
@@ -3691,8 +3690,8 @@ impl EnemyAi {
         // aspect-corrected direction-sector assignment. The aspect-scaled
         // components are observable here because the following scalar
         // products are truncated to signed 16-bit values before left/right scoring.
-        let dir_vec = sector_to_vector_iso(ctx.direction, ASPECT_RATIO);
-        let right_vec = get_normal_iso(dir_vec, false, ASPECT_RATIO);
+        let dir_vec = MapVec::from_sector_iso(ctx.direction);
+        let right_vec = dir_vec.normal_iso(false);
 
         let mut points_for_right: i32 = 0;
 
@@ -3716,8 +3715,8 @@ impl EnemyAi {
             if !is_observing_combat_substate(f.current_substate) {
                 continue;
             }
-            let v = pos_diff(&f.position, &ctx.position);
-            let scalar = dot2(right_vec, v) as i32;
+            let v = f.position.map_point() - ctx.position.map_point();
+            let scalar = right_vec.dot(v) as i32;
 
             // `scalar > 0` takes the right-bonus branch, otherwise
             // (including `scalar == 0`) takes the right-malus branch.
@@ -3967,8 +3966,8 @@ impl EnemyAi {
         //     turn step advances the current direction on the following frame.
         if self.combat_trainer {
             if let Some(primary) = self.find_fighter(new_primary, tick) {
-                let v = pos_diff(&primary.position, &me_pos);
-                let dir = vec_to_sector_ar(v.0, v.1, ASPECT_RATIO);
+                let v = primary.position.map_point() - me_pos.map_point();
+                let dir = v.sector_with_aspect(ASPECT_RATIO);
                 self.base.set_direction_goal(dir);
             }
             self.base.outbox.actor.set_focus(new_primary);
@@ -4052,20 +4051,20 @@ impl EnemyAi {
         let me_pos = ctx.position;
         if let Some(primary) = self.find_fighter(new_primary, tick).cloned() {
             let pos_fighter = primary.position;
-            let v_to_me = pos_diff(&me_pos, &pos_fighter);
-            let distance = iso_norm(v_to_me, ASPECT_RATIO) as u16;
+            let v_to_me = me_pos.map_point() - pos_fighter.map_point();
+            let distance = v_to_me.iso_norm(ASPECT_RATIO) as u16;
 
             // Element direction-vector lookup constructs this vector with
             // aspect-corrected direction-sector assignment. The isometric Y
             // compression is significant near the behind/in-front boundary.
-            let target_dir = sector_to_vector_iso(primary.direction, ASPECT_RATIO);
+            let target_dir = MapVec::from_sector_iso(primary.direction);
             // Reference condition:
             //   primary.direction_vector * (pos_fighter - pos_me) > 0
             // This means the target is looking away from the observer,
             // exposing their back. Using (me - fighter) instead makes
             // observers attack when the target faces them.
-            let v_observer_to_target = pos_diff(&pos_fighter, &me_pos);
-            let back_to_me = dot2(target_dir, v_observer_to_target) > 0.0;
+            let v_observer_to_target = pos_fighter.map_point() - me_pos.map_point();
+            let back_to_me = target_dir.dot(v_observer_to_target) > 0.0;
 
             let principal_opponents_count = if primary.is_swordfighting {
                 self.find_fighter(primary.principal_opponent, tick)
@@ -4145,8 +4144,8 @@ impl EnemyAi {
             self.get_courage() as u8,
         );
 
-        let v_to_fighter = pos_diff(&pos_me, &pos_fighter);
-        let mut distance = iso_norm(v_to_fighter, ASPECT_RATIO) as u16;
+        let v_to_fighter = pos_me.map_point() - pos_fighter.map_point();
+        let mut distance = v_to_fighter.iso_norm(ASPECT_RATIO) as u16;
 
         // If the primary target is swordfighting someone else who is
         // closer, use that person as the reference distance.
@@ -4154,8 +4153,8 @@ impl EnemyAi {
             && primary.principal_opponent != Some(AiEntityHandle::new(self.base.me))
             && let Some(friend) = self.find_fighter(primary.principal_opponent, tick)
         {
-            let friend_v = pos_diff(&pos_me, &friend.position);
-            let friend_dist = iso_norm(friend_v, ASPECT_RATIO) as u16;
+            let friend_v = pos_me.map_point() - friend.position.map_point();
+            let friend_dist = friend_v.iso_norm(ASPECT_RATIO) as u16;
             if friend_dist < distance {
                 distance = friend_dist;
                 pos_fighter = friend.position;
@@ -4167,24 +4166,24 @@ impl EnemyAi {
 
         if distance + 50 < ideal_distance {
             // Too near — step back.
-            let v = pos_diff(&pos_me, &pos_fighter);
-            let n = iso_normalize(v, ASPECT_RATIO);
+            let v = pos_me.map_point() - pos_fighter.map_point();
+            let n = v.iso_normalize(ASPECT_RATIO);
             let step = (ideal_distance - distance) as f32;
             pos_destination = Position {
-                x: pos_me.x + n.0 * step,
-                y: pos_me.y + n.1 * step,
+                x: pos_me.x + n.x * step,
+                y: pos_me.y + n.y * step,
                 sector: pos_me.sector,
                 level: pos_me.level,
             };
             b_move = check_straight_movement(grid, &pos_me, &pos_destination, &ctx.move_box);
         } else if distance > ideal_distance + 50 {
             // Too far — step forward.
-            let v = pos_diff(&pos_fighter, &pos_me);
-            let n = iso_normalize(v, ASPECT_RATIO);
+            let v = pos_fighter.map_point() - pos_me.map_point();
+            let n = v.iso_normalize(ASPECT_RATIO);
             let step = (distance - ideal_distance) as f32;
             pos_destination = Position {
-                x: pos_me.x + n.0 * step,
-                y: pos_me.y + n.1 * step,
+                x: pos_me.x + n.x * step,
+                y: pos_me.y + n.y * step,
                 sector: pos_me.sector,
                 level: pos_me.level,
             };
@@ -4203,13 +4202,13 @@ impl EnemyAi {
             for i in 0..2u8 {
                 // First try preferred direction, then the other.
                 let direct = (i == 0) == prefer_left;
-                let to_fighter = pos_diff(&pos_fighter, &pos_me);
-                let normal = get_normal_iso(to_fighter, direct, ASPECT_RATIO);
-                let n = iso_normalize(normal, ASPECT_RATIO);
+                let to_fighter = pos_fighter.map_point() - pos_me.map_point();
+                let normal = to_fighter.normal_iso(direct);
+                let n = normal.iso_normalize(ASPECT_RATIO);
                 let step = parameters_ai::OBSERVE_SWORDFIGHT_SIDE_STEP;
                 let candidate = Position {
-                    x: pos_me.x + n.0 * step,
-                    y: pos_me.y + n.1 * step,
+                    x: pos_me.x + n.x * step,
+                    y: pos_me.y + n.y * step,
                     sector: pos_me.sector,
                     level: pos_me.level,
                 };
@@ -4245,8 +4244,8 @@ impl EnemyAi {
             );
         } else {
             // Stay in place, face primary target.
-            let to_target = pos_diff(&primary.position, &ctx.position);
-            let dir = vec_to_sector(to_target.0, to_target.1);
+            let to_target = primary.position.map_point() - ctx.position.map_point();
+            let dir = vec_to_sector(to_target.x, to_target.y);
             self.base.set_direction_goal(dir);
             self.base.outbox.actor.set_focus(self.base.primary_target);
             self.base.stop_all();

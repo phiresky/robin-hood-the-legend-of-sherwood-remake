@@ -426,6 +426,14 @@ pub struct Position {
     pub level: u16,
 }
 
+impl Position {
+    /// The projected map point `(x, y)`; sector and level are dropped.
+    /// `a.map_point() - b.map_point()` is the `MapVec` `(a.x - b.x, a.y - b.y)`.
+    pub fn map_point(&self) -> crate::coordinates::MapPoint {
+        crate::coordinates::MapPoint::new(self.x, self.y)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // AI destination forecasts
 // ---------------------------------------------------------------------------

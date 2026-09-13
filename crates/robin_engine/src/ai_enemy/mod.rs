@@ -12,6 +12,7 @@ mod detection;
 mod event_handlers;
 mod money_fight;
 pub(crate) use detection::context_detects_180_degrees;
+mod map_vec_ext;
 mod parity_trace;
 mod periodic;
 mod seek;

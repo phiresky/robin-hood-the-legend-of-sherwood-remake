@@ -6,11 +6,12 @@
 //! and the report-merging helper `get_report_from_soldier`.
 
 use crate::ai::*;
-use crate::coordinates::{MapPoint, WorldPoint3D};
+use crate::coordinates::{MapPoint, MapVec, WorldPoint3D};
 use crate::parameters_ai;
 use crate::position_interface::{ASPECT_RATIO, INVERSE_ASPECT_RATIO};
 
-use super::util::{ai_max_norm_distance, iso_normalize, vec_to_sector, vec_to_sector_ar};
+use super::map_vec_ext::AiMapVec;
+use super::util::{ai_max_norm_distance, vec_to_sector};
 use super::{CampSoldierInfo, EnemyAi, ProfileRank, SeekFlags, ThinkEnv, combat, task_priority};
 use crate::fast_find_grid::FastFindGrid;
 
@@ -27,7 +28,7 @@ pub(crate) enum CommandSoldiersStart {
 /// argument explicit: using the aspect-1 classifier changes diagonal map-space
 /// vectors by a sector.
 fn formation_direction(dx: f32, dy: f32) -> u16 {
-    vec_to_sector_ar(dx, dy, ASPECT_RATIO)
+    MapVec::new(dx, dy).sector_with_aspect(ASPECT_RATIO)
 }
 
 /// Return Original's raw formation-loop cursor and its projected sector.
@@ -58,9 +59,9 @@ fn average_alerted_direction_vector(
     alerted_positions
         .iter()
         .fold((0.0, 0.0), |(sum_x, sum_y), soldier_pos| {
-            let direction =
-                iso_normalize((soldier_pos.x - officer.x, soldier_pos.y - officer.y), 1.0);
-            (sum_x + direction.0, sum_y + direction.1)
+            let direction = MapVec::new(soldier_pos.x - officer.x, soldier_pos.y - officer.y)
+                .iso_normalize(1.0);
+            (sum_x + direction.x, sum_y + direction.y)
         })
 }
 
