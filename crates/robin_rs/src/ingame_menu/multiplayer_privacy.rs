@@ -1,42 +1,23 @@
 //! Multiplayer publication/privacy preferences.
 
-use crate::gfx_types::{GameEvent, Keycode};
-use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::multiplayer_config::MultiplayerConfig;
 
-use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt_font,
-};
-use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::layout::{align_bottom_right, draw_screen_background, render_text_virt_font};
+use super::resources::{MT_BTN_CANCEL, MT_BTN_OK};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_PUBLICATION: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 
 pub async fn show_multiplayer_privacy(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     config: &mut MultiplayerConfig,
 ) -> bool {
-    let mut state = MultiplayerPrivacyModalState::new(event_pump, renderer, resources, config);
-    let mut io = ModalScreenIo {
-        window: event_pump,
-        renderer,
-        resources,
-        cursor: cursor.as_ref(),
-    };
-    loop {
-        let done = state.tick(&mut io);
-        crate::window::sleep_ui_frame().await;
-        if done {
-            return state.commit(config);
-        }
-    }
+    let mut state = MultiplayerPrivacyModalState::new(io, config);
+    widget_bridge::run_modal(io, |io| state.tick(io)).await;
+    state.commit(config)
 }
 
 /// Retained widget/input and staged preference state for one modal frame.
@@ -50,16 +31,8 @@ pub struct MultiplayerPrivacyModalState {
 }
 
 impl MultiplayerPrivacyModalState {
-    pub fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-        config: &MultiplayerConfig,
-    ) -> Self {
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+    pub fn new(io: &ModalScreenIo<'_, '_>, config: &MultiplayerConfig) -> Self {
+        let resources = io.resources;
         let working = *config;
         let dirty = false;
         let (btn_w, btn_h) = resources.button_dimensions();
@@ -94,7 +67,7 @@ impl MultiplayerPrivacyModalState {
             bottom[1].h,
         ));
 
-        let input = ModalInputState::from_window(event_pump, transform);
+        let input = ModalInputState::for_screen(io.window, io.renderer);
 
         Self {
             working,
@@ -106,41 +79,33 @@ impl MultiplayerPrivacyModalState {
         }
     }
 
-    /// Poll and draw exactly one frame; the caller owns pacing.
-    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
+    /// Poll and draw exactly one frame; the caller owns pacing. The frame that
+    /// closes the screen is still drawn and paced: `Some(())` is only reported
+    /// on the following tick, before polling.
+    pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<()> {
         if self.done {
-            return true;
+            return Some(());
         }
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => self.done = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } => {
+        let screen = ScreenFrame::begin(io, &mut self.input);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
                 }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.done = true,
-                _ => {}
+                ScreenKey::Next => {}
             }
         }
-        let widget_events = self.input.process_frame(&mut self.frame);
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input, &mut self.frame);
+        if let Some(id) = activated {
             self.activate(id);
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
         if let Some(bg) = resources.menu_bg[0] {
             draw_screen_background(renderer, &bg);
         }
@@ -183,12 +148,9 @@ impl MultiplayerPrivacyModalState {
                 widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
             }
         }
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
+        screen.finish(io, &self.input);
 
-        self.done
+        None
     }
 
     fn activate(&mut self, id: u32) {

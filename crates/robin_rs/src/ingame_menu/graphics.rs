@@ -62,7 +62,7 @@ pub async fn show_graphics(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    cursor: Option<&ModalCursor<'_>>,
     config: &mut GraphicConfig,
 ) -> (bool, bool) {
     let transform = MenuTransform::centered(
@@ -77,7 +77,7 @@ pub async fn show_graphics(
                 window: event_pump,
                 renderer,
                 resources,
-                cursor: cursor.as_ref(),
+                cursor,
             })
             .await;
         // Preserve the original final-frame presentation and sleep on close.

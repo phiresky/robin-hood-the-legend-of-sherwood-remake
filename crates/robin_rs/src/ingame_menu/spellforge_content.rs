@@ -1094,7 +1094,7 @@ pub async fn show_spellforge_content_settings(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    cursor: Option<&ModalCursor<'_>>,
 ) {
     let mut state =
         SpellforgeContentSettingsState::new(application_context, event_pump, renderer, resources);
@@ -1105,7 +1105,7 @@ pub async fn show_spellforge_content_settings(
                 window: event_pump,
                 renderer,
                 resources,
-                cursor: cursor.as_ref(),
+                cursor,
             },
         ) {
             SpellforgeContentSettingsOutcome::Pending => crate::window::sleep_ui_frame().await,

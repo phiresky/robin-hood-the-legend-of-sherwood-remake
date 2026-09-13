@@ -9,15 +9,10 @@
 //! [`super::widget_bridge`].
 
 use crate::application::require;
-use crate::gfx_types::Keycode;
-use robin_engine::sound_cache::SampleLoader;
 
-use crate::gfx_types::GameEvent;
 use crate::hardware::Hardware;
 use crate::key_config::KeyConfig;
 use crate::options_model::{OptionsController, OptionsPage};
-use crate::renderer::Renderer;
-use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 use robin_engine::graphic_config::GraphicConfig;
@@ -28,19 +23,20 @@ use super::gameplay::show_gameplay;
 use super::graphics::show_graphics;
 use super::language::show_language;
 use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt_font,
+    MenuTransform, align_bottom_right, draw_screen_background, render_text_virt_font,
 };
 use super::leaderboard_settings::show_leaderboard_settings;
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
-    IngameMenuResources, MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS,
-    MT_STR_MEGA_BYTES, MT_STR_MEGA_HERZS, MT_STR_MEMORY, MT_STR_PROCESSOR, MT_TTL_OPTIONS,
+    MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS, MT_STR_MEGA_BYTES,
+    MT_STR_MEGA_HERZS, MT_STR_MEMORY, MT_STR_PROCESSOR, MT_TTL_OPTIONS,
 };
 use super::shortcuts::show_shortcuts;
 use super::sounds::show_sounds;
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{
+    self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame, ScreenKey,
+};
 
 /// Outcome of the options hub.
 #[derive(Debug, Clone, Copy, Default)]
@@ -78,47 +74,51 @@ fn language_option_visible(allow_language_switching: bool, selector_visible: boo
     allow_language_switching && selector_visible
 }
 
+/// Live configuration slots and scope flags edited by the options hub.
+///
+/// Borrowed for one modal run, so it is deliberately not serializable; the
+/// staged edits live in [`OptionsController`] until the hub closes.
+pub struct OptionsTargets<'a> {
+    /// Offer the language selector (main menu only).
+    pub allow_language_switching: bool,
+    /// Whether the gameplay page may edit Sherwood trading.
+    pub sherwood_trading_editable: bool,
+    pub graphic: &'a mut GraphicConfig,
+    pub gameplay: &'a mut GameplayConfig,
+    pub multiplayer: &'a mut MultiplayerConfig,
+    pub sound: &'a mut SoundConfig,
+    pub keys: &'a mut KeyConfig,
+    pub custom_keys: &'a mut KeyConfig,
+}
+
 /// Display the in-game options hub.
 ///
-/// `sound` / `audio_backend` / `sample_loader` are threaded into the
-/// Sounds sub-screen so volume-slider interactions play the
-/// `RHWIDGETNOISY_SLIDER` tick sounds.  After the Sounds sub-screen
-/// returns with changes, `sound.apply_volumes` runs.  Pass `None` for
-/// audio args from contexts with no live audio (e.g. the main-menu
-/// entry path).
+/// `audio` is threaded into the Sounds sub-screen so volume-slider
+/// interactions play the `RHWIDGETNOISY_SLIDER` tick sounds.  After the
+/// Sounds sub-screen returns with changes, `sound.apply_volumes` runs.
+/// Pass `None` services from contexts with no live audio.
+///
+/// The frame loop stays here instead of `run_modal` because a tick awaits
+/// nested sub-screens.
 pub async fn show_options(
     application_context: &crate::host::ApplicationContext,
-    allow_language_switching: bool,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
-    graphic_config: &mut GraphicConfig,
-    gameplay_config: &mut GameplayConfig,
-    multiplayer_config: &mut MultiplayerConfig,
-    sound_config: &mut SoundConfig,
-    key_config: &mut KeyConfig,
-    custom_key_config: &mut KeyConfig,
-    sherwood_trading_editable: bool,
-    mut sound: Option<&mut SoundManager>,
-    mut audio_backend: Option<&mut dyn AudioBackend>,
-    sample_loader: Option<&SampleLoader>,
+    io: &mut ModalScreenIo<'_, '_>,
+    targets: OptionsTargets<'_>,
+    mut audio: ScreenAudio<'_>,
 ) -> OptionsOutcome {
     let controller = OptionsController::new(
-        graphic_config.clone(),
-        *sound_config,
-        *gameplay_config,
-        *multiplayer_config,
-        key_config.clone(),
-        custom_key_config.clone(),
+        targets.graphic.clone(),
+        *targets.sound,
+        *targets.gameplay,
+        *targets.multiplayer,
+        targets.keys.clone(),
+        targets.custom_keys.clone(),
     );
 
     let mut state = OptionsModalState::new(
         application_context,
-        allow_language_switching,
-        event_pump,
-        renderer,
-        resources,
+        targets.allow_language_switching,
+        io,
         controller,
         OptionsOutcome::default(),
         ModalInputState::new(),
@@ -128,14 +128,9 @@ pub async fn show_options(
             state
                 .tick(
                     application_context,
-                    event_pump,
-                    renderer,
-                    resources,
-                    &mut cursor,
-                    sherwood_trading_editable,
-                    &mut sound,
-                    &mut audio_backend,
-                    sample_loader,
+                    io,
+                    targets.sherwood_trading_editable,
+                    &mut audio,
                 )
                 .await;
             // Closing frames were always drawn and paced before committing edits.
@@ -147,22 +142,20 @@ pub async fn show_options(
         // Rebuild only after resolution changes, keeping edits and live input.
         state = OptionsModalState::new(
             application_context,
-            allow_language_switching,
-            event_pump,
-            renderer,
-            resources,
+            targets.allow_language_switching,
+            io,
             state.controller,
             state.outcome,
             state.input_state,
         );
     }
 
-    *graphic_config = state.controller.graphic.working;
-    *sound_config = state.controller.sound.working;
-    *gameplay_config = state.controller.gameplay;
-    *multiplayer_config = state.controller.multiplayer;
-    *key_config = state.controller.keys;
-    *custom_key_config = state.controller.custom_keys;
+    *targets.graphic = state.controller.graphic.working;
+    *targets.sound = state.controller.sound.working;
+    *targets.gameplay = state.controller.gameplay;
+    *targets.multiplayer = state.controller.multiplayer;
+    *targets.keys = state.controller.keys;
+    *targets.custom_keys = state.controller.custom_keys;
     state.outcome
 }
 
@@ -182,16 +175,13 @@ impl OptionsModalState {
     fn new(
         application_context: &crate::host::ApplicationContext,
         allow_language_switching: bool,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
         controller: OptionsController,
         outcome: OptionsOutcome,
         mut input_state: ModalInputState,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let resources = io.resources;
+        let transform = MenuTransform::for_renderer(io.renderer);
 
         let (btn_w, btn_h) = resources.button_dimensions();
 
@@ -244,7 +234,7 @@ impl OptionsModalState {
 
         let done = false;
         let re_display = false;
-        input_state.seed_mouse_from_window(event_pump, transform);
+        input_state.seed_mouse_from_window(io.window, transform);
 
         Self {
             controller,
@@ -261,45 +251,31 @@ impl OptionsModalState {
     async fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: &mut Option<ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
         sherwood_trading_editable: bool,
-        sound: &mut Option<&mut SoundManager>,
-        audio_backend: &mut Option<&mut dyn AudioBackend>,
-        sample_loader: Option<&SampleLoader>,
+        audio: &mut ScreenAudio<'_>,
     ) {
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => self.done = true,
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        for key in screen.keys() {
+            match key {
                 // Escape → Back.  No Return/KpEnter accelerator
                 // since there's no input field.
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    self.done = true;
-                }
-                _ => {}
+                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Confirm | ScreenKey::Next => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
 
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        if let Some(id) = activated {
             match id {
                 BUTTON_GRAPHICS => {
                     self.controller.enter_page(OptionsPage::Graphics);
                     let (changed, _resolution_changed) = show_graphics(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
+                        io.window,
+                        io.renderer,
+                        io.resources,
+                        io.cursor,
                         &mut self.controller.graphic.working,
                     )
                     .await;
@@ -312,34 +288,17 @@ impl OptionsModalState {
                         // rebuilds itself; the caller still owns engine,
                         // HUD, and input-cache propagation on return.
                         self.outcome.resolution_changed = true;
-                        event_pump.set_logical_resolution_policy(&self.controller.graphic.working);
-                        renderer.sync_window_size(event_pump);
+                        io.window
+                            .set_logical_resolution_policy(&self.controller.graphic.working);
+                        io.renderer.sync_window_size(io.window);
                         self.re_display = true;
                         self.done = true;
                     }
                 }
                 BUTTON_SOUNDS => {
                     self.controller.enter_page(OptionsPage::Sounds);
-                    // Explicit reborrow: `Option<&mut dyn Trait>::as_deref_mut` infers
-                    // the returned reference's lifetime against the outer `&mut dyn`,
-                    // which the borrow checker won't accept across loop iterations.
-                    // `as_mut().map(|b| &mut **b as &mut dyn _)` re-expresses the
-                    // reborrow with the local `&mut` as the source lifetime, which
-                    // NLL happily shortens.
-                    let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
-                        .as_mut()
-                        .map(|b| &mut **b as &mut dyn AudioBackend);
-                    let changed = show_sounds(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
-                        &mut self.controller.sound.working,
-                        sound.as_deref_mut(),
-                        backend_reborrow,
-                        sample_loader,
-                    )
-                    .await;
+                    let changed =
+                        show_sounds(io, &mut self.controller.sound.working, audio.reborrow()).await;
                     let effects = self.controller.accept_page(changed);
                     self.outcome.changed |= effects.profile_changed;
                     // When the sub-screen accepts edits, push the
@@ -351,11 +310,14 @@ impl OptionsModalState {
                     // `use_3d_sound`, invalidates the sample cache,
                     // and re-activates source pendings when the 3D
                     // toggle changed.
-                    if changed && let Some(s) = sound.as_deref_mut() {
-                        let backend_for_apply: Option<&mut dyn AudioBackend> = audio_backend
-                            .as_mut()
-                            .map(|b| &mut **b as &mut dyn AudioBackend);
-                        if let Some(b) = backend_for_apply {
+                    if changed
+                        && let ScreenAudio {
+                            sound: Some(s),
+                            backend,
+                            ..
+                        } = audio.reborrow()
+                    {
+                        if let Some(b) = backend {
                             s.apply_sound_settings(false, b, &self.controller.sound.working, None);
                         } else {
                             s.apply_volumes(&self.controller.sound.working);
@@ -364,19 +326,19 @@ impl OptionsModalState {
                 }
                 BUTTON_SHORTCUTS => {
                     self.controller.enter_page(OptionsPage::Shortcuts);
-                    let backend_reborrow: Option<&mut dyn AudioBackend> = audio_backend
-                        .as_mut()
-                        .map(|b| &mut **b as &mut dyn AudioBackend);
+                    // TODO: pass `io` / `ScreenAudio` once the shortcuts
+                    // screen is migrated to the ScreenFrame API.
+                    let shortcut_audio = audio.reborrow();
                     let accepted = show_shortcuts(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
+                        io.window,
+                        io.renderer,
+                        io.resources,
+                        io.cursor,
                         &mut self.controller.keys,
                         &mut self.controller.custom_keys,
-                        sound.as_deref_mut(),
-                        backend_reborrow,
-                        sample_loader,
+                        shortcut_audio.sound,
+                        shortcut_audio.backend,
+                        shortcut_audio.sample_loader,
                     )
                     .await;
                     // Shortcut edits do not propagate to the outer
@@ -395,10 +357,10 @@ impl OptionsModalState {
                     self.controller.enter_page(OptionsPage::Gameplay);
                     let changed = show_gameplay(
                         application_context,
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
+                        io.window,
+                        io.renderer,
+                        io.resources,
+                        io.cursor,
                         &mut self.controller.gameplay,
                         sherwood_trading_editable,
                     )
@@ -407,14 +369,7 @@ impl OptionsModalState {
                 }
                 BUTTON_LEADERBOARDS => match crate::leaderboard_preferences::load() {
                     Ok(mut preferences) => {
-                        if show_leaderboard_settings(
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor.as_mut().map(|c| c.reborrow()),
-                            &mut preferences,
-                        )
-                        .await
+                        if show_leaderboard_settings(io, &mut preferences).await
                             && let Err(error) =
                                 crate::leaderboard_preferences::persist(&preferences)
                         {
@@ -428,28 +383,12 @@ impl OptionsModalState {
                 #[cfg(all(not(target_arch = "wasm32"), feature = "multiplayer"))]
                 BUTTON_MULTIPLAYER_PRIVACY => {
                     self.controller.enter_page(OptionsPage::MultiplayerPrivacy);
-                    let changed = show_multiplayer_privacy(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor.as_mut().map(|c| c.reborrow()),
-                        &mut self.controller.multiplayer,
-                    )
-                    .await;
+                    let changed =
+                        show_multiplayer_privacy(io, &mut self.controller.multiplayer).await;
                     self.outcome.changed |= self.controller.accept_page(changed).profile_changed;
                 }
                 BUTTON_LANGUAGE => {
-                    if show_language(
-                        application_context,
-                        &mut widget_bridge::ModalScreenIo {
-                            window: event_pump,
-                            renderer,
-                            resources,
-                            cursor: cursor.as_ref(),
-                        },
-                    )
-                    .await
-                    {
+                    if show_language(application_context, io).await {
                         self.outcome.language_changed = true;
                         self.outcome.changed = true;
                         self.done = true;
@@ -472,8 +411,10 @@ impl OptionsModalState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
@@ -492,11 +433,7 @@ impl OptionsModalState {
 
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
 
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &self.input_state);
-        }
-
-        renderer.present();
+        screen.finish(io, &self.input_state);
     }
 }
 

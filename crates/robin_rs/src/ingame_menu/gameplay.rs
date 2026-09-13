@@ -273,7 +273,7 @@ pub async fn show_gameplay(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
+    cursor: Option<&ModalCursor<'_>>,
     config: &mut GameplayConfig,
     sherwood_trading_editable: bool,
 ) -> bool {
@@ -292,7 +292,7 @@ pub async fn show_gameplay(
                 window: event_pump,
                 renderer,
                 resources,
-                cursor: cursor.as_ref(),
+                cursor,
             },
         );
         if state.take_content_request() {
@@ -301,7 +301,7 @@ pub async fn show_gameplay(
                 event_pump,
                 renderer,
                 resources,
-                cursor.as_mut().map(|cursor| cursor.reborrow()),
+                cursor,
             )
             .await;
             state.resume_after_content(event_pump, renderer);

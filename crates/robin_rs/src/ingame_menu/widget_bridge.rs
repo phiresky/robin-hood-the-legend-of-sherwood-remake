@@ -58,6 +58,23 @@ pub struct ScreenAudio<'a> {
     pub sample_loader: Option<&'a SampleLoader>,
 }
 
+impl ScreenAudio<'_> {
+    /// Lend the same audio services to a nested screen for a shorter borrow.
+    ///
+    /// `Option<&mut dyn Trait>::as_deref_mut` ties the result to the outer
+    /// trait-object lifetime, so the backend is re-coerced explicitly here.
+    pub fn reborrow(&mut self) -> ScreenAudio<'_> {
+        ScreenAudio {
+            sound: self.sound.as_deref_mut(),
+            backend: self
+                .backend
+                .as_mut()
+                .map(|backend| &mut **backend as &mut dyn AudioBackend),
+            sample_loader: self.sample_loader,
+        }
+    }
+}
+
 /// Standard modal keys shared by every menu screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenKey {

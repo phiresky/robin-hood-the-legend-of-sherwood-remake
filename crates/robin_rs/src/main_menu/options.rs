@@ -9,8 +9,8 @@
 use crate::application::require;
 use crate::audio_backend::PlatformAudioBackend;
 use crate::host::ApplicationContext;
-use crate::ingame_menu::widget_bridge::ModalCursor;
-use crate::ingame_menu::{IngameMenuResources, show_options};
+use crate::ingame_menu::widget_bridge::{ModalCursor, ModalScreenIo, ScreenAudio};
+use crate::ingame_menu::{IngameMenuResources, OptionsTargets, show_options};
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
@@ -90,36 +90,36 @@ pub(crate) async fn show_main_menu_options(
         audio_backend = None;
     }
 
-    // Reborrow helper: turn `Option<&mut PlatformAudioBackend>` into the
-    // trait object form that `show_options` expects.  See the note in
-    // `ingame_menu::sounds::show_sounds` — `Option<&mut dyn Trait>`
-    // can't be shortened with `as_deref_mut` across the call boundary,
-    // so we do the `&mut **b as &mut dyn _` dance instead.
+    // Turn `Option<&mut PlatformAudioBackend>` into the trait-object form
+    // that `ScreenAudio` expects.
     let backend_opt: Option<&mut dyn crate::sound::AudioBackend> = audio_backend
         .as_mut()
         .map(|b| b as &mut dyn crate::sound::AudioBackend);
 
+    let cursor = ModalCursor::new(cursor_renderer, engine_api::input::MOUSE_OPACITY_DEFAULT, 0);
     let outcome = show_options(
         application_context,
-        true,
-        event_pump,
-        renderer,
-        resources,
-        Some(ModalCursor::new(
-            cursor_renderer,
-            engine_api::input::MOUSE_OPACITY_DEFAULT,
-            0,
-        )),
-        &mut graphic,
-        &mut gameplay,
-        &mut multiplayer,
-        &mut sound_cfg,
-        &mut key_cfg.active,
-        &mut key_cfg.custom,
-        true,
-        Some(&mut sound_mgr),
-        backend_opt,
-        sample_loader.as_deref(),
+        &mut ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: Some(&cursor),
+        },
+        OptionsTargets {
+            allow_language_switching: true,
+            sherwood_trading_editable: true,
+            graphic: &mut graphic,
+            gameplay: &mut gameplay,
+            multiplayer: &mut multiplayer,
+            sound: &mut sound_cfg,
+            keys: &mut key_cfg.active,
+            custom_keys: &mut key_cfg.custom,
+        },
+        ScreenAudio {
+            sound: Some(&mut sound_mgr),
+            backend: backend_opt,
+            sample_loader: sample_loader.as_deref(),
+        },
     )
     .await;
     if outcome.resolution_changed {
