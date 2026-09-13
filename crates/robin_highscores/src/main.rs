@@ -307,7 +307,7 @@ async fn initialize_connected_api(
             if let Err(error) = result {
                 tracing::warn!(
                     error_code = safe_error_code(&error),
-                    "scheduled state maintenance was quiesced or failed"
+                    "scheduled state maintenance could not acquire its write lease or failed"
                 );
             }
         }
@@ -371,15 +371,19 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[tokio::test]
-    async fn active_backup_gate_prevents_api_startup_from_creating_storage_roots() {
+    async fn unavailable_write_lease_prevents_api_startup_from_creating_storage_roots() {
         let directory = tempfile::tempdir().unwrap();
         let mut config = ServerConfig::default();
         config.database_path = directory.path().join("highscores.sqlite3");
         config.replay_directory = directory.path().join("objects/replays");
         config.campaign_state_directory = directory.path().join("objects/campaigns");
         let database = Database::migrate(&config).await.unwrap();
-        let backup = database
-            .acquire_backup_lock("startup-gate-test", Duration::from_secs(60))
+        let held = database
+            .acquire_maintenance_write_lease(
+                robin_highscores::db::MaintenanceWriteClass::ApiMaintenance,
+                "startup-gate-test-holder",
+                Duration::from_secs(60),
+            )
             .await
             .unwrap();
 
@@ -389,7 +393,12 @@ mod tests {
         assert!(!config.replay_directory.exists());
         assert!(!config.campaign_state_directory.exists());
         assert!(!directory.path().join("objects").exists());
-        assert!(database.release_backup_lock(&backup).await.unwrap());
+        assert!(
+            database
+                .release_maintenance_write_lease(&held)
+                .await
+                .unwrap()
+        );
     }
 
     struct FailingReadyNotifier;

@@ -235,15 +235,6 @@ pub struct CapacityDemandBytes {
 /// serialized administrator mutation may coexist with bounded HTTP writers.
 pub const MAXIMUM_AUXILIARY_DATABASE_WRITERS: u64 = 3;
 
-/// Worst-case object/database growth already admitted when a maintenance
-/// operation closes the admission gate. Backup capacity uses this exact same
-/// primitive so its in-flight allowance cannot drift from HTTP/worker policy.
-pub fn maximum_capacity_demand_bytes(
-    config: &ServerConfig,
-) -> Result<CapacityDemandBytes, StorageAdmissionError> {
-    capacity_demand_bytes(config, config.max_replay_bytes, config.max_campaign_bytes)
-}
-
 fn capacity_demand_bytes(
     config: &ServerConfig,
     current_replay_bytes: u64,
