@@ -15,7 +15,6 @@ use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::localization::PortTextKey;
 use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::multiplayer::matchmaking::{self, GameListing, JoinedGame};
-use crate::native_font::Font;
 use crate::renderer::Renderer;
 use crate::scroll_view::ScrollView;
 use crate::widget::{ColumnAlign, ColumnLayout, FrameWnd};

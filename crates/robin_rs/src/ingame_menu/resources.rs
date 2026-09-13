@@ -2252,7 +2252,7 @@ mod tests {
         for (key, text) in DEFAULT_FALLBACKS {
             assert_eq!(map.get(key), Some(text));
         }
-        assert_eq!(DEFAULT_FALLBACKS.len(), 203);
+        assert_eq!(DEFAULT_FALLBACKS.len(), 229);
         assert_eq!(map.get(&MT_BTN_START_GAME), Some(&"Start Game"));
         assert_eq!(map.get(&MT_BTN_SHOW_CREDITS), Some(&"Show Credits"));
         assert_eq!(map.get(&MT_STR_KEY_PAUSE), Some(&"Pause"));
