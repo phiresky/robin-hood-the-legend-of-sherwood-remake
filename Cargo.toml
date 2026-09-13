@@ -6,6 +6,7 @@ members = [
     "crates/robin_content",
     "crates/robin_identity_signer",
     "crates/robin_data_io",
+    "crates/robin_display_text",
     "crates/robin_highscores",
     "crates/robin_manifest_tool",
     "crates/robin_parity",
@@ -57,6 +58,7 @@ result_large_err = "allow"
 # Workspace crates
 robin_content = { path = "crates/robin_content" }
 robin_data_io = { path = "crates/robin_data_io" }
+robin_display_text = { path = "crates/robin_display_text" }
 robin_assets = { path = "crates/robin_assets" }
 robin_engine = { path = "crates/robin_engine" }
 robin_lua = { path = "crates/robin_lua" }

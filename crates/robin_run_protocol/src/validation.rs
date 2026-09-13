@@ -129,7 +129,7 @@ pub(crate) fn text(
     }
     if value
         .chars()
-        .any(robin_util::display_text::is_unsafe_display_character)
+        .any(robin_display_text::is_unsafe_display_character)
     {
         return Err(ValidationError::ControlCharacter { field });
     }

@@ -1,0 +1,16 @@
+[package]
+name = "robin_display_text"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_display_text"
+
+# Leaf crate: the isolated identity signer reaches this through
+# robin_run_protocol, so it must not depend on robin_util or other large crates.
+[dependencies]
+unicode-security.workspace = true
+
+[lints]
+workspace = true

@@ -5963,6 +5963,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_display_text"
+version = "0.0.0"
+dependencies = [
+ "unicode-security",
+]
+
+[[package]]
 name = "robin_engine"
 version = "0.0.0"
 dependencies = [
@@ -6315,7 +6322,7 @@ dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
  "hex",
- "robin_util",
+ "robin_display_text",
  "semver",
  "serde",
  "serde_json",
@@ -6364,12 +6371,12 @@ dependencies = [
  "geo",
  "indexmap",
  "nonmax",
+ "robin_display_text",
  "serde",
  "serde-value",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
- "unicode-security",
  "xxhash-rust",
 ]
 
