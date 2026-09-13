@@ -3356,6 +3356,7 @@ mod tests {
             assert_eq!(actual, expected);
         }
     }
+    use crate::test_support::TestDeployment;
     use robin_run_protocol::{
         ChallengeNonce32, CompetitionRunGrantClaimV1, CompetitionRunGrantRequestClaimV1,
         PublicKey32, RankedSessionConfigV1, ResourceLocaleRootV1, SCHEMA_VERSION_V1, Signature64,
@@ -3364,12 +3365,7 @@ mod tests {
     use sqlx::Connection as _;
 
     async fn test_database() -> (tempfile::TempDir, Database) {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, _config, database) = TestDeployment::new().migrate().await;
         (directory, database)
     }
 
@@ -4488,14 +4484,13 @@ mod tests {
 
     #[tokio::test]
     async fn maintenance_writer_class_limits_match_the_capacity_model() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            max_concurrent_requests: 2,
-            max_concurrent_uploads: 2,
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new()
+            .configure(|_, config| {
+                config.max_concurrent_requests = 2;
+                config.max_concurrent_uploads = 2;
+            })
+            .migrate()
+            .await;
 
         let mut leases = Vec::new();
         for (class, count) in [
@@ -5008,13 +5003,10 @@ mod tests {
 
     #[tokio::test]
     async fn purpose_quotas_reserve_submission_offer_capacity() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            max_pending_submissions: 2,
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new()
+            .configure(|_, config| config.max_pending_submissions = 2)
+            .migrate()
+            .await;
         for key in [[1_u8; 32], [2_u8; 32]] {
             database
                 .issue_challenge(
@@ -5653,12 +5645,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_cross_instance_reservation_has_one_ingestion_lease() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let left_db = Database::migrate(&config).await.unwrap();
+        let (_directory, config, left_db) = TestDeployment::new().migrate().await;
         let right_db = Database::connect(&config).await.unwrap();
         let submission = submission_fixture(&left_db).await;
         let left_intent = upload_intent(&submission);

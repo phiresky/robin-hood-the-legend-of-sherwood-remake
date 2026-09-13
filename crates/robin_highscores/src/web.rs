@@ -4625,8 +4625,8 @@ fn internal_json(error: serde_json::Error) -> ApiError {
 mod tests {
     use super::*;
     use crate::test_support::{
-        published_ruleset_fixture, viewer_build, viewer_build_v2, viewer_content_manifest,
-        viewer_profile,
+        TestDeployment, published_ruleset_fixture, viewer_build, viewer_build_v2,
+        viewer_content_manifest, viewer_profile,
     };
     use bytes::Bytes;
     use ed25519_dalek::SigningKey;
@@ -4646,12 +4646,7 @@ mod tests {
     async fn owned_mutation_keeps_its_lease_after_response_cancellation() {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new().migrate().await;
         let started = std::sync::Arc::new(tokio::sync::Notify::new());
         let unblock = std::sync::Arc::new(tokio::sync::Notify::new());
         let completed = std::sync::Arc::new(AtomicBool::new(false));
@@ -4719,12 +4714,7 @@ mod tests {
 
     #[tokio::test]
     async fn detached_outer_fence_survives_timeout_and_avoids_nested_admission_deadlock() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new().migrate().await;
         let outer_shared_acquired = std::sync::Arc::new(tokio::sync::Barrier::new(2));
         let allow_mutation_start = std::sync::Arc::new(tokio::sync::Notify::new());
         let operation_database = database.clone();
@@ -4806,13 +4796,10 @@ mod tests {
 
     #[tokio::test]
     async fn saturated_lane_does_not_admit_queued_request_before_backup_gate() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, config, database) = TestDeployment::new()
+            .with_replay_directory()
+            .migrate()
+            .await;
         let state = AppState {
             database: database.clone(),
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
@@ -5689,13 +5676,10 @@ mod tests {
 
     #[tokio::test]
     async fn replay_http_responses_serve_exact_compact_bytes() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, config, database) = TestDeployment::new()
+            .with_replay_directory()
+            .migrate()
+            .await;
         let replay_store = ReplayStore::create(config.replay_directory.clone(), 1024)
             .await
             .unwrap();
@@ -6237,14 +6221,11 @@ mod tests {
     #[tracing_test::traced_test]
     #[tokio::test]
     async fn deletion_challenge_is_not_an_unsigned_ownership_oracle() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            challenge_requests_per_minute_per_ip: 20,
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, config, database) = TestDeployment::new()
+            .with_replay_directory()
+            .configure(|_, config| config.challenge_requests_per_minute_per_ip = 20)
+            .migrate()
+            .await;
         let owner_signing_key = ed25519_dalek::SigningKey::from_bytes(&[0xd4; 32]);
         let owner_key = PublicKey32::from_bytes(owner_signing_key.verifying_key().to_bytes());
         let wrong_signing_key = ed25519_dalek::SigningKey::from_bytes(&[0xe5; 32]);
@@ -6492,15 +6473,15 @@ mod tests {
 
     #[tokio::test]
     async fn operator_router_requires_token_and_audits_actions() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            moderation_bearer_token: Some(Arc::new(b"0123456789abcdef0123456789abcdef".to_vec())),
-            moderation_bearer_token_path: Some(directory.path().join("token")),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, config, database) = TestDeployment::new()
+            .with_replay_directory()
+            .configure(|root, config| {
+                config.moderation_bearer_token =
+                    Some(Arc::new(b"0123456789abcdef0123456789abcdef".to_vec()));
+                config.moderation_bearer_token_path = Some(root.join("token"));
+            })
+            .migrate()
+            .await;
         let key = [5; 32];
         let challenge = database
             .issue_challenge(
@@ -6602,14 +6583,12 @@ mod tests {
 
     #[tokio::test]
     async fn operator_routes_are_absent_without_a_configured_secret() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            replay_directory: directory.path().join("replays"),
-            ..Default::default()
-        };
+        let (directory, config, database) = TestDeployment::new()
+            .with_replay_directory()
+            .migrate()
+            .await;
         let state = AppState {
-            database: Database::migrate(&config).await.unwrap(),
+            database,
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
                 .await
                 .unwrap(),

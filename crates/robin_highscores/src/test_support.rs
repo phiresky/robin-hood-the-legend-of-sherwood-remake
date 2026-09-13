@@ -394,6 +394,56 @@ pub fn published_ruleset_fixture() -> PublishedRulesetV1 {
     published
 }
 
+/// Temporary deployment root plus the server configuration pointing into it.
+///
+/// Process-local test resource (owns a `TempDir`), so it is intentionally not
+/// serializable. The directory must outlive every database or store opened
+/// from `config`: bind it to a named variable, never `_`.
+pub struct TestDeployment {
+    pub directory: tempfile::TempDir,
+    pub config: crate::ServerConfig,
+}
+
+impl Default for TestDeployment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TestDeployment {
+    /// `database_path = <tempdir>/highscores.sqlite3`; every other setting is
+    /// `ServerConfig::default()`.
+    pub fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let config = crate::ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
+        Self { directory, config }
+    }
+
+    /// Also stores replays under `<tempdir>/replays`.
+    pub fn with_replay_directory(mut self) -> Self {
+        self.config.replay_directory = self.directory.path().join("replays");
+        self
+    }
+
+    /// Overrides further settings; the closure receives the temporary root.
+    pub fn configure(
+        mut self,
+        configure: impl FnOnce(&std::path::Path, &mut crate::ServerConfig),
+    ) -> Self {
+        configure(self.directory.path(), &mut self.config);
+        self
+    }
+
+    /// Creates and migrates the database and hands back the owned parts.
+    pub async fn migrate(self) -> (tempfile::TempDir, crate::ServerConfig, crate::Database) {
+        let database = crate::Database::migrate(&self.config).await.unwrap();
+        (self.directory, self.config, database)
+    }
+}
+
 pub async fn app_state(
     config: crate::ServerConfig,
     campaign_directory: std::path::PathBuf,
