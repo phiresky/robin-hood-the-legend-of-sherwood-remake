@@ -617,7 +617,10 @@ impl CampaignMapModalState {
                 ),
             ) {
                 Ok(()) => "Replay opened in a separate window.".into(),
-                Err(error) => error,
+                Err(error) => {
+                    tracing::error!(recording = %path.display(), "{error}");
+                    error
+                }
             },
             None => "No recording is available for this play.".into(),
         };

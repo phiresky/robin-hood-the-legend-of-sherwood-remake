@@ -386,10 +386,12 @@ pub(crate) fn watch(
         return Err("The recording file does not match this play.".into());
     }
     // A separate viewer preserves the live session, recorder and paused state.
-    let mut child = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
-        .arg("--replay")
-        .arg(path)
-        .args(["--http-server", "0"])
+    let mut command =
+        std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    command.arg("--replay").arg(path);
+    #[cfg(feature = "script-rpc")]
+    command.args(["--http-server", "0"]);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Cannot open replay: {e}"))?;
     std::thread::spawn(move || match child.wait() {
