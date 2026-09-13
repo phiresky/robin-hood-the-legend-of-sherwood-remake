@@ -60,21 +60,6 @@ pub fn open_beneath_no_symlinks(
     open_no_symlinks_at(directory, path, flags, Mode::empty(), ResolveFlags::BENEATH)
 }
 
-/// `RESOLVE_BENEATH | RESOLVE_NO_XDEV` open relative to `directory` with no mode.
-pub fn open_beneath_same_mount_no_symlinks(
-    directory: impl AsFd,
-    path: impl Arg,
-    flags: OFlags,
-) -> rustix::io::Result<OwnedFd> {
-    open_no_symlinks_at(
-        directory,
-        path,
-        flags,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_XDEV,
-    )
-}
-
 /// `RESOLVE_BENEATH` open relative to `directory` with an explicit creation mode.
 pub fn create_beneath_no_symlinks(
     directory: impl AsFd,
@@ -136,14 +121,6 @@ pub mod file_lock {
     operation!(try_lock_shared, NonBlockingLockShared);
     operation!(try_lock_exclusive, NonBlockingLockExclusive);
     operation!(unlock, Unlock);
-}
-
-pub fn available_space(path: &Path) -> std::io::Result<u64> {
-    let filesystem = rustix::fs::statvfs(path)?;
-    filesystem
-        .f_frsize
-        .checked_mul(filesystem.f_bavail)
-        .ok_or_else(|| std::io::Error::other("available filesystem space overflows"))
 }
 
 /// Shared API/worker state is private to the deployment's dedicated data

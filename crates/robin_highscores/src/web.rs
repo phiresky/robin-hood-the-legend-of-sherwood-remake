@@ -1591,7 +1591,7 @@ async fn submission_offer(
     let rules_config_sha256 = digest(&profile.config_id)?;
     let ruleset_manifest_sha256 = digest(&profile.ruleset_id)?;
     // This is the last fallible step before the transaction which issues the
-    // upload challenge. A red store, capacity plan, or backup must not create
+    // upload challenge. A red store or capacity plan must not create
     // an offer that the service cannot safely accept.
     ensure_offer_admission_ready(&state).await?;
     let (_challenge, offer) = state
@@ -4612,18 +4612,6 @@ mod tests {
             1,
             "dropping the response waiter must not release an in-flight mutation"
         );
-        let backup = database
-            .acquire_backup_lock("test-backup", Duration::from_secs(60))
-            .await
-            .unwrap();
-        assert_eq!(
-            database
-                .active_maintenance_write_lease_count()
-                .await
-                .unwrap(),
-            1,
-            "backup admission must continue to observe the detached mutation"
-        );
         unblock.notify_one();
         for _ in 0..100 {
             if database
@@ -4644,7 +4632,6 @@ mod tests {
                 .unwrap(),
             0
         );
-        assert!(database.release_backup_lock(&backup).await.unwrap());
 
         database.close().await;
     }
