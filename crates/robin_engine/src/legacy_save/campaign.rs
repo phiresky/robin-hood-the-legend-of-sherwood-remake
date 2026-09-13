@@ -9,10 +9,11 @@
 use super::read_helpers::DEFAULT_LIST_LIMIT;
 use enum_map::enum_map;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
+use super::adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError};
 
 use crate::campaign::{Campaign, CampaignValue, PcDescription};
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{HumanStatus, PcStatus, Skill};
 use crate::profiles::{CharacterProfileIdx, ProfileManager};
@@ -121,131 +122,67 @@ impl LegacyCampaignStream {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Field declaration order is wire order. Lists use [`read_vec`], whose
+/// allocation errors report the count offset.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyCampaignLimits,
+    fingerprint = RH_CAMPAIGN_FINGERPRINT,
+    expected = "campaign fingerprint"
+)]
 pub struct LegacyCampaign {
     pub reservists_are_back: bool,
     pub values: [i32; CAMPAIGN_VALUE_COUNT],
     pub ares: i8,
+    #[legacy(with = read_vec, args(ctx.missions, |reader, _| LegacyMission::read(reader, &())))]
     pub missions: Vec<LegacyMission>,
+    #[legacy(with = read_vec, args(ctx.mission_links, |reader, _| {
+        read_mission_link(reader, "mission")
+    }))]
     pub accessible_missions: Vec<Option<u16>>,
+    #[legacy(with = read_vec, args(ctx.mission_links, |reader, _| {
+        read_mission_link(reader, "mission")
+    }))]
     pub pending_accessible_missions: Vec<Option<u16>>,
+    #[legacy(with = read_vec, args(ctx.characters, |reader, _| {
+        LegacyPcDescription::read(reader, &ctx.wide_string_code_units)
+    }))]
     pub characters: Vec<LegacyPcDescription>,
+    #[legacy(with = read_vec, args(ctx.character_links, |reader, _| reader.read_u32("character")))]
     pub gang: Vec<u32>,
+    #[legacy(with = read_vec, args(ctx.character_links, |reader, _| reader.read_u32("character")))]
     pub reservists: Vec<u32>,
+    #[legacy(with = read_vec, args(ctx.character_links, |reader, _| reader.read_u32("character")))]
     pub mission_team: Vec<u32>,
+    #[legacy(with = read_vec, args(ctx.production_sectors, |reader, _| {
+        LegacyProductionSector::read(reader, &ctx.production_occupants)
+    }))]
     pub production_sectors: Vec<LegacyProductionSector>,
+    #[legacy(with = read_vec, args(ctx.collected_relics, |reader, _| {
+        reader.read_u32("object_type")
+    }))]
     pub collected_relics: Vec<u32>,
+    #[legacy(with = read_vec, args(ctx.peasant_names, |reader, _| {
+        reader.read_wide_string("name", ctx.wide_string_code_units)
+    }))]
     pub peasant_names: Vec<String>,
+    #[legacy(with = read_mission_link)]
     pub last_mission: Option<u16>,
+    #[legacy(with = read_mission_link)]
     pub current_mission: Option<u16>,
+    #[legacy(with = read_mission_link)]
     pub next_mission: Option<u16>,
+    #[legacy(with = read_mission_link)]
     pub blazon_mission: Option<u16>,
+    #[legacy(with = read_vec, args(ctx.last_played_missions, |reader, _| {
+        read_mission_link(reader, "mission")
+    }))]
     pub last_played_missions: Vec<Option<u16>>,
     pub last_pseudo_mission_status: u32,
     pub last_pseudo_mission_id: u32,
 }
 
 impl LegacyCampaign {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyCampaignLimits) -> LegacyResult<Self> {
-        reader.read_signature(
-            "fingerprint",
-            RH_CAMPAIGN_FINGERPRINT,
-            "campaign fingerprint",
-        )?;
-        let reservists_are_back = reader.read_bool("reservists_are_back")?;
-
-        let mut values = [0; CAMPAIGN_VALUE_COUNT];
-        for (index, value) in values.iter_mut().enumerate() {
-            *value = reader.read_i32(format_args!("values[{index}]"))?;
-        }
-        let ares = reader.read_i8("ares")?;
-
-        let missions = read_vec(reader, "missions", limits.missions, |reader, _| {
-            LegacyMission::read(reader)
-        })?;
-        let accessible_missions = read_vec(
-            reader,
-            "accessible_missions",
-            limits.mission_links,
-            |reader, _| read_mission_link(reader, "mission"),
-        )?;
-        let pending_accessible_missions = read_vec(
-            reader,
-            "pending_accessible_missions",
-            limits.mission_links,
-            |reader, _| read_mission_link(reader, "mission"),
-        )?;
-        let characters = read_vec(reader, "characters", limits.characters, |reader, _| {
-            LegacyPcDescription::read(reader, limits.wide_string_code_units)
-        })?;
-        let gang = read_vec(reader, "gang", limits.character_links, |reader, _| {
-            reader.read_u32("character")
-        })?;
-        let reservists = read_vec(reader, "reservists", limits.character_links, |reader, _| {
-            reader.read_u32("character")
-        })?;
-        let mission_team = read_vec(
-            reader,
-            "mission_team",
-            limits.character_links,
-            |reader, _| reader.read_u32("character"),
-        )?;
-        let production_sectors = read_vec(
-            reader,
-            "production_sectors",
-            limits.production_sectors,
-            |reader, _| LegacyProductionSector::read(reader, limits.production_occupants),
-        )?;
-        let collected_relics = read_vec(
-            reader,
-            "collected_relics",
-            limits.collected_relics,
-            |reader, _| reader.read_u32("object_type"),
-        )?;
-        let peasant_names = read_vec(
-            reader,
-            "peasant_names",
-            limits.peasant_names,
-            |reader, _| reader.read_wide_string("name", limits.wide_string_code_units),
-        )?;
-
-        let last_mission = read_mission_link(reader, "last_mission")?;
-        let current_mission = read_mission_link(reader, "current_mission")?;
-        let next_mission = read_mission_link(reader, "next_mission")?;
-        let blazon_mission = read_mission_link(reader, "blazon_mission")?;
-        let last_played_missions = read_vec(
-            reader,
-            "last_played_missions",
-            limits.last_played_missions,
-            |reader, _| read_mission_link(reader, "mission"),
-        )?;
-        let last_pseudo_mission_status = reader.read_u32("last_pseudo_mission_status")?;
-        let last_pseudo_mission_id = reader.read_u32("last_pseudo_mission_id")?;
-
-        Ok(Self {
-            reservists_are_back,
-            values,
-            ares,
-            missions,
-            accessible_missions,
-            pending_accessible_missions,
-            characters,
-            gang,
-            reservists,
-            mission_team,
-            production_sectors,
-            collected_relics,
-            peasant_names,
-            last_mission,
-            current_mission,
-            next_mission,
-            blazon_mission,
-            last_played_missions,
-            last_pseudo_mission_status,
-            last_pseudo_mission_id,
-        })
-    }
-
     /// Validate every serialized reference and construct the matching Rust
     /// campaign. The save header mission id is resolved through static
     /// profiles and reported with its proto/mission filenames.
@@ -253,24 +190,22 @@ impl LegacyCampaign {
         &self,
         profiles: &ProfileManager,
         header_mission_id: u32,
-    ) -> Result<LegacyCampaignBootstrap, LegacyCampaignMappingError> {
+    ) -> Result<LegacyCampaignBootstrap, LegacyAdoptError> {
         let header_profile_index = profiles
             .missions
             .iter()
             .position(|profile| profile.id == header_mission_id)
-            .ok_or(LegacyCampaignMappingError::MissingHeaderMissionProfile {
+            .ok_or(AdoptErrorKind::MissingHeaderMissionProfile {
                 mission_id: header_mission_id,
             })?;
         let campaign_mission_index = self
             .missions
             .iter()
             .position(|mission| mission.profile_index == Some(header_profile_index as u32))
-            .ok_or(
-                LegacyCampaignMappingError::HeaderMissionMissingFromCampaign {
-                    mission_id: header_mission_id,
-                    profile_index: header_profile_index,
-                },
-            )?;
+            .ok_or(AdoptErrorKind::HeaderMissionMissingFromCampaign {
+                mission_id: header_mission_id,
+                profile_index: header_profile_index,
+            })?;
 
         let missions = self
             .missions
@@ -288,9 +223,10 @@ impl LegacyCampaign {
         let character_count = characters.len();
 
         if self.last_played_missions.len() > 3 {
-            return Err(LegacyCampaignMappingError::TooManyRecentMissions {
+            return Err(AdoptErrorKind::TooManyRecentMissions {
                 count: self.last_played_missions.len(),
-            });
+            }
+            .into());
         }
 
         let accessible_mission_indices =
@@ -412,36 +348,24 @@ impl LegacyCampaign {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = RH_MISSION_FINGERPRINT, expected = "mission fingerprint")]
 pub struct LegacyMission {
     pub age: u16,
     pub blazon_price: u16,
     pub status: u32,
     /// Four bytes skipped by mission serialization, retained explicitly.
     pub legacy_padding_words: [u16; 2],
+    #[legacy(with = read_profile_link)]
     pub profile_index: Option<u32>,
 }
 
 impl LegacyMission {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.read_signature("fingerprint", RH_MISSION_FINGERPRINT, "mission fingerprint")?;
-        Ok(Self {
-            age: reader.read_u16("age")?,
-            blazon_price: reader.read_u16("blazon_price")?,
-            status: reader.read_u32("status")?,
-            legacy_padding_words: [
-                reader.read_u16("legacy_padding_words[0]")?,
-                reader.read_u16("legacy_padding_words[1]")?,
-            ],
-            profile_index: read_profile_link(reader, "profile_index")?,
-        })
-    }
-
     fn to_rust(
         &self,
         profiles: &ProfileManager,
         mission_index: usize,
-    ) -> Result<Mission, LegacyCampaignMappingError> {
+    ) -> Result<Mission, LegacyAdoptError> {
         let profile_idx = required_profile_link(
             self.profile_index,
             profiles.missions.len(),
@@ -458,15 +382,19 @@ impl LegacyMission {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacySkill {
     pub capacity: u32,
     pub experience: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Context: the maximum name length in UTF-16 code units.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = usize)]
 pub struct LegacyPcStatus {
+    #[legacy(read = read_campaign_skills(reader))]
     pub skills: [LegacySkill; SKILL_COUNT],
+    #[legacy(fingerprint = RH_PC_STATUS_FINGERPRINT, expected = "MD5(\"RHPCStatus\")")]
     pub life_points: i16,
     pub in_coma: bool,
     pub ales: u16,
@@ -479,49 +407,23 @@ pub struct LegacyPcStatus {
     pub stones: u16,
     pub wasp_nests: u16,
     pub beam_me_index_in_sherwood: i16,
+    #[legacy(read = reader.read_wide_string("name", *ctx))]
     pub name: String,
 }
 
-impl LegacyPcStatus {
-    fn read(reader: &mut LegacyReader<'_>, maximum_name_units: usize) -> LegacyResult<Self> {
+/// The embedded human status is reported as `human_status.*`.
+fn read_campaign_skills(reader: &mut LegacyReader<'_>) -> LegacyResult<[LegacySkill; SKILL_COUNT]> {
+    reader.scope("human_status", |reader| {
         reader.read_signature(
-            "human_status.fingerprint",
+            "fingerprint",
             RH_HUMAN_STATUS_FINGERPRINT,
             "human-status fingerprint",
         )?;
-        let skills = [
-            LegacySkill {
-                capacity: reader.read_u32("human_status.skills[0].capacity")?,
-                experience: reader.read_u32("human_status.skills[0].experience")?,
-            },
-            LegacySkill {
-                capacity: reader.read_u32("human_status.skills[1].capacity")?,
-                experience: reader.read_u32("human_status.skills[1].experience")?,
-            },
-        ];
-        reader.read_signature(
-            "fingerprint",
-            RH_PC_STATUS_FINGERPRINT,
-            "MD5(\"RHPCStatus\")",
-        )?;
-        Ok(Self {
-            skills,
-            life_points: reader.read_i16("life_points")?,
-            in_coma: reader.read_bool("in_coma")?,
-            ales: reader.read_u16("ales")?,
-            apples: reader.read_u16("apples")?,
-            arrows: reader.read_u16("arrows")?,
-            nets: reader.read_u16("nets")?,
-            plants: reader.read_u16("plants")?,
-            purses: reader.read_u16("purses")?,
-            rations: reader.read_u16("rations")?,
-            stones: reader.read_u16("stones")?,
-            wasp_nests: reader.read_u16("wasp_nests")?,
-            beam_me_index_in_sherwood: reader.read_i16("beam_me_index_in_sherwood")?,
-            name: reader.read_wide_string("name", maximum_name_units)?,
-        })
-    }
+        <[LegacySkill; SKILL_COUNT]>::read_field(reader, "skills", &())
+    })
+}
 
+impl LegacyPcStatus {
     fn to_rust(&self) -> PcStatus {
         PcStatus {
             human_status: HumanStatus {
@@ -552,29 +454,22 @@ impl LegacyPcStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Context: the maximum name length in UTF-16 code units.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = usize)]
 pub struct LegacyPcDescription {
     pub status: LegacyPcStatus,
+    #[legacy(with = read_profile_link)]
     pub character_profile_index: Option<u32>,
     pub instanced: bool,
 }
 
 impl LegacyPcDescription {
-    fn read(reader: &mut LegacyReader<'_>, maximum_name_units: usize) -> LegacyResult<Self> {
-        Ok(Self {
-            status: reader.scope("status", |reader| {
-                LegacyPcStatus::read(reader, maximum_name_units)
-            })?,
-            character_profile_index: read_profile_link(reader, "character_profile_index")?,
-            instanced: reader.read_bool("instanced")?,
-        })
-    }
-
     fn to_rust(
         &self,
         profiles: &ProfileManager,
         character_index: usize,
-    ) -> Result<PcDescription, LegacyCampaignMappingError> {
+    ) -> Result<PcDescription, LegacyAdoptError> {
         let profile_index = required_profile_link(
             self.character_profile_index,
             profiles.characters.len(),
@@ -588,72 +483,52 @@ impl LegacyPcDescription {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyProductionOccupant {
     pub character_index: u32,
+    #[legacy(name = "position.x")]
     pub x: f32,
+    #[legacy(name = "position.y")]
     pub y: f32,
     pub obstacle: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Context: the maximum occupant count.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = usize,
+    fingerprint = RH_SECTOR_PRODUCTION_FINGERPRINT,
+    expected = "production-sector fingerprint"
+)]
 pub struct LegacyProductionSector {
     pub production_type: u32,
     pub speed: u16,
     pub amount: u16,
     pub produced_amount: u16,
     pub max_amount_reached: bool,
+    #[legacy(with = read_vec, args(*ctx, |reader, _| LegacyProductionOccupant::read(reader, &())))]
     pub occupants: Vec<LegacyProductionOccupant>,
 }
 
 impl LegacyProductionSector {
-    fn read(reader: &mut LegacyReader<'_>, maximum_occupants: usize) -> LegacyResult<Self> {
-        reader.read_signature(
-            "fingerprint",
-            RH_SECTOR_PRODUCTION_FINGERPRINT,
-            "production-sector fingerprint",
-        )?;
-        let production_type = reader.read_u32("production_type")?;
-        let speed = reader.read_u16("speed")?;
-        let amount = reader.read_u16("amount")?;
-        let produced_amount = reader.read_u16("produced_amount")?;
-        let max_amount_reached = reader.read_bool("max_amount_reached")?;
-        let occupants = read_vec(reader, "occupants", maximum_occupants, |reader, _| {
-            Ok(LegacyProductionOccupant {
-                character_index: reader.read_u32("character_index")?,
-                x: reader.read_f32("position.x")?,
-                y: reader.read_f32("position.y")?,
-                obstacle: reader.read_u16("obstacle")?,
-            })
-        })?;
-        Ok(Self {
-            production_type,
-            speed,
-            amount,
-            produced_amount,
-            max_amount_reached,
-            occupants,
-        })
-    }
-
     fn to_rust(
         &self,
         character_count: usize,
         sector_index: usize,
-    ) -> Result<SectorProduction, LegacyCampaignMappingError> {
+    ) -> Result<SectorProduction, LegacyAdoptError> {
         let prod_type = Type::from_script_i32(self.production_type as i32).ok_or_else(|| {
-            LegacyCampaignMappingError::InvalidEnum {
-                field: format!("production_sectors[{sector_index}].production_type"),
-                value: self.production_type,
-                expected: "production sector type 0..12",
-            }
+            CAMPAIGN.invalid(
+                format!("production_sectors[{sector_index}].production_type"),
+                self.production_type,
+                "production sector type 0..12",
+            )
         })?;
         let occupants = self
             .occupants
             .iter()
             .enumerate()
             .map(|(occupant_index, occupant)| {
-                let pc_description_idx = checked_reference(
+                let pc_description_idx = checked_collection_index(
                     occupant.character_index as usize,
                     character_count,
                     format!(
@@ -669,7 +544,7 @@ impl LegacyProductionSector {
                     ),
                 })
             })
-            .collect::<Result<Vec<_>, LegacyCampaignMappingError>>()?;
+            .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
         Ok(SectorProduction {
             prod_type,
             script_zone: None,
@@ -699,34 +574,8 @@ pub struct LegacyCampaignBootstrap {
     pub identity: LegacyMissionIdentity,
 }
 
-#[derive(Debug, Error)]
-pub enum LegacyCampaignMappingError {
-    #[error("save header mission id {mission_id} has no matching static mission profile")]
-    MissingHeaderMissionProfile { mission_id: u32 },
-    #[error(
-        "save header mission id {mission_id} (profile index {profile_index}) is absent from the campaign"
-    )]
-    HeaderMissionMissingFromCampaign {
-        mission_id: u32,
-        profile_index: usize,
-    },
-    #[error("{field} reference {index} is outside collection length {length}")]
-    InvalidReference {
-        field: String,
-        index: usize,
-        length: usize,
-    },
-    #[error("{field} is unexpectedly null")]
-    NullReference { field: String },
-    #[error("{field} has invalid enum value {value}; expected {expected}")]
-    InvalidEnum {
-        field: String,
-        value: u32,
-        expected: &'static str,
-    },
-    #[error("Original campaign has {count} recent missions; format permits at most 3")]
-    TooManyRecentMissions { count: usize },
-}
+/// Error context for campaign-stream reference and enum validation.
+const CAMPAIGN: AdoptSite = AdoptSite::new("saved campaign");
 
 fn read_vec<T>(
     reader: &mut LegacyReader<'_>,
@@ -741,9 +590,7 @@ fn read_vec<T>(
         .try_reserve_exact(count)
         .map_err(|_| reader.allocation_error(count_offset, field, count))?;
     for index in 0..count {
-        values.push(reader.scope(format!("{field}[{index}]"), |reader| {
-            read_item(reader, index)
-        })?);
+        values.push(reader.scope_indexed(field, index, |reader| read_item(reader, index))?);
     }
     Ok(values)
 }
@@ -764,19 +611,15 @@ fn read_profile_link(
     Ok((index != NULL_PROFILE_INDEX).then_some(index))
 }
 
-fn checked_reference(
+fn checked_collection_index(
     index: usize,
     length: usize,
     field: impl Into<String>,
-) -> Result<usize, LegacyCampaignMappingError> {
+) -> Result<usize, LegacyAdoptError> {
     if index < length {
         Ok(index)
     } else {
-        Err(LegacyCampaignMappingError::InvalidReference {
-            field: field.into(),
-            index,
-            length,
-        })
+        Err(CAMPAIGN.out_of_range(field.into(), "index", index, length))
     }
 }
 
@@ -784,21 +627,20 @@ fn required_profile_link(
     index: Option<u32>,
     length: usize,
     field: impl Into<String>,
-) -> Result<usize, LegacyCampaignMappingError> {
+) -> Result<usize, LegacyAdoptError> {
     let field = field.into();
-    let index = index.ok_or_else(|| LegacyCampaignMappingError::NullReference {
-        field: field.clone(),
-    })?;
-    checked_reference(index as usize, length, field)
+    let index =
+        index.ok_or_else(|| CAMPAIGN.field_error(field.clone(), AdoptErrorKind::NullReference))?;
+    checked_collection_index(index as usize, length, field)
 }
 
 fn map_optional_mission_link(
     index: Option<u16>,
     length: usize,
     field: impl Into<String>,
-) -> Result<Option<usize>, LegacyCampaignMappingError> {
+) -> Result<Option<usize>, LegacyAdoptError> {
     index
-        .map(|index| checked_reference(index as usize, length, field))
+        .map(|index| checked_collection_index(index as usize, length, field))
         .transpose()
 }
 
@@ -806,16 +648,16 @@ fn map_required_mission_links(
     links: &[Option<u16>],
     length: usize,
     field: &str,
-) -> Result<Vec<usize>, LegacyCampaignMappingError> {
+) -> Result<Vec<usize>, LegacyAdoptError> {
     links
         .iter()
         .enumerate()
         .map(|(position, link)| {
             let item_field = format!("{field}[{position}]");
-            let index = link.ok_or_else(|| LegacyCampaignMappingError::NullReference {
-                field: item_field.clone(),
+            let index = link.ok_or_else(|| {
+                CAMPAIGN.field_error(item_field.clone(), AdoptErrorKind::NullReference)
             })?;
-            checked_reference(index as usize, length, item_field)
+            checked_collection_index(index as usize, length, item_field)
         })
         .collect()
 }
@@ -824,12 +666,12 @@ fn map_character_links(
     links: &[u32],
     length: usize,
     field: &str,
-) -> Result<Vec<usize>, LegacyCampaignMappingError> {
+) -> Result<Vec<usize>, LegacyAdoptError> {
     links
         .iter()
         .enumerate()
         .map(|(position, &index)| {
-            checked_reference(index as usize, length, format!("{field}[{position}]"))
+            checked_collection_index(index as usize, length, format!("{field}[{position}]"))
         })
         .collect()
 }
@@ -837,16 +679,12 @@ fn map_character_links(
 fn map_mission_status(
     value: u32,
     field: impl Into<String>,
-) -> Result<MissionStatus, LegacyCampaignMappingError> {
+) -> Result<MissionStatus, LegacyAdoptError> {
     match value {
         0 => Ok(MissionStatus::Available),
         1 => Ok(MissionStatus::Won),
         2 => Ok(MissionStatus::Lost),
-        _ => Err(LegacyCampaignMappingError::InvalidEnum {
-            field: field.into(),
-            value,
-            expected: "mission status 0..2",
-        }),
+        _ => Err(CAMPAIGN.invalid(field.into(), value, "mission status 0..2")),
     }
 }
 

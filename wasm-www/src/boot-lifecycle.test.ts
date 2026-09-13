@@ -18,7 +18,11 @@ function fixture(calls: string[]): BootDependencies {
             calls.push('runtime'); return wasm;
         },
         prepareContent: async () => { throw new Error('unexpected multiplayer content'); },
-        loadDefaultContent: async () => { calls.push('content'); return { datadir: new Uint8Array([1, 2]), dataBaseUrl: 'data' }; },
+        loadDefaultContent: async (base, build) => {
+            // Default content follows the Demo generation pinned by the selected build.
+            assert.equal(base, 'https://runtime.example/builds/abc'); assert.deepEqual(build, { short: 'abc', source: 'latest' });
+            calls.push('content'); return { datadir: new Uint8Array([1, 2]), dataBaseUrl: 'data' };
+        },
         preloadLocalAssets: () => { throw new Error('unexpected local assets'); },
         preloadShippingFiles: () => { throw new Error('unexpected shipping files'); },
         preloadAssets: async () => { calls.push('preload'); },
@@ -52,8 +56,8 @@ test('cancellation stops later runtime side effects even when an adapter complet
     const calls: string[] = [];
     const controller = new AbortController();
     const deps = fixture(calls);
-    await assert.rejects(bootGame({ ...deps, loadDefaultContent: async latest => {
-        controller.abort(); return deps.loadDefaultContent(latest, controller.signal);
+    await assert.rejects(bootGame({ ...deps, loadDefaultContent: async (base, build) => {
+        controller.abort(); return deps.loadDefaultContent(base, build, controller.signal);
     } }, controller.signal), { name: 'AbortError' });
     assert.equal(calls.includes('preload'), false);
     assert.equal(calls.includes('boot'), false);
@@ -110,7 +114,9 @@ test('default content overlaps runtime and core preload, but boot waits for both
     runtime.resolve(await deps.loadRuntime('https://runtime.example/builds/abc', true, true, new AbortController().signal));
     await preloadStarted.promise;
     assert.equal(calls.includes('boot'), false);
-    content.resolve(await deps.loadDefaultContent(true, new AbortController().signal));
+    content.resolve(await deps.loadDefaultContent(
+        'https://runtime.example/builds/abc', { short: 'abc', source: 'latest' }, new AbortController().signal,
+    ));
     await boot;
     assert.ok(calls.includes('boot'));
 });

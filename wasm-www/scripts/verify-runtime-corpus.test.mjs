@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { brotliCompressSync } from 'node:zlib';
 import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -15,10 +15,13 @@ import {
     writeDatadirDeploymentReceipt,
     writeDatadirReleaseAuthority,
 } from './datadir-release-authority.mjs';
+import { stageCloudflareHeaders } from './stage-cloudflare-headers.mjs';
 import {
     DEMO_CONTENT_MANIFEST_PATH,
+    DEMO_PARENT_ROOT,
     DEMO_PATH,
     DEMO_ROOT,
+    retainedDemoDetails,
     verifyDatadirCorpus,
     verifyDemoWebContentPackage,
 } from './verify-datadir-corpus.mjs';
@@ -285,6 +288,189 @@ test('runtime update retains immutable wasm versions and never imports the datad
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     await assert.rejects(readFile(resolve(updated, DEMO_CONTENT_MANIFEST_PATH)), /ENOENT/u);
+});
+
+async function setTreeModes(path, directoryMode, fileMode) {
+    const facts = await lstat(path);
+    if (!facts.isDirectory()) {
+        await chmod(path, fileMode);
+        return;
+    }
+    // Writable first so children can be changed, then the requested mode.
+    await chmod(path, 0o700);
+    for (const entry of await readdir(path)) await setTreeModes(resolve(path, entry), directoryMode, fileMode);
+    await chmod(path, directoryMode);
+}
+
+async function treeModes(path, prefix = '') {
+    const modes = [[prefix, (await lstat(path)).mode & 0o777]];
+    if ((await lstat(path)).isDirectory()) {
+        for (const entry of (await readdir(path)).sort()) modes.push(...await treeModes(resolve(path, entry), `${prefix}/${entry}`));
+    }
+    return modes;
+}
+
+test('runtime update assembles onto a read-only archived corpus without making it writable', async t => {
+    const first = await runtimeAddition('111111111111');
+    const second = await runtimeAddition('222222222222');
+    const release = await datadirRelease();
+    const root = await mkdtemp(resolve(tmpdir(), 'runtime-readonly-'));
+    const original = resolve(root, 'original');
+    const updated = resolve(root, 'updated');
+    t.after(async () => {
+        await setTreeModes(original, 0o755, 0o644).catch(() => {});
+        await Promise.all([
+            rm(first, { recursive: true, force: true }), rm(second, { recursive: true, force: true }),
+            rm(release.root, { recursive: true, force: true }), rm(root, { recursive: true, force: true }),
+        ]);
+    });
+    await assembleRuntimeCorpus({
+        existing: null, addition: first, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: original,
+    });
+    await setTreeModes(original, 0o555, 0o444);
+    const archivedModes = await treeModes(original);
+
+    const result = await assembleRuntimeCorpus({
+        existing: original, addition: second, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: updated,
+    });
+    assert.equal(result.assetCount, 22);
+    assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
+    assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
+    assert.deepEqual(await treeModes(original), archivedModes);
+    assert.equal(JSON.parse(await readFile(resolve(original, 'wasm/latest.json'))).short, '111111111111');
+
+    // A failed assembly removes its read-only-derived staging tree.
+    const failed = resolve(root, 'failed');
+    await assert.rejects(assembleRuntimeCorpus({
+        existing: original, addition: first, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: failed,
+    }));
+    assert.deepEqual((await readdir(root)).filter(name => name.includes('assembling')), []);
+    assert.deepEqual(await treeModes(original), archivedModes);
+});
+
+function canonicalJson(value) {
+    const sorted = item => (Array.isArray(item) ? item.map(sorted)
+        : item !== null && typeof item === 'object'
+            ? Object.fromEntries(Object.keys(item).sort().map(key => [key, sorted(item[key])]))
+            : item);
+    return JSON.stringify(sorted(value));
+}
+
+/** A published corpus holding only an earlier generation at the parent root. */
+async function retainedGenerationCorpus() {
+    const retained = await demoPackage();
+    const root = await mkdtemp(resolve(tmpdir(), 'datadir-retained-'));
+    const prior = resolve(root, 'prior');
+    const manifestBytes = await readFile(resolve(retained.root, 'Data/robinhood-web-content.json'));
+    const generation = {
+        root: DEMO_PARENT_ROOT,
+        datadirPath: `${DEMO_PARENT_ROOT}/v8-web-opus-q80.rhdata.zst`,
+        contentManifestPath: `${DEMO_PARENT_ROOT}/robinhood-web-content.json`,
+        contentManifestSha256: sha(manifestBytes),
+        datadirSha256: sha(retained.datadir),
+        datadirByteLength: retained.datadir.length,
+        nativeContentSha256,
+    };
+    await mkdir(resolve(prior, DEMO_PARENT_ROOT), { recursive: true });
+    await writeFile(resolve(prior, generation.datadirPath), retained.datadir);
+    await writeFile(resolve(prior, generation.contentManifestPath), manifestBytes);
+    for (const object of demoObjects) {
+        const path = resolve(prior, DEMO_PARENT_ROOT, object.path);
+        await mkdir(resolve(path, '..'), { recursive: true });
+        await writeFile(path, object.bytes);
+    }
+    await stageCloudflareHeaders('datadir', prior);
+    // The prior deployment's authority named this generation as its Demo.
+    const authority = resolve(root, 'prior-datadir-authority.json');
+    await writeFile(authority, canonicalJson({
+        schema_version: 1,
+        source_commit: sourceCommit,
+        cargo_lock_sha256: cargoLockSha256,
+        inventory_sha256: 'f'.repeat(64),
+        worker_name: 'robinhood-datadir-assets',
+        route_pattern: 'robinhood.phiresky.xyz/datadirs/*',
+        public_root_url: 'https://robinhood.phiresky.xyz/datadirs/',
+        demo: retainedDemoDetails(generation),
+    }));
+    return { root, retained, prior, authority, retainedGenerations: [generation] };
+}
+
+test('datadir update adds the current generation beside every retained object', async t => {
+    const fixture = await retainedGenerationCorpus();
+    const current = await demoPackage();
+    t.after(() => Promise.all([fixture.root, fixture.retained.root, current.root]
+        .map(path => rm(path, { recursive: true, force: true }))));
+    const { retainedGenerations } = fixture;
+    // The converter's unpublished dependency plan never enters the corpus.
+    await writeFile(resolve(current.root, 'Data/conversion-plan.json'), '{}');
+
+    await assert.rejects(verifyDatadirCorpus(fixture.prior, { retainedGenerations }), /closure mismatch; missing/u);
+    assert.equal((await verifyDatadirCorpus(fixture.prior, { retainedGenerations, requireCurrent: false })).demo, undefined);
+    await assert.rejects(verifyDatadirCorpus(fixture.prior, { requireCurrent: false }), /extra/u);
+
+    const output = resolve(fixture.root, 'updated');
+    const result = await assembleDatadirCorpus({ existing: fixture.prior, demo: current.root, output, retainedGenerations });
+    assert.equal(result.demo.datadir_url, `https://robinhood.phiresky.xyz/${DEMO_PATH}`);
+    assert.deepEqual(await readFile(resolve(output, retainedGenerations[0].datadirPath)), fixture.retained.datadir);
+    assert.deepEqual(await readFile(resolve(output, DEMO_PATH)), current.datadir);
+    await assert.rejects(readFile(resolve(output, DEMO_ROOT, 'conversion-plan.json')), /ENOENT/u);
+
+    await rm(resolve(output, retainedGenerations[0].datadirPath));
+    await assert.rejects(
+        verifyDatadirCorpus(output, { retainedGenerations }),
+        /retained Demo generation .* closure mismatch; missing/u,
+    );
+});
+
+test('runtime update keeps builds pinned to a retained generation and binds latest to the current one', async t => {
+    const fixture = await retainedGenerationCorpus();
+    const old = await runtimeAddition('777777777777');
+    const addition = await runtimeAddition('888888888888');
+    const release = await datadirRelease();
+    t.after(() => Promise.all([fixture.root, fixture.retained.root, old, addition, release.root]
+        .map(path => rm(path, { recursive: true, force: true }))));
+    const { retainedGenerations } = fixture;
+
+    await rewriteRuntimeManifest(old, document => {
+        document.multiplayerContent.demo.url = `https://robinhood.phiresky.xyz/${retainedGenerations[0].datadirPath}`;
+    });
+    const priorRuntime = resolve(fixture.root, 'prior-runtime');
+    const priorReceipt = resolve(fixture.root, 'prior-datadir-deployment.json');
+    await writeDatadirDeploymentReceipt({
+        authorityPath: fixture.authority, workerVersionId, output: priorReceipt, retainedGenerations,
+    });
+    await cp(resolve(old, 'wasm'), resolve(priorRuntime, 'wasm'), { recursive: true });
+    await copyFile(priorReceipt, resolve(priorRuntime, DATADIR_BINDING_PATH));
+    await stageCloudflareHeaders('runtime', priorRuntime);
+    await verifyRuntimeCorpus(priorRuntime, { datadirAuthorityPath: fixture.authority, retainedGenerations });
+    await assert.rejects(
+        verifyRuntimeCorpus(priorRuntime, { datadirAuthorityPath: fixture.authority }),
+        /content_manifest_url|datadir_url|Demo URL/u,
+    );
+
+    const updated = resolve(fixture.root, 'updated-runtime');
+    const options = {
+        existing: priorRuntime, addition, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, retainedGenerations,
+    };
+    await assert.rejects(assembleRuntimeCorpus({ ...options, output: updated }), /authority_sha256/u);
+    const result = await assembleRuntimeCorpus({
+        ...options, output: updated, existingDatadirAuthority: fixture.authority,
+    });
+    assert.equal(result.latest.short, '888888888888');
+    assert.equal(
+        JSON.parse(await readFile(resolve(updated, 'wasm/777777777777/manifest.json'))).multiplayerContent.demo.url,
+        `https://robinhood.phiresky.xyz/${retainedGenerations[0].datadirPath}`,
+    );
+
+    await copyFile(resolve(updated, 'wasm/777777777777/manifest.json'), resolve(updated, 'wasm/latest.json'));
+    await assert.rejects(
+        verifyRuntimeCorpus(updated, { datadirAuthorityPath: release.authority, retainedGenerations }),
+        /select the deployed Demo datadir generation/u,
+    );
 });
 
 test('capacity gate enforces Cloudflare asset count and object limits', () => {

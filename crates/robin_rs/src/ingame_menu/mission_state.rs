@@ -5,12 +5,12 @@
 //! button position, and on open advances a frame-driven Yes/No
 //! confirmation prompt. Reports `true` when the player confirms.
 
-use crate::ingame_menu::widget_bridge::ModalScreenIo;
+use crate::ingame_menu::widget_bridge::{ModalScreenIo, ScreenFrame};
 use crate::renderer::Renderer;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, dim_screen, draw_background, enter_modal_gpu_phase,
-    render_text_in_box_font,
+    MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, draw_background,
+    render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON};
 use super::yesno::YesNoModalState;
@@ -74,38 +74,28 @@ impl MissionStatePopupState {
     }
 
     pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<bool> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         match &mut self.phase {
             MissionStatePopupPhase::Opening(transition) => {
-                if transition.tick(&mut ModalScreenIo {
-                    window: event_pump,
-                    renderer,
-                    resources,
-                    cursor,
-                }) {
-                    self.phase = MissionStatePopupPhase::Confirming(Box::new(
-                        YesNoModalState::new(event_pump, renderer, resources, self.message.clone()),
-                    ));
+                if transition.tick(io) {
+                    self.phase =
+                        MissionStatePopupPhase::Confirming(Box::new(YesNoModalState::new(
+                            io.window,
+                            io.renderer,
+                            io.resources,
+                            self.message.clone(),
+                        )));
                 }
                 None
             }
             MissionStatePopupPhase::Confirming(yesno) => {
-                if let Some(confirmed) = yesno.tick(&mut ModalScreenIo {
-                    window: event_pump,
-                    renderer,
-                    resources,
-                    cursor,
-                }) {
+                if let Some(confirmed) = yesno.tick(io) {
                     if confirmed {
                         self.phase = MissionStatePopupPhase::Done;
                         Some(true)
                     } else {
                         self.phase = MissionStatePopupPhase::Closing(MissionStateTransition::new(
-                            renderer,
-                            resources,
+                            io.renderer,
+                            io.resources,
                             &self.message,
                             self.won,
                             self.source_button,
@@ -118,12 +108,7 @@ impl MissionStatePopupState {
                 }
             }
             MissionStatePopupPhase::Closing(transition) => {
-                if transition.tick(&mut ModalScreenIo {
-                    window: event_pump,
-                    renderer,
-                    resources,
-                    cursor,
-                }) {
+                if transition.tick(io) {
                     self.phase = MissionStatePopupPhase::Done;
                     Some(false)
                 } else {
@@ -158,9 +143,7 @@ impl MissionStateTransition {
         source_button: Option<(i32, i32, i32, i32)>,
         direction: TransitionDirection,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let transform = MenuTransform::for_renderer(renderer);
 
         // Final (fully-open) virtual rectangle, centred in the menu.
         let final_x = (MENU_W - POPUP_W) / 2;
@@ -206,10 +189,6 @@ impl MissionStateTransition {
     }
 
     fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> bool {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         // Exponential decay:
         //   open:  counter *= INV_TRANSITION_SPEED
         //   close: counter *= TRANSITION_SPEED
@@ -230,8 +209,8 @@ impl MissionStateTransition {
 
         // Drain pending input so the OS doesn't think the window is hung, and
         // keep the transition centred if the presentation aspect changes.
-        let (_events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
+        let screen = ScreenFrame::poll(io);
+        self.transform = screen.transform;
 
         // Interpolate bounds: destination = source + (final - source) * (1 - counter)
         let t = (1.0_f32 - self.counter.min(1.0)).clamp(0.0, 1.0);
@@ -244,8 +223,9 @@ impl MissionStateTransition {
         let cur_w = (br_x - tl_x).max(1);
         let cur_h = (br_y - tl_y).max(1);
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.menu_bg_small {
             draw_background(renderer, self.transform, &bg, tl_x, tl_y, cur_w, cur_h);
@@ -271,7 +251,7 @@ impl MissionStateTransition {
             );
         }
         if let Some(font) = resources.popup_font_any() {
-            let _ = render_text_in_box_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 self.transform,
@@ -281,16 +261,19 @@ impl MissionStateTransition {
                 (TEXT_W as f32 * scale_x) as i32,
                 (TEXT_H as f32 * scale_y) as i32,
                 TextAlign::Center,
+                VAlign::Top,
             );
         }
 
-        if let Some(c) = cursor {
-            let (mx, my) = event_pump.cursor_pos();
+        // The transition has no modal input state, so the cursor follows the
+        // raw window position instead of `ScreenFrame::finish`'s input cursor.
+        if let Some(c) = io.cursor {
+            let (mx, my) = io.window.cursor_pos();
             c.cursor
-                .render(renderer, mx as f32, my as f32, c.opacity, c.shadow_color);
+                .render(io.renderer, mx as f32, my as f32, c.opacity, c.shadow_color);
         }
 
-        renderer.present();
+        io.renderer.present();
         false
     }
 }

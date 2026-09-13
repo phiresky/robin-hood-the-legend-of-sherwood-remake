@@ -3,8 +3,6 @@
 //! Host playback channels, stream seeking, and widget mutation are returned as
 //! presentation state. They are never invoked during simulation adoption.
 
-use thiserror::Error;
-
 use crate::{
     coordinates::MapPoint,
     engine::EngineInner,
@@ -16,6 +14,7 @@ use crate::{
 
 use super::{
     LegacySaveAbiProfile,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     engine::{
         LegacyEnginePreamble, LegacyGameState, LegacySerializedSound, LegacySound,
         LegacySoundSource,
@@ -95,40 +94,12 @@ impl LegacyPreambleServicesPlan {
     }
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
-pub(crate) enum LegacyPreambleServicesError {
-    #[error("saved messenger action {value} is not a known action")]
-    InvalidMessengerAction { value: u16 },
-    #[error("saved sound field {field} has value {value}; expected {expected}")]
-    InvalidSoundField {
-        field: &'static str,
-        value: String,
-        expected: &'static str,
-    },
-    #[error("saved sound slot {slot} stores slot_index {value}; expected its exact array ordinal")]
-    WrongSoundSlotIndex { slot: usize, value: i16 },
-    #[error(
-        "saved sound slot {slot} registration id {registration_id} differs from source sample id {source_id}"
-    )]
-    WrongSoundRegistration {
-        slot: usize,
-        registration_id: u32,
-        source_id: u32,
-    },
-    #[error(
-        "saved sound slot {slot} serializes the same active member twice with different values ({first}, {second})"
-    )]
-    InconsistentSoundActive {
-        slot: usize,
-        first: bool,
-        second: bool,
-    },
-}
+const SOUND: AdoptSite = AdoptSite::new("saved sound");
 
 pub(crate) fn preflight_v48_preamble_services(
     _abi: LegacySaveAbiProfile,
     preamble: &LegacyEnginePreamble,
-) -> Result<LegacyPreambleServicesPlan, LegacyPreambleServicesError> {
+) -> Result<LegacyPreambleServicesPlan, LegacyAdoptError> {
     let selected_action = convert_messenger_action(preamble.messenger.action)?;
     let sound = convert_sound(&preamble.sound)?;
     let host = LegacyPreambleHostState::from_preamble_parts(
@@ -146,18 +117,15 @@ pub(crate) fn preflight_v48_preamble_services(
     })
 }
 
-fn convert_messenger_action(value: u16) -> Result<Action, LegacyPreambleServicesError> {
-    Action::try_from(u32::from(value))
-        .map_err(|_| LegacyPreambleServicesError::InvalidMessengerAction { value })
+fn convert_messenger_action(value: u16) -> Result<Action, LegacyAdoptError> {
+    AdoptSite::new("saved messenger").enum_value("action", u32::from(value))
 }
 
-fn convert_sound(
-    saved: &LegacySound,
-) -> Result<Option<SoundSimState>, LegacyPreambleServicesError> {
+fn convert_sound(saved: &LegacySound) -> Result<Option<SoundSimState>, LegacyAdoptError> {
     match (&saved.serialized, &saved.state) {
         (false, None) => Ok(None),
         (true, Some(state)) => convert_serialized_sound(state).map(Some),
-        (serialized, state) => Err(invalid_sound(
+        (serialized, state) => Err(SOUND.invalid(
             "serialized/state",
             format!("{serialized}/{state:?}"),
             "false/None or true/Some",
@@ -167,12 +135,12 @@ fn convert_sound(
 
 fn convert_serialized_sound(
     saved: &LegacySerializedSound,
-) -> Result<SoundSimState, LegacyPreambleServicesError> {
-    validate_finite("geometry.listen_point.x", saved.geometry.listen_point.x)?;
-    validate_finite("geometry.listen_point.y", saved.geometry.listen_point.y)?;
-    validate_finite("geometry.zoom_factor", saved.geometry.zoom_factor)?;
+) -> Result<SoundSimState, LegacyAdoptError> {
+    SOUND.finite("geometry.listen_point.x", saved.geometry.listen_point.x)?;
+    SOUND.finite("geometry.listen_point.y", saved.geometry.listen_point.y)?;
+    SOUND.finite("geometry.zoom_factor", saved.geometry.zoom_factor)?;
     if saved.geometry.zoom_factor <= 0.0 {
-        return Err(invalid_sound(
+        return Err(SOUND.invalid(
             "geometry.zoom_factor",
             saved.geometry.zoom_factor,
             "a finite positive zoom",
@@ -181,11 +149,7 @@ fn convert_serialized_sound(
     match saved.music_mode {
         0..=2 => {}
         value => {
-            return Err(invalid_sound(
-                "music_mode",
-                value,
-                "MODE_QUIET..=MODE_FIGHT (0..=2)",
-            ));
+            return Err(SOUND.invalid("music_mode", value, "MODE_QUIET..=MODE_FIGHT (0..=2)"));
         }
     }
     let mut sources = SoundSourceManager::new();
@@ -196,17 +160,19 @@ fn convert_serialized_sound(
         };
         let expected_slot = (slot as u16) as i16;
         if entry.slot_index != expected_slot {
-            return Err(LegacyPreambleServicesError::WrongSoundSlotIndex {
+            return Err(AdoptErrorKind::WrongSoundSlotIndex {
                 slot,
                 value: entry.slot_index,
-            });
+            }
+            .into());
         }
         if entry.registration_id != entry.source.id {
-            return Err(LegacyPreambleServicesError::WrongSoundRegistration {
+            return Err(AdoptErrorKind::WrongSoundRegistration {
                 slot,
                 registration_id: entry.registration_id,
                 source_id: entry.source.id,
-            });
+            }
+            .into());
         }
         sources.sources_push_some(convert_source(slot, &entry.source)?);
     }
@@ -227,19 +193,17 @@ fn convert_serialized_sound(
     })
 }
 
-fn convert_source(
-    slot: usize,
-    saved: &LegacySoundSource,
-) -> Result<SoundSource, LegacyPreambleServicesError> {
+fn convert_source(slot: usize, saved: &LegacySoundSource) -> Result<SoundSource, LegacyAdoptError> {
     if saved.active_first != saved.active_second {
-        return Err(LegacyPreambleServicesError::InconsistentSoundActive {
+        return Err(AdoptErrorKind::InconsistentSoundActive {
             slot,
             first: saved.active_first,
             second: saved.active_second,
-        });
+        }
+        .into());
     }
     let source_kind = SoundSourceKind::from_u8(saved.kind).ok_or_else(|| {
-        invalid_sound(
+        SOUND.invalid(
             "source.kind",
             saved.kind,
             "KIND_SINGLE..=KIND_VOLATILE (0..=3)",
@@ -251,7 +215,7 @@ fn convert_source(
         2 => SoundSourceAltitude::Top,
         3 => SoundSourceAltitude::NoAltitude,
         value => {
-            return Err(invalid_sound(
+            return Err(SOUND.invalid(
                 "source.altitude",
                 value,
                 "ALTITUDE_GROUND..=ALTITUDE_NONE (0..=3)",
@@ -260,8 +224,8 @@ fn convert_source(
     };
     let mut shape = Vec::with_capacity(saved.shape.len());
     for point in &saved.shape {
-        validate_finite("source.shape.x", point.x)?;
-        validate_finite("source.shape.y", point.y)?;
+        SOUND.finite("source.shape.x", point.x)?;
+        SOUND.finite("source.shape.y", point.y)?;
         shape.push(MapPoint::new(point.x, point.y));
     }
 
@@ -288,26 +252,6 @@ fn convert_source(
         // mission ambience.
         ambience_enabled: true,
     })
-}
-
-fn validate_finite(field: &'static str, value: f32) -> Result<(), LegacyPreambleServicesError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(invalid_sound(field, value, "a finite f32"))
-    }
-}
-
-fn invalid_sound(
-    field: &'static str,
-    value: impl std::fmt::Display,
-    expected: &'static str,
-) -> LegacyPreambleServicesError {
-    LegacyPreambleServicesError::InvalidSoundField {
-        field,
-        value: value.to_string(),
-        expected,
-    }
 }
 
 #[cfg(test)]
@@ -500,14 +444,17 @@ mod tests {
             alter(&mut saved);
             assert!(matches!(
                 convert_serialized_sound(&saved),
-                Err(LegacyPreambleServicesError::InvalidSoundField { field: actual, .. }) if actual == field
+                Err(LegacyAdoptError { field: Some(actual), .. }) if actual == field
             ));
         }
         let mut saved = sound();
         saved.source_manager.slots[0].as_mut().unwrap().slot_index = 1;
         assert!(matches!(
             convert_serialized_sound(&saved),
-            Err(LegacyPreambleServicesError::WrongSoundSlotIndex { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::WrongSoundSlotIndex { .. },
+                ..
+            })
         ));
         let mut saved = sound();
         saved.source_manager.slots[0]
@@ -516,7 +463,10 @@ mod tests {
             .registration_id += 1;
         assert!(matches!(
             convert_serialized_sound(&saved),
-            Err(LegacyPreambleServicesError::WrongSoundRegistration { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::WrongSoundRegistration { .. },
+                ..
+            })
         ));
     }
 
@@ -526,10 +476,13 @@ mod tests {
         source.active_second = false;
         assert!(matches!(
             convert_source(3, &source),
-            Err(LegacyPreambleServicesError::InconsistentSoundActive {
-                slot: 3,
-                first: true,
-                second: false,
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::InconsistentSoundActive {
+                    slot: 3,
+                    first: true,
+                    second: false,
+                },
+                ..
             })
         ));
     }
@@ -538,7 +491,12 @@ mod tests {
     fn rejects_unknown_messenger_action() {
         assert_eq!(
             convert_messenger_action(u16::MAX),
-            Err(LegacyPreambleServicesError::InvalidMessengerAction { value: u16::MAX })
+            Err(AdoptSite::new("saved messenger").field_error(
+                "action",
+                AdoptErrorKind::UnknownEnum {
+                    value: i64::from(u16::MAX)
+                },
+            ))
         );
     }
 

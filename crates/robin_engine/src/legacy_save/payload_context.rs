@@ -86,6 +86,9 @@ impl<'a> LegacyMissionPayloadDecodeContext<'a> {
         }
     }
 
+    /// Linux i386 defaults for unit tests; production decoding always names
+    /// its ABI through [`Self::with_default_limits_for_abi`].
+    #[cfg(test)]
     pub fn with_default_limits(
         scb: &'a ScbFile,
         metadata: &'a LegacyMissionPayloadMetadata,

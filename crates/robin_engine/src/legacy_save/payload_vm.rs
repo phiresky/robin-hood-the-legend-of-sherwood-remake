@@ -11,12 +11,10 @@ use super::payload_base::read_element_ref;
 use super::read_helpers::DEFAULT_BULK_LIMIT;
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 use crate::scb::{MemberVariable, ScbFile, TypeTag};
 
 use super::payload_base::{LegacyElementRef, LegacyPoint2, LegacySectorRef};
-
-const NULL_U16: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyVmDecodeLimits {
@@ -78,11 +76,14 @@ pub enum LegacyVmMemberValue {
     Location(Option<LegacyVmLocation>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Field declaration order is wire order; the position's `x`/`y` are
+/// reported without a `position` segment.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyVmLocation {
     /// Serialized but unused during location loading; preserve it for parity
     /// diagnostics instead of assuming that old saves always contain false.
     pub legacy_dummy: bool,
+    #[legacy(flatten)]
     pub position: LegacyPoint2,
     pub layer: u16,
     pub active: bool,
@@ -290,23 +291,7 @@ fn read_location(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyVmL
     if !reader.read_bool("initialized")? {
         return Ok(None);
     }
-
-    let legacy_dummy = reader.read_bool("legacy_dummy")?;
-    let position = LegacyPoint2 {
-        x: reader.read_f32("x")?,
-        y: reader.read_f32("y")?,
-    };
-    let layer = reader.read_u16("layer")?;
-    let active = reader.read_bool("active")?;
-    let sector_index = reader.read_u16("sector")?;
-    let sector = LegacySectorRef((sector_index != NULL_U16).then_some(sector_index));
-    Ok(Some(LegacyVmLocation {
-        legacy_dummy,
-        position,
-        layer,
-        active,
-        sector,
-    }))
+    LegacyVmLocation::read(reader, &()).map(Some)
 }
 
 #[cfg(test)]

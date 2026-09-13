@@ -1512,19 +1512,19 @@ pub(super) fn handle_pause_menu_events(
         let authoritative_transition_enabled =
             host.transport.authoritative_transition_actions_enabled();
         menu.set_authoritative_transition_actions_enabled(authoritative_transition_enabled);
-        let screen_w = renderer.screen_width() as i32;
-        let screen_h = renderer.screen_height() as i32;
+        let transform = crate::ingame_menu::layout::MenuTransform::for_renderer(renderer);
         for event in events {
             let backend = audio_backend
                 .as_mut()
                 .map(|b| b as &mut dyn crate::sound::AudioBackend);
             match menu.handle_event_with_audio(
                 event,
-                screen_w,
-                screen_h,
-                Some(&mut host.audio.sound),
-                backend,
-                Some(sample_loader),
+                transform,
+                crate::ingame_menu::widget_bridge::ScreenAudio {
+                    sound: Some(&mut host.audio.sound),
+                    backend,
+                    sample_loader: Some(sample_loader),
+                },
             ) {
                 PauseMenuOutcome::Pending => {}
                 other => {
@@ -2192,13 +2192,15 @@ impl SherwoodCtx<'_> {
                     let Some(resources) = menu_resources.as_mut() else {
                         panic!("mission-description resources disappeared while the modal was open")
                     };
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
                     let mut frame_actions = Vec::new();
                     let outcome = state.tick(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor,
+                        &mut ModalScreenIo {
+                            window: event_pump,
+                            renderer,
+                            resources,
+                            cursor: Some(&cursor),
+                        },
                         engine,
                         assets,
                         &mut frame_actions,
@@ -2615,7 +2617,12 @@ impl SherwoodCtx<'_> {
                         });
                         *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
                             state: ingame_menu::DebriefingModalState::new(
-                                resources, text, None, 0, won, false, None, false, false,
+                                resources,
+                                ingame_menu::DebriefingContent {
+                                    body: text,
+                                    won,
+                                    ..Default::default()
+                                },
                             ),
                         });
                         return Ok(HandlerAction::Proceed);

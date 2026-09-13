@@ -5,6 +5,7 @@ import { resolve, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import { buildRuntime, buildReplayAdmission, run } from './build-runtime.mjs';
+import { DEMO_PATH } from './verify-datadir-corpus.mjs';
 import { verifyRuntimeSourceContract } from './verify-runtime-source-contract.mjs';
 
 export function validateContentIdentity({ demoSha, nativeDemoSha, demoBytes, fullSha }) {
@@ -67,7 +68,7 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
         commit, short, builtAt: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'), netProtocol: contract.netProtocol,
         ticketSchema: contract.ticketSchema,
         multiplayerContent: { schema: contract.contentSchema,
-            demo: { url: 'https://robinhood.phiresky.xyz/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst',
+            demo: { url: `https://robinhood.phiresky.xyz/${DEMO_PATH}`,
                 sha256: identity.demoSha, byteLength: identity.demoBytes, nativeContentSha256: identity.nativeDemoSha },
             full: identity.fullSha ? { manifestSha256: identity.fullSha } : null },
         files: { js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz', wasmBrotli: 'robin_bg.wasm.br', replayAdmissionJs: 'replay_admission.js', replayAdmissionWasm: 'replay_admission_bg.wasm' },

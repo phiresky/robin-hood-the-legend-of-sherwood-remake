@@ -6,8 +6,9 @@
 //! [`crate::main_menu::MainMenuChoice::Load`] so the caller can start a
 //! session seeded with a `SaveLoadRequest::Load`.
 
+use crate::application::require;
 use crate::host::ApplicationContext;
-use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::widget_bridge::{ModalCursor, ModalScreenIo};
 use crate::ingame_menu::{IngameMenuResources, SaveLoadOutcome, show_load_picker};
 use crate::main_menu::MainMenuChoice;
 use crate::renderer::Renderer;
@@ -23,14 +24,18 @@ pub(crate) async fn run_main_menu_load(
     cursor: ModalCursor<'_>,
     save_manager: &mut SaveGameManager,
 ) -> Option<MainMenuChoice> {
-    let detailed_metadata = application_context
-        .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata)
-        .unwrap_or_else(|error| panic!("Load Game requires an active profile: {error}"));
+    let detailed_metadata = require(
+        application_context
+            .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata),
+        "Load Game screen",
+    );
     let outcome = show_load_picker(
-        event_pump,
-        renderer,
-        resources,
-        Some(cursor),
+        &mut ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: Some(&cursor),
+        },
         save_manager,
         detailed_metadata,
     )

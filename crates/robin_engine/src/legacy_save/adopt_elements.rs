@@ -7,8 +7,6 @@
 
 use std::{collections::BTreeMap, num::NonZeroU32};
 
-use thiserror::Error;
-
 use crate::{
     actor_state::{ActorContinuationState, ActorSeekSector},
     ai::{
@@ -17,10 +15,12 @@ use crate::{
         PathHistoryEntry, PathId, PatrolPath, Position, Question, ReconnaissanceReport, Remark,
         ReportType, Stimulus, StimulusInfo, StimulusType, StolenObject, Substate,
     },
+    ai_enemy::EnemyAi,
+    ai_friendly::FriendlyAi,
     coordinates::{GroundPoint, MapPoint, MapVec},
     element::{
-        ActionState, AiBrain, Detectable, DetectableType, EntityId, EyeStatus, NpcData,
-        OutlineColorName,
+        ActionState, AiActorData, AiBrain, Detectable, DetectableType, EntityId, EyeStatus,
+        NpcData, OutlineColorName,
     },
     engine::{EngineInner, LevelAssets},
     level_data::WaypointCommand,
@@ -31,258 +31,41 @@ use crate::{
 
 use super::{
     adopt::{
-        LegacyEntityFixups, LegacyLineTopology, LegacyLineTopologyError, LegacyPositionTopology,
-        LegacySaveAdoptError, preflight_v48_position,
+        LegacyEnemyJumpLineGeometry, LegacyEntityFixups, LegacyLineTopology,
+        LegacyPositionTopology, missing_creation_order, preflight_v48_position,
     },
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_ai::{
         LegacyAiPathStatus, LegacyAiPosition, LegacyLocalAiCommon, LegacyLocalAiTail,
         LegacyStimulus, LegacyStimulusInfo, LegacyStimulusPosition,
     },
     payload_base::{
         LegacyActorPayload, LegacyAiElementRef, LegacyElementPayloadBase, LegacyLineRef,
-        LegacyNpcPayload, LegacyNpcView, LegacyPoint2, LegacySpritePayload,
+        LegacyNpcPayload, LegacyNpcView, LegacySpritePayload,
     },
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
 };
 
-/// Authoritative serialized members which have no equivalent in the current
-/// Rust entity model and therefore remain for later adoption stages.
-///
-/// Keeping the list next to the conversion prevents a partially adopted save
-/// from looking complete. In particular, the sprite frame countdown drives
-/// projectile flight and must land before this plan is wired into replay.
-pub const REMAINING_COMMON_ELEMENT_FIELDS: &[&str] = &[
-    "actor sequence/order links and inline post-seek sequence",
-    "actor script member variables",
-];
+// Serialized bytes which are intentionally not simulation state in Rust, and
+// so are decoded but never adopted:
+// - sprite already-decompressed flag (a host-side sprite asset cache)
+// - sprite display order and its display-order placeholder (Original
+//   recomputes display order during normal render refreshes; the dummy is an
+//   uninitialized legacy compatibility slot)
+// - sprite bounding box (recomputed by position refreshes)
+// - AI log info/frame (Linux v48 serializes only the debug line type)
+// - enemy AI duplicate pre-personal seek directions and first
+//   seek-flags/status copies (later serialized copies overwrite them during
+//   original-game load)
+// None may influence authoritative replay comparison.
 
-/// Serialized bytes which are intentionally not simulation state in Rust.
-///
-/// Original recomputes display order and the sprite bounding box during its
-/// normal render/position refreshes; the dummy is an uninitialized legacy
-/// compatibility slot. The already-decompressed flag describes a host-side sprite
-/// asset cache. None may influence authoritative replay comparison.
-pub const NON_AUTHORITATIVE_COMMON_ELEMENT_FIELDS: &[&str] = &[
-    "sprite already-decompressed flag",
-    "sprite display order",
-    "sprite display-order placeholder",
-    "sprite bounding box",
-    "AI log info/frame (Linux v48 serializes only the debug line type)",
-    "enemy AI duplicate pre-personal seek directions and first seek-flags/status copies (later serialized copies overwrite them during original-game load)",
-];
+fn element_site(creation_order: u32) -> AdoptSite {
+    AdoptSite::element("saved element", creation_order)
+}
 
-#[derive(Debug, Error)]
-pub enum LegacyElementAdoptError {
-    #[error(transparent)]
-    Common(#[from] LegacySaveAdoptError),
-    #[error(
-        "saved element creation order {creation_order} field {field} has unknown enum value {value}"
-    )]
-    UnknownEnum {
-        creation_order: u32,
-        field: &'static str,
-        value: u32,
-    },
-    #[error(
-        "saved element creation order {creation_order} resolves to missing Rust entity {entity_id}"
-    )]
-    MissingEntity {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} resolves to non-NPC Rust entity {entity_id}"
-    )]
-    ExpectedNpc {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved actor creation order {creation_order} resolves to non-actor Rust entity {entity_id}"
-    )]
-    ExpectedActor {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved element creation order {creation_order} field {field} references sector {index}, but initialized topology has {count} sector slots"
-    )]
-    MissingSector {
-        creation_order: u32,
-        field: &'static str,
-        index: u16,
-        count: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} field {field} references Original gate slot {index}, but initialized topology has {count} gate slots"
-    )]
-    MissingGate {
-        creation_order: u32,
-        field: &'static str,
-        index: i16,
-        count: usize,
-    },
-    #[error(
-        "saved element creation order {creation_order} field {field} references layer {index}, but initialized topology has {count} layers"
-    )]
-    MissingLayer {
-        creation_order: u32,
-        field: &'static str,
-        index: u16,
-        count: usize,
-    },
-    #[error(
-        "saved element creation order {creation_order} field {field} contains non-finite value {value}"
-    )]
-    NonFinite {
-        creation_order: u32,
-        field: &'static str,
-        value: f32,
-    },
-    #[error(
-        "saved actor creation order {creation_order} writes inconsistent duplicate distance-to-boundary values {first} and {second}"
-    )]
-    DistanceToBoundaryMismatch {
-        creation_order: u32,
-        first: f32,
-        second: f32,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} has {saved_kind} local AI but its initialized Rust entity has {runtime_kind}"
-    )]
-    AiKindMismatch {
-        creation_order: u32,
-        saved_kind: &'static str,
-        runtime_kind: &'static str,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} local-AI owner resolves to {actual:?}; expected itself ({expected})"
-    )]
-    AiOwnerMismatch {
-        creation_order: u32,
-        expected: EntityId,
-        actual: Option<EntityId>,
-    },
-    #[error(
-        "saved element creation order {creation_order} field {field} has invalid bit flags 0x{value:x}"
-    )]
-    InvalidFlags {
-        creation_order: u32,
-        field: &'static str,
-        value: u16,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} field {field} resolves to {entity_id} ({actual:?}); expected {expected}"
-    )]
-    WrongReferenceKind {
-        creation_order: u32,
-        field: &'static str,
-        entity_id: EntityId,
-        actual: crate::entity_id::EntityIdKind,
-        expected: &'static str,
-    },
-    #[error(
-        "saved element creation order {creation_order} field {field} is missing a required reference"
-    )]
-    MissingRequiredReference {
-        creation_order: u32,
-        field: &'static str,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} field {field} has negative enum value {value}"
-    )]
-    NegativeEnum {
-        creation_order: u32,
-        field: &'static str,
-        value: i32,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} stimulus declares info type {declared}, but decoded payload is {actual}"
-    )]
-    StimulusInfoMismatch {
-        creation_order: u32,
-        declared: i32,
-        actual: &'static str,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} path references hiking path {index}, but initialized assets have {count} paths"
-    )]
-    MissingHikingPath {
-        creation_order: u32,
-        index: u16,
-        count: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} hiking path {path} has {count} waypoints, which does not fit Original's u8 path state"
-    )]
-    TooManyWaypoints {
-        creation_order: u32,
-        path: u16,
-        count: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} path {path} field {field} references waypoint {waypoint}, but the path has {count} waypoints"
-    )]
-    MissingWaypoint {
-        creation_order: u32,
-        path: u16,
-        field: &'static str,
-        waypoint: u8,
-        count: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} has a patrol path but no initialized hiking path"
-    )]
-    PatrolPathWithoutHikingPath { creation_order: u32 },
-    #[error(
-        "saved NPC creation order {creation_order} macro cursor {offset} with {remaining} remaining bytes exceeds current waypoint macro length {length}"
-    )]
-    InvalidMacroCursor {
-        creation_order: u32,
-        offset: usize,
-        remaining: u16,
-        length: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} has active macro state on a current waypoint whose command is {command}"
-    )]
-    MacroCommandKind {
-        creation_order: u32,
-        command: &'static str,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} has macro progress without a patrol-path-relative cursor"
-    )]
-    MacroWithoutPatrolPath { creation_order: u32 },
-    #[error(
-        "saved NPC creation order {creation_order} field {field} has {saved} entries, but initialized AI topology has {initialized}"
-    )]
-    AiTopologyCount {
-        creation_order: u32,
-        field: &'static str,
-        saved: usize,
-        initialized: usize,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} field {field} index {index} is invalid for initialized count {count}"
-    )]
-    InvalidAiIndex {
-        creation_order: u32,
-        field: &'static str,
-        index: u32,
-        count: usize,
-    },
-    #[error(transparent)]
-    LineTopology(#[from] LegacyLineTopologyError),
-    #[error(
-        "saved NPC creation order {creation_order} has {saved_kind} leaf state but initialized entity is {runtime_kind:?}"
-    )]
-    NpcLeafKindMismatch {
-        creation_order: u32,
-        saved_kind: &'static str,
-        runtime_kind: crate::entity_id::EntityIdKind,
-    },
+fn npc_site(creation_order: u32) -> AdoptSite {
+    AdoptSite::element("saved NPC", creation_order)
 }
 
 #[derive(Clone, Debug)]
@@ -297,7 +80,10 @@ struct ConvertedElement {
     creation_order: u32,
     element: ConvertedElementBase,
     actor: Option<ConvertedActor>,
-    npc: Option<ConvertedNpc>,
+    /// Finished NPC component: the preflight-time runtime clone with every
+    /// serialized NPC/view/local-AI member replaced. See the apply-order
+    /// invariant in [`super::adopt_engine`].
+    npc: Option<NpcData>,
     npc_leaf: Option<ConvertedNpcLeaf>,
 }
 
@@ -344,18 +130,17 @@ impl LegacyElementBaseAdoption {
         saved: &LegacyElementPayloadBase,
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
-    ) -> Result<Self, LegacyElementAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let creation_order = saved.creation_order;
         let entity_id = entities
             .by_creation_order
             .get(&creation_order)
             .copied()
-            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
+            .ok_or_else(|| missing_creation_order(creation_order))?;
         if engine.world.entities.get(entity_id).is_none() {
-            return Err(LegacyElementAdoptError::MissingEntity {
-                creation_order,
-                entity_id,
-            });
+            return Err(
+                element_site(creation_order).error(AdoptErrorKind::MissingEntity { entity_id })
+            );
         }
         Ok(Self {
             entity_id,
@@ -422,165 +207,6 @@ struct ConvertedActor {
     passing_door_directly: bool,
     sequence_element_started: bool,
     script_class: String,
-}
-
-#[derive(Clone, Debug)]
-struct ConvertedNpc {
-    life: i16,
-    arrows: u16,
-    old_direction: i16,
-    register: u16,
-    attached_scroll: Option<EntityId>,
-    body_visitors: u16,
-    fried_pikachu: bool,
-    inform: bool,
-    money: u32,
-    wasp: bool,
-    old_deafness: u16,
-    old_frame: u32,
-    detectable_lists: Vec<Vec<Detectable>>,
-    detection_suspects: [u16; DetectableType::COUNT],
-    maximum_suspect: u16,
-    worst_detectable_type: DetectableType,
-    custom_values: [i32; 10],
-    gave_money: bool,
-    view: ConvertedNpcView,
-    initial_position_x: f32,
-    initial_position_y: f32,
-    initial_position_sector: Option<SectorHandle>,
-    initial_position_level: u16,
-    initial_view_direction: MapVec,
-    local_ai: ConvertedLocalAi,
-}
-
-#[derive(Clone, Debug)]
-struct ConvertedNpcView {
-    eye_status: EyeStatus,
-    transition: bool,
-    alpha: u16,
-    half_angle: f32,
-    angle_iterator: f32,
-    angle_iterator_step: f32,
-    angle_step: f32,
-    angle: f32,
-    half_aperture: f32,
-    real_half_aperture: f32,
-    half_aperture_cosine: f32,
-    future_half_aperture: f32,
-    half_aperture_step: f32,
-    half_aperture_changes: bool,
-    crazy_angle_iterator: f32,
-    crazy_angle_iterator_step: f32,
-    crazy_color_iterator: u8,
-    crazy_half_angle_range: f32,
-    direction: [f32; 2],
-    left_side: [f32; 2],
-    right_side: [f32; 2],
-    stare: GroundPoint,
-    follow_target: Option<EntityId>,
-    radius_goal: u16,
-    radius: u16,
-    radius_reduction_permil: u16,
-    radius_step: u16,
-    long_range: f32,
-    real_radius: u16,
-    drunkenness: [f32; 4],
-    sniper: bool,
-    leaning: bool,
-}
-
-#[derive(Clone, Debug)]
-enum ConvertedLocalAi {
-    Friendly {
-        common: AiController,
-        fleeing_seen_enemy_counter: u16,
-        beggar_dont_talk_counter: u16,
-        wants_to_talk: bool,
-        last_talk_partner: Option<AiEntityHandle>,
-        can_go_away: bool,
-    },
-    Enemy {
-        common: AiController,
-        last_stimulus_dispatched_to_patrol: Stimulus,
-        frame_when_missed_charly: u32,
-        heard_nets: Vec<u32>,
-        frame_when_enemy_detected: u32,
-        fleeing_seen_enemy_counter: u16,
-        other_seen_ale: Vec<u32>,
-        pc_gone_away_direction: u16,
-        detected_something_there: Position,
-        missed_pc: Option<AiEntityHandle>,
-        last_seek_direction_index: u8,
-        beggar_to_examine: Option<AiEntityHandle>,
-        pc_missed: bool,
-        search_charly_way: Vec<Position>,
-        current_task_priority: u16,
-        minimal_task_priority: u16,
-        new_task_priority: u16,
-        number_of_different_checkpoints: u8,
-        delta_sorrow_level: u16,
-        missed_in_action: Vec<u32>,
-        other_bodies_to_examine: Vec<u32>,
-        beggars_to_control: Vec<u32>,
-        thirsty: bool,
-        old_life_points: u8,
-        initial_life_points: u8,
-        list_them: Vec<u32>,
-        old_odds: i16,
-        position_change_locked_for_test: bool,
-        ambush_point_array_reset: bool,
-        ambush_point_status: Vec<crate::ai_enemy::AmbushPointStatus>,
-        my_seek_points: Vec<u16>,
-        personal_seek_point_1: Option<crate::ai::SeekPoint>,
-        personal_seek_point_2: Option<crate::ai::SeekPoint>,
-        seek_center: Position,
-        actual_seek_point: Option<u16>,
-        seek_point_view_directions: Vec<u16>,
-        positions_of_beggars_to_control: Vec<Position>,
-        seek_flags: crate::ai_enemy::SeekFlags,
-        forced_next_battle_decision: crate::ai::Decision,
-        reset_battle_decision: bool,
-        synchronize_index: u16,
-        seen_dead_body: bool,
-        seeking_charly: bool,
-        initial_view_cone: crate::ai::ViewCone,
-        company_number: u16,
-        left_combat_neighbour: Option<AiEntityHandle>,
-        right_combat_neighbour: Option<AiEntityHandle>,
-        attentive: bool,
-        will_be_attentive: bool,
-        forced_attentive: bool,
-        guarded_pc: Option<crate::entity_id::PcId>,
-        tower_guard: bool,
-        combat_trainer: bool,
-        gather_position: Position,
-        gather_direction: u16,
-        gather_position_instructed: bool,
-        officers_position: Position,
-        previous_state: i32,
-        previous_substate: i32,
-        reported_to_officer: bool,
-        missed_soldier_timer: u16,
-        old_money: u16,
-        other_seen_money: Vec<u32>,
-        money_fight_enemies: Vec<u32>,
-        money_fight_victims: Vec<u32>,
-        archer_behind_me: Option<AiEntityHandle>,
-        shield_bearer_before_me: Option<AiEntityHandle>,
-        already_seen_bodies: Vec<u32>,
-        my_line_jump: Option<u32>,
-        shield_bearer_direction: u16,
-        phalanx_aborted: bool,
-        changed_to_alert_path: bool,
-        my_shooting_point: Option<(u16, u16)>,
-        my_archery_sector: Option<u16>,
-        my_archery_sector_index: u16,
-        my_archery_point_index: crate::sector::ArcheryPointIdx,
-        my_archery_point_increment: i8,
-        enemy_seen_below: bool,
-        enemy_had_this_elevation: u16,
-        known_enemy_strikes: [Option<crate::weapons::SwordStrike>; 3],
-    },
 }
 
 #[derive(Clone, Copy)]
@@ -650,7 +276,7 @@ impl LegacyStaticElementAdoption {
         payloads: &LegacyElementPayloadStream,
         entities: &LegacyEntityFixups,
         position_topology: &LegacyPositionTopology,
-    ) -> Result<Self, LegacyElementAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let line_topology = LegacyLineTopology::derive(engine, assets)?;
         let saved_human_geometries = saved_human_geometries(payloads, entities, position_topology)?;
         let context = ElementAdoptContext {
@@ -674,25 +300,26 @@ impl LegacyStaticElementAdoption {
                 .by_creation_order
                 .get(&creation_order)
                 .copied()
-                .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
-            let runtime = engine.world.entities.get(entity_id).ok_or(
-                LegacyElementAdoptError::MissingEntity {
-                    creation_order,
-                    entity_id,
-                },
-            )?;
+                .ok_or_else(|| missing_creation_order(creation_order))?;
+            let runtime = engine.world.entities.get(entity_id).ok_or_else(|| {
+                element_site(creation_order).error(AdoptErrorKind::MissingEntity { entity_id })
+            })?;
             let (base, actor, npc) = payload_parts(&record.payload);
             if actor.is_some() && runtime.actor_data().is_none() {
-                return Err(LegacyElementAdoptError::ExpectedActor {
-                    creation_order,
-                    entity_id,
-                });
+                return Err(AdoptSite::element("saved actor", creation_order).error(
+                    AdoptErrorKind::WrongEntityKind {
+                        entity_id,
+                        expected: "actor",
+                    },
+                ));
             }
             if npc.is_some() && runtime.npc_data().is_none() {
-                return Err(LegacyElementAdoptError::ExpectedNpc {
-                    creation_order,
-                    entity_id,
-                });
+                return Err(
+                    npc_site(creation_order).error(AdoptErrorKind::WrongEntityKind {
+                        entity_id,
+                        expected: "NPC",
+                    }),
+                );
             }
             records.push(ConvertedElement {
                 entity_id,
@@ -729,7 +356,7 @@ impl LegacyStaticElementAdoption {
             record
                 .npc
                 .as_ref()
-                .is_some_and(|npc| matches!(&npc.local_ai, ConvertedLocalAi::Enemy { .. }))
+                .is_some_and(|npc| matches!(npc.ai_brain, AiBrain::Enemy(_)))
         });
         Ok(Self {
             records,
@@ -782,12 +409,9 @@ impl LegacyStaticElementAdoption {
                 actor.script_class = saved.script_class;
             }
             if let Some(saved) = converted.npc {
-                apply_npc(
-                    entity
-                        .npc_data_mut()
-                        .expect("preflighted v48 NPC changed kind in candidate engine"),
-                    saved,
-                );
+                *entity
+                    .npc_data_mut()
+                    .expect("preflighted v48 NPC changed kind in candidate engine") = saved;
             }
             if let Some(saved) = converted.npc_leaf {
                 match (entity, saved) {
@@ -879,34 +503,19 @@ fn convert_element(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<ConvertedElementBase, LegacyElementAdoptError> {
+) -> Result<ConvertedElementBase, LegacyAdoptError> {
     // The element consumes these coordinates only while the corresponding
     // delayed-position bit is set. Its setters overwrite the complete point
     // before setting that bit, so inactive bytes are dormant constructor
     // storage and may legitimately contain non-finite legacy values.
+    let site = element_site(creation_order);
     if saved.position_map_delayed {
-        finite_point(
-            saved.delayed_map_position,
-            creation_order,
-            "delayed_map_position",
-        )?;
+        site.finite_point("delayed_map_position", saved.delayed_map_position)?;
     }
     if saved.position_delayed {
-        finite(
-            saved.delayed_position.x,
-            creation_order,
-            "delayed_position.x",
-        )?;
-        finite(
-            saved.delayed_position.y,
-            creation_order,
-            "delayed_position.y",
-        )?;
-        finite(
-            saved.delayed_position.z,
-            creation_order,
-            "delayed_position.z",
-        )?;
+        site.finite("delayed_position.x", saved.delayed_position.x)?;
+        site.finite("delayed_position.y", saved.delayed_position.y)?;
+        site.finite("delayed_position.z", saved.delayed_position.z)?;
     }
     Ok(ConvertedElementBase {
         outline_colors: saved.outline_colors,
@@ -938,17 +547,18 @@ fn convert_sprite(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<ConvertedSprite, LegacyElementAdoptError> {
+) -> Result<ConvertedSprite, LegacyAdoptError> {
     let animation_replacements = saved
         .animation_replacements
         .iter()
         .map(|&(from, to)| {
+            let site = element_site(creation_order);
             Ok((
-                order_type(from, creation_order, "animation_replacements.from")?,
-                order_type(to, creation_order, "animation_replacements.to")?,
+                site.enum_value("animation_replacements.from", from)?,
+                site.enum_value("animation_replacements.to", to)?,
             ))
         })
-        .collect::<Result<Vec<_>, LegacyElementAdoptError>>()?;
+        .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
     Ok(ConvertedSprite {
         current_row: saved.current_row,
         current_frame: saved.current_frame,
@@ -956,7 +566,7 @@ fn convert_sprite(
         flight_frame_countdown: saved.frame_count_down,
         current_height: saved.current_height,
         current_width: saved.current_width,
-        last_action: order_type(saved.last_action, creation_order, "last_action")?,
+        last_action: element_site(creation_order).enum_value("last_action", saved.last_action)?,
         alternate_profile: saved.alternate_profile,
         masked: saved.masked,
         behind_display_order_reference: saved.behind_display_order_reference,
@@ -986,7 +596,7 @@ fn convert_actor(
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
     layer_count: usize,
-) -> Result<ConvertedActor, LegacyElementAdoptError> {
+) -> Result<ConvertedActor, LegacyAdoptError> {
     let last_order_id = match saved.last_order_id {
         u32::MAX => None,
         value => NonZeroU32::new(
@@ -1000,28 +610,29 @@ fn convert_actor(
     // the redundant records to agree. Boundary-distance calculation refreshes it
     // whenever the actor moves and ignores it when no material sector exists.
     if saved.distance_to_boundary_first.to_bits() != saved.distance_to_boundary_second.to_bits() {
-        return Err(LegacyElementAdoptError::DistanceToBoundaryMismatch {
-            creation_order,
-            first: saved.distance_to_boundary_first,
-            second: saved.distance_to_boundary_second,
-        });
+        return Err(AdoptSite::element("saved actor", creation_order).error(
+            AdoptErrorKind::DistanceToBoundaryMismatch {
+                first: saved.distance_to_boundary_first,
+                second: saved.distance_to_boundary_second,
+            },
+        ));
     }
-    finite_point(saved.bypass_exit, creation_order, "bypass_exit")?;
-    finite_point(
-        saved.position_at_last_distance_request,
-        creation_order,
+    let site = element_site(creation_order);
+    site.finite_point("bypass_exit", saved.bypass_exit)?;
+    site.finite_point(
         "position_at_last_distance_request",
+        saved.position_at_last_distance_request,
     )?;
     for point in &saved.bypass_points {
-        finite_point(*point, creation_order, "bypass_points")?;
+        site.finite_point("bypass_points", *point)?;
     }
     if saved.seek_to_point && usize::from(saved.seek_layer) >= layer_count {
-        return Err(LegacyElementAdoptError::MissingLayer {
-            creation_order,
-            field: "seek_layer",
-            index: saved.seek_layer,
-            count: layer_count,
-        });
+        return Err(site.out_of_range(
+            "seek_layer",
+            "layer",
+            usize::from(saved.seek_layer),
+            layer_count,
+        ));
     }
     let menacer = checked_reference(
         entities.resolve_element(saved.menacer)?,
@@ -1063,14 +674,8 @@ fn convert_actor(
     Ok(ConvertedActor {
         continuation,
         last_order_id,
-        old_action: order_type(saved.old_action, creation_order, "old_action")?,
-        action_state: ActionState::try_from(saved.action_state).map_err(|_| {
-            LegacyElementAdoptError::UnknownEnum {
-                creation_order,
-                field: "action_state",
-                value: saved.action_state,
-            }
-        })?,
+        old_action: site.enum_value("old_action", saved.old_action)?,
+        action_state: site.enum_value::<ActionState>("action_state", saved.action_state)?,
         execution_frozen: saved.execution_frozen,
         ignored_for_anti_collision: saved.ignored_for_anti_collision,
         new_order: saved.new_order,
@@ -1091,7 +696,7 @@ fn saved_human_geometries(
     payloads: &LegacyElementPayloadStream,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<BTreeMap<EntityId, SavedHumanGeometry>, LegacyElementAdoptError> {
+) -> Result<BTreeMap<EntityId, SavedHumanGeometry>, LegacyAdoptError> {
     let mut geometries = BTreeMap::new();
     for record in &payloads.records {
         let position = match &record.payload {
@@ -1109,7 +714,7 @@ fn saved_human_geometries(
             .by_creation_order
             .get(&creation_order)
             .copied()
-            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
+            .ok_or_else(|| missing_creation_order(creation_order))?;
         geometries.insert(
             entity_id,
             SavedHumanGeometry {
@@ -1132,7 +737,7 @@ fn resolve_saved_enemy_jump_line(
     owner_id: EntityId,
     owner_creation_order: u32,
     context: &ElementAdoptContext<'_>,
-) -> Result<Option<crate::jump_line::JumpLineIndex>, LegacyElementAdoptError> {
+) -> Result<Option<crate::jump_line::JumpLineIndex>, LegacyAdoptError> {
     let ElementAdoptContext {
         engine,
         assets,
@@ -1143,8 +748,11 @@ fn resolve_saved_enemy_jump_line(
     } = *context;
     match topology.resolve("local_ai.enemy.jump_line", reference) {
         Ok(line) => return Ok(line),
-        Err(LegacyLineTopologyError::Missing { .. }) => {}
-        Err(error) => return Err(error.into()),
+        Err(LegacyAdoptError {
+            kind: AdoptErrorKind::MissingLine { .. },
+            ..
+        }) => {}
+        Err(error) => return Err(error),
     }
 
     let target_id = entities
@@ -1169,15 +777,11 @@ fn resolve_saved_enemy_jump_line(
     let target_sector = target_geometry.sector.ok_or_else(|| {
         shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
     })?;
-    let owner =
-        engine
-            .world
-            .entities
-            .get(owner_id)
-            .ok_or(LegacyElementAdoptError::MissingEntity {
-                creation_order: owner_creation_order,
-                entity_id: owner_id,
-            })?;
+    let owner = engine.world.entities.get(owner_id).ok_or_else(|| {
+        element_site(owner_creation_order).error(AdoptErrorKind::MissingEntity {
+            entity_id: owner_id,
+        })
+    })?;
     let maximal_sword_range =
         crate::engine::melee::get_hth_weapon_id_full(owner, &assets.profile_manager)
             .and_then(|weapon| assets.profile_manager.get_hth_weapon(weapon))
@@ -1186,34 +790,32 @@ fn resolve_saved_enemy_jump_line(
                 shifted_enemy_line_error(reference, owner_creation_order, target_creation_order)
             })?;
 
-    topology
-        .resolve_enemy_jump_line(
-            "local_ai.enemy.jump_line",
-            reference,
-            &engine.world.fast_grid,
-            owner_creation_order,
+    topology.resolve_enemy_jump_line(
+        "local_ai.enemy.jump_line",
+        reference,
+        &engine.world.fast_grid,
+        LegacyEnemyJumpLineGeometry {
+            owner: owner_creation_order,
             owner_sector,
-            target_creation_order,
+            target: target_creation_order,
             target_sector,
-            target_geometry.map,
+            target_position: target_geometry.map,
             maximal_sword_range,
-        )
-        .map_err(Into::into)
+        },
+    )
 }
 
-fn shifted_enemy_line_error(
-    reference: LegacyLineRef,
-    owner: u32,
-    target: u32,
-) -> LegacyElementAdoptError {
-    LegacyLineTopologyError::MissingGeometryIdentity {
-        field: "local_ai.enemy.jump_line",
-        layer: reference.layer.unwrap_or(u16::MAX),
-        index: reference.index.unwrap_or(-1),
-        owner,
-        target,
-    }
-    .into()
+fn shifted_enemy_line_error(reference: LegacyLineRef, owner: u32, target: u32) -> LegacyAdoptError {
+    LegacyAdoptError::new(
+        "saved jump-line",
+        AdoptErrorKind::MissingLineGeometry {
+            layer: reference.layer.unwrap_or(u16::MAX),
+            index: reference.index.unwrap_or(-1),
+            owner,
+            target,
+        },
+    )
+    .with_field("local_ai.enemy.jump_line")
 }
 
 fn convert_npc(
@@ -1222,20 +824,13 @@ fn convert_npc(
     runtime: &NpcData,
     entity_id: EntityId,
     creation_order: u32,
-) -> Result<ConvertedNpc, LegacyElementAdoptError> {
+) -> Result<NpcData, LegacyAdoptError> {
     let entities = context.entities;
     let topology = context.topology;
-    finite(
-        saved.initial_position.x,
-        creation_order,
-        "initial_position.x",
-    )?;
-    finite(
-        saved.initial_position.y,
-        creation_order,
-        "initial_position.y",
-    )?;
-    finite_point(saved.initial_view, creation_order, "initial_view")?;
+    let site = element_site(creation_order);
+    site.finite("initial_position.x", saved.initial_position.x)?;
+    site.finite("initial_position.y", saved.initial_position.y)?;
+    site.finite_point("initial_view", saved.initial_view)?;
 
     let mut detectable_lists = Vec::with_capacity(DetectableType::COUNT);
     let mut detection_suspects = [0; DetectableType::COUNT];
@@ -1263,7 +858,7 @@ fn convert_npc(
                         last_visibility: detectable.visibility,
                     })
                 })
-                .collect::<Result<Vec<_>, LegacyElementAdoptError>>()?,
+                .collect::<Result<Vec<_>, LegacyAdoptError>>()?,
         );
     }
     crate::engine::debug_detectable_mutation_load_snapshot(
@@ -1272,229 +867,155 @@ fn convert_npc(
         &detectable_lists,
         |target_id| entities.creation_order_by_entity.get(&target_id).copied(),
     );
-    Ok(ConvertedNpc {
-        life: saved.life,
-        arrows: saved.arrows,
-        old_direction: saved.old_direction,
-        register: saved.register,
-        attached_scroll: checked_reference(
-            entities.resolve_element(saved.attached_scroll)?,
-            ReferenceKind::Scroll,
-            creation_order,
-            "attached_scroll",
-        )?,
-        body_visitors: saved.body_visitors,
-        fried_pikachu: saved.fried,
-        inform: saved.inform,
-        money: saved.money,
-        wasp: saved.wasp,
-        old_deafness: saved.old_deafness,
-        old_frame: saved.old_frame,
-        detectable_lists,
-        detection_suspects,
-        maximum_suspect: saved.maximum_suspect,
-        worst_detectable_type: detectable_type(
-            saved.worst_detectable_type,
-            creation_order,
-            "worst_detectable_type",
-        )?,
-        custom_values: saved.custom_values,
-        gave_money: saved.gave_money,
-        view: convert_npc_view(
-            &saved.view,
-            entities.resolve_element(saved.mobile_target)?,
-            creation_order,
-        )?,
-        initial_position_x: saved.initial_position.x,
-        initial_position_y: saved.initial_position.y,
-        initial_position_sector: sector(
-            saved.initial_position.sector.0,
-            topology,
-            creation_order,
-            "initial_position.sector",
-        )?,
-        initial_position_level: saved.initial_position.level,
-        initial_view_direction: MapVec::new(saved.initial_view.x, saved.initial_view.y),
-        local_ai: convert_local_ai(
-            &saved.local_ai,
-            runtime,
-            entity_id,
-            creation_order,
-            context,
-            alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
-        )?,
-    })
-}
-
-fn apply_npc(npc: &mut NpcData, saved: ConvertedNpc) {
-    let ai_initial_position = Position {
-        x: saved.initial_position_x,
-        y: saved.initial_position_y,
-        sector: saved.initial_position_sector,
-        level: saved.initial_position_level,
-    };
-    let ai_initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
-        saved.initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
-        saved.initial_view_direction.y,
-    ) as u16;
-    npc.life_points = saved.life;
-    npc.number_of_arrows = saved.arrows;
-    npc.direction_old = saved.old_direction;
-    npc.register_number = saved.register;
-    npc.attached_scroll = saved.attached_scroll;
-    npc.body_visitors = saved.body_visitors;
-    npc.fried_pikachu = saved.fried_pikachu;
-    npc.inform_my_friends = saved.inform;
-    npc.money = saved.money;
-    npc.wasp_victim = saved.wasp;
-    npc.old_cover_noise_deafness = saved.old_deafness;
-    npc.old_cover_noise_deafness_frame_counter = saved.old_frame;
-    npc.detectable_lists = saved.detectable_lists;
-    npc.detection_suspects = saved.detection_suspects;
-    npc.maximal_detection_suspect = saved.maximum_suspect;
-    npc.worst_detected_type = saved.worst_detectable_type;
-    npc.custom_values = saved.custom_values;
-    npc.has_given_money_to_beggar = saved.gave_money;
-    npc.initial_position_x = saved.initial_position_x;
-    npc.initial_position_y = saved.initial_position_y;
-    npc.initial_position_sector = saved.initial_position_sector;
-    npc.initial_position_level = saved.initial_position_level;
-    npc.initial_view_direction = saved.initial_view_direction;
-    npc.eye_status = saved.view.eye_status;
-    npc.view_transition = saved.view.transition;
-    npc.view_alpha_start = saved.view.alpha;
-    npc.view_half_angle_range = saved.view.half_angle;
-    npc.view_angle_iterator = saved.view.angle_iterator;
-    npc.view_angle_iterator_step = saved.view.angle_iterator_step;
-    npc.view_angle_step = saved.view.angle_step;
-    npc.view_angle = saved.view.angle;
-    npc.half_aperture = saved.view.half_aperture;
-    npc.real_half_aperture = saved.view.real_half_aperture;
-    npc.view_half_aperture_cosine = saved.view.half_aperture_cosine;
-    npc.view_future_half_aperture = saved.view.future_half_aperture;
-    npc.view_half_aperture_step = saved.view.half_aperture_step;
-    npc.view_half_aperture_changes = saved.view.half_aperture_changes;
-    npc.view_crazy_angle_iterator = saved.view.crazy_angle_iterator;
-    npc.view_crazy_angle_iterator_step = saved.view.crazy_angle_iterator_step;
-    npc.view_crazy_color_iterator = saved.view.crazy_color_iterator;
-    npc.view_crazy_half_angle_range = saved.view.crazy_half_angle_range;
-    npc.view_direction = saved.view.direction;
-    npc.view_left_side = saved.view.left_side;
-    npc.view_right_side = saved.view.right_side;
-    npc.stare_point = saved.view.stare;
-    npc.follow_target = saved.view.follow_target;
-    npc.view_radius_goal = saved.view.radius_goal;
-    npc.view_radius_base = saved.view.radius;
-    npc.view_radius_reduction_permil = saved.view.radius_reduction_permil;
-    npc.view_radius_step = saved.view.radius_step;
-    npc.view_longrange_radius_factor = saved.view.long_range;
-    npc.view_radius = saved.view.real_radius;
-    npc.drunken_cone_iterators = saved.view.drunkenness;
-    npc.view_sniper = saved.view.sniper;
-    npc.view_lean_out = saved.view.leaning;
-    apply_local_ai(&mut npc.ai_brain, saved.local_ai);
-    let ai = ai_base_mut(&mut npc.ai_brain)
-        .expect("preflighted local-AI kind cannot become None in candidate engine");
+    // Fallible conversions keep the evaluation order of the former
+    // `ConvertedNpc` literal so a multiply-invalid save reports the same error.
+    let attached_scroll = checked_reference(
+        entities.resolve_element(saved.attached_scroll)?,
+        ReferenceKind::Scroll,
+        creation_order,
+        "attached_scroll",
+    )?;
+    let worst_detected_type = detectable_type(
+        saved.worst_detectable_type,
+        creation_order,
+        "worst_detectable_type",
+    )?;
+    // The raw pointer echo inside LegacyNpcView is ABI residue;
+    // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
+    let follow_target = entities.resolve_element(saved.mobile_target)?;
+    let view_state = convert_npc_view(&saved.view, follow_target, creation_order, &runtime.ai)?;
+    let initial_position_sector = sector(
+        saved.initial_position.sector.0,
+        topology,
+        creation_order,
+        "initial_position.sector",
+    )?;
+    let mut ai_brain = convert_local_ai(
+        &saved.local_ai,
+        runtime,
+        entity_id,
+        creation_order,
+        context,
+        alert_level(saved.view.alert_status, creation_order, "view.alert_status")?,
+    )?;
+    let initial_view_direction = MapVec::new(saved.initial_view.x, saved.initial_view.y);
+    let ai = ai_base_mut(&mut ai_brain)
+        .expect("convert_local_ai only produces Friendly or Enemy brains");
     // The saved view status and follow target are already authoritative.
     // Rust's edge-triggered primary-target reconciliation is runtime-only
     // bookkeeping; leaving its marker at the constructor default would make
     // the first post-load view refresh focus on the primary target and
     // overwrite a saved LookForward/Stare state that Original preserves.
     ai.last_synced_focus_target = ai.primary_target;
-    ai.initial_position = ai_initial_position;
-    ai.initial_view_direction = ai_initial_view_direction;
+    ai.initial_position = Position {
+        x: saved.initial_position.x,
+        y: saved.initial_position.y,
+        sector: initial_position_sector,
+        level: saved.initial_position.level,
+    };
+    ai.initial_view_direction = crate::position_interface::vector_to_sector_0_to_15(
+        initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
+        initial_view_direction.y,
+    ) as u16;
+    Ok(NpcData {
+        life_points: saved.life,
+        ai: AiActorData {
+            number_of_arrows: saved.arrows,
+            direction_old: saved.old_direction,
+            register_number: saved.register,
+            attached_scroll,
+            body_visitors: saved.body_visitors,
+            fried_pikachu: saved.fried,
+            inform_my_friends: saved.inform,
+            money: saved.money,
+            wasp_victim: saved.wasp,
+            old_cover_noise_deafness: saved.old_deafness,
+            old_cover_noise_deafness_frame_counter: saved.old_frame,
+            detectable_lists,
+            detection_suspects,
+            maximal_detection_suspect: saved.maximum_suspect,
+            worst_detected_type,
+            custom_values: saved.custom_values,
+            has_given_money_to_beggar: saved.gave_money,
+            initial_position_x: saved.initial_position.x,
+            initial_position_y: saved.initial_position.y,
+            initial_position_sector,
+            initial_position_level: saved.initial_position.level,
+            initial_view_direction,
+            ai_brain,
+            // View members come from `convert_npc_view`; everything else is
+            // the runtime's mission-initialized NPC state outside this save
+            // section's ownership (e.g. display/ladder/alerted bookkeeping).
+            ..view_state
+        },
+    })
 }
 
+/// Validate the serialized view cone and return `runtime` with every view
+/// member replaced by its saved value.
 fn convert_npc_view(
     saved: &LegacyNpcView,
     follow_target: Option<EntityId>,
     creation_order: u32,
-) -> Result<ConvertedNpcView, LegacyElementAdoptError> {
-    finite(saved.half_angle, creation_order, "view.half_angle")?;
-    finite(saved.angle_iterator, creation_order, "view.angle_iterator")?;
-    finite(
-        saved.angle_iterator_step,
-        creation_order,
-        "view.angle_iterator_step",
-    )?;
-    finite(saved.angle_step, creation_order, "view.angle_step")?;
-    finite(saved.angle, creation_order, "view.angle")?;
-    finite(saved.half_aperture, creation_order, "view.half_aperture")?;
-    finite(
-        saved.real_half_aperture,
-        creation_order,
-        "view.real_half_aperture",
-    )?;
-    finite(
-        saved.half_aperture_cosine,
-        creation_order,
-        "view.half_aperture_cosine",
-    )?;
-    finite(
-        saved.future_half_aperture,
-        creation_order,
-        "view.future_half_aperture",
-    )?;
-    finite(
-        saved.half_aperture_step,
-        creation_order,
-        "view.half_aperture_step",
-    )?;
-    finite(saved.crazy_iterator, creation_order, "view.crazy_iterator")?;
-    finite(
-        saved.crazy_iterator_step,
-        creation_order,
-        "view.crazy_iterator_step",
-    )?;
-    finite(
-        saved.crazy_half_aperture,
-        creation_order,
-        "view.crazy_half_aperture",
-    )?;
-    finite_point(saved.direction, creation_order, "view.direction")?;
-    finite_point(saved.left, creation_order, "view.left")?;
-    finite_point(saved.right, creation_order, "view.right")?;
-    finite_point(saved.stare, creation_order, "view.stare")?;
-    finite(saved.long_range, creation_order, "view.long_range")?;
+    runtime: &AiActorData,
+) -> Result<AiActorData, LegacyAdoptError> {
+    let site = element_site(creation_order);
+    site.finite("view.half_angle", saved.half_angle)?;
+    site.finite("view.angle_iterator", saved.angle_iterator)?;
+    site.finite("view.angle_iterator_step", saved.angle_iterator_step)?;
+    site.finite("view.angle_step", saved.angle_step)?;
+    site.finite("view.angle", saved.angle)?;
+    site.finite("view.half_aperture", saved.half_aperture)?;
+    site.finite("view.real_half_aperture", saved.real_half_aperture)?;
+    site.finite("view.half_aperture_cosine", saved.half_aperture_cosine)?;
+    site.finite("view.future_half_aperture", saved.future_half_aperture)?;
+    site.finite("view.half_aperture_step", saved.half_aperture_step)?;
+    site.finite("view.crazy_iterator", saved.crazy_iterator)?;
+    site.finite("view.crazy_iterator_step", saved.crazy_iterator_step)?;
+    site.finite("view.crazy_half_aperture", saved.crazy_half_aperture)?;
+    site.finite_point("view.direction", saved.direction)?;
+    site.finite_point("view.left", saved.left)?;
+    site.finite_point("view.right", saved.right)?;
+    site.finite_point("view.stare", saved.stare)?;
+    site.finite("view.long_range", saved.long_range)?;
     for value in saved.drunkenness {
-        finite(value, creation_order, "view.drunkenness")?;
+        site.finite("view.drunkenness", value)?;
     }
 
-    Ok(ConvertedNpcView {
+    Ok(AiActorData {
         eye_status: eye_status(saved.status, creation_order)?,
-        transition: saved.transitioning,
-        alpha: saved.alpha,
-        half_angle: saved.half_angle,
-        angle_iterator: saved.angle_iterator,
-        angle_iterator_step: saved.angle_iterator_step,
-        angle_step: saved.angle_step,
-        angle: saved.angle,
+        view_transition: saved.transitioning,
+        view_alpha_start: saved.alpha,
+        view_half_angle_range: saved.half_angle,
+        view_angle_iterator: saved.angle_iterator,
+        view_angle_iterator_step: saved.angle_iterator_step,
+        view_angle_step: saved.angle_step,
+        view_angle: saved.angle,
         half_aperture: saved.half_aperture,
         real_half_aperture: saved.real_half_aperture,
-        half_aperture_cosine: saved.half_aperture_cosine,
-        future_half_aperture: saved.future_half_aperture,
-        half_aperture_step: saved.half_aperture_step,
-        half_aperture_changes: saved.half_aperture_changes,
-        crazy_angle_iterator: saved.crazy_iterator,
-        crazy_angle_iterator_step: saved.crazy_iterator_step,
-        crazy_color_iterator: saved.color,
-        crazy_half_angle_range: saved.crazy_half_aperture,
-        direction: [saved.direction.x, saved.direction.y],
-        left_side: [saved.left.x, saved.left.y],
-        right_side: [saved.right.x, saved.right.y],
-        stare: GroundPoint::new(saved.stare.x, saved.stare.y),
-        // The raw pointer echo inside LegacyNpcView is ABI residue;
-        // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
+        view_half_aperture_cosine: saved.half_aperture_cosine,
+        view_future_half_aperture: saved.future_half_aperture,
+        view_half_aperture_step: saved.half_aperture_step,
+        view_half_aperture_changes: saved.half_aperture_changes,
+        view_crazy_angle_iterator: saved.crazy_iterator,
+        view_crazy_angle_iterator_step: saved.crazy_iterator_step,
+        view_crazy_color_iterator: saved.color,
+        view_crazy_half_angle_range: saved.crazy_half_aperture,
+        view_direction: [saved.direction.x, saved.direction.y],
+        view_left_side: [saved.left.x, saved.left.y],
+        view_right_side: [saved.right.x, saved.right.y],
+        stare_point: GroundPoint::new(saved.stare.x, saved.stare.y),
         follow_target,
-        radius_goal: saved.radius_goal,
-        radius: saved.radius,
-        radius_reduction_permil: saved.radius_reduction,
-        radius_step: saved.radius_step,
-        long_range: saved.long_range,
-        real_radius: saved.real_radius,
-        drunkenness: saved.drunkenness,
-        sniper: saved.sniper,
-        leaning: saved.leaning,
+        view_radius_goal: saved.radius_goal,
+        view_radius_base: saved.radius,
+        view_radius_reduction_permil: saved.radius_reduction,
+        view_radius_step: saved.radius_step,
+        view_longrange_radius_factor: saved.long_range,
+        view_radius: saved.real_radius,
+        drunken_cone_iterators: saved.drunkenness,
+        view_sniper: saved.sniper,
+        view_lean_out: saved.leaning,
+        ..runtime.clone()
     })
 }
 
@@ -1505,42 +1026,38 @@ fn convert_local_ai(
     creation_order: u32,
     context: &ElementAdoptContext<'_>,
     view_alert_status: AlertLevel,
-) -> Result<ConvertedLocalAi, LegacyElementAdoptError> {
+) -> Result<AiBrain, LegacyAdoptError> {
     let entities = context.entities;
     let topology = context.topology;
-    let assets = context.assets;
     let ai_global = &context.engine.ai.global;
     let owner = entities.resolve_ai_element(saved.common.owner)?;
     if owner != Some(entity_id) {
-        return Err(LegacyElementAdoptError::AiOwnerMismatch {
-            creation_order,
-            expected: entity_id,
-            actual: owner,
-        });
+        return Err(
+            npc_site(creation_order).error(AdoptErrorKind::AiOwnerMismatch {
+                expected: entity_id,
+                actual: owner,
+            }),
+        );
     }
     let common = convert_local_ai_common(
         &saved.common,
-        runtime
-            .ai_brain
-            .base()
-            .ok_or(LegacyElementAdoptError::AiKindMismatch {
-                creation_order,
+        runtime.ai_brain.base().ok_or_else(|| {
+            npc_site(creation_order).error(AdoptErrorKind::AiKindMismatch {
                 saved_kind: match &saved.tail {
                     LegacyLocalAiTail::Friendly(_) => "Friendly",
                     LegacyLocalAiTail::Enemy(_) => "Enemy",
                 },
                 runtime_kind: ai_brain_kind(&runtime.ai_brain),
-            })?,
+            })
+        })?,
         creation_order,
-        entities,
-        topology,
+        context,
         view_alert_status,
-        assets,
     )?;
     match (&saved.tail, &runtime.ai_brain) {
-        (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(_)) => {
-            Ok(ConvertedLocalAi::Friendly {
-                common,
+        (LegacyLocalAiTail::Friendly(tail), AiBrain::Friendly(runtime_ai)) => {
+            Ok(AiBrain::Friendly(Box::new(FriendlyAi {
+                base: common,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
                 beggar_dont_talk_counter: tail.beggar_dont_talk_counter,
                 wants_to_talk: tail.wants_to_talk,
@@ -1551,7 +1068,10 @@ fn convert_local_ai(
                     "local_ai.friendly.last_talk_partner",
                 )?,
                 can_go_away: tail.can_go_away,
-            })
+                // Preserve mission-initialized civilian AI state outside this
+                // save section's ownership.
+                ..FriendlyAi::clone(runtime_ai)
+            })))
         }
         (LegacyLocalAiTail::Enemy(tail), AiBrain::Enemy(runtime_ai)) => {
             let actual_seek_point = convert_actual_seek_point(
@@ -1568,70 +1088,83 @@ fn convert_local_ai(
             )?;
             let (my_shooting_point, my_archery_sector) =
                 convert_archery_refs(tail, ai_global, creation_order)?;
-            Ok(ConvertedLocalAi::Enemy {
-                common,
-                last_stimulus_dispatched_to_patrol: convert_stimulus(
-                    &tail.last_stimulus_dispatched_to_patrol,
-                    creation_order,
-                    entities,
-                    topology,
-                )?,
+            // Fallible conversions keep the evaluation order of the former
+            // `ConvertedLocalAi::Enemy` literal: everything up to the first
+            // base-owned fallible member is hoisted, and the base-owned
+            // members are converted at the literal position of the last one.
+            let last_stimulus_dispatched_to_patrol = convert_stimulus(
+                &tail.last_stimulus_dispatched_to_patrol,
+                creation_order,
+                entities,
+                topology,
+            )?;
+            let heard_nets = ai_handle_list(
+                &tail.heard_nets,
+                ReferenceKind::Net,
+                creation_order,
+                "local_ai.enemy.heard_nets",
+                entities,
+            )?;
+            let other_seen_ale = ai_handle_list(
+                &tail.other_seen_ale,
+                ReferenceKind::Object,
+                creation_order,
+                "local_ai.enemy.other_seen_ale",
+                entities,
+            )?;
+            let detected_something_there = ai_position(
+                tail.detected_something_there,
+                topology,
+                creation_order,
+                "local_ai.enemy.detected_something_there.sector",
+            )?;
+            let missed_pc = optional_ai_handle(
+                entities.resolve_ai_element(tail.missed_pc)?,
+                ReferenceKind::Human,
+                creation_order,
+                "local_ai.enemy.missed_pc",
+            )?;
+            let beggar_to_examine = optional_ai_handle(
+                entities.resolve_ai_element(tail.beggar_to_examine)?,
+                ReferenceKind::Human,
+                creation_order,
+                "local_ai.enemy.beggar_to_examine",
+            )?;
+            let search_charly_way = ai_position_list(
+                &tail.search_charly_way,
+                topology,
+                creation_order,
+                "local_ai.enemy.search_charly_way.sector",
+            )?;
+            let missed_in_action = ai_handle_list(
+                &tail.missed_in_action,
+                ReferenceKind::Npc,
+                creation_order,
+                "local_ai.enemy.missed_in_action",
+                entities,
+            )?;
+            let mut ai = EnemyAi {
+                // The original game has one alerted-us list on the common AI
+                // base. Runtime EnemyAi keeps the actively coordinated officer
+                // group in its typed mirror, so restore that mirror from the
+                // authoritative serialized list as part of adoption.
+                alerted_us: common.list_alerted_us.clone(),
+                last_stimulus_dispatched_to_patrol: Some(last_stimulus_dispatched_to_patrol),
                 frame_when_missed_charly: tail.frame_when_missed_charly,
-                heard_nets: ai_handle_list(
-                    &tail.heard_nets,
-                    ReferenceKind::Net,
-                    creation_order,
-                    "local_ai.enemy.heard_nets",
-                    entities,
-                )?,
-                frame_when_enemy_detected: tail.frame_when_enemy_detected,
+                heard_nets,
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
-                other_seen_ale: ai_handle_list(
-                    &tail.other_seen_ale,
-                    ReferenceKind::Object,
-                    creation_order,
-                    "local_ai.enemy.other_seen_ale",
-                    entities,
-                )?,
-                pc_gone_away_direction: tail.pc_gone_away_direction,
-                detected_something_there: ai_position(
-                    tail.detected_something_there,
-                    topology,
-                    creation_order,
-                    "local_ai.enemy.detected_something_there.sector",
-                )?,
-                missed_pc: optional_ai_handle(
-                    entities.resolve_ai_element(tail.missed_pc)?,
-                    ReferenceKind::Human,
-                    creation_order,
-                    "local_ai.enemy.missed_pc",
-                )?,
+                other_seen_ale,
+                pc_gone_away_in_this_direction: tail.pc_gone_away_direction,
+                detected_something_there,
+                missed_pc,
                 last_seek_direction_index: tail.last_seek_direction_index,
-                beggar_to_examine: optional_ai_handle(
-                    entities.resolve_ai_element(tail.beggar_to_examine)?,
-                    ReferenceKind::Human,
-                    creation_order,
-                    "local_ai.enemy.beggar_to_examine",
-                )?,
+                beggar_to_examine,
                 pc_missed: tail.pc_missed,
-                search_charly_way: ai_position_list(
-                    &tail.search_charly_way,
-                    topology,
-                    creation_order,
-                    "local_ai.enemy.search_charly_way.sector",
-                )?,
+                search_charly_way,
                 current_task_priority: tail.current_task_priority,
                 minimal_task_priority: tail.minimal_task_priority,
                 new_task_priority: tail.new_task_priority,
                 number_of_different_checkpoints: tail.number_of_different_checkpoints,
-                delta_sorrow_level: tail.delta_sorrow_level,
-                missed_in_action: ai_handle_list(
-                    &tail.missed_in_action,
-                    ReferenceKind::Npc,
-                    creation_order,
-                    "local_ai.enemy.missed_in_action",
-                    entities,
-                )?,
                 other_bodies_to_examine: ai_handle_list(
                     &tail.other_bodies_to_examine,
                     ReferenceKind::Human,
@@ -1701,10 +1234,16 @@ fn convert_local_ai(
                     creation_order,
                 )?,
                 reset_battle_decision: tail.reset_battle_decision,
-                synchronize_index: tail.synchronize_index,
                 seen_dead_body: tail.seen_dead_body,
                 seeking_charly: tail.seeking_charly,
-                initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
+                base: AiController {
+                    frame_when_enemy_detected: tail.frame_when_enemy_detected,
+                    delta_sorrow_level: tail.delta_sorrow_level,
+                    missed_in_action,
+                    synchronize_index: tail.synchronize_index,
+                    initial_view_cone: view_cone(tail.initial_view_cone, creation_order)?,
+                    ..common
+                },
                 company_number: tail.company_number,
                 left_combat_neighbour: optional_ai_handle(
                     entities.resolve_ai_element(tail.left_combat_neighbour)?,
@@ -1810,25 +1349,34 @@ fn convert_local_ai(
                 my_archery_point_increment: tail.archery_point_increment,
                 enemy_seen_below: tail.enemy_seen_below,
                 enemy_had_this_elevation: tail.enemy_had_this_elevation,
-                known_enemy_strikes: tail
-                    .known_enemy_strike_commands
-                    .map(|command| known_enemy_strike(command, creation_order))
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()?
-                    .try_into()
-                    .expect("fixed-size strike conversion preserves length"),
-            })
+                // Preserve mission-initialized soldier AI state outside this
+                // save section's ownership.
+                ..EnemyAi::clone(runtime_ai)
+            };
+            let [strike_1, strike_2, strike_3]: [Option<crate::weapons::SwordStrike>; 3] = tail
+                .known_enemy_strike_commands
+                .map(|command| known_enemy_strike(command, creation_order))
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?
+                .try_into()
+                .expect("fixed-size strike conversion preserves length");
+            ai.known_enemy_strike_1 = strike_1;
+            ai.known_enemy_strike_2 = strike_2;
+            ai.known_enemy_strike_3 = strike_3;
+            Ok(AiBrain::Enemy(Box::new(ai)))
         }
-        (LegacyLocalAiTail::Friendly(_), brain) => Err(LegacyElementAdoptError::AiKindMismatch {
-            creation_order,
-            saved_kind: "Friendly",
-            runtime_kind: ai_brain_kind(brain),
-        }),
-        (LegacyLocalAiTail::Enemy(_), brain) => Err(LegacyElementAdoptError::AiKindMismatch {
-            creation_order,
-            saved_kind: "Enemy",
-            runtime_kind: ai_brain_kind(brain),
-        }),
+        (LegacyLocalAiTail::Friendly(_), brain) => Err(npc_site(creation_order).error(
+            AdoptErrorKind::AiKindMismatch {
+                saved_kind: "Friendly",
+                runtime_kind: ai_brain_kind(brain),
+            },
+        )),
+        (LegacyLocalAiTail::Enemy(_), brain) => Err(npc_site(creation_order).error(
+            AdoptErrorKind::AiKindMismatch {
+                saved_kind: "Enemy",
+                runtime_kind: ai_brain_kind(brain),
+            },
+        )),
     }
 }
 
@@ -1850,11 +1398,12 @@ fn convert_local_ai_common(
     saved: &LegacyLocalAiCommon,
     runtime: &AiController,
     creation_order: u32,
-    entities: &LegacyEntityFixups,
-    topology: &LegacyPositionTopology,
+    context: &ElementAdoptContext<'_>,
     view_alert_status: AlertLevel,
-    assets: &LevelAssets,
-) -> Result<AiController, LegacyElementAdoptError> {
+) -> Result<AiController, LegacyAdoptError> {
+    let entities = context.entities;
+    let topology = context.topology;
+    let assets = context.assets;
     let macro_cursor =
         convert_macro_command(saved, creation_order, &assets.navigation.hiking_paths)?;
     let (patrol_path, detached_patrol_path_status) = convert_patrol_path(
@@ -1923,11 +1472,8 @@ fn convert_local_ai_common(
         attitude: attitude(saved.attitude, creation_order, "local_ai.attitude")?,
         blood_alcohol: saved.blood_alcohol,
         initial_action: u32::try_from(saved.initial_action).map_err(|_| {
-            LegacyElementAdoptError::UnknownEnum {
-                creation_order,
-                field: "local_ai.initial_action",
-                value: saved.initial_action as u32,
-            }
+            element_site(creation_order)
+                .unknown_enum("local_ai.initial_action", saved.initial_action)
         })?,
         number_of_looks: saved.number_of_looks,
         can_move: saved.can_move,
@@ -2042,13 +1588,14 @@ fn convert_local_ai_common(
         remaining_tequila_gulps: saved.remaining_tequila_gulps,
         friends_are_alerted: saved.friends_are_alerted,
         is_stay_at_home: saved.stay_at_home,
-        locks_flag_field: AiLockFlags::from_bits(saved.locks_flag_field).ok_or(
-            LegacyElementAdoptError::InvalidFlags {
-                creation_order,
-                field: "local_ai.locks_flag_field",
-                value: u16::from(saved.locks_flag_field),
-            },
-        )?,
+        locks_flag_field: AiLockFlags::from_bits(saved.locks_flag_field).ok_or_else(|| {
+            element_site(creation_order).field_error(
+                "local_ai.locks_flag_field",
+                AdoptErrorKind::InvalidFlags {
+                    value: u16::from(saved.locks_flag_field),
+                },
+            )
+        })?,
         was_busy: saved.was_busy,
         script_locked: saved.script_locked,
         remember_events: saved.remember_events,
@@ -2164,204 +1711,6 @@ fn convert_local_ai_common(
     Ok(converted)
 }
 
-fn apply_local_ai(brain: &mut AiBrain, saved: ConvertedLocalAi) {
-    match (brain, saved) {
-        (
-            AiBrain::Friendly(ai),
-            ConvertedLocalAi::Friendly {
-                common,
-                fleeing_seen_enemy_counter,
-                beggar_dont_talk_counter,
-                wants_to_talk,
-                last_talk_partner,
-                can_go_away,
-            },
-        ) => {
-            ai.base = common;
-            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
-            ai.beggar_dont_talk_counter = beggar_dont_talk_counter;
-            ai.wants_to_talk = wants_to_talk;
-            ai.last_talk_partner = last_talk_partner;
-            ai.can_go_away = can_go_away;
-        }
-        (
-            AiBrain::Enemy(ai),
-            ConvertedLocalAi::Enemy {
-                common,
-                last_stimulus_dispatched_to_patrol,
-                frame_when_missed_charly,
-                heard_nets,
-                frame_when_enemy_detected,
-                fleeing_seen_enemy_counter,
-                other_seen_ale,
-                pc_gone_away_direction,
-                detected_something_there,
-                missed_pc,
-                last_seek_direction_index,
-                beggar_to_examine,
-                pc_missed,
-                search_charly_way,
-                current_task_priority,
-                minimal_task_priority,
-                new_task_priority,
-                number_of_different_checkpoints,
-                delta_sorrow_level,
-                missed_in_action,
-                other_bodies_to_examine,
-                beggars_to_control,
-                thirsty,
-                old_life_points,
-                initial_life_points,
-                list_them,
-                old_odds,
-                position_change_locked_for_test,
-                ambush_point_array_reset,
-                ambush_point_status,
-                my_seek_points,
-                personal_seek_point_1,
-                personal_seek_point_2,
-                seek_center,
-                actual_seek_point,
-                seek_point_view_directions,
-                positions_of_beggars_to_control,
-                seek_flags,
-                forced_next_battle_decision,
-                reset_battle_decision,
-                synchronize_index,
-                seen_dead_body,
-                seeking_charly,
-                initial_view_cone,
-                company_number,
-                left_combat_neighbour,
-                right_combat_neighbour,
-                attentive,
-                will_be_attentive,
-                forced_attentive,
-                guarded_pc,
-                tower_guard,
-                combat_trainer,
-                gather_position,
-                gather_direction,
-                gather_position_instructed,
-                officers_position,
-                previous_state,
-                previous_substate,
-                reported_to_officer,
-                missed_soldier_timer,
-                old_money,
-                other_seen_money,
-                money_fight_enemies,
-                money_fight_victims,
-                archer_behind_me,
-                shield_bearer_before_me,
-                already_seen_bodies,
-                my_line_jump,
-                shield_bearer_direction,
-                phalanx_aborted,
-                changed_to_alert_path,
-                my_shooting_point,
-                my_archery_sector,
-                my_archery_sector_index,
-                my_archery_point_index,
-                my_archery_point_increment,
-                enemy_seen_below,
-                enemy_had_this_elevation,
-                known_enemy_strikes,
-            },
-        ) => {
-            ai.base = common;
-            // The original game has one alerted-us list on the common AI
-            // base. Runtime EnemyAi keeps the actively coordinated officer
-            // group in its typed mirror, so restore that mirror from the
-            // authoritative serialized list as part of adoption.
-            ai.alerted_us = ai.base.list_alerted_us.clone();
-            ai.last_stimulus_dispatched_to_patrol = Some(last_stimulus_dispatched_to_patrol);
-            ai.frame_when_missed_charly = frame_when_missed_charly;
-            ai.heard_nets = heard_nets;
-            ai.base.frame_when_enemy_detected = frame_when_enemy_detected;
-            ai.fleeing_seen_enemy_counter = fleeing_seen_enemy_counter;
-            ai.other_seen_ale = other_seen_ale;
-            ai.pc_gone_away_in_this_direction = pc_gone_away_direction;
-            ai.detected_something_there = detected_something_there;
-            ai.missed_pc = missed_pc;
-            ai.last_seek_direction_index = last_seek_direction_index;
-            ai.beggar_to_examine = beggar_to_examine;
-            ai.pc_missed = pc_missed;
-            ai.search_charly_way = search_charly_way;
-            ai.current_task_priority = current_task_priority;
-            ai.minimal_task_priority = minimal_task_priority;
-            ai.new_task_priority = new_task_priority;
-            ai.number_of_different_checkpoints = number_of_different_checkpoints;
-            ai.base.delta_sorrow_level = delta_sorrow_level;
-            ai.base.missed_in_action = missed_in_action;
-            ai.other_bodies_to_examine = other_bodies_to_examine;
-            ai.beggars_to_control = beggars_to_control;
-            ai.thirsty = thirsty;
-            ai.old_life_points = old_life_points;
-            ai.initial_life_points = initial_life_points;
-            ai.list_them = list_them;
-            ai.old_odds = old_odds;
-            ai.position_change_locked_for_test = position_change_locked_for_test;
-            ai.ambush_point_array_reset = ambush_point_array_reset;
-            ai.ambush_point_status = ambush_point_status;
-            ai.my_seek_points = my_seek_points;
-            ai.personal_seek_point_1 = personal_seek_point_1;
-            ai.personal_seek_point_2 = personal_seek_point_2;
-            ai.seek_center = seek_center;
-            ai.actual_seek_point = actual_seek_point;
-            ai.seek_point_view_directions = seek_point_view_directions;
-            ai.positions_of_beggars_to_control = positions_of_beggars_to_control;
-            ai.seek_flags = seek_flags;
-            ai.forced_next_battle_decision = forced_next_battle_decision;
-            ai.reset_battle_decision = reset_battle_decision;
-            ai.base.synchronize_index = synchronize_index;
-            ai.seen_dead_body = seen_dead_body;
-            ai.seeking_charly = seeking_charly;
-            ai.base.initial_view_cone = initial_view_cone;
-            ai.company_number = company_number;
-            ai.left_combat_neighbour = left_combat_neighbour;
-            ai.right_combat_neighbour = right_combat_neighbour;
-            ai.attentive = attentive;
-            ai.will_be_attentive = will_be_attentive;
-            ai.forced_attentive = forced_attentive;
-            ai.guarded_pc = guarded_pc;
-            ai.tower_guard = tower_guard;
-            ai.combat_trainer = combat_trainer;
-            ai.gather_position = gather_position;
-            ai.gather_direction = gather_direction;
-            ai.gather_position_instructed = gather_position_instructed;
-            ai.officers_position = officers_position;
-            ai.previous_state = crate::ai::StoredEnumWord::from_raw(previous_state);
-            ai.previous_substate = crate::ai::StoredEnumWord::from_raw(previous_substate);
-            ai.reported_to_officer = reported_to_officer;
-            ai.missed_soldier_timer = missed_soldier_timer;
-            ai.old_money = old_money;
-            ai.other_seen_money = other_seen_money;
-            ai.money_fight_enemies = money_fight_enemies;
-            ai.money_fight_victims = money_fight_victims;
-            ai.archer_behind_me = archer_behind_me;
-            ai.shield_bearer_before_me = shield_bearer_before_me;
-            ai.already_seen_bodies = already_seen_bodies;
-            ai.my_line_jump = my_line_jump;
-            ai.shield_bearer_direction = shield_bearer_direction;
-            ai.phalanx_aborted = phalanx_aborted;
-            ai.changed_to_alert_path = changed_to_alert_path;
-            ai.my_shooting_point = my_shooting_point;
-            ai.my_archery_sector = my_archery_sector;
-            ai.my_archery_sector_index = my_archery_sector_index;
-            ai.my_archery_point_index = my_archery_point_index;
-            ai.my_archery_point_increment = my_archery_point_increment;
-            ai.enemy_seen_below = enemy_seen_below;
-            ai.enemy_had_this_elevation = enemy_had_this_elevation;
-            let [strike_1, strike_2, strike_3] = known_enemy_strikes;
-            ai.known_enemy_strike_1 = strike_1;
-            ai.known_enemy_strike_2 = strike_2;
-            ai.known_enemy_strike_3 = strike_3;
-        }
-        _ => unreachable!("preflighted local-AI kind changed in candidate engine"),
-    }
-}
-
 fn reset_loaded_ai_completion_ownership(ai: &mut AiController) {
     // The Original serializes the three completion latches above, but not its
     // AI decision recursion depth. Consequently a loaded latch has no live
@@ -2403,16 +1752,17 @@ fn convert_npc_leaf(
     payload: &LegacyElementPayload,
     entity_id: EntityId,
     creation_order: u32,
-) -> Result<Option<ConvertedNpcLeaf>, LegacyElementAdoptError> {
+) -> Result<Option<ConvertedNpcLeaf>, LegacyAdoptError> {
     use crate::entity_id::EntityIdKind;
     match payload {
         LegacyElementPayload::ActorNpcSoldier(saved) => {
             if entity_id.kind() != EntityIdKind::Soldier {
-                return Err(LegacyElementAdoptError::NpcLeafKindMismatch {
-                    creation_order,
-                    saved_kind: "Soldier",
-                    runtime_kind: entity_id.kind(),
-                });
+                return Err(
+                    npc_site(creation_order).error(AdoptErrorKind::WrongEntityKind {
+                        entity_id,
+                        expected: "Soldier",
+                    }),
+                );
             }
             Ok(Some(ConvertedNpcLeaf::Soldier {
                 apple_smell: saved.leaf.apple_smell,
@@ -2420,11 +1770,12 @@ fn convert_npc_leaf(
         }
         LegacyElementPayload::ActorNpcCivilian(saved) => {
             if entity_id.kind() != EntityIdKind::Civilian {
-                return Err(LegacyElementAdoptError::NpcLeafKindMismatch {
-                    creation_order,
-                    saved_kind: "Civilian",
-                    runtime_kind: entity_id.kind(),
-                });
+                return Err(
+                    npc_site(creation_order).error(AdoptErrorKind::WrongEntityKind {
+                        entity_id,
+                        expected: "Civilian",
+                    }),
+                );
             }
             Ok(Some(ConvertedNpcLeaf::Civilian {
                 current_scroll_set: saved.leaf.current_scroll_set,
@@ -2451,34 +1802,18 @@ fn object_item_base(item: &LegacyObjectItemPayload) -> &LegacyElementPayloadBase
     }
 }
 
-fn outline(value: u32, creation_order: u32) -> Result<OutlineColorName, LegacyElementAdoptError> {
+fn outline(value: u32, creation_order: u32) -> Result<OutlineColorName, LegacyAdoptError> {
     match value {
         0 => Ok(OutlineColorName::Default),
         1 => Ok(OutlineColorName::Target),
         2 => Ok(OutlineColorName::Hidden),
         3 => Ok(OutlineColorName::Striking),
         4 => Ok(OutlineColorName::Parrying),
-        value => Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field: "current_outline",
-            value,
-        }),
+        value => Err(element_site(creation_order).unknown_enum("current_outline", value)),
     }
 }
 
-fn order_type(
-    value: u32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<OrderType, LegacyElementAdoptError> {
-    OrderType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
-}
-
-fn motion_state(value: u32, creation_order: u32) -> Result<MotionState, LegacyElementAdoptError> {
+fn motion_state(value: u32, creation_order: u32) -> Result<MotionState, LegacyAdoptError> {
     match value {
         0 => Ok(MotionState::Done),
         1 => Ok(MotionState::Start),
@@ -2502,36 +1837,11 @@ fn motion_state(value: u32, creation_order: u32) -> Result<MotionState, LegacyEl
     }
 }
 
-fn finite(
-    value: f32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<(), LegacyElementAdoptError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(LegacyElementAdoptError::NonFinite {
-            creation_order,
-            field,
-            value,
-        })
-    }
-}
-
-fn finite_point(
-    point: LegacyPoint2,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<(), LegacyElementAdoptError> {
-    finite(point.x, creation_order, field)?;
-    finite(point.y, creation_order, field)
-}
-
 fn detectable_type(
     value: u32,
     creation_order: u32,
     field: &'static str,
-) -> Result<DetectableType, LegacyElementAdoptError> {
+) -> Result<DetectableType, LegacyAdoptError> {
     // In the original game, the detectable-type count is the
     // non-value sentinel 6; DETECTABLE_NONE is 7.
     match value {
@@ -2542,15 +1852,11 @@ fn detectable_type(
         4 => Ok(DetectableType::MissedFriend),
         5 => Ok(DetectableType::Beggar),
         7 => Ok(DetectableType::None),
-        value => Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field,
-            value,
-        }),
+        value => Err(element_site(creation_order).unknown_enum(field, value)),
     }
 }
 
-fn eye_status(value: u8, creation_order: u32) -> Result<EyeStatus, LegacyElementAdoptError> {
+fn eye_status(value: u8, creation_order: u32) -> Result<EyeStatus, LegacyAdoptError> {
     match value {
         0 => Ok(EyeStatus::Closed),
         1 => Ok(EyeStatus::LookForward),
@@ -2561,11 +1867,7 @@ fn eye_status(value: u8, creation_order: u32) -> Result<EyeStatus, LegacyElement
         6 => Ok(EyeStatus::Follow),
         7 => Ok(EyeStatus::Stare),
         8 => Ok(EyeStatus::ViewconeGrow),
-        value => Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field: "view.status",
-            value: u32::from(value),
-        }),
+        value => Err(element_site(creation_order).unknown_enum("view.status", value)),
     }
 }
 
@@ -2573,29 +1875,27 @@ fn alert_level(
     value: u32,
     creation_order: u32,
     field: &'static str,
-) -> Result<AlertLevel, LegacyElementAdoptError> {
-    AlertLevel::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
+) -> Result<AlertLevel, LegacyAdoptError> {
+    element_site(creation_order).enum_value(field, value)
+}
+
+/// Decode a signed saved enum word; negative words are unknown values.
+fn signed_enum<T: TryFrom<u32>>(
+    value: i32,
+    creation_order: u32,
+    field: &'static str,
+) -> Result<T, LegacyAdoptError> {
+    let site = element_site(creation_order);
+    let raw = u32::try_from(value).map_err(|_| site.unknown_enum(field, value))?;
+    site.enum_value(field, raw)
 }
 
 fn ai_state(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<AiState, LegacyElementAdoptError> {
-    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: value as u32,
-    })?;
-    AiState::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: raw,
-    })
+) -> Result<AiState, LegacyAdoptError> {
+    signed_enum(value, creation_order, field)
 }
 
 /// Preserve `mOldState` exactly, including indeterminate constructor bytes.
@@ -2611,59 +1911,32 @@ fn preserve_old_ai_state(raw: i32) -> i32 {
 /// The original game initializes neither value. The pair is
 /// assigned atomically before the only branch that consumes it, so arbitrary
 /// saved words are inert unless that branch is live.
-fn preserve_previous_enemy_state_word(raw: i32) -> i32 {
-    raw
+fn preserve_previous_enemy_state_word<T>(raw: i32) -> crate::ai::StoredEnumWord<T> {
+    crate::ai::StoredEnumWord::from_raw(raw)
 }
 
 fn substate(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<Substate, LegacyElementAdoptError> {
-    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: value as u32,
-    })?;
-    Substate::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: raw,
-    })
+) -> Result<Substate, LegacyAdoptError> {
+    signed_enum(value, creation_order, field)
 }
 
 fn attitude(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<Attitude, LegacyElementAdoptError> {
-    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: value as u32,
-    })?;
-    Attitude::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: raw,
-    })
+) -> Result<Attitude, LegacyAdoptError> {
+    signed_enum(value, creation_order, field)
 }
 
 fn question(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<Question, LegacyElementAdoptError> {
-    let raw = u32::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: value as u32,
-    })?;
-    Question::try_from(raw).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value: raw,
-    })
+) -> Result<Question, LegacyAdoptError> {
+    signed_enum(value, creation_order, field)
 }
 
 fn legacy_door_index(
@@ -2671,26 +1944,15 @@ fn legacy_door_index(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<crate::gate::DoorIndex>, LegacyElementAdoptError> {
+) -> Result<Option<crate::gate::DoorIndex>, LegacyAdoptError> {
     value
         .map(|index| {
-            let slot =
-                usize::try_from(index).map_err(|_| LegacyElementAdoptError::MissingGate {
-                    creation_order,
-                    field,
-                    index,
-                    count: topology.doors.len(),
-                })?;
-            topology
-                .doors
-                .get(slot)
-                .copied()
-                .ok_or(LegacyElementAdoptError::MissingGate {
-                    creation_order,
-                    field,
-                    index,
-                    count: topology.doors.len(),
-                })
+            let site = npc_site(creation_order);
+            let slot = usize::try_from(index)
+                .map_err(|_| site.invalid(field, index, "a non-negative Original gate slot"))?;
+            topology.doors.get(slot).copied().ok_or_else(|| {
+                site.out_of_range(field, "Original gate slot", slot, topology.doors.len())
+            })
         })
         .transpose()
 }
@@ -2699,11 +1961,9 @@ fn goto_flags(
     value: u16,
     creation_order: u32,
     field: &'static str,
-) -> Result<GotoFlags, LegacyElementAdoptError> {
-    GotoFlags::from_bits(value).ok_or(LegacyElementAdoptError::InvalidFlags {
-        creation_order,
-        field,
-        value,
+) -> Result<GotoFlags, LegacyAdoptError> {
+    GotoFlags::from_bits(value).ok_or_else(|| {
+        element_site(creation_order).field_error(field, AdoptErrorKind::InvalidFlags { value })
     })
 }
 
@@ -2712,23 +1972,21 @@ fn sector(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<SectorHandle>, LegacyElementAdoptError> {
+) -> Result<Option<SectorHandle>, LegacyAdoptError> {
     value
         .map(|index| {
             let slot = usize::from(index);
             let Some(sector) = topology.sectors.get(slot) else {
-                return Err(LegacyElementAdoptError::MissingSector {
-                    creation_order,
+                return Err(element_site(creation_order).out_of_range(
                     field,
-                    index,
-                    count: topology.sectors.len(),
-                });
+                    "sector",
+                    slot,
+                    topology.sectors.len(),
+                ));
             };
-            let public = sector.ok_or(LegacyElementAdoptError::MissingSector {
-                creation_order,
-                field,
-                index,
-                count: topology.sectors.len(),
+            let public = sector.ok_or_else(|| {
+                element_site(creation_order)
+                    .field_error(field, AdoptErrorKind::UnmappedSector { index: slot })
             })?;
             // The original game serialized a sector reference as its sparse array slot. The
             // retained topology resolves that pointer to both its public
@@ -2771,7 +2029,7 @@ fn seek_sector(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<ActorSeekSector>, LegacyElementAdoptError> {
+) -> Result<Option<ActorSeekSector>, LegacyAdoptError> {
     value
         .map(|index| {
             let slot = usize::from(index);
@@ -2781,12 +2039,12 @@ fn seek_sector(
             if let Some(Some(door)) = topology.sector_doors.get(slot) {
                 return Ok(ActorSeekSector::Door(*door));
             }
-            Err(LegacyElementAdoptError::MissingSector {
-                creation_order,
+            Err(element_site(creation_order).out_of_range(
                 field,
-                index,
-                count: topology.sectors.len(),
-            })
+                "sector",
+                slot,
+                topology.sectors.len(),
+            ))
         })
         .transpose()
 }
@@ -2796,7 +2054,7 @@ fn ai_position(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Position, LegacyElementAdoptError> {
+) -> Result<Position, LegacyAdoptError> {
     Ok(Position {
         x: saved.x,
         y: saved.y,
@@ -2810,7 +2068,7 @@ fn ai_position_list(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Vec<Position>, LegacyElementAdoptError> {
+) -> Result<Vec<Position>, LegacyAdoptError> {
     saved
         .iter()
         .copied()
@@ -2821,16 +2079,15 @@ fn ai_position_list(
 fn ambush_status(
     value: i32,
     creation_order: u32,
-) -> Result<crate::ai_enemy::AmbushPointStatus, LegacyElementAdoptError> {
+) -> Result<crate::ai_enemy::AmbushPointStatus, LegacyAdoptError> {
     match raw_i32(value, creation_order, "local_ai.enemy.ambush_point_status")? {
         0 => Ok(crate::ai_enemy::AmbushPointStatus::Far),
         1 => Ok(crate::ai_enemy::AmbushPointStatus::Near),
         2 => Ok(crate::ai_enemy::AmbushPointStatus::Checked),
-        value => Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field: "local_ai.enemy.ambush_point_status",
-            value,
-        }),
+        value => {
+            Err(element_site(creation_order)
+                .unknown_enum("local_ai.enemy.ambush_point_status", value))
+        }
     }
 }
 
@@ -2838,7 +2095,7 @@ fn convert_ambush_point_statuses(
     initialized: &[crate::ai_enemy::AmbushPointStatus],
     saved: &[i32],
     creation_order: u32,
-) -> Result<Vec<crate::ai_enemy::AmbushPointStatus>, LegacyElementAdoptError> {
+) -> Result<Vec<crate::ai_enemy::AmbushPointStatus>, LegacyAdoptError> {
     // Enemy AI serialization does not clear the per-NPC
     // Ambush-point status is initialized with the AI. It appends every saved
     // status after deleting the separate shared ambush-point topology.
@@ -2860,26 +2117,16 @@ fn clear_ambush_points_on_enemy_load(ai_global: &mut AiGlobalState) {
     ai_global.ambush_points.clear();
 }
 
-fn decision(
-    value: i32,
-    creation_order: u32,
-) -> Result<crate::ai::Decision, LegacyElementAdoptError> {
+fn decision(value: i32, creation_order: u32) -> Result<crate::ai::Decision, LegacyAdoptError> {
     let value = raw_i32(
         value,
         creation_order,
         "local_ai.enemy.forced_next_battle_decision",
     )?;
-    crate::ai::Decision::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field: "local_ai.enemy.forced_next_battle_decision",
-        value,
-    })
+    element_site(creation_order).enum_value("local_ai.enemy.forced_next_battle_decision", value)
 }
 
-fn view_cone(
-    value: i32,
-    creation_order: u32,
-) -> Result<crate::ai::ViewCone, LegacyElementAdoptError> {
+fn view_cone(value: i32, creation_order: u32) -> Result<crate::ai::ViewCone, LegacyAdoptError> {
     use crate::ai::ViewCone;
     let value = raw_i32(value, creation_order, "local_ai.enemy.initial_view_cone")?;
     let result = match value {
@@ -2903,11 +2150,8 @@ fn view_cone(
         17 => ViewCone::SceneOfTheCrime,
         18 => ViewCone::Valium,
         value => {
-            return Err(LegacyElementAdoptError::UnknownEnum {
-                creation_order,
-                field: "local_ai.enemy.initial_view_cone",
-                value,
-            });
+            return Err(element_site(creation_order)
+                .unknown_enum("local_ai.enemy.initial_view_cone", value));
         }
     };
     Ok(result)
@@ -2917,11 +2161,9 @@ fn seek_flags(
     value: u16,
     creation_order: u32,
     field: &'static str,
-) -> Result<crate::ai_enemy::SeekFlags, LegacyElementAdoptError> {
-    crate::ai_enemy::SeekFlags::from_bits(value).ok_or(LegacyElementAdoptError::InvalidFlags {
-        creation_order,
-        field,
-        value,
+) -> Result<crate::ai_enemy::SeekFlags, LegacyAdoptError> {
+    crate::ai_enemy::SeekFlags::from_bits(value).ok_or_else(|| {
+        element_site(creation_order).field_error(field, AdoptErrorKind::InvalidFlags { value })
     })
 }
 
@@ -2930,7 +2172,7 @@ fn convert_seek_point(
     id: u16,
     topology: &LegacyPositionTopology,
     creation_order: u32,
-) -> Result<crate::ai::SeekPoint, LegacyElementAdoptError> {
+) -> Result<crate::ai::SeekPoint, LegacyAdoptError> {
     Ok(crate::ai::SeekPoint {
         position: Position {
             x: saved.position_x,
@@ -2960,30 +2202,17 @@ fn validate_seek_point_id(
     global_count: usize,
     creation_order: u32,
     field: &'static str,
-) -> Result<u16, LegacyElementAdoptError> {
+) -> Result<u16, LegacyAdoptError> {
+    let invalid =
+        || npc_site(creation_order).out_of_range(field, "index", value as usize, global_count);
     match value {
         1111 if has_personal_1 => Ok(1111),
         2222 if has_personal_2 => Ok(2222),
-        1111 | 2222 => Err(LegacyElementAdoptError::InvalidAiIndex {
-            creation_order,
-            field,
-            index: value,
-            count: global_count,
-        }),
+        1111 | 2222 => Err(invalid()),
         value if usize::try_from(value).is_ok_and(|index| index < global_count) => {
-            u16::try_from(value).map_err(|_| LegacyElementAdoptError::InvalidAiIndex {
-                creation_order,
-                field,
-                index: value,
-                count: global_count,
-            })
+            u16::try_from(value).map_err(|_| invalid())
         }
-        value => Err(LegacyElementAdoptError::InvalidAiIndex {
-            creation_order,
-            field,
-            index: value,
-            count: global_count,
-        }),
+        _ => Err(invalid()),
     }
 }
 
@@ -2993,7 +2222,7 @@ fn convert_seek_point_ids(
     has_personal_2: bool,
     global_count: usize,
     creation_order: u32,
-) -> Result<Vec<u16>, LegacyElementAdoptError> {
+) -> Result<Vec<u16>, LegacyAdoptError> {
     values
         .iter()
         .copied()
@@ -3016,7 +2245,7 @@ fn convert_actual_seek_point(
     has_personal_2: bool,
     global_count: usize,
     creation_order: u32,
-) -> Result<Option<u16>, LegacyElementAdoptError> {
+) -> Result<Option<u16>, LegacyAdoptError> {
     if value == 6666 {
         return Ok(None);
     }
@@ -3035,17 +2264,17 @@ fn optional_pc_id(
     entity_id: Option<EntityId>,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<crate::entity_id::PcId>, LegacyElementAdoptError> {
+) -> Result<Option<crate::entity_id::PcId>, LegacyAdoptError> {
     match checked_reference(entity_id, ReferenceKind::Human, creation_order, field)? {
         None => Ok(None),
         Some(EntityId::Pc(id)) => Ok(Some(id)),
-        Some(entity_id) => Err(LegacyElementAdoptError::WrongReferenceKind {
-            creation_order,
+        Some(entity_id) => Err(npc_site(creation_order).field_error(
             field,
-            entity_id,
-            actual: entity_id.kind(),
-            expected: "PC",
-        }),
+            AdoptErrorKind::WrongEntityKind {
+                entity_id,
+                expected: "PC",
+            },
+        )),
     }
 }
 
@@ -3053,26 +2282,28 @@ fn convert_archery_refs(
     saved: &super::payload_ai::LegacyEnemyAiTail,
     ai_global: &AiGlobalState,
     creation_order: u32,
-) -> Result<(Option<(u16, u16)>, Option<u16>), LegacyElementAdoptError> {
+) -> Result<(Option<(u16, u16)>, Option<u16>), LegacyAdoptError> {
     let shooting_point = saved
         .shooting_point
         .map(|reference| {
             let sector = ai_global
                 .archery_sectors
                 .get(usize::from(reference.sector_index))
-                .ok_or(LegacyElementAdoptError::InvalidAiIndex {
-                    creation_order,
-                    field: "local_ai.enemy.shooting_point.sector",
-                    index: u32::from(reference.sector_index),
-                    count: ai_global.archery_sectors.len(),
+                .ok_or_else(|| {
+                    npc_site(creation_order).out_of_range(
+                        "local_ai.enemy.shooting_point.sector",
+                        "index",
+                        usize::from(reference.sector_index),
+                        ai_global.archery_sectors.len(),
+                    )
                 })?;
             if usize::from(reference.point_index) >= sector.points.len() {
-                return Err(LegacyElementAdoptError::InvalidAiIndex {
-                    creation_order,
-                    field: "local_ai.enemy.shooting_point.point",
-                    index: u32::from(reference.point_index),
-                    count: sector.points.len(),
-                });
+                return Err(npc_site(creation_order).out_of_range(
+                    "local_ai.enemy.shooting_point.point",
+                    "index",
+                    usize::from(reference.point_index),
+                    sector.points.len(),
+                ));
             }
             Ok((reference.sector_index, reference.point_index))
         })
@@ -3081,12 +2312,12 @@ fn convert_archery_refs(
         .archery_sector
         .map(|index| {
             if usize::from(index) >= ai_global.archery_sectors.len() {
-                return Err(LegacyElementAdoptError::InvalidAiIndex {
-                    creation_order,
-                    field: "local_ai.enemy.archery_sector",
-                    index: u32::from(index),
-                    count: ai_global.archery_sectors.len(),
-                });
+                return Err(npc_site(creation_order).out_of_range(
+                    "local_ai.enemy.archery_sector",
+                    "index",
+                    usize::from(index),
+                    ai_global.archery_sectors.len(),
+                ));
             }
             Ok(index)
         })
@@ -3097,13 +2328,11 @@ fn convert_archery_refs(
 fn known_enemy_strike(
     value: i32,
     creation_order: u32,
-) -> Result<Option<crate::weapons::SwordStrike>, LegacyElementAdoptError> {
+) -> Result<Option<crate::weapons::SwordStrike>, LegacyAdoptError> {
     use crate::{element::Command, weapons::SwordStrike};
-    let command = Command::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field: "local_ai.enemy.known_enemy_strike",
-        value: value as u32,
-    })?;
+    let unknown =
+        || element_site(creation_order).unknown_enum("local_ai.enemy.known_enemy_strike", value);
+    let command = Command::try_from(value).map_err(|_| unknown())?;
     let strike = match command {
         Command::Null => None,
         Command::SwordstrikeThrustA => Some(SwordStrike::A),
@@ -3115,13 +2344,7 @@ fn known_enemy_strike(
         Command::SwordstrikeThrustG => Some(SwordStrike::G),
         Command::SwordstrikeThrustH => Some(SwordStrike::H),
         Command::SwordstrikeThrustI => Some(SwordStrike::I),
-        _ => {
-            return Err(LegacyElementAdoptError::UnknownEnum {
-                creation_order,
-                field: "local_ai.enemy.known_enemy_strike",
-                value: value as u32,
-            });
-        }
+        _ => return Err(unknown()),
     };
     Ok(strike)
 }
@@ -3131,7 +2354,7 @@ fn convert_patrol_path(
     creation_order: u32,
     topology: &LegacyPositionTopology,
     hiking_paths: &[crate::level_data::RawHikingPath],
-) -> Result<(Option<PatrolPath>, DetachedPatrolPathStatus), LegacyElementAdoptError> {
+) -> Result<(Option<PatrolPath>, DetachedPatrolPathStatus), LegacyAdoptError> {
     let history = saved
         .history
         .iter()
@@ -3152,7 +2375,7 @@ fn convert_patrol_path(
                 distance: entry.distance,
             })
         })
-        .collect::<Result<_, LegacyElementAdoptError>>()?;
+        .collect::<Result<_, LegacyAdoptError>>()?;
     let Some(raw_path_id) = saved.hiking_path_index else {
         return Ok((
             None,
@@ -3167,28 +2390,30 @@ fn convert_patrol_path(
     };
     let path_id = PathId::new(raw_path_id)
         .expect("Legacy decoder already maps the 0xffff no-path sentinel to None");
-    let authored = hiking_paths.get(usize::from(path_id)).ok_or(
-        LegacyElementAdoptError::MissingHikingPath {
-            creation_order,
-            index: raw_path_id,
-            count: hiking_paths.len(),
-        },
-    )?;
+    let npc = npc_site(creation_order);
+    let authored = hiking_paths.get(usize::from(path_id)).ok_or_else(|| {
+        npc.out_of_range(
+            "path.hiking_path_index",
+            "hiking path",
+            usize::from(raw_path_id),
+            hiking_paths.len(),
+        )
+    })?;
     let size = u8::try_from(authored.waypoints.len()).map_err(|_| {
-        LegacyElementAdoptError::TooManyWaypoints {
-            creation_order,
+        npc.error(AdoptErrorKind::TooManyWaypoints {
             path: raw_path_id,
             count: authored.waypoints.len(),
-        }
+        })
     })?;
     if usize::from(saved.current_waypoint_index) >= authored.waypoints.len() {
-        return Err(LegacyElementAdoptError::MissingWaypoint {
-            creation_order,
-            path: raw_path_id,
-            field: "current_waypoint_index",
-            waypoint: saved.current_waypoint_index,
-            count: authored.waypoints.len(),
-        });
+        return Err(npc.field_error(
+            "current_waypoint_index",
+            AdoptErrorKind::MissingWaypoint {
+                path: raw_path_id,
+                waypoint: saved.current_waypoint_index,
+                count: authored.waypoints.len(),
+            },
+        ));
     }
     // Path-status serialization restores the last waypoint index verbatim and
     // never indexes the hiking path with it. The value is historical state used
@@ -3211,10 +2436,11 @@ fn convert_macro_command(
     saved: &LegacyLocalAiCommon,
     creation_order: u32,
     hiking_paths: &[crate::level_data::RawHikingPath],
-) -> Result<Option<ConvertedMacroCursor>, LegacyElementAdoptError> {
+) -> Result<Option<ConvertedMacroCursor>, LegacyAdoptError> {
+    let npc = npc_site(creation_order);
     if !saved.has_patrol_path {
         if saved.macro_in_progress {
-            return Err(LegacyElementAdoptError::MacroWithoutPatrolPath { creation_order });
+            return Err(npc.error(AdoptErrorKind::MacroWithoutPatrolPath));
         }
         // No cursor in the stream: keep the one the mission left behind. It is
         // dormant while the NPC stands on a post, but the NPC can return to its
@@ -3226,26 +2452,31 @@ fn convert_macro_command(
         // standalone mission reconstruction cannot recover it from the save.
         return Ok(None);
     }
-    let raw_path_id = saved
-        .path
-        .hiking_path_index
-        .ok_or(LegacyElementAdoptError::PatrolPathWithoutHikingPath { creation_order })?;
-    let authored = hiking_paths.get(usize::from(raw_path_id)).ok_or(
-        LegacyElementAdoptError::MissingHikingPath {
-            creation_order,
-            index: raw_path_id,
-            count: hiking_paths.len(),
-        },
-    )?;
+    let raw_path_id = saved.path.hiking_path_index.ok_or_else(|| {
+        npc.error(AdoptErrorKind::Missing {
+            what: "initialized hiking path for its patrol path",
+        })
+    })?;
+    let authored = hiking_paths.get(usize::from(raw_path_id)).ok_or_else(|| {
+        npc.out_of_range(
+            "path.hiking_path_index",
+            "hiking path",
+            usize::from(raw_path_id),
+            hiking_paths.len(),
+        )
+    })?;
     let waypoint = authored
         .waypoints
         .get(usize::from(saved.path.current_waypoint_index))
-        .ok_or(LegacyElementAdoptError::MissingWaypoint {
-            creation_order,
-            path: raw_path_id,
-            field: "current_waypoint_index",
-            waypoint: saved.path.current_waypoint_index,
-            count: authored.waypoints.len(),
+        .ok_or_else(|| {
+            npc.field_error(
+                "current_waypoint_index",
+                AdoptErrorKind::MissingWaypoint {
+                    path: raw_path_id,
+                    waypoint: saved.path.current_waypoint_index,
+                    count: authored.waypoints.len(),
+                },
+            )
         })?;
     let offset = usize::from(
         saved
@@ -3279,7 +2510,7 @@ fn convert_waypoint_macro_cursor(
     remaining: u16,
     macro_in_progress: bool,
     creation_order: u32,
-) -> Result<(Vec<u8>, usize), LegacyElementAdoptError> {
+) -> Result<(Vec<u8>, usize), LegacyAdoptError> {
     // Next-macro-command execution tests the signed remaining-byte count before
     // reading the macro-command buffer. A zero-byte macro therefore has a
     // dormant pointer even if the macro-in-progress flag remains true.
@@ -3289,16 +2520,12 @@ fn convert_waypoint_macro_cursor(
         WaypointCommand::None if inactive => return Ok((Vec::new(), offset)),
         WaypointCommand::Script(_) if inactive => return Ok((Vec::new(), offset)),
         WaypointCommand::None => {
-            return Err(LegacyElementAdoptError::MacroCommandKind {
-                creation_order,
-                command: "none",
-            });
+            return Err(npc_site(creation_order)
+                .error(AdoptErrorKind::MacroCommandKind { command: "none" }));
         }
         WaypointCommand::Script(_) => {
-            return Err(LegacyElementAdoptError::MacroCommandKind {
-                creation_order,
-                command: "script",
-            });
+            return Err(npc_site(creation_order)
+                .error(AdoptErrorKind::MacroCommandKind { command: "script" }));
         }
     };
 
@@ -3317,11 +2544,12 @@ fn convert_waypoint_macro_cursor(
     offset
         .checked_add(usize::from(remaining))
         .filter(|&end| offset <= macro_data.len() && end <= macro_data.len())
-        .ok_or(LegacyElementAdoptError::InvalidMacroCursor {
-            creation_order,
-            offset,
-            remaining,
-            length: macro_data.len(),
+        .ok_or_else(|| {
+            npc_site(creation_order).error(AdoptErrorKind::InvalidMacroCursor {
+                offset,
+                remaining,
+                length: macro_data.len(),
+            })
         })?;
     Ok((macro_data.clone(), offset))
 }
@@ -3331,7 +2559,7 @@ fn stimulus_position(
     topology: &LegacyPositionTopology,
     creation_order: u32,
     field: &'static str,
-) -> Result<Position, LegacyElementAdoptError> {
+) -> Result<Position, LegacyAdoptError> {
     Ok(Position {
         x: saved.x,
         y: saved.y,
@@ -3340,15 +2568,9 @@ fn stimulus_position(
     })
 }
 
-fn raw_i32(
-    value: i32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<u32, LegacyElementAdoptError> {
-    u32::try_from(value).map_err(|_| LegacyElementAdoptError::NegativeEnum {
-        creation_order,
-        field,
-        value,
+fn raw_i32(value: i32, creation_order: u32, field: &'static str) -> Result<u32, LegacyAdoptError> {
+    u32::try_from(value).map_err(|_| {
+        npc_site(creation_order).field_error(field, AdoptErrorKind::NegativeEnum { value })
     })
 }
 
@@ -3356,48 +2578,32 @@ fn stimulus_type(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<StimulusType, LegacyElementAdoptError> {
+) -> Result<StimulusType, LegacyAdoptError> {
     let value = raw_i32(value, creation_order, field)?;
-    StimulusType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
+    element_site(creation_order).enum_value(field, value)
 }
 
 fn remark(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<Remark, LegacyElementAdoptError> {
+) -> Result<Remark, LegacyAdoptError> {
     let value = raw_i32(value, creation_order, field)?;
-    Remark::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
+    element_site(creation_order).enum_value(field, value)
 }
 
 fn noise_type(
     value: i32,
     creation_order: u32,
     field: &'static str,
-) -> Result<NoiseType, LegacyElementAdoptError> {
+) -> Result<NoiseType, LegacyAdoptError> {
     let value = raw_i32(value, creation_order, field)?;
     // Legacy original-game payloads only contain the shipped 0..=Off ordinals. Rust's
     // appended deterministic Distraction variant is never valid input here.
     if value > NoiseType::Off as u32 {
-        return Err(LegacyElementAdoptError::UnknownEnum {
-            creation_order,
-            field,
-            value,
-        });
+        return Err(element_site(creation_order).unknown_enum(field, value));
     }
-    NoiseType::try_from(value).map_err(|_| LegacyElementAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
+    element_site(creation_order).enum_value(field, value)
 }
 
 fn checked_reference(
@@ -3405,17 +2611,17 @@ fn checked_reference(
     expected: ReferenceKind,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<EntityId>, LegacyElementAdoptError> {
+) -> Result<Option<EntityId>, LegacyAdoptError> {
     if let Some(entity_id) = entity_id
         && !expected.accepts(entity_id.kind())
     {
-        return Err(LegacyElementAdoptError::WrongReferenceKind {
-            creation_order,
+        return Err(npc_site(creation_order).field_error(
             field,
-            entity_id,
-            actual: entity_id.kind(),
-            expected: expected.name(),
-        });
+            AdoptErrorKind::WrongEntityKind {
+                entity_id,
+                expected: expected.name(),
+            },
+        ));
     }
     Ok(entity_id)
 }
@@ -3425,12 +2631,11 @@ fn ai_handle(
     expected: ReferenceKind,
     creation_order: u32,
     field: &'static str,
-) -> Result<u32, LegacyElementAdoptError> {
+) -> Result<u32, LegacyAdoptError> {
     checked_reference(entity_id, expected, creation_order, field)?
         .map(EntityId::index)
-        .ok_or(LegacyElementAdoptError::MissingRequiredReference {
-            creation_order,
-            field,
+        .ok_or_else(|| {
+            element_site(creation_order).field_error(field, AdoptErrorKind::NullReference)
         })
 }
 
@@ -3439,7 +2644,7 @@ fn optional_ai_handle(
     expected: ReferenceKind,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<AiEntityHandle>, LegacyElementAdoptError> {
+) -> Result<Option<AiEntityHandle>, LegacyAdoptError> {
     Ok(
         checked_reference(entity_id, expected, creation_order, field)?
             .map(EntityId::index)
@@ -3452,7 +2657,7 @@ fn element_handle(
     expected: ReferenceKind,
     creation_order: u32,
     field: &'static str,
-) -> Result<u32, LegacyElementAdoptError> {
+) -> Result<u32, LegacyAdoptError> {
     ai_handle(entity_id, expected, creation_order, field)
 }
 
@@ -3461,7 +2666,7 @@ fn optional_element_entity(
     expected: ReferenceKind,
     creation_order: u32,
     field: &'static str,
-) -> Result<Option<EntityId>, LegacyElementAdoptError> {
+) -> Result<Option<EntityId>, LegacyAdoptError> {
     checked_reference(entity_id, expected, creation_order, field)
 }
 
@@ -3471,7 +2676,7 @@ fn ai_handle_list(
     creation_order: u32,
     field: &'static str,
     entities: &LegacyEntityFixups,
-) -> Result<Vec<u32>, LegacyElementAdoptError> {
+) -> Result<Vec<u32>, LegacyAdoptError> {
     references
         .iter()
         .copied()
@@ -3492,7 +2697,7 @@ fn ai_entity_list(
     creation_order: u32,
     field: &'static str,
     entities: &LegacyEntityFixups,
-) -> Result<Vec<EntityId>, LegacyElementAdoptError> {
+) -> Result<Vec<EntityId>, LegacyAdoptError> {
     references
         .iter()
         .copied()
@@ -3503,7 +2708,7 @@ fn ai_entity_list(
                 creation_order,
                 field,
             )?
-            .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order }.into())
+            .ok_or_else(|| missing_creation_order(creation_order))
         })
         .collect()
 }
@@ -3513,7 +2718,7 @@ fn reconnaissance(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<ReconnaissanceReport, LegacyElementAdoptError> {
+) -> Result<ReconnaissanceReport, LegacyAdoptError> {
     let report_type = match raw_i32(
         saved.report_type,
         creation_order,
@@ -3526,11 +2731,8 @@ fn reconnaissance(
         4 => ReportType::DeadBody,
         5 => ReportType::Enemy,
         value => {
-            return Err(LegacyElementAdoptError::UnknownEnum {
-                creation_order,
-                field: "local_ai.reconnaissance.report_type",
-                value,
-            });
+            return Err(element_site(creation_order)
+                .unknown_enum("local_ai.reconnaissance.report_type", value));
         }
     };
     Ok(ReconnaissanceReport {
@@ -3574,7 +2776,7 @@ fn convert_stimulus(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<Stimulus, LegacyElementAdoptError> {
+) -> Result<Stimulus, LegacyAdoptError> {
     let (actual_info_type, actual_name, info) = match &saved.info {
         LegacyStimulusInfo::None => (0, "None", StimulusInfo::None),
         LegacyStimulusInfo::Noise {
@@ -3724,11 +2926,12 @@ fn convert_stimulus(
         LegacyStimulusInfo::Index(value) => (9, "Index", StimulusInfo::Index(*value)),
     };
     if saved.info_type != actual_info_type {
-        return Err(LegacyElementAdoptError::StimulusInfoMismatch {
-            creation_order,
-            declared: saved.info_type,
-            actual: actual_name,
-        });
+        return Err(
+            npc_site(creation_order).error(AdoptErrorKind::StimulusInfoMismatch {
+                declared: saved.info_type,
+                actual: actual_name,
+            }),
+        );
     }
     let (stimulus_type, info) = match stimulus_type(
         saved.stimulus_type,
@@ -3791,7 +2994,7 @@ fn ai_base_mut(brain: &mut AiBrain) -> Option<&mut AiController> {
 mod tests {
     use super::*;
     use crate::legacy_save::payload_ai::LegacyAiPathHistoryEntry;
-    use crate::legacy_save::payload_base::LegacySectorRef;
+    use crate::legacy_save::payload_base::{LegacyPoint2, LegacySectorRef};
 
     #[test]
     fn legacy_detached_patrol_status_keeps_the_serialized_cursor_and_history() {
@@ -4019,25 +3222,26 @@ mod tests {
 
     #[test]
     fn npc_view_adoption_preserves_complete_serialized_continuation() {
-        let converted = convert_npc_view(&sample_npc_view(), None, 31).unwrap();
+        let converted =
+            convert_npc_view(&sample_npc_view(), None, 31, &AiActorData::default()).unwrap();
         assert!(
-            converted.leaning,
+            converted.view_lean_out,
             "legacy adoption must preserve serialized bLeanOut independently of posture"
         );
-        assert_eq!(converted.angle_iterator, 0.12);
-        assert_eq!(converted.angle_iterator_step, 0.13);
-        assert_eq!(converted.half_aperture_cosine, 0.23);
-        assert_eq!(converted.future_half_aperture, 0.24);
-        assert_eq!(converted.half_aperture_step, 0.25);
-        assert!(converted.half_aperture_changes);
-        assert_eq!(converted.crazy_angle_iterator, 0.31);
-        assert_eq!(converted.crazy_angle_iterator_step, 0.32);
-        assert_eq!(converted.crazy_color_iterator, 17);
-        assert_eq!(converted.crazy_half_angle_range, 0.33);
-        assert_eq!(converted.left_side, [0.43, 0.44]);
-        assert_eq!(converted.right_side, [0.45, 0.46]);
-        assert_eq!(converted.radius_reduction_permil, 503);
-        assert!(converted.sniper);
+        assert_eq!(converted.view_angle_iterator, 0.12);
+        assert_eq!(converted.view_angle_iterator_step, 0.13);
+        assert_eq!(converted.view_half_aperture_cosine, 0.23);
+        assert_eq!(converted.view_future_half_aperture, 0.24);
+        assert_eq!(converted.view_half_aperture_step, 0.25);
+        assert!(converted.view_half_aperture_changes);
+        assert_eq!(converted.view_crazy_angle_iterator, 0.31);
+        assert_eq!(converted.view_crazy_angle_iterator_step, 0.32);
+        assert_eq!(converted.view_crazy_color_iterator, 17);
+        assert_eq!(converted.view_crazy_half_angle_range, 0.33);
+        assert_eq!(converted.view_left_side, [0.43, 0.44]);
+        assert_eq!(converted.view_right_side, [0.45, 0.46]);
+        assert_eq!(converted.view_radius_reduction_permil, 503);
+        assert!(converted.view_sniper);
     }
 
     #[test]
@@ -4045,11 +3249,12 @@ mod tests {
         let mut view = sample_npc_view();
         view.crazy_iterator_step = f32::NAN;
         assert!(matches!(
-            convert_npc_view(&view, None, 31),
-            Err(LegacyElementAdoptError::NonFinite {
-                field: "view.crazy_iterator_step",
+            convert_npc_view(&view, None, 31, &AiActorData::default()),
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::NonFinite { .. },
                 ..
-            })
+            }) if field == "view.crazy_iterator_step"
         ));
     }
 
@@ -4058,7 +3263,10 @@ mod tests {
         let target = EntityId::new(7, crate::entity_id::EntityIdKind::Target);
         assert!(matches!(
             checked_reference(Some(target), ReferenceKind::Scroll, 31, "attached_scroll"),
-            Err(LegacyElementAdoptError::WrongReferenceKind { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::WrongEntityKind { .. },
+                ..
+            })
         ));
         let scroll = EntityId::new(8, crate::entity_id::EntityIdKind::Scroll);
         assert_eq!(
@@ -4084,7 +3292,10 @@ mod tests {
         let pc = EntityId::new(18, crate::entity_id::EntityIdKind::Pc);
         assert!(matches!(
             optional_ai_handle(Some(pc), ReferenceKind::Npc, 31, "last_talk_partner"),
-            Err(LegacyElementAdoptError::WrongReferenceKind { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::WrongEntityKind { .. },
+                ..
+            })
         ));
     }
 
@@ -4096,7 +3307,10 @@ mod tests {
         );
         assert!(matches!(
             detectable_type(6, 44, "worst_detectable_type"),
-            Err(LegacyElementAdoptError::UnknownEnum { value: 6, .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::UnknownEnum { value: 6 },
+                ..
+            })
         ));
     }
 
@@ -4153,11 +3367,11 @@ mod tests {
         let target = EntityId::new(7, crate::entity_id::EntityIdKind::Target);
         assert!(matches!(
             checked_reference(Some(target), ReferenceKind::Human, 31, "target"),
-            Err(LegacyElementAdoptError::WrongReferenceKind {
-                entity_id,
-                actual: crate::entity_id::EntityIdKind::Target,
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::WrongEntityKind { entity_id, .. },
                 ..
             }) if entity_id == target
+                && entity_id.kind() == crate::entity_id::EntityIdKind::Target
         ));
     }
 
@@ -4165,11 +3379,17 @@ mod tests {
     fn local_ai_signed_enums_reject_negative_and_unknown_values() {
         assert!(matches!(
             stimulus_type(-1, 31, "stimulus"),
-            Err(LegacyElementAdoptError::NegativeEnum { value: -1, .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::NegativeEnum { value: -1 },
+                ..
+            })
         ));
         assert!(matches!(
             noise_type(15, 31, "noise"),
-            Err(LegacyElementAdoptError::UnknownEnum { value: 15, .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::UnknownEnum { value: 15 },
+                ..
+            })
         ));
         assert_eq!(
             remark(Remark::TheSoundOfSilence as i32, 31, "current_remark").unwrap(),
@@ -4285,10 +3505,12 @@ mod tests {
         assert_eq!(offset, 12_304);
         assert!(matches!(
             convert_waypoint_macro_cursor(&command, 12_304, 1, true, 89),
-            Err(LegacyElementAdoptError::InvalidMacroCursor {
-                offset: 12_304,
-                remaining: 1,
-                length: 26,
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::InvalidMacroCursor {
+                    offset: 12_304,
+                    remaining: 1,
+                    length: 26,
+                },
                 ..
             })
         ));
@@ -4323,11 +3545,11 @@ mod tests {
         );
         assert!(matches!(
             convert_ambush_point_statuses(&[Far], &[3], 88),
-            Err(LegacyElementAdoptError::UnknownEnum {
-                field: "local_ai.enemy.ambush_point_status",
-                value: 3,
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::UnknownEnum { value: 3 },
                 ..
-            })
+            }) if field == "local_ai.enemy.ambush_point_status"
         ));
     }
 
@@ -4367,8 +3589,8 @@ mod tests {
     fn linux_v48_previous_enemy_state_preserves_indeterminate_storage_bits() {
         assert_eq!(
             (
-                preserve_previous_enemy_state_word(72),
-                preserve_previous_enemy_state_word(0x5a3b_010e)
+                preserve_previous_enemy_state_word::<crate::ai::AiState>(72).raw(),
+                preserve_previous_enemy_state_word::<crate::ai::Substate>(0x5a3b_010e).raw()
             ),
             (72, 0x5a3b_010e),
         );

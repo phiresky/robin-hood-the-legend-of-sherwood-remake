@@ -29,6 +29,8 @@ mod packaging;
 mod publication;
 #[path = "convert_datadir/shipping_build.rs"]
 mod shipping_build;
+#[path = "convert_datadir/shipping_phases.rs"]
+mod shipping_phases;
 #[path = "convert_datadir/sprite_pipeline.rs"]
 mod sprite_pipeline;
 #[path = "convert_datadir/sprite_transform.rs"]
@@ -1372,39 +1374,9 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     fs::create_dir_all(&audio_assets_dir)?;
 
     let locale_dirs = detect_locale_data_dirs(&data_in);
-    for src in &locale_dirs {
-        tracing::info!("Locale data dir [{}]: {}", src.iso, src.data_dir.display());
-        let mut aliases = BTreeSet::from([src.lcid.to_owned(), src.iso.to_owned()]);
-        if src.iso == "und" {
-            aliases.insert("neutral".to_owned());
-        }
-        let locale = ShippingLocale {
-            source_lcid: Some(src.lcid.to_owned()),
-            aliases,
-            ..ShippingLocale::default()
-        };
-        if dd.locales.insert(src.iso.to_owned(), locale).is_some() {
-            bail!(
-                "multiple locale directories resolve to canonical locale {}",
-                src.iso
-            );
-        }
-    }
+    shipping_phases::register_locales(&mut dd, &locale_dirs)?;
 
-    // Top-level fields retain the v4 default-resolution behavior for existing
-    // consumers: base Data first, English fallback, then the remaining locale
-    // dirs. Explicit per-locale maps below never use this fallback closure.
-    let in_path = |rel: &str| -> Option<PathBuf> {
-        if let Some(resolved) = resolve_data_file(&data_in, rel) {
-            return Some(resolved);
-        }
-        for alt in &locale_dirs {
-            if let Some(resolved) = resolve_data_file(&alt.data_dir, rel) {
-                return Some(resolved);
-            }
-        }
-        None
-    };
+    let in_path = shipping_phases::default_data_path_resolver(&data_in, &locale_dirs);
 
     shipping_build::load_boot_roots(
         &mut dd,
@@ -1415,53 +1387,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         &in_path,
     )?;
 
-    // ── profile.cpf (root index) ───────────────────────────────────────
-    let cpf_path =
-        in_path("Configuration/profile.cpf").ok_or_else(|| anyhow!("profile.cpf missing"))?;
-    let cpf = {
-        let mut file =
-            SbFile::open(&cpf_path.to_string_lossy()).map_err(|e| anyhow!("open cpf: {e}"))?;
-        let mut mgr = ProfileManager::new();
-        mgr.load_all_legacy_cpf(&mut file)
-            .map_err(|e| anyhow!("parse cpf: {e}"))?;
-        mgr
-    };
-    let character_exclamation_ids: Vec<u32> = cpf
-        .characters
-        .iter()
-        .map(|profile| profile.exclamation_id)
-        .collect();
-    for (i, c) in cpf.civilians.iter().enumerate() {
-        if c.civilian_type == CivilianType::Beggar {
-            beggar_ids.insert(i as u32);
-        }
-    }
+    let (cpf, character_exclamation_ids) =
+        shipping_phases::load_profile_index(&mut beggar_ids, &in_path)?;
 
     let mut mission_builds =
         mission_planning::plan_missions(&mut dd, &cpf, &locale_dirs, &beggar_ids, &in_path)?;
 
-    // Runtime party composition is not known during conversion. Build a
-    // manifest index for every character profile so the mission boundary can
-    // fetch only the selected team plus eligible reinforcement candidates.
-    // Each entry also carries the projectile/pickup masters enabled by that
-    // profile's actions; those objects can be created during a tick and cannot
-    // perform asynchronous loading themselves.
-    let mut character_rhs_requirements = std::collections::BTreeMap::<
-        u32,
-        std::collections::BTreeMap<String, BTreeSet<String>>,
-    >::new();
-    for (index, profile) in cpf.characters.iter().enumerate() {
-        let profile_index = u32::try_from(index).context("character profile index exceeds u32")?;
-        let required = character_rhs_requirements.entry(profile_index).or_default();
-        add_character_rhs_profiles_for_index(required, &cpf, index, &in_path, false)?;
-        add_character_action_rhs_profiles(
-            required,
-            profile
-                .actions
-                .into_iter()
-                .chain(profile.contextual_actions),
-        );
-    }
+    let character_rhs_requirements = shipping_phases::character_rhs_requirements(&cpf, &in_path)?;
 
     // A decoded save can contain a live object which is neither authored by
     // the destination mission nor implied by its current party. Until exact
@@ -1471,102 +1403,15 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         std::collections::BTreeMap::<String, BTreeSet<String>>::new();
     add_all_saved_world_object_rhs_profiles(&mut saved_world_rhs_requirements);
 
-    // Load the source bank once. Each RHS gets one shared payload containing
-    // its metadata and reachable bank slots; missions reference these files
-    // instead of duplicating characters they have in common.
-    let parent = data_in
-        .parent()
-        .ok_or_else(|| anyhow!("data dir has no parent"))?;
-    let holder =
-        FrameHolder::from_data_dir(&parent.to_string_lossy()).context("loading sprite bank")?;
-    // Frequency-rank the dictionaries so the most used tile of each becomes
-    // index 0, and remember the old→new maps to rewrite every VQ sprite's
-    // indices below. A consistent permutation is invisible to the decoder.
-    let dict_remaps = if opts.rank_dictionaries {
-        Some(build_dictionary_rank_remaps(&holder)?)
-    } else {
-        None
-    };
-    let shipping_dictionaries = match &dict_remaps {
-        Some(remaps) => holder
-            .dictionaries()
-            .iter()
-            .zip(remaps)
-            .map(|(dict, remap)| permute_dictionary(dict, remap))
-            .collect(),
-        None => holder.dictionaries().to_vec(),
-    };
-    dd.sprite_bank = Some(ShippingSpriteBank {
-        signature: holder.signature(),
-        dictionaries: shipping_dictionaries,
-        sprite_count: holder.sprites().len() as u32,
-        sprites: Vec::new(),
-        vq_chunks: Vec::new(),
-        rle_jxl_chunks: Vec::new(),
-    });
-    let mut dependency_plan = DependencyPlan::default();
-    for (mission, build) in &mission_builds {
-        dependency_plan.include(
-            DependencyRoot::Mission(mission.clone()),
-            &build.required_rhs_profiles,
-        );
-    }
-    for (character, required) in &character_rhs_requirements {
-        dependency_plan.include(DependencyRoot::Character(*character), required);
-    }
-    for (mission, build) in &mission_builds {
-        let mut planned = dependency_plan::PlannedMission::default();
-        planned.sources.insert(
-            format!("Levels/{}.rhp", build.proto_filename),
-            "mission proto level".into(),
-        );
-        planned
-            .sources
-            .insert(format!("Levels/{mission}.rhm"), "mission world".into());
-        for map in &build.map_names {
-            planned
-                .sources
-                .insert(map.clone(), "terrain map and minimap".into());
-        }
-        for music in &build.music_names {
-            planned
-                .sources
-                .insert(format!("Musics/{music}"), "mission music".into());
-        }
-        for dialogue in &build.dialogue_samples {
-            planned
-                .sources
-                .insert(dialogue.clone(), "localized mission dialogue".into());
-        }
-        for id in &build.sound_wave_ids {
-            planned
-                .sources
-                .insert(format!("Sounds/snd_{id:03}"), "mission sound source".into());
-        }
-        for id in &build.required_exclamation_ids {
-            planned.sources.insert(
-                format!("exclamation:{id:08x}"),
-                "actor voice profile".into(),
-            );
-        }
-        dependency_plan.missions.insert(mission.clone(), planned);
-    }
-    dependency_plan.include(DependencyRoot::SavedWorld, &saved_world_rhs_requirements);
+    let (holder, dict_remaps) = shipping_phases::load_sprite_bank(&mut dd, &data_in, &opts)?;
+    let mut dependency_plan = shipping_phases::plan_dependencies(
+        &mission_builds,
+        &character_rhs_requirements,
+        &saved_world_rhs_requirements,
+    );
     // Preserve the planned roots even if a later codec or source read fails.
     write_json_pretty(&data_out.join("conversion-plan.json"), &dependency_plan)?;
-    // Max-level zstd and the VQ context-model encoder are deliberately
-    // expensive and memory hungry. Bound the worker count; each completed
-    // chunk is written in its worker so the result vectors retain only small
-    // manifest metadata, not every compressed RHS.
-    let compression_workers = std::thread::available_parallelism()
-        .map(|count| count.get())
-        .unwrap_or(1)
-        .min(4);
-    let compression_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(compression_workers)
-        .thread_name(|index| format!("shipping-zstd-{index}"))
-        .build()
-        .context("create bounded shipping compression pool")?;
+    let compression_pool = shipping_phases::bounded_compression_pool()?;
 
     let (rhs_payloads, rhs_base_dep) = sprite_pipeline::transform_rhs(
         &data_in,
@@ -1587,108 +1432,34 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // measurements in docs/COMPRESSION.md show that within-character
     // cross-sprite matching retains the current compression ratio, while
     // shared RHS files avoid duplicating heroes/accessories across missions.
-    let mission_dir = data_out.join("missions");
-    let rhs_dir = data_out.join("rhs");
-    let terrain_dir = data_out.join("terrain");
-    let audio_dir = data_out.join("audio");
-    fs::create_dir_all(&mission_dir)?;
-    fs::create_dir_all(&rhs_dir)?;
-    fs::create_dir_all(&terrain_dir)?;
-    fs::create_dir_all(&audio_dir)?;
-    let encoded_level_assets = compression_pool.install(|| {
-        level_asset_payloads
-            .into_par_iter()
-            .map(|(rel, payload)| {
-                let (filename, compressed) = prepare_shipping_payload(
-                    &terrain_dir,
-                    &rel,
-                    &payload,
-                    opts.zstd_window_log,
-                    opts.resume,
-                )?;
-                write_prepared_shipping_payload(&terrain_dir, &filename, compressed)?;
-                Ok((rel, format!("terrain/{filename}")))
-            })
-            .collect::<Vec<Result<(String, String)>>>()
-    });
-    let mut level_asset_files = std::collections::BTreeMap::<String, String>::new();
-    for encoded in encoded_level_assets {
-        let (rel, filename) = encoded?;
-        level_asset_files.insert(rel, filename);
-    }
-    let encoded_rhs = compression_pool.install(|| {
-        rhs_payloads
-            .into_par_iter()
-            .map(|(rel, payload)| {
-                let (filename, compressed) = prepare_shipping_payload(
-                    &rhs_dir,
-                    &rel,
-                    &payload,
-                    opts.zstd_window_log,
-                    opts.resume,
-                )?;
-                write_prepared_shipping_payload(&rhs_dir, &filename, compressed)?;
-                Ok((rel, filename))
-            })
-            .collect::<Vec<Result<(String, String)>>>()
-    });
-    let mut rhs_files = std::collections::BTreeMap::<String, String>::new();
-    for encoded in encoded_rhs {
-        let (rel, filename) = encoded?;
-        let relative = format!("rhs/{filename}");
-        rhs_files.insert(rel, relative);
-    }
-    // A dependency on a family-variant chunk implies its hub chunk(s): the
-    // runtime decodes the variant's VQ grids against the hubs' at install
-    // (star-2 chunks depend on both hubs).
-    let rhs_chunk_files = |rel: &str| -> Result<Vec<String>> {
-        let mut chunk_files = Vec::with_capacity(3);
-        let file = rhs_files
-            .get(rel)
-            .ok_or_else(|| anyhow!("missing shipping RHS payload {rel}"))?;
-        chunk_files.push(file.clone());
-        for base_rel in rhs_base_dep.get(rel).into_iter().flatten() {
-            let base_file = rhs_files.get(base_rel).ok_or_else(|| {
-                anyhow!("missing shipping RHS family-hub payload {base_rel} (required by {rel})")
-            })?;
-            chunk_files.push(base_file.clone());
-        }
-        Ok(chunk_files)
-    };
-    for (rel, planned) in &mut dependency_plan.rhs {
-        planned.destination_payloads = rhs_chunk_files(rel)?;
-        planned.grouping = Some(match rhs_base_dep.get(rel).map(Vec::len).unwrap_or(0) {
-            0 => "standalone".to_owned(),
-            count => format!("family variant with {count} shared hub(s)"),
-        });
-    }
-
-    for (profile_index, requirements) in character_rhs_requirements {
-        let mut files = Vec::with_capacity(requirements.len());
-        for rel in requirements.keys() {
-            files.extend(rhs_chunk_files(rel).with_context(|| {
-                format!("character profile {profile_index} RHS dependency {rel}")
-            })?);
-        }
-        files.sort();
-        files.dedup();
-        dd.character_rhs_files.insert(profile_index, files);
-    }
-    for rel in saved_world_rhs_requirements.keys() {
-        dd.saved_world_rhs_files.extend(
-            rhs_chunk_files(rel)
-                .with_context(|| format!("saved-world compatibility RHS dependency {rel}"))?,
-        );
-    }
-    dd.saved_world_rhs_files.sort();
-    dd.saved_world_rhs_files.dedup();
+    let dirs = shipping_phases::ShippingOutputDirs::create(data_out)?;
+    let level_asset_files = shipping_phases::encode_level_assets(
+        &compression_pool,
+        level_asset_payloads,
+        &dirs.terrain,
+        &opts,
+    )?;
+    let rhs_chunks = shipping_phases::RhsChunkFiles::encode(
+        &compression_pool,
+        rhs_payloads,
+        rhs_base_dep,
+        &dirs.rhs,
+        &opts,
+    )?;
+    shipping_phases::assign_rhs_dependencies(
+        &mut dd,
+        &mut dependency_plan,
+        character_rhs_requirements,
+        &saved_world_rhs_requirements,
+        &rhs_chunks,
+    )?;
 
     let common_audio_file = shipping_build::write_common_audio(
         &mut dd,
         &mission_builds,
         &data_in,
         &audio_assets_dir,
-        &audio_dir,
+        &dirs.audio,
         &opts,
     )?;
     let shipping_build::ExclamationDependencies {
@@ -1699,206 +1470,27 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         &mission_builds,
         &data_in,
         &audio_assets_dir,
-        &audio_dir,
+        &dirs.audio,
         &opts,
         &in_path,
         character_exclamation_ids,
     )?;
 
-    let encoded_missions = compression_pool.install(|| {
-        mission_builds
-            .into_par_iter()
-            .map(|(mission_name, build)| {
-                let ShippingMissionBuild {
-                    payload,
-                    required_rhs_profiles,
-                    required_exclamation_ids,
-                    music_names,
-                    dialogue_samples,
-                    sound_wave_ids,
-                    level_asset_keys,
-                    forest_level,
-                    ..
-                } = build;
-                let (filename, compressed) = prepare_shipping_payload(
-                    &mission_dir,
-                    &mission_name,
-                    &payload,
-                    opts.zstd_window_log,
-                    opts.resume,
-                )?;
-                let compressed_len =
-                    write_prepared_shipping_payload(&mission_dir, &filename, compressed)?;
-                Ok((
-                    mission_name,
-                    filename,
-                    compressed_len,
-                    required_rhs_profiles,
-                    required_exclamation_ids,
-                    music_names,
-                    dialogue_samples,
-                    sound_wave_ids,
-                    level_asset_keys,
-                    forest_level,
-                ))
-            })
-            .collect::<Vec<Result<_>>>()
-    });
+    let encoded_missions =
+        shipping_phases::encode_missions(&compression_pool, mission_builds, &dirs.mission, &opts);
+    let mission_packaging = shipping_phases::MissionPackaging {
+        level_asset_files: &level_asset_files,
+        rhs_chunks: &rhs_chunks,
+        common_audio_file: common_audio_file.as_ref(),
+        exclamation_metadata_file: exclamation_metadata_file.as_ref(),
+        actor_voice_files: &actor_voice_files,
+        audio_assets_dir: &audio_assets_dir,
+        audio_dir: &dirs.audio,
+        opts: &opts,
+        in_path: &in_path,
+    };
     for encoded in encoded_missions {
-        let (
-            mission_name,
-            filename,
-            compressed_len,
-            required_rhs_profiles,
-            required_exclamation_ids,
-            music_names,
-            dialogue_samples,
-            sound_wave_ids,
-            level_asset_keys,
-            forest_level,
-        ) = encoded?;
-        let relative = format!("missions/{filename}");
-        let mut files = vec![relative.clone()];
-        for rel in level_asset_keys {
-            let file = level_asset_files.get(&rel).ok_or_else(|| {
-                anyhow!("shipping mission {mission_name} requires missing terrain payload {rel}")
-            })?;
-            files.push(file.clone());
-        }
-        for rel in required_rhs_profiles.keys() {
-            files.extend(
-                rhs_chunk_files(rel)
-                    .with_context(|| format!("shipping mission {mission_name} RHS dependency"))?,
-            );
-        }
-        if let Some(file) = common_audio_file.as_ref() {
-            files.push(file.clone());
-        }
-        if let Some(file) = exclamation_metadata_file.as_ref() {
-            files.push(file.clone());
-        }
-        for exclamation_id in &required_exclamation_ids {
-            if let Some(file) = actor_voice_files.get(exclamation_id) {
-                files.push(file.clone());
-            }
-        }
-        let mut dialogue_audio = ShippingMission::default();
-        for sample_rel in &dialogue_samples {
-            let sample_path = in_path(sample_rel).ok_or_else(|| {
-                anyhow!(
-                    "shipping mission {mission_name} references missing dialogue sample {sample_rel}"
-                )
-            })?;
-            insert_shipping_audio(
-                &mut dialogue_audio,
-                &mut dd.audio_assets,
-                &audio_assets_dir,
-                &format!("dialogue-{}", shipping_file_stem(&mission_name)),
-                sample_rel,
-                &sample_path,
-                AudioKind::Voice,
-                opts.audio_format,
-            )?;
-        }
-        if let Some(file) = write_shipping_dependency(
-            &audio_dir,
-            "mission-dialogue",
-            &dialogue_audio,
-            opts.zstd_window_log,
-            opts.resume,
-        )? {
-            files.push(file);
-        }
-        let mut source_audio = ShippingMission::default();
-        for id in sound_wave_ids {
-            let resolved = ["wav", "ogg"].into_iter().find_map(|extension| {
-                let relative = format!("Sounds/snd_{id:03}.{extension}");
-                in_path(&relative).map(|path| (relative, path))
-            });
-            let Some((relative, path)) = resolved else {
-                tracing::warn!(
-                    mission = mission_name,
-                    id,
-                    "mission sound source has no sample"
-                );
-                continue;
-            };
-            insert_shipping_audio(
-                &mut source_audio,
-                &mut dd.audio_assets,
-                &audio_assets_dir,
-                &format!("ambience-{}", shipping_file_stem(&mission_name)),
-                &relative,
-                &path,
-                AudioKind::Effect,
-                opts.audio_format,
-            )?;
-        }
-        if let Some(file) = write_shipping_dependency(
-            &audio_dir,
-            "mission-ambience",
-            &source_audio,
-            opts.zstd_window_log,
-            opts.resume,
-        )? {
-            files.push(file);
-        }
-        let mut music_audio = ShippingMission::default();
-        for name in &music_names {
-            // SoundManager requests `.wav`, but the Linux release ships Ogg
-            // and the audio backend deliberately falls back between them.
-            // Preserve whichever real file the source datadir provides.
-            let (relative, path) = ["wav", "ogg"]
-                .into_iter()
-                .find_map(|extension| {
-                    let relative = format!("Musics/{name}.{extension}");
-                    in_path(&relative).map(|path| (relative, path))
-                })
-                .ok_or_else(|| {
-                    anyhow!(
-                        "shipping mission {mission_name} references missing music Musics/{name}.{{wav,ogg}}"
-                    )
-                })?;
-            insert_shipping_audio(
-                &mut music_audio,
-                &mut dd.audio_assets,
-                &audio_assets_dir,
-                "music",
-                &relative,
-                &path,
-                AudioKind::Music,
-                opts.audio_format,
-            )?;
-        }
-        if let Some(file) = write_shipping_dependency(
-            &audio_dir,
-            "mission-music",
-            &music_audio,
-            opts.zstd_window_log,
-            opts.resume,
-        )? {
-            files.push(file);
-        }
-        tracing::info!(
-            mission = mission_name,
-            bytes = compressed_len,
-            dependencies = files.len(),
-            file = relative,
-            "wrote shipping mission payload"
-        );
-        dd.mission_exclamation_ids.insert(
-            mission_name.clone(),
-            required_exclamation_ids.iter().copied().collect(),
-        );
-        files.sort();
-        files.dedup();
-        dd.missions.insert(
-            mission_name,
-            ShippingMissionRef {
-                forest_level,
-                files,
-            },
-        );
+        mission_packaging.package(&mut dd, encoded?)?;
     }
 
     bundle_grouped_audio(&mut dd, data_out)?;

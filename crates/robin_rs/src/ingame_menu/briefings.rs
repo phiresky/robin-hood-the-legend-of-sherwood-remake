@@ -8,8 +8,8 @@ use crate::renderer::Renderer;
 use robin_engine::short_briefings::{ShortBriefing, ShortBriefings};
 
 use super::layout::{
-    MenuRect, MenuTransform, TextAlign, draw_background, measure_text_height_in_box_font,
-    render_text_in_box_font,
+    MenuRect, MenuTransform, TextAlign, VAlign, draw_background, measure_text_height_in_box_font,
+    render_clipped_text_in_box_font,
 };
 use super::resources::IngameMenuResources;
 
@@ -119,7 +119,7 @@ fn draw_section(
         // every line actually drawn.
         let needed_h = measure_text_height_in_box_font(font, &text, text_w, remaining_h)
             .max(font.height() as i32);
-        let _ = render_text_in_box_font(
+        render_clipped_text_in_box_font(
             renderer,
             font,
             transform,
@@ -129,6 +129,7 @@ fn draw_section(
             text_w,
             remaining_h,
             TextAlign::Justified,
+            VAlign::Top,
         );
         y += needed_h + SPACING;
     }

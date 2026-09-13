@@ -278,7 +278,7 @@ mod tests {
         )));
         assert_eq!(
             files.read_shared("../forbidden.res").unwrap_err(),
-            engine_sbfile::SbFileError::Read,
+            engine_sbfile::SbFileError::Read(None),
         );
         let mut resources = ResourceManager::with_files(files);
         let error = attach_mission_archive(&mut resources, "../forbidden.res", None).unwrap_err();
@@ -288,7 +288,7 @@ mod tests {
                 path: "../forbidden.res".into(),
                 detail: format!(
                     "read resource file '../forbidden.res': error {}",
-                    engine_sbfile::SbFileError::Read,
+                    engine_sbfile::SbFileError::Read(None),
                 ),
             },
         );

@@ -6,13 +6,16 @@
 //! the game is in-session or at the main menu — the dialog always writes
 //! back to the active player profile.
 
+use crate::application::require;
 use crate::audio_backend::PlatformAudioBackend;
 use crate::host::ApplicationContext;
-use crate::ingame_menu::widget_bridge::ModalCursor;
-use crate::ingame_menu::{IngameMenuResources, show_options};
+use crate::ingame_menu::widget_bridge::{ModalCursor, ModalScreenIo, ScreenAudio};
+use crate::ingame_menu::{IngameMenuResources, OptionsTargets, show_options};
 use crate::renderer::Renderer;
 use crate::sound::SoundManager;
 use robin_engine::engine as engine_api;
+
+const SCREEN: &str = "Main menu Options screen";
 
 /// Show the options dialog over the main-menu background.
 ///
@@ -87,36 +90,36 @@ pub(crate) async fn show_main_menu_options(
         audio_backend = None;
     }
 
-    // Reborrow helper: turn `Option<&mut PlatformAudioBackend>` into the
-    // trait object form that `show_options` expects.  See the note in
-    // `ingame_menu::sounds::show_sounds` — `Option<&mut dyn Trait>`
-    // can't be shortened with `as_deref_mut` across the call boundary,
-    // so we do the `&mut **b as &mut dyn _` dance instead.
+    // Turn `Option<&mut PlatformAudioBackend>` into the trait-object form
+    // that `ScreenAudio` expects.
     let backend_opt: Option<&mut dyn crate::sound::AudioBackend> = audio_backend
         .as_mut()
         .map(|b| b as &mut dyn crate::sound::AudioBackend);
 
+    let cursor = ModalCursor::new(cursor_renderer, engine_api::input::MOUSE_OPACITY_DEFAULT, 0);
     let outcome = show_options(
         application_context,
-        true,
-        event_pump,
-        renderer,
-        resources,
-        Some(ModalCursor::new(
-            cursor_renderer,
-            engine_api::input::MOUSE_OPACITY_DEFAULT,
-            0,
-        )),
-        &mut graphic,
-        &mut gameplay,
-        &mut multiplayer,
-        &mut sound_cfg,
-        &mut key_cfg.active,
-        &mut key_cfg.custom,
-        true,
-        Some(&mut sound_mgr),
-        backend_opt,
-        sample_loader.as_deref(),
+        &mut ModalScreenIo {
+            window: event_pump,
+            renderer,
+            resources,
+            cursor: Some(&cursor),
+        },
+        OptionsTargets {
+            allow_language_switching: true,
+            sherwood_trading_editable: true,
+            graphic: &mut graphic,
+            gameplay: &mut gameplay,
+            multiplayer: &mut multiplayer,
+            sound: &mut sound_cfg,
+            keys: &mut key_cfg.active,
+            custom_keys: &mut key_cfg.custom,
+        },
+        ScreenAudio {
+            sound: Some(&mut sound_mgr),
+            backend: backend_opt,
+            sample_loader: sample_loader.as_deref(),
+        },
     )
     .await;
     if outcome.resolution_changed {
@@ -132,8 +135,8 @@ pub(crate) async fn show_main_menu_options(
     );
 
     if outcome.changed {
-        application_context
-            .update_and_retain_player_profiles(|mgr| {
+        require(
+            application_context.update_and_retain_player_profiles(|mgr| {
                 let profile = mgr
                     .profiles
                     .iter_mut()
@@ -143,19 +146,21 @@ pub(crate) async fn show_main_menu_options(
                 profile.gameplay_config = gameplay;
                 profile.multiplayer_config = multiplayer;
                 profile.sound_config = sound_cfg;
-            })
-            .unwrap_or_else(|error| panic!("Main menu Options profile update failed: {error}"))
-            .log_persistence_error("Main menu Options: failed to save profile manager");
+            }),
+            SCREEN,
+        )
+        .log_persistence_error("Main menu Options: failed to save profile manager");
     }
     if outcome.key_config_changed {
-        application_context
-            .with_key_configs_mut(|store| {
+        require(
+            application_context.with_key_configs_mut(|store| {
                 *store.entry_or_default(active_profile_id) = key_cfg;
                 if let Err(err) = store.save() {
                     tracing::error!("Main menu Options: failed to save key configs: {err:#}");
                 }
-            })
-            .unwrap_or_else(|error| panic!("Main menu Options key update failed: {error}"));
+            }),
+            SCREEN,
+        );
     }
     // `audio_backend` drops here: PlatformAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.

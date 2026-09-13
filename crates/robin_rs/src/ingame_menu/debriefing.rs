@@ -18,19 +18,18 @@ use robin_engine::pc_status as engine_pc_status;
 
 use crate::gfx_types::GameEvent;
 use crate::native_font::Font;
-use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, WrappedLine, dim_screen,
-    draw_background, enter_modal_gpu_phase, render_text_in_box_font,
+    MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, WrappedLine, draw_background,
+    render_clipped_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_LOAD, MT_INFOBULLE_BUTTON_OK, MT_INFOBULLE_BUTTON_RECOMMENCER,
     MT_STR_DB_S06, MT_STR_DB_S07, MT_STR_DB_S08, MT_STR_DB_S09, MT_STR_DB_S10, MT_STR_DB_S11,
     MT_STR_DB_S13, MT_STR_DB_S17, MT_STR_DB_S18, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON, MenuText,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 /// Virtual window geometry.
 pub const WIN_W: i32 = 496;
@@ -116,63 +115,46 @@ fn debriefing_title(resources: &IngameMenuResources, won: bool) -> String {
     resources.menu_text.get(id)
 }
 
+/// What one debriefing flow shows and which buttons it offers.
+///
+/// Borrowed parameter bundle for [`DebriefingModalState::new`] and
+/// [`show_debriefing`]; `Default` is the body-only flow without restart.
+#[derive(Default)]
+pub struct DebriefingContent<'a> {
+    pub body: String,
+    /// When `Some`, the stat panel is shown as a follow-up page after the
+    /// body page completes (and only if Load wasn't clicked). `None` skips
+    /// it — the cheat path that displays the full debriefing vector doesn't
+    /// render the stat panel.
+    pub stat: Option<&'a MissionStat>,
+    pub mission_length_seconds: u32,
+    pub won: bool,
+    pub restart_allowed: bool,
+    pub quick_load_key: Option<winit::keyboard::KeyCode>,
+    /// Restart only triggers a load request when a restart snapshot
+    /// exists; when the snapshot is missing the body window closes and
+    /// the stat panel still shows.  The caller probes the save-manager
+    /// up front so the Restart click can short-circuit to "skip body,
+    /// show stat" instead of queueing a no-op load request.
+    pub restart_snapshot_exists: bool,
+    /// When `true`, skip the body page and start with the stat panel.
+    /// Used by the caller to resume after a cancelled Load picker on the
+    /// stat phase, so the player stays on the page that was visible when
+    /// Load was clicked.
+    pub start_at_stat: bool,
+}
+
 /// Display the debriefing window.
 ///
 ///   1. Render the complete, scrollable body text.
 ///   2. If the player didn't click Load, render the mission stat
 ///      panel as a follow-up page.
-///
-/// When `stat` is `Some`, the stat panel is shown as a follow-up page
-/// after the body page completes (and only if Load wasn't
-/// clicked).  Pass `None` to skip the stat panel — the cheat path
-/// that displays the full debriefing vector doesn't render the stat
-/// panel, so that caller passes `None`.
 pub async fn show_debriefing(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
-    body: &str,
-    stat: Option<&MissionStat>,
-    mission_length_seconds: u32,
-    won: bool,
-    restart_allowed: bool,
-    quick_load_key: Option<winit::keyboard::KeyCode>,
-    // Restart only triggers a load request when a restart snapshot
-    // exists; when the snapshot is missing the body window closes and
-    // the stat panel still shows.  The caller probes the save-manager
-    // up front and passes the result here so the Restart click can
-    // short-circuit to "skip body, show stat" instead of queueing a
-    // no-op load request.
-    restart_snapshot_exists: bool,
-    // When `true`, skip the body page and start with the stat
-    // panel.  Used by the caller to resume after a cancelled Load
-    // picker on the stat phase, so the player stays on the page that
-    // was visible when Load was clicked.
-    start_at_stat: bool,
+    io: &mut ModalScreenIo<'_, '_>,
+    content: DebriefingContent<'_>,
 ) -> DebriefingOutcome {
-    let mut state = DebriefingModalState::new(
-        resources,
-        body.to_string(),
-        stat,
-        mission_length_seconds,
-        won,
-        restart_allowed,
-        quick_load_key,
-        restart_snapshot_exists,
-        start_at_stat,
-    );
-    loop {
-        if let Some(outcome) = state.tick(&mut ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor: cursor.as_ref(),
-        }) {
-            return outcome;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
+    let mut state = DebriefingModalState::new(io.resources, content);
+    widget_bridge::run_modal(io, |io| state.tick(io)).await
 }
 
 enum DebriefingPhase {
@@ -195,17 +177,17 @@ pub struct DebriefingModalState {
 }
 
 impl DebriefingModalState {
-    pub fn new(
-        resources: &IngameMenuResources,
-        body: String,
-        stat: Option<&MissionStat>,
-        mission_length_seconds: u32,
-        won: bool,
-        restart_allowed: bool,
-        quick_load_key: Option<winit::keyboard::KeyCode>,
-        restart_snapshot_exists: bool,
-        start_at_stat: bool,
-    ) -> Self {
+    pub fn new(resources: &IngameMenuResources, content: DebriefingContent<'_>) -> Self {
+        let DebriefingContent {
+            body,
+            stat,
+            mission_length_seconds,
+            won,
+            restart_allowed,
+            quick_load_key,
+            restart_snapshot_exists,
+            start_at_stat,
+        } = content;
         let stat_text =
             stat.map(|s| format_mission_stat_text(s, mission_length_seconds, &resources.menu_text));
         Self {
@@ -226,54 +208,38 @@ impl DebriefingModalState {
 
     /// Scripted replay batches begin on the body and await one recorded result;
     /// physical buttons must not advance or finish them ahead of that result.
-    pub(crate) fn render_scripted_replay_wait(
-        &mut self,
-        event_pump: &mut crate::window::GameWindow,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
-    ) {
+    pub(crate) fn render_scripted_replay_wait(&mut self, io: &mut ModalScreenIo<'_, '_>) {
         assert!(
             matches!(self.phase, DebriefingPhase::Body),
             "scripted replay debriefing advanced without recorded control"
         );
-        let page = self.current_page.get_or_insert_with(|| {
-            DebriefingPageState::new(
-                event_pump,
-                renderer,
-                resources,
-                self.title.clone(),
+        if self.current_page.is_none() {
+            self.current_page = Some(DebriefingPageState::new(
+                io,
+                self,
                 self.body.clone(),
-                self.restart_allowed,
-                self.restart_snapshot_exists,
                 BodyFont::PopupScroll,
-                self.active_quick_load,
-            )
-        });
-        let (_, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        page.transform = transform;
-        let (font, lines) = page.prepare_body(resources);
-        page.render(renderer, resources, cursor, font, &lines);
-        renderer.present();
+            ));
+        }
+        let page = self
+            .current_page
+            .as_mut()
+            .expect("scripted replay page was just opened");
+        let screen = ScreenFrame::poll(io);
+        page.transform = screen.transform;
+        let (font, lines) = page.prepare_body(io.resources);
+        page.render(io, &screen, font, &lines);
     }
 
     pub fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<DebriefingOutcome> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
         match self.phase {
             DebriefingPhase::Body => {
                 if self.current_page.is_none() {
                     self.current_page = Some(DebriefingPageState::new(
-                        event_pump,
-                        renderer,
-                        resources,
-                        self.title.clone(),
+                        io,
+                        self,
                         self.body.clone(),
-                        self.restart_allowed,
-                        self.restart_snapshot_exists,
                         BodyFont::PopupScroll,
-                        self.active_quick_load,
                     ));
                 }
                 let outcome = self.current_page.as_mut().and_then(|page| page.tick(io));
@@ -287,15 +253,10 @@ impl DebriefingModalState {
                 };
                 if self.current_page.is_none() {
                     self.current_page = Some(DebriefingPageState::new(
-                        event_pump,
-                        renderer,
-                        resources,
-                        self.title.clone(),
+                        io,
+                        self,
                         stat_text.clone(),
-                        self.restart_allowed,
-                        self.restart_snapshot_exists,
                         BodyFont::Debrief,
-                        self.active_quick_load,
                     ));
                 }
                 let outcome = self.current_page.as_mut().and_then(|page| page.tick(io));
@@ -512,20 +473,21 @@ struct DebriefingPageState {
 }
 
 impl DebriefingPageState {
+    /// Open one page of `flow` showing `body`; title, restart and quick-load
+    /// settings come from the owning flow.
     fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
-        title: String,
+        io: &ModalScreenIo<'_, '_>,
+        flow: &DebriefingModalState,
         body: String,
-        restart_allowed: bool,
-        restart_snapshot_exists: bool,
         body_font: BodyFont,
-        quick_load_key: Option<winit::keyboard::KeyCode>,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let resources = io.resources;
+        let renderer = &*io.renderer;
+        let title = flow.title.clone();
+        let restart_allowed = flow.restart_allowed;
+        let restart_snapshot_exists = flow.restart_snapshot_exists;
+        let quick_load_key = flow.active_quick_load;
+        let transform = MenuTransform::for_renderer(renderer);
         let virt_x = (MENU_W - WIN_W) / 2;
         let virt_y = (MENU_H - WIN_H) / 2;
         // The original debriefing uses the round `RHID_OK` seal
@@ -599,7 +561,7 @@ impl DebriefingPageState {
             font.height() as i32,
             resources,
         );
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::from_window(io.window, transform);
         Self {
             title,
             body,
@@ -617,19 +579,17 @@ impl DebriefingPageState {
     }
 
     fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>) -> Option<PageOutcome> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         let mut outcome = None;
-        let (font, lines) = self.prepare_body(resources);
+        let (font, lines) = self.prepare_body(io.resources);
         self.scroll_view.set_total(lines.len());
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        for event in events {
-            self.input_state.update_from_event(&event, self.transform);
+        // Scroll-bar dragging reads the mouse position updated by the same
+        // event, so input updates stay interleaved (no `ScreenFrame::begin`).
+        let screen = ScreenFrame::poll(io);
+        self.transform = screen.transform;
+        for event in &screen.events {
+            self.input_state.update_from_event(event, self.transform);
             if self.scroll_view.handle_event(
-                &event,
+                event,
                 self.transform,
                 (
                     self.input_state.virt_x as i32,
@@ -638,42 +598,36 @@ impl DebriefingPageState {
             ) {
                 continue;
             }
-            match event {
-                GameEvent::Quit => outcome = Some(PageOutcome::EmergencyEnd),
-                GameEvent::KeyDown { keycode, .. }
-                    if matches!(
-                        keycode,
-                        Keycode::Up
-                            | Keycode::Down
-                            | Keycode::PageUp
-                            | Keycode::PageDown
-                            | Keycode::Home
-                            | Keycode::End
-                    ) =>
-                {
-                    self.scroll_view.navigate(keycode);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
-                    outcome = Some(PageOutcome::Ok);
-                }
-                GameEvent::KeyDown { physical_key, .. } if physical_key == self.quick_load_key => {
-                    outcome = Some(PageOutcome::LoadClicked);
-                }
-                _ => {}
+            match ScreenKey::from_event(event) {
+                Some(ScreenKey::Quit) => outcome = Some(PageOutcome::EmergencyEnd),
+                Some(ScreenKey::Confirm) => outcome = Some(PageOutcome::Ok),
+                // Escape and Tab only matter when bound as the quick-load key.
+                Some(ScreenKey::Cancel | ScreenKey::Next) | None => match *event {
+                    GameEvent::KeyDown { keycode, .. }
+                        if matches!(
+                            keycode,
+                            Keycode::Up
+                                | Keycode::Down
+                                | Keycode::PageUp
+                                | Keycode::PageDown
+                                | Keycode::Home
+                                | Keycode::End
+                        ) =>
+                    {
+                        self.scroll_view.navigate(keycode);
+                    }
+                    GameEvent::KeyDown { physical_key, .. }
+                        if physical_key == self.quick_load_key =>
+                    {
+                        outcome = Some(PageOutcome::LoadClicked);
+                    }
+                    _ => {}
+                },
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(id) = activated {
             outcome = Some(match id {
                 BTN_OK => PageOutcome::Ok,
                 BTN_RESTART => {
@@ -692,8 +646,7 @@ impl DebriefingPageState {
             });
         }
 
-        self.render(renderer, resources, cursor, font, &lines);
-        renderer.present();
+        self.render(io, &screen, font, &lines);
         outcome
     }
 
@@ -715,16 +668,17 @@ impl DebriefingPageState {
         (font, lines)
     }
 
+    /// Draw the page, then the cursor, and present.
     fn render(
         &mut self,
-        renderer: &mut Renderer,
-        resources: &IngameMenuResources,
-        cursor: Option<&ModalCursor<'_>>,
+        io: &mut ModalScreenIo<'_, '_>,
+        screen: &ScreenFrame,
         font: &Font,
         lines: &[WrappedLine],
     ) {
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.parchment_huge {
             draw_background(
@@ -739,7 +693,7 @@ impl DebriefingPageState {
         }
 
         if let Some(font) = resources.title_font_any() {
-            render_text_in_box_font(
+            render_clipped_text_in_box_font(
                 renderer,
                 font,
                 self.transform,
@@ -749,6 +703,7 @@ impl DebriefingPageState {
                 TITLE_W,
                 TITLE_H,
                 TextAlign::Center,
+                super::layout::VAlign::Top,
             );
         }
 
@@ -775,9 +730,7 @@ impl DebriefingPageState {
         self.tooltip
             .draw(renderer, font, self.transform, &self.frame, mouse_pt);
 
-        if let Some(c) = cursor {
-            c.draw(renderer, self.transform, &self.input_state);
-        }
+        screen.finish(io, &self.input_state);
     }
 }
 

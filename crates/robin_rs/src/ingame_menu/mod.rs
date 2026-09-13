@@ -53,16 +53,17 @@ pub mod widget_bridge;
 pub mod yesno;
 
 pub use buy_blazons::BuyBlazonsOutcome;
-pub use debriefing::{DebriefingModalState, DebriefingOutcome, show_debriefing};
+pub use debriefing::{DebriefingContent, DebriefingModalState, DebriefingOutcome, show_debriefing};
 pub(crate) use dialogue::show_dialogue_batch;
 pub use dialogue::{
-    BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueModalState, DialogueSentence, show_dialogue,
+    BatchDialogue, DIALOGUE_PORTRAIT_IDS, DialogueAudio, DialogueIo, DialogueModalState,
+    DialogueSentence, show_dialogue,
 };
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use leaderboard::MissionEndLeaderboardScreen;
 pub use mission_state::MissionStatePopupState;
 pub use modal_net::ModalNet;
-pub use options::{OptionsOutcome, show_options};
+pub use options::{OptionsOutcome, OptionsTargets, show_options};
 pub use pause::{PauseMenu, PauseMenuOutcome};
 pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};

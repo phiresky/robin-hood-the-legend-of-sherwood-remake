@@ -8,11 +8,11 @@
 
 use std::collections::BTreeMap;
 
-use thiserror::Error;
+use serde::{Deserialize, Serialize};
 
 use crate::fast_find_grid::{GridSector, SectorIndex};
 use crate::{
-    coordinates::{MapBBox, MapPoint, MapVec, WorldPoint3D, WorldVec3D},
+    coordinates::MapBBox,
     element::EntityId,
     engine::{EngineInner, LevelAssets},
     jump_line::JumpLineIndex,
@@ -23,82 +23,22 @@ use crate::{
 };
 
 use super::{
-    body::LegacySaveBody,
-    elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError, point2, point3, vector2, vector3},
     gate_topology::derive_legacy_gate_order,
     payload_base::{
-        LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyLineRef, LegacyPoint2,
-        LegacyPoint3, LegacyPositionPayload,
+        LegacyAiElementRef, LegacyBoundingBox2, LegacyElementRef, LegacyLineRef,
+        LegacyPositionPayload,
     },
-    topology_adapter::{
-        LegacyMissingTopologyFact, LegacyStaticElementTopology, LegacyTopologyAdapterError,
-        derive_static_element_topology,
-    },
+    topology_adapter::LegacyMissingTopologyFact,
+};
+// Used only by the test-only static fixup builder below.
+#[cfg(test)]
+use super::{
+    elements::{LegacyElementClass, LegacyElementEnvelope, LegacyElementResolution},
+    topology_adapter::LegacyStaticElementTopology,
 };
 
-#[derive(Debug, Error)]
-pub enum LegacySaveAdoptError {
-    #[error(transparent)]
-    Topology(#[from] LegacyTopologyAdapterError),
-    #[error(
-        "saved static element slot {slot}, creation order {creation_order}, class {class:?} has no initialized Rust entity"
-    )]
-    MissingStaticEntity {
-        slot: usize,
-        creation_order: u32,
-        class: LegacyElementClass,
-    },
-    #[error(
-        "saved static mobile master slot {slot}, creation order {creation_order} requires mobile-state adoption"
-    )]
-    UnsupportedMobileMaster { slot: usize, creation_order: u32 },
-    #[error(
-        "saved dynamic element slot {slot}, creation order {creation_order}, class {class:?} requires dynamic factory adoption"
-    )]
-    UnsupportedDynamicElement {
-        slot: usize,
-        creation_order: u32,
-        class: LegacyElementClass,
-    },
-    #[error(
-        "initialized entity {entity_id} occurs at both Original creation orders {first_creation_order} and {second_creation_order}"
-    )]
-    DuplicateInitializedEntity {
-        entity_id: EntityId,
-        first_creation_order: u32,
-        second_creation_order: u32,
-    },
-    #[error("save references absent Original element creation order {creation_order}")]
-    MissingCreationOrderReference { creation_order: u32 },
-    #[error(
-        "save references AI element slot {slot}, but the serialized element array contains only {element_count} records"
-    )]
-    MissingAiElementSlot { slot: u16, element_count: usize },
-    #[error(
-        "save references Original mobile master at AI element slot {slot}; mobile masters are not actors"
-    )]
-    MobileMasterAiReference { slot: u16 },
-    #[error("saved position field {field} has value {value}; expected {expected}")]
-    InvalidPositionField {
-        field: &'static str,
-        value: String,
-        expected: &'static str,
-    },
-    #[error(
-        "saved position field {field} references index {index}, but initialized topology contains only {count} entries"
-    )]
-    MissingPositionTopologyEntry {
-        field: &'static str,
-        index: usize,
-        count: usize,
-    },
-    #[error(
-        "saved position field {field} references Original sector slot {index}, which has no Rust position-sector counterpart"
-    )]
-    UnmappedPositionSector { field: &'static str, index: usize },
-    #[error("cannot derive Original position topology: {detail}")]
-    InvalidPositionTopology { detail: String },
-}
+const POSITION: AdoptSite = AdoptSite::new("saved position");
 
 /// Rust obstacle identity and the top plane paired with it.
 ///
@@ -187,102 +127,63 @@ pub struct LegacyLineTopology {
     by_original_identity: BTreeMap<(u16, i16), JumpLineIndex>,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum LegacyLineTopologyError {
-    #[error("initialized jump-line runtime index {index} exceeds u32")]
-    RuntimeIndexOverflow { index: usize },
-    #[error("initialized jump-line runtime index equals the null sentinel")]
-    RuntimeIndexNullSentinel,
-    #[error("initialized jump-line layer {layer} contains more than i16::MAX entries")]
-    LayerIndexOverflow { layer: u16 },
-    #[error(
-        "saved jump-line field {field} has inconsistent null identity layer={layer:?}, index={index:?}"
-    )]
-    InconsistentNull {
-        field: &'static str,
-        layer: Option<u16>,
-        index: Option<i16>,
-    },
-    #[error(
-        "saved jump-line field {field} references missing Original line layer {layer}, index {index}"
-    )]
-    Missing {
-        field: &'static str,
-        layer: u16,
-        index: i16,
-    },
-    #[error(
-        "saved jump-line field {field} references shifted Original line layer {layer}, index {index}, but owner {owner} and primary target {target} do not identify a reciprocal table-swordfight line"
-    )]
-    MissingGeometryIdentity {
-        field: &'static str,
-        layer: u16,
-        index: i16,
-        owner: u32,
-        target: u32,
-    },
-    #[error(
-        "saved jump-line field {field} references shifted Original line layer {layer}, index {index}, but owner {owner} and primary target {target} ambiguously identify runtime lines {candidates:?}"
-    )]
-    AmbiguousGeometryIdentity {
-        field: &'static str,
-        layer: u16,
-        index: i16,
-        owner: u32,
-        target: u32,
-        candidates: Vec<u32>,
-    },
-    #[error("initialized mission retained {retained} jump-line identities for {runtime} lines")]
-    RetainedIdentityCountMismatch { retained: usize, runtime: usize },
-    #[error(
-        "initialized mission retained duplicate jump-line identity layer {layer}, index {index}"
-    )]
-    DuplicateIdentity { layer: u16, index: i16 },
+const JUMP_LINE: AdoptSite = AdoptSite::new("saved jump-line");
+
+/// Saved owner/primary-target geometry that identifies a shifted retail
+/// enemy jump line (see [`LegacyLineTopology::resolve_enemy_jump_line`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LegacyEnemyJumpLineGeometry {
+    pub owner: u32,
+    pub owner_sector: SectorHandle,
+    pub target: u32,
+    pub target_sector: SectorHandle,
+    pub target_position: crate::coordinates::MapPoint,
+    pub maximal_sword_range: f32,
 }
 
 impl LegacyLineTopology {
     /// Reconstruct exact `(layer, combined-line ordinal)` identities retained
     /// while the initialized mission's complete line arrays were built.
-    pub fn derive(
-        engine: &EngineInner,
-        assets: &LevelAssets,
-    ) -> Result<Self, LegacyLineTopologyError> {
+    pub fn derive(engine: &EngineInner, assets: &LevelAssets) -> Result<Self, LegacyAdoptError> {
         let runtime = engine.world.fast_grid.level.jump_lines.len();
         let Some(retained) = assets.navigation.legacy_grid_topology.as_ref() else {
             if runtime == 0 {
                 return Ok(Self::default());
             }
-            return Err(LegacyLineTopologyError::RetainedIdentityCountMismatch {
+            return Err(AdoptErrorKind::JumpLineRetainedCountMismatch {
                 retained: 0,
                 runtime,
-            });
+            }
+            .into());
         };
         if retained.jump_line_identities.len() != runtime {
-            return Err(LegacyLineTopologyError::RetainedIdentityCountMismatch {
+            return Err(AdoptErrorKind::JumpLineRetainedCountMismatch {
                 retained: retained.jump_line_identities.len(),
                 runtime,
-            });
+            }
+            .into());
         }
         Self::derive_from_identities(retained.jump_line_identities.iter().copied())
     }
 
     fn derive_from_identities(
         identities: impl IntoIterator<Item = (u16, i16)>,
-    ) -> Result<Self, LegacyLineTopologyError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut by_original_identity = BTreeMap::new();
         for (runtime_index, identity) in identities.into_iter().enumerate() {
             let raw_runtime_index = u32::try_from(runtime_index).map_err(|_| {
-                LegacyLineTopologyError::RuntimeIndexOverflow {
+                AdoptErrorKind::JumpLineRuntimeIndexOverflow {
                     index: runtime_index,
                 }
             })?;
             let handle = JumpLineIndex::new(raw_runtime_index)
-                .ok_or(LegacyLineTopologyError::RuntimeIndexNullSentinel)?;
+                .ok_or(AdoptErrorKind::JumpLineRuntimeIndexNullSentinel)?;
             if by_original_identity.insert(identity, handle).is_some() {
-                return Err(LegacyLineTopologyError::DuplicateIdentity {
+                return Err(AdoptErrorKind::DuplicateJumpLineIdentity {
                     layer: identity.0,
                     index: identity.1,
-                });
+                }
+                .into());
             }
         }
         Ok(Self {
@@ -291,24 +192,22 @@ impl LegacyLineTopology {
     }
 
     #[cfg(test)]
-    fn derive_from_layers(
-        layers: impl IntoIterator<Item = u16>,
-    ) -> Result<Self, LegacyLineTopologyError> {
+    fn derive_from_layers(layers: impl IntoIterator<Item = u16>) -> Result<Self, LegacyAdoptError> {
         let mut next_in_layer = BTreeMap::<u16, i16>::new();
         let mut by_original_identity = BTreeMap::new();
         for (runtime_index, layer) in layers.into_iter().enumerate() {
             let index_in_layer = next_in_layer.entry(layer).or_default();
             let raw_runtime_index = u32::try_from(runtime_index).map_err(|_| {
-                LegacyLineTopologyError::RuntimeIndexOverflow {
+                AdoptErrorKind::JumpLineRuntimeIndexOverflow {
                     index: runtime_index,
                 }
             })?;
             let handle = JumpLineIndex::new(raw_runtime_index)
-                .ok_or(LegacyLineTopologyError::RuntimeIndexNullSentinel)?;
+                .ok_or(AdoptErrorKind::JumpLineRuntimeIndexNullSentinel)?;
             by_original_identity.insert((layer, *index_in_layer), handle);
             *index_in_layer = index_in_layer
                 .checked_add(1)
-                .ok_or(LegacyLineTopologyError::LayerIndexOverflow { layer })?;
+                .ok_or(AdoptErrorKind::JumpLineLayerIndexOverflow { layer })?;
         }
         Ok(Self {
             by_original_identity,
@@ -319,7 +218,7 @@ impl LegacyLineTopology {
         &self,
         field: &'static str,
         reference: LegacyLineRef,
-    ) -> Result<Option<JumpLineIndex>, LegacyLineTopologyError> {
+    ) -> Result<Option<JumpLineIndex>, LegacyAdoptError> {
         match (reference.layer, reference.index) {
             (None, None) => Ok(None),
             (Some(layer), Some(index)) if index >= 0 => self
@@ -327,16 +226,13 @@ impl LegacyLineTopology {
                 .get(&(layer, index))
                 .copied()
                 .map(Some)
-                .ok_or(LegacyLineTopologyError::Missing {
-                    field,
-                    layer,
-                    index,
+                .ok_or_else(|| {
+                    JUMP_LINE.field_error(field, AdoptErrorKind::MissingLine { layer, index })
                 }),
-            (layer, index) => Err(LegacyLineTopologyError::InconsistentNull {
-                field,
-                layer,
-                index,
-            }),
+            (layer, index) => {
+                Err(JUMP_LINE
+                    .field_error(field, AdoptErrorKind::InconsistentLineNull { layer, index }))
+            }
         }
     }
 
@@ -353,67 +249,54 @@ impl LegacyLineTopology {
         field: &'static str,
         reference: LegacyLineRef,
         fast_grid: &crate::fast_find_grid::FastFindGrid,
-        owner: u32,
-        owner_sector: crate::position_interface::SectorHandle,
-        target: u32,
-        target_sector: crate::position_interface::SectorHandle,
-        target_position: crate::coordinates::MapPoint,
-        maximal_sword_range: f32,
-    ) -> Result<Option<JumpLineIndex>, LegacyLineTopologyError> {
+        geometry: LegacyEnemyJumpLineGeometry,
+    ) -> Result<Option<JumpLineIndex>, LegacyAdoptError> {
+        let LegacyEnemyJumpLineGeometry {
+            owner,
+            owner_sector,
+            target,
+            target_sector,
+            target_position,
+            maximal_sword_range,
+        } = geometry;
         let (layer, index) = match (reference.layer, reference.index) {
             (None, None) => return Ok(None),
             (Some(layer), Some(index)) if index >= 0 => (layer, index),
             (layer, index) => {
-                return Err(LegacyLineTopologyError::InconsistentNull {
-                    field,
-                    layer,
-                    index,
-                });
+                return Err(JUMP_LINE
+                    .field_error(field, AdoptErrorKind::InconsistentLineNull { layer, index }));
             }
         };
         if let Some(line) = self.by_original_identity.get(&(layer, index)).copied() {
             return Ok(Some(line));
         }
+        let missing_geometry = || {
+            JUMP_LINE.field_error(
+                field,
+                AdoptErrorKind::MissingLineGeometry {
+                    layer,
+                    index,
+                    owner,
+                    target,
+                },
+            )
+        };
 
         let Some(owner_sector_index) = owner_sector.arena_index() else {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         };
         let Some(target_sector_index) = target_sector.arena_index() else {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         };
         if owner_sector_index == target_sector_index {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         }
         let Some(target_sector_data) = fast_grid
             .level
             .sectors
             .get(usize::from(target_sector_index))
         else {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         };
 
         let mut candidates = Vec::<(JumpLineIndex, f32)>::new();
@@ -448,13 +331,7 @@ impl LegacyLineTopology {
         }
         candidates.sort_by(|left, right| left.1.total_cmp(&right.1));
         let Some(&(best, best_distance)) = candidates.first() else {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         };
         let tied = candidates
             .iter()
@@ -462,14 +339,16 @@ impl LegacyLineTopology {
             .map(|(line, _)| line.get())
             .collect::<Vec<_>>();
         if tied.len() != 1 {
-            return Err(LegacyLineTopologyError::AmbiguousGeometryIdentity {
+            return Err(JUMP_LINE.field_error(
                 field,
-                layer,
-                index,
-                owner,
-                target,
-                candidates: tied,
-            });
+                AdoptErrorKind::AmbiguousLineGeometry {
+                    layer,
+                    index,
+                    owner,
+                    target,
+                    candidates: tied,
+                },
+            ));
         }
         let owner_line = &fast_grid.level.jump_lines[usize::from(best)];
         let target_line = &fast_grid.level.jump_lines[owner_line
@@ -477,26 +356,14 @@ impl LegacyLineTopology {
             .expect("candidate was reciprocal")
             as usize];
         if (owner_line.z_a - target_line.z_a).abs() > 40.0 {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         }
         let owner_mid = owner_line.get_middle_point();
         let target_mid = target_line.get_middle_point();
         let middle_distance =
             ((owner_mid.x - target_mid.x).powi(2) + (owner_mid.y - target_mid.y).powi(2)).sqrt();
         if middle_distance + best_distance > maximal_sword_range {
-            return Err(LegacyLineTopologyError::MissingGeometryIdentity {
-                field,
-                layer,
-                index,
-                owner,
-                target,
-            });
+            return Err(missing_geometry());
         }
         Ok(Some(best))
     }
@@ -524,10 +391,14 @@ impl LegacyEntityFixups {
     /// returning a partial map would let later state conversion silently bind
     /// references to the wrong entity. Their exact constructors are added by
     /// subsequent adoption stages.
+    ///
+    /// Only unit tests use this static-only slice; production adoption builds
+    /// the complete map including dynamic elements.
+    #[cfg(test)]
     pub fn build(
         envelope: &LegacyElementEnvelope,
         topology: &LegacyStaticElementTopology,
-    ) -> Result<Self, LegacySaveAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut initialized_by_creation_order = BTreeMap::new();
         for (&entity_id, &creation_order) in &topology.creation_order_by_entity {
             initialized_by_creation_order.insert(creation_order, entity_id);
@@ -557,20 +428,28 @@ impl LegacyEntityFixups {
                                 by_saved_slot.push(None);
                                 continue;
                             }
-                            return Err(LegacySaveAdoptError::MissingStaticEntity {
-                                slot: record.slot,
-                                creation_order: record.creation_order,
-                                class: record.class,
-                            });
+                            return Err(AdoptSite::element(
+                                "saved static element",
+                                record.creation_order,
+                            )
+                            .error(
+                                AdoptErrorKind::MissingStaticEntity {
+                                    slot: record.slot,
+                                    class: record.class,
+                                },
+                            ));
                         }
                     }
                 }
                 LegacyElementResolution::ConstructDynamic { .. } => {
-                    return Err(LegacySaveAdoptError::UnsupportedDynamicElement {
-                        slot: record.slot,
-                        creation_order: record.creation_order,
-                        class: record.class,
-                    });
+                    return Err(
+                        AdoptSite::element("saved dynamic element", record.creation_order).error(
+                            AdoptErrorKind::UnsupportedDynamicElement {
+                                slot: record.slot,
+                                class: record.class,
+                            },
+                        ),
+                    );
                 }
             };
 
@@ -579,11 +458,12 @@ impl LegacyEntityFixups {
             if let Some(first_creation_order) =
                 creation_order_by_entity.insert(entity_id, record.creation_order)
             {
-                return Err(LegacySaveAdoptError::DuplicateInitializedEntity {
+                return Err(AdoptErrorKind::DuplicateInitializedEntity {
                     entity_id,
                     first_creation_order,
                     second_creation_order: record.creation_order,
-                });
+                }
+                .into());
             }
         }
 
@@ -599,14 +479,14 @@ impl LegacyEntityFixups {
     pub fn resolve_element(
         &self,
         reference: LegacyElementRef,
-    ) -> Result<Option<EntityId>, LegacySaveAdoptError> {
+    ) -> Result<Option<EntityId>, LegacyAdoptError> {
         reference
             .0
             .map(|creation_order| {
                 self.by_creation_order
                     .get(&creation_order)
                     .copied()
-                    .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })
+                    .ok_or_else(|| missing_creation_order(creation_order))
             })
             .transpose()
     }
@@ -615,32 +495,27 @@ impl LegacyEntityFixups {
     pub fn resolve_ai_element(
         &self,
         reference: LegacyAiElementRef,
-    ) -> Result<Option<EntityId>, LegacySaveAdoptError> {
+    ) -> Result<Option<EntityId>, LegacyAdoptError> {
         reference
             .0
             .map(|slot| {
-                self.by_saved_slot
+                Ok(self
+                    .by_saved_slot
                     .get(usize::from(slot))
                     .copied()
-                    .ok_or(LegacySaveAdoptError::MissingAiElementSlot {
+                    .ok_or(AdoptErrorKind::MissingAiElementSlot {
                         slot,
                         element_count: self.by_saved_slot.len(),
                     })?
-                    .ok_or(LegacySaveAdoptError::MobileMasterAiReference { slot })
+                    .ok_or(AdoptErrorKind::MobileMasterAiReference { slot })?)
             })
             .transpose()
     }
 }
 
-/// Derive and validate the complete entity-reference plan without mutating the
-/// initialized engine.
-pub fn preflight_initialized_v48_adoption(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-    body: &LegacySaveBody,
-) -> Result<LegacyEntityFixups, LegacySaveAdoptError> {
-    let topology = derive_static_element_topology(engine, assets)?;
-    LegacyEntityFixups::build(&body.element_envelope, &topology)
+/// Error for a saved creation-order reference absent from the element map.
+pub(crate) fn missing_creation_order(creation_order: u32) -> LegacyAdoptError {
+    AdoptErrorKind::MissingCreationOrderReference { creation_order }.into()
 }
 
 /// Reconstruct the mission-created arrays used by position pointer fixups.
@@ -660,7 +535,7 @@ pub fn preflight_initialized_v48_adoption(
 fn build_position_sector_identities(
     retained: &crate::engine::LegacyGridTopologyAssets,
     runtime_sectors: &[GridSector],
-) -> Result<Vec<Option<LegacyPositionSectorIdentity>>, LegacySaveAdoptError> {
+) -> Result<Vec<Option<LegacyPositionSectorIdentity>>, LegacyAdoptError> {
     if retained.position_sector_numbers.len() != retained.sectors.len()
         || retained.position_sector_indices.len() != retained.sectors.len()
     {
@@ -724,13 +599,13 @@ fn build_position_sector_identities(
 pub fn derive_position_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
-) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
+) -> Result<LegacyPositionTopology, LegacyAdoptError> {
     let retained = assets.navigation.legacy_grid_topology.as_ref().ok_or({
-        LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissingRetainedFact {
+        AdoptErrorKind::MissingRetainedFact {
             fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
             original_owner: "spatial-grid construction-time arrays",
             detail: "position adoption requires the retained sparse sector and gate arrays",
-        })
+        }
     })?;
     let gate_order =
         derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
@@ -789,7 +664,7 @@ fn build_position_topology(
     sector_doors: Vec<Option<DoorHandle>>,
     gate_order: &[crate::gate::DoorIndex],
     obstacles: &[crate::sight_obstacle::SightObstacle],
-) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
+) -> Result<LegacyPositionTopology, LegacyAdoptError> {
     if sector_indices.len() != sectors.len() {
         return Err(position_topology_detail(format!(
             "position topology has {} public sector slots but {} runtime-index slots",
@@ -878,10 +753,12 @@ fn build_position_topology(
     })
 }
 
-fn position_topology_detail(detail: impl Into<String>) -> LegacySaveAdoptError {
-    LegacySaveAdoptError::InvalidPositionTopology {
+fn position_topology_detail(detail: impl Into<String>) -> LegacyAdoptError {
+    AdoptErrorKind::TopologyMismatch {
+        what: "position",
         detail: detail.into(),
     }
+    .into()
 }
 
 /// Validate and normalize one serialized position without mutating its owner.
@@ -893,17 +770,17 @@ pub(crate) fn preflight_v48_position(
     payload: &LegacyPositionPayload,
     entities: &LegacyEntityFixups,
     topology: &LegacyPositionTopology,
-) -> Result<PositionInterfaceV48State, LegacySaveAdoptError> {
+) -> Result<PositionInterfaceV48State, LegacyAdoptError> {
     let computed_position =
         PositionComputed::from_bits(u8::try_from(payload.computed_position).map_err(|_| {
-            invalid_position(
+            POSITION.invalid(
                 "computed_position",
                 payload.computed_position,
                 "computed-position bit mask 0..7",
             )
         })?)
         .ok_or_else(|| {
-            invalid_position(
+            POSITION.invalid(
                 "computed_position",
                 payload.computed_position,
                 "computed-position bit mask 0..7",
@@ -911,14 +788,14 @@ pub(crate) fn preflight_v48_position(
         })?;
     let computed_increment =
         IncrementComputed::from_bits(u8::try_from(payload.computed_increment).map_err(|_| {
-            invalid_position(
+            POSITION.invalid(
                 "computed_increment",
                 payload.computed_increment,
                 "computed-increment bit mask 0..7",
             )
         })?)
         .ok_or_else(|| {
-            invalid_position(
+            POSITION.invalid(
                 "computed_increment",
                 payload.computed_increment,
                 "computed-increment bit mask 0..7",
@@ -931,14 +808,14 @@ pub(crate) fn preflight_v48_position(
     // gameplay later consumes the value as a material.
     let material = payload.material;
     let posture = crate::element::Posture::try_from(payload.posture).map_err(|_| {
-        invalid_position(
+        POSITION.invalid(
             "posture",
             payload.posture,
             "serialized posture ordinal 0..24",
         )
     })?;
     let old_posture = crate::element::Posture::try_from(payload.old_posture).map_err(|_| {
-        invalid_position(
+        POSITION.invalid(
             "old_posture",
             payload.old_posture,
             "serialized posture ordinal 0..24",
@@ -946,10 +823,12 @@ pub(crate) fn preflight_v48_position(
     })?;
     let direction = checked_direction("direction", payload.direction)?;
     let direction_goal = checked_direction("direction_goal", payload.direction_goal)?;
-    let sector = checked_sector("sector", payload.sector.0, &topology.sectors)?;
-    let sector_index = checked_sector_index("sector", payload.sector.0, &topology.sector_indices)?;
-    let sector_goal = checked_sector("sector_goal", payload.sector_goal.0, &topology.sectors)?;
-    let sector_goal_index = checked_sector_index(
+    let sector = POSITION.checked_sector("sector", payload.sector.0, &topology.sectors)?;
+    let sector_index =
+        POSITION.checked_sector("sector", payload.sector.0, &topology.sector_indices)?;
+    let sector_goal =
+        POSITION.checked_sector("sector_goal", payload.sector_goal.0, &topology.sectors)?;
+    let sector_goal_index = POSITION.checked_sector(
         "sector_goal",
         payload.sector_goal.0,
         &topology.sector_indices,
@@ -1011,105 +890,27 @@ pub(crate) fn preflight_v48_position(
     })
 }
 
-fn invalid_position(
-    field: &'static str,
-    value: impl std::fmt::Display,
-    expected: &'static str,
-) -> LegacySaveAdoptError {
-    LegacySaveAdoptError::InvalidPositionField {
-        field,
-        value: value.to_string(),
-        expected,
-    }
-}
-
-fn checked_direction(field: &'static str, raw: i16) -> Result<Direction, LegacySaveAdoptError> {
+fn checked_direction(field: &'static str, raw: i16) -> Result<Direction, LegacyAdoptError> {
     if !(0..16).contains(&raw) {
-        return Err(invalid_position(field, raw, "direction sector 0..15"));
+        return Err(POSITION.invalid(field, raw, "direction sector 0..15"));
     }
     Ok(Direction::from_raw(i32::from(raw)))
-}
-
-fn checked_sector(
-    field: &'static str,
-    raw: Option<u16>,
-    sectors: &[Option<SectorHandle>],
-) -> Result<Option<SectorHandle>, LegacySaveAdoptError> {
-    let Some(index) = raw else {
-        return Ok(None);
-    };
-    let Some(sector) = sectors.get(usize::from(index)) else {
-        return Err(LegacySaveAdoptError::MissingPositionTopologyEntry {
-            field,
-            index: usize::from(index),
-            count: sectors.len(),
-        });
-    };
-    (*sector)
-        .map(Some)
-        .ok_or(LegacySaveAdoptError::UnmappedPositionSector {
-            field,
-            index: usize::from(index),
-        })
-}
-
-fn checked_sector_index(
-    field: &'static str,
-    raw: Option<u16>,
-    sectors: &[Option<SectorIndex>],
-) -> Result<Option<SectorIndex>, LegacySaveAdoptError> {
-    let Some(index) = raw else {
-        return Ok(None);
-    };
-    let Some(sector) = sectors.get(usize::from(index)) else {
-        return Err(LegacySaveAdoptError::MissingPositionTopologyEntry {
-            field,
-            index: usize::from(index),
-            count: sectors.len(),
-        });
-    };
-    (*sector)
-        .map(Some)
-        .ok_or(LegacySaveAdoptError::UnmappedPositionSector {
-            field,
-            index: usize::from(index),
-        })
 }
 
 fn checked_index<'a, T>(
     field: &'static str,
     raw: Option<i16>,
     values: &'a [T],
-) -> Result<Option<&'a T>, LegacySaveAdoptError> {
+) -> Result<Option<&'a T>, LegacyAdoptError> {
     let Some(raw) = raw else {
         return Ok(None);
     };
     let index = usize::try_from(raw)
-        .map_err(|_| invalid_position(field, raw, "non-negative initialized-array index"))?;
+        .map_err(|_| POSITION.invalid(field, raw, "non-negative initialized-array index"))?;
     values
         .get(index)
         .map(Some)
-        .ok_or(LegacySaveAdoptError::MissingPositionTopologyEntry {
-            field,
-            index,
-            count: values.len(),
-        })
-}
-
-fn point2(value: LegacyPoint2) -> MapPoint {
-    MapPoint::new(value.x, value.y)
-}
-
-fn vector2(value: LegacyPoint2) -> MapVec {
-    MapVec::new(value.x, value.y)
-}
-
-fn point3(value: LegacyPoint3) -> WorldPoint3D {
-    WorldPoint3D::new(value.x, value.y, value.z)
-}
-
-fn vector3(value: LegacyPoint3) -> WorldVec3D {
-    WorldVec3D::new(value.x, value.y, value.z)
+        .ok_or_else(|| POSITION.out_of_range(field, "index", index, values.len()))
 }
 
 fn bounding_box(value: LegacyBoundingBox2) -> MapBBox {
@@ -1128,10 +929,11 @@ fn bounding_box(value: LegacyBoundingBox2) -> MapBBox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinates::MapPoint;
     use crate::element::EntityIdKind;
     use crate::legacy_save::{
         elements::{LegacyElementFixupTable, LegacyElementRecord, LegacyElementResolution},
-        payload_base::{LegacySectorRef, LegacySignedIndexRef},
+        payload_base::{LegacyPoint2, LegacyPoint3, LegacySectorRef, LegacySignedIndexRef},
         payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
     };
     use crate::position_interface::PositionInterface;
@@ -1269,15 +1071,21 @@ mod tests {
 
         assert!(matches!(
             fixups.resolve_element(LegacyElementRef(Some(999))),
-            Err(LegacySaveAdoptError::MissingCreationOrderReference {
-                creation_order: 999
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissingCreationOrderReference {
+                    creation_order: 999
+                },
+                ..
             })
         ));
         assert!(matches!(
             fixups.resolve_ai_element(LegacyAiElementRef(Some(1))),
-            Err(LegacySaveAdoptError::MissingAiElementSlot {
-                slot: 1,
-                element_count: 1
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissingAiElementSlot {
+                    slot: 1,
+                    element_count: 1
+                },
+                ..
             })
         ));
     }
@@ -1462,7 +1270,13 @@ mod tests {
                 .unwrap_err();
         assert!(matches!(
             obstacle_error,
-            LegacySaveAdoptError::InvalidPositionTopology { .. }
+            LegacyAdoptError {
+                kind: AdoptErrorKind::TopologyMismatch {
+                    what: "position",
+                    ..
+                },
+                ..
+            }
         ));
     }
 
@@ -1594,11 +1408,12 @@ mod tests {
 
         assert!(matches!(
             error,
-            LegacySaveAdoptError::InvalidPositionField {
-                field: "direction",
+            LegacyAdoptError {
+                kind: AdoptErrorKind::InvalidValue { .. },
                 ..
             }
         ));
+        assert_eq!(error.field.as_deref(), Some("direction"));
         assert_eq!(
             position.get_pathfinder_index(),
             before.get_pathfinder_index()
@@ -1687,7 +1502,10 @@ mod tests {
                     index: None,
                 },
             ),
-            Err(LegacyLineTopologyError::InconsistentNull { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::InconsistentLineNull { .. },
+                ..
+            })
         ));
         assert!(matches!(
             topology.resolve(
@@ -1697,7 +1515,10 @@ mod tests {
                     index: Some(1),
                 },
             ),
-            Err(LegacyLineTopologyError::Missing { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissingLine { .. },
+                ..
+            })
         ));
     }
 
@@ -1738,6 +1559,21 @@ mod tests {
         grid
     }
 
+    fn test_enemy_geometry() -> LegacyEnemyJumpLineGeometry {
+        LegacyEnemyJumpLineGeometry {
+            owner: 126,
+            owner_sector: SectorHandle::new(10)
+                .unwrap()
+                .with_arena_index(SectorIndex::new(0).unwrap()),
+            target: 172,
+            target_sector: SectorHandle::new(20)
+                .unwrap()
+                .with_arena_index(SectorIndex::new(1).unwrap()),
+            target_position: MapPoint::new(5.0, 4.0),
+            maximal_sword_range: 50.0,
+        }
+    }
+
     #[test]
     fn shifted_enemy_line_uses_unique_primary_target_geometry() {
         let grid = ambiguous_jump_grid(12.0);
@@ -1750,16 +1586,7 @@ mod tests {
                     index: Some(1399),
                 },
                 &grid,
-                126,
-                SectorHandle::new(10)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(0).unwrap()),
-                172,
-                SectorHandle::new(20)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(1).unwrap()),
-                MapPoint::new(5.0, 4.0),
-                50.0,
+                test_enemy_geometry(),
             )
             .unwrap();
         assert_eq!(resolved, JumpLineIndex::new(0));
@@ -1777,22 +1604,16 @@ mod tests {
                     index: Some(1399),
                 },
                 &grid,
-                126,
-                SectorHandle::new(10)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(0).unwrap()),
-                172,
-                SectorHandle::new(20)
-                    .unwrap()
-                    .with_arena_index(SectorIndex::new(1).unwrap()),
-                MapPoint::new(5.0, 4.0),
-                50.0,
+                test_enemy_geometry(),
             )
             .unwrap_err();
         assert!(matches!(
             error,
-            LegacyLineTopologyError::AmbiguousGeometryIdentity {
-                candidates,
+            LegacyAdoptError {
+                kind: AdoptErrorKind::AmbiguousLineGeometry {
+                    candidates,
+                    ..
+                },
                 ..
             } if candidates == vec![0, 2]
         ));

@@ -1,7 +1,5 @@
 //! Adoption of original-game mobile masters kept outside Rust's entity arena.
 
-use thiserror::Error;
-
 use crate::{
     coordinates::{MapPoint, MapVec},
     element::EntityId,
@@ -10,30 +8,13 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacyPositionTopology},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_objects::LegacyObjectItemPayload,
 };
 
-#[derive(Debug, Error)]
-pub enum LegacyMobileAdoptError {
-    #[error("saved mobile creation order {creation_order} has no initialized mobile master")]
-    MissingMaster { creation_order: u32 },
-    #[error(
-        "saved mobile {mobile_index} has {saved} masked children, initialized master has {runtime}"
-    )]
-    ChildCount {
-        mobile_index: usize,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error("saved mobile {mobile_index} field {field} contains non-finite value {value}")]
-    NonFinite {
-        mobile_index: usize,
-        field: &'static str,
-        value: f32,
-    },
-    #[error("saved mobile {mobile_index} references absent Original sector slot {sector}")]
-    MissingSector { mobile_index: usize, sector: u16 },
+fn mobile_site(mobile_index: usize) -> AdoptSite {
+    AdoptSite::owned(format!("saved mobile {mobile_index}"))
 }
 
 struct SavedMobile {
@@ -68,7 +49,7 @@ impl LegacyMobileAdoptionPlan {
         payloads: &LegacyElementPayloadStream,
         entities: &LegacyEntityFixups,
         positions: &LegacyPositionTopology,
-    ) -> Result<Self, LegacyMobileAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut records = Vec::new();
         for record in &payloads.records {
             let LegacyElementPayload::ObjectItem(LegacyObjectItemPayload::Mobile(saved)) =
@@ -81,14 +62,22 @@ impl LegacyMobileAdoptionPlan {
                 .mobile_by_creation_order
                 .get(&creation_order)
                 .copied()
-                .ok_or(LegacyMobileAdoptError::MissingMaster { creation_order })?;
+                .ok_or_else(|| {
+                    AdoptSite::element("saved mobile", creation_order).error(
+                        AdoptErrorKind::Missing {
+                            what: "initialized mobile master",
+                        },
+                    )
+                })?;
             let runtime = &engine.world.mobile_elements[mobile_index];
             if saved.sprites.len() != runtime.sprite_ids.len() {
-                return Err(LegacyMobileAdoptError::ChildCount {
-                    mobile_index,
-                    saved: saved.sprites.len(),
-                    runtime: runtime.sprite_ids.len(),
-                });
+                return Err(mobile_site(mobile_index).field_error(
+                    "masked_children",
+                    AdoptErrorKind::CountMismatch {
+                        saved: saved.sprites.len(),
+                        runtime: runtime.sprite_ids.len(),
+                    },
+                ));
             }
             for (field, value) in [
                 ("position.x", saved.element.sprite.position.map.x),
@@ -104,11 +93,8 @@ impl LegacyMobileAdoptionPlan {
                 ("acceleration", saved.acceleration),
             ] {
                 if !value.is_finite() {
-                    return Err(LegacyMobileAdoptError::NonFinite {
-                        mobile_index,
-                        field,
-                        value,
-                    });
+                    return Err(mobile_site(mobile_index)
+                        .field_error(field, AdoptErrorKind::NonFinite { value }));
                 }
             }
             let sector_slot = saved.element.sprite.position.sector.0;
@@ -117,9 +103,13 @@ impl LegacyMobileAdoptionPlan {
                     .sectors
                     .get(usize::from(slot))
                     .and_then(|sector| *sector)
-                    .ok_or(LegacyMobileAdoptError::MissingSector {
-                        mobile_index,
-                        sector: slot,
+                    .ok_or_else(|| {
+                        mobile_site(mobile_index).field_error(
+                            "sector",
+                            AdoptErrorKind::UnmappedSector {
+                                index: usize::from(slot),
+                            },
+                        )
                     })?
                     .get(),
                 None => u16::MAX,

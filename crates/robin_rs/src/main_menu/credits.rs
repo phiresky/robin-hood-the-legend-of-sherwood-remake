@@ -10,11 +10,12 @@
 //! cursor at start-up, and the outer-loop `ModalCursor` stops rendering
 //! for the duration of `show_credits`, so nothing draws over the scroll.
 
-use crate::gfx_types::Keycode;
 use robin_engine::sprite::BBox;
 
+use crate::application::require;
 use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
+use crate::ingame_menu::widget_bridge::ScreenKey;
 use crate::main_entry::picture_to_surface;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
@@ -35,9 +36,7 @@ pub(crate) async fn show_credits(
         return;
     }
 
-    let shipping = application_context
-        .shipping()
-        .unwrap_or_else(|error| panic!("Credits lost its ApplicationContext: {error}"));
+    let shipping = require(application_context.shipping(), "Credits screen");
     let files = match application_context.preparation_files() {
         Ok(files) => files.clone(),
         Err(error) => {
@@ -128,19 +127,15 @@ impl CreditsModalState {
         let events = event_pump.poll_events();
         renderer.sync_window_size(event_pump);
         for event in events {
-            match event {
-                // The original dismisses only on left-click or Escape.
-                // `Quit` is treated as an implicit ESC since the
-                // original game had no window-close path.
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                }
-                | GameEvent::MouseDown(_, _, 1, _) => {
-                    return true;
-                }
-                _ => {}
+            // The original dismisses only on left-click or Escape.
+            // `Quit` is treated as an implicit ESC since the
+            // original game had no window-close path.
+            if matches!(
+                ScreenKey::from_event(&event),
+                Some(ScreenKey::Quit | ScreenKey::Cancel)
+            ) || matches!(event, GameEvent::MouseDown(_, _, 1, _))
+            {
+                return true;
             }
         }
 

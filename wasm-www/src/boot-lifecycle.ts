@@ -36,7 +36,8 @@ export type BootDependencies = {
     readonly loadManifest: (base: string, ticket: VerifiedBrowserJoinTicket, signal: AbortSignal) => Promise<MultiplayerBuildManifest>;
     readonly loadRuntime: (base: string, compressed: boolean, latest: boolean, signal: AbortSignal) => Promise<RobinWasmModule>;
     readonly prepareContent: (ticket: VerifiedBrowserJoinTicket, manifest: MultiplayerBuildManifest, signal: AbortSignal) => Promise<PreparedMultiplayerContent>;
-    readonly loadDefaultContent: (latest: boolean, signal: AbortSignal) => Promise<BootContent>;
+    /** Loads the Demo datadir generation pinned by the selected build. */
+    readonly loadDefaultContent: (base: string, build: BuildSelection, signal: AbortSignal) => Promise<BootContent>;
     readonly preloadLocalAssets: (wasm: RobinWasmModule, assets: PreparedMultiplayerContent['assets']) => void;
     readonly preloadShippingFiles: (wasm: RobinWasmModule, files: PreparedMultiplayerContent['shippingFiles']) => void;
     readonly preloadAssets: (wasm: RobinWasmModule, base: string, latest: boolean, signal: AbortSignal) => Promise<void>;
@@ -85,7 +86,7 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
                     await withAbort(loadingSignal, () => deps.preloadAssets(loaded, base, build.source === 'latest', loadingSignal));
                     return loaded;
                 }),
-                withAbort(loadingSignal, () => deps.loadDefaultContent(build.source === 'latest', loadingSignal)),
+                withAbort(loadingSignal, () => deps.loadDefaultContent(base, build, loadingSignal)),
             ]);
         } catch (error) {
             failed.abort(error);

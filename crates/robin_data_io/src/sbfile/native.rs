@@ -13,7 +13,7 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 
 fn path_resolution_error(operation: &str, path: &Path, error: std::io::Error) -> SbFileError {
     tracing::warn!("asset {operation} {} failed: {error}", path.display());
-    SbFileError::Read
+    SbFileError::read_io(error)
 }
 
 fn is_missing_component(error: &std::io::Error) -> bool {
@@ -52,7 +52,7 @@ pub(super) fn first_case_folded_entry(
 pub(super) fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf>, SbFileError> {
     let Some(path_str) = path.to_str() else {
         tracing::warn!("asset path is not UTF-8: {}", path.display());
-        return Err(SbFileError::Read);
+        return Err(SbFileError::Read(None));
     };
     if cfg!(windows) {
         // The case-fold walk below cannot rebuild drive/verbatim prefixes
@@ -130,7 +130,7 @@ fn try_resolve_contained(root: &Path, candidate: &Path) -> Result<Option<PathBuf
             resolved.display(),
             root.display()
         );
-        return Err(SbFileError::Read);
+        return Err(SbFileError::Read(None));
     }
     Ok(Some(resolved))
 }

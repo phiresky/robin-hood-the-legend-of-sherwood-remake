@@ -5942,6 +5942,7 @@ name = "robin_data_io"
 version = "0.0.0"
 dependencies = [
  "fastrand",
+ "robin_state_hash_derive",
  "robin_util",
  "serde",
  "tempfile",
@@ -6362,7 +6363,6 @@ dependencies = [
  "nonmax",
  "robin_display_text",
  "serde",
- "serde-value",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",

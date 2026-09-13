@@ -6,8 +6,10 @@
 // Repeat warm loads with --repeat-replay FILE (repeatable; same package build).
 // Default mission=auto exercises normal production demo launch (correct demo team).
 // Explicit Dem_Lei_MP takes a different forced-mission path with a different team.
-// Endpoint: bootstrap and screenshot-after-two-rAF plus 500ms capture settle, NOT physical presentation.
-// --require-present also waits for Rust's first mission present-return marker.
+// Endpoint: Rust's first mission present-return marker, then screenshot-after-two-rAF
+// plus 500ms capture settle, NOT physical presentation. The run fails fast when the
+// page reports "boot failed". --require-present is accepted for compatibility; the
+// present-return marker is now always required.
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
@@ -80,7 +82,8 @@ for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_adm
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
-const dataPrefix = '/datadirs/demo-leicester/';
+const dataPrefix = '/datadirs/demo-leicester/v16/';
+const demoDatadirName = 'v16-web-opus-q80.rhdata.zst';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
 preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });
@@ -110,6 +113,14 @@ async function asset(path) {
         body = Buffer.from(JSON.stringify({ short: hash })); type = 'application/json';
     } else if (path === runtimePrefix + 'preload-assets.json') {
         body = Buffer.from(JSON.stringify(preload)); type = 'application/json';
+    } else if (path === runtimePrefix + 'manifest.json') {
+        // The shell loads the Demo datadir generation pinned by the build manifest.
+        const demo = await readFile(join(datadir, 'Data/datadir.bin'));
+        body = Buffer.from(JSON.stringify({ short: hash, multiplayerContent: { demo: {
+            url: `https://robinhood.phiresky.xyz${dataPrefix}${demoDatadirName}`,
+            sha256: sha256(demo), byteLength: demo.length,
+        } } }));
+        type = 'application/json';
     } else {
         let file;
         if (path.startsWith(runtimePrefix)) {
@@ -121,7 +132,7 @@ async function asset(path) {
             if (suffix === 'replay_admission_bg.wasm' && httpAdmissionBr) { body = httpAdmissionBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
             const suffix = path.slice(dataPrefix.length);
-            file = safePath(datadir, suffix === 'v8-web-opus-q80.rhdata.zst' ? 'Data/datadir.bin' : `Data/${suffix}`);
+            file = safePath(datadir, suffix === demoDatadirName ? 'Data/datadir.bin' : `Data/${suffix}`);
         } else file = safePath(site, path === '/' ? 'index.html' : path.slice(1));
         body ??= await readFile(file);
         type = ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.svg': 'image/svg+xml' })[extname(file)] ?? type;
@@ -163,7 +174,9 @@ const profile = await mkdtemp(join(tmpdir(), 'robin-production-startup-'));
 let browser, socket;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let browserErrors = '';
-let bootstrapEpoch, presentEpoch, replayState;
+const MISSION_PRESENT_MARKER = 'startup timing: first mission present returned';
+const BOOT_FAILED_MARKER = 'boot failed';
+let bootstrapEpoch, presentEpoch, replayState, bootFailure;
 try {
     browser = spawn(values.chrome, ['--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
     browser.stderr.on('data', data => { browserErrors += data; });
@@ -197,8 +210,10 @@ try {
             const line = p.args.map(arg => arg.value ?? arg.description ?? '').join(' ').replaceAll('%c', '');
             logs.push({ epochMs: p.timestamp, line });
             console.log(line);
-            if (line.includes('mission bootstrap: total elapsed_ms')) bootstrapEpoch ??= p.timestamp;
-            if (line.includes('startup timing: first mission present returned')) presentEpoch ??= p.timestamp;
+            // The engine no longer logs a separate bootstrap line; the first
+            // presented mission frame is the startup endpoint.
+            if (line.includes(MISSION_PRESENT_MARKER)) { bootstrapEpoch ??= p.timestamp; presentEpoch ??= p.timestamp; }
+            if (line.includes(BOOT_FAILED_MARKER)) bootFailure ??= line;
         } else if (message.method === 'Runtime.exceptionThrown') errors.push(message.params);
     });
     await send('Runtime.enable'); await send('Page.enable');
@@ -211,7 +226,7 @@ try {
         }
         output = replayRuns.length === 1 ? outputBase : `${outputBase}-${runIndex}`;
         records.length = 0; logs.length = 0; errors.length = 0;
-        bootstrapEpoch = undefined; presentEpoch = undefined; replayState = undefined;
+        bootstrapEpoch = undefined; presentEpoch = undefined; replayState = undefined; bootFailure = undefined;
         const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
         if (values.mission === 'auto') query.delete('mission');
         for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
@@ -227,8 +242,22 @@ try {
 
         await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/?${query}` });
         const deadline = Date.now() + 180000;
-        while ((!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
-        if (!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
+        // The shell writes "boot failed" only to its DOM (#bp-label, #log), not the
+        // console. Probe it without blocking the wait loop: at most one evaluation
+        // is in flight, since the page's main thread may be busy with wasm startup.
+        // The inlined shell script contains the marker, so never search body text.
+        let bootFailureProbe, lastBootFailureProbeAt = 0;
+        const probeBootFailure = () => {
+            if (bootFailureProbe || Date.now() - lastBootFailureProbeAt < 250) return;
+            lastBootFailureProbeAt = Date.now();
+            bootFailureProbe = send('Runtime.evaluate', {
+                expression: `[document.getElementById('bp-label')?.textContent ?? '', document.getElementById('log')?.textContent ?? ''].find(text => text.includes(${JSON.stringify(BOOT_FAILED_MARKER)})) ?? null`,
+                returnByValue: true,
+            }).then(reply => { bootFailure ??= reply.result?.value ?? undefined; }, () => {}).finally(() => { bootFailureProbe = undefined; });
+        };
+        while (!presentEpoch && !bootFailure && Date.now() < deadline && !errors.length) { probeBootFailure(); await sleep(20); }
+        if (bootFailure) throw new Error('Page reported boot failure: ' + bootFailure.slice(-2000));
+        if (!presentEpoch) throw new Error(`Startup did not reach required endpoint "${MISSION_PRESENT_MARKER}": ` + JSON.stringify(errors));
         if (replayContent !== undefined) {
             if (!logs.some(({ line }) => line.includes('Loaded replay (decoded):'))) {
                 throw new Error('Bootstrap completed without decoded replay playback');
@@ -344,7 +373,7 @@ try {
     }
     if (replayRuns.length > 1) await writeFile(outputBase + '.repeat.json', JSON.stringify(repeatResults, null, 2));
 } catch (error) {
-    await writeFile(output + '.failure.json', JSON.stringify({ error: String(error), errors, logs, records, browserErrors, bootstrapEpoch, presentEpoch, replayState, replayPath: values.replay ? resolve(values.replay) : null }, null, 2));
+    await writeFile(output + '.failure.json', JSON.stringify({ error: String(error), errors, logs, records, browserErrors, bootstrapEpoch, presentEpoch, bootFailure, replayState, replayPath: values.replay ? resolve(values.replay) : null }, null, 2));
     throw error;
 } finally {
     socket?.close();

@@ -18,10 +18,10 @@ use std::path::{Path, PathBuf};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_W, MenuTransform, align_bottom_right, dim_screen, elide_text_to_width_by,
-    enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
+    FALLBACK_PANEL_EDGE, MENU_W, MenuTransform, align_bottom_right, elide_text_to_width_by,
+    render_text_virt_font, wrap_text_for_box_font,
 };
-use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use crate::ingame_menu::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mission_roots};
 use crate::renderer::Renderer;
 use crate::scroll_view::ScrollView;
@@ -87,27 +87,16 @@ const ID_CANCEL: u32 = 1;
 /// player picked a launchable mission, `None` on cancel or when there's
 /// no launchable content.
 pub(crate) async fn show_custom_missions(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: ModalCursor<'_>,
+    io: &mut ModalScreenIo<'_, '_>,
     mods_root: &Path,
     files: &robin_engine::sbfile::SbFileSystem,
 ) -> Option<CustomMissionChoice> {
-    let Some(mut state) =
-        CustomMissionsState::new(event_pump, renderer, resources, mods_root, files)
-    else {
-        return None;
-    };
-    let mut io = ModalScreenIo {
-        window: event_pump,
-        renderer,
-        resources,
-        cursor: Some(&cursor),
-    };
+    let mut state = CustomMissionsState::new(io, mods_root, files)?;
+    // The loop stays here instead of `run_modal`: `Retry` re-ticks without
+    // frame pacing.
     loop {
         match state.tick(
-            &mut io,
+            io,
             #[cfg(not(target_arch = "wasm32"))]
             mods_root,
         ) {
@@ -150,12 +139,11 @@ impl CustomMissionsState {
     }
 
     fn new(
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
         mods_root: &Path,
         files: &robin_engine::sbfile::SbFileSystem,
     ) -> Option<Self> {
+        let resources = io.resources;
         let mods = scan_mission_roots(mods_root, crate::main_entry::overlay_mods_dir().as_deref());
         let entries = enumerate_missions(&mods, files);
         if entries.is_empty() {
@@ -165,10 +153,6 @@ impl CustomMissionsState {
             );
             return None;
         }
-
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
 
         let (btn_w, btn_h) = resources.button_dimensions();
         let play_label = "Play".to_string();
@@ -208,7 +192,7 @@ impl CustomMissionsState {
             mission_detail_lines(font, &entries[selected], detail_view.content_width() - 4);
         detail_view.set_total(detail_lines.len());
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
 
         // FrameWnd holds widget state (Focused/Pushed/Activated) across
         // frames — menu buttons take multiple ticks to traverse the state
@@ -239,30 +223,30 @@ impl CustomMissionsState {
         io: &mut ModalScreenIo<'_, '_>,
         #[cfg(not(target_arch = "wasm32"))] mods_root: &Path,
     ) -> CustomMissionsTick {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
         let resources = io.resources;
         let font = resources
             .menu_text_font_any()
             .expect("custom missions requires a body font");
 
         // ── Events ──────────────────────────────────────────────
+        // Interleaved: the scroll views and double-click test read the pointer
+        // state updated by each event, so `ScreenFrame::begin` does not apply.
         let mut activated: Option<u32> = None;
-        let (events, transform) =
-            crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
+        let screen = ScreenFrame::poll(io);
+        let transform = screen.transform;
+        for event in &screen.events {
             let previous_selected = self.selected;
-            self.input_state.update_from_event(&event, transform);
+            self.input_state.update_from_event(event, transform);
             let pointer = (
                 self.input_state.virt_x as i32,
                 self.input_state.virt_y as i32,
             );
-            if self.list_view.handle_event(&event, transform, pointer)
-                || self.detail_view.handle_event(&event, transform, pointer)
+            if self.list_view.handle_event(event, transform, pointer)
+                || self.detail_view.handle_event(event, transform, pointer)
             {
                 continue;
             }
-            match event {
+            match *event {
                 GameEvent::Quit => activated = Some(ID_CANCEL),
                 GameEvent::KeyDown { keycode, .. } => {
                     if let Some(action) = mission_key_action(
@@ -306,7 +290,7 @@ impl CustomMissionsState {
             // Only keyboard navigation reveals selection; wheel/drag scrolling
             // must remain independent of the currently selected mission.
             if matches!(
-                event,
+                *event,
                 GameEvent::KeyDown {
                     keycode: Keycode::Up
                         | Keycode::Down
@@ -328,10 +312,8 @@ impl CustomMissionsState {
             .expect("picker always has a Play button")
             .base_mut()
             .enabled = self.entries[self.selected].status.is_ok();
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        let (_, widget_activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
+        if let Some(id) = widget_activated {
             activated = Some(id);
         }
 
@@ -391,8 +373,8 @@ impl CustomMissionsState {
         }
 
         // ── Render ──────────────────────────────────────────────
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let renderer = &mut *io.renderer;
+        screen.begin_draw(renderer);
         // Skip the wood/parchment menu background — both panes draw on
         // their own solid fills, so the busy menu artwork would only
         // bleed through the edges and fight the list/detail text. The
@@ -415,10 +397,7 @@ impl CustomMissionsState {
             &self.detail_view,
         );
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &self.frame);
-        if let Some(cursor) = io.cursor {
-            cursor.draw(renderer, transform, &self.input_state);
-        }
-        renderer.present();
+        screen.finish(io, &self.input_state);
 
         CustomMissionsTick::Presented
     }
@@ -481,7 +460,7 @@ fn draw_list(
         )),
         Renderer::create_color_16(20, 15, 10),
     );
-    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, Renderer::create_color_16(180, 160, 100));
+    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, FALLBACK_PANEL_EDGE);
 
     for idx in view.visible_range() {
         let row_y = view.row_y(idx);
@@ -552,7 +531,7 @@ fn draw_detail_pane(
         )),
         Renderer::create_color_16(20, 15, 10),
     );
-    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, Renderer::create_color_16(180, 160, 100));
+    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, FALLBACK_PANEL_EDGE);
 
     // Same body font as the rows + the main menu's profile info block,
     // so the detail pane visually matches the rest of the menu.

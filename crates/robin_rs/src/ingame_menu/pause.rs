@@ -19,11 +19,9 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
-use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::UiState;
 use crate::widget::FrameWnd;
 use robin_engine::short_briefings::ShortBriefings;
@@ -34,7 +32,7 @@ use super::resources::{
     IngameMenuResources, MT_BTN_CONTINUE, MT_BTN_LOAD, MT_BTN_OPTIONS, MT_BTN_QUIT_GAME,
     MT_BTN_RESTART, MT_BTN_SAVE, MT_TTL_SHERWOOD_TRADING,
 };
-use super::widget_bridge::{self, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ScreenAudio, ScreenKey};
 
 /// Button indices / widget IDs.  Order is the widget creation order so
 /// `align_bottom_right` produces the canonical vertical stack.
@@ -218,88 +216,77 @@ impl PauseMenu {
     pub fn seed_mouse_from_window(
         &mut self,
         event_pump: &crate::window::GameWindow,
-        screen_w: i32,
-        screen_h: i32,
+        renderer: &Renderer,
     ) {
-        let transform = MenuTransform::centered(screen_w, screen_h);
         self.input_state
-            .seed_mouse_from_window(event_pump, transform);
+            .seed_mouse_from_window(event_pump, MenuTransform::for_renderer(renderer));
     }
 
     /// Feed a single event to the menu and return the updated outcome.
     pub fn handle_event(
         &mut self,
         event: &GameEvent,
-        screen_w: i32,
-        screen_h: i32,
+        transform: MenuTransform,
     ) -> PauseMenuOutcome {
-        self.handle_event_with_audio(event, screen_w, screen_h, None, None, None)
+        self.handle_event_with_audio(
+            event,
+            transform,
+            ScreenAudio {
+                sound: None,
+                backend: None,
+                sample_loader: None,
+            },
+        )
     }
 
     /// Feed a single event to the menu and return the updated outcome.
-    /// When audio is supplied, hover and activation events trigger the
-    /// same menu-button sounds as the original game.
+    /// `transform` is the live renderer's centred menu transform
+    /// ([`MenuTransform::for_renderer`]). When audio is supplied, hover and
+    /// activation events trigger the same menu-button sounds as the
+    /// original game.
     pub fn handle_event_with_audio(
         &mut self,
         event: &GameEvent,
-        screen_w: i32,
-        screen_h: i32,
-        sound: Option<&mut SoundManager>,
-        audio_backend: Option<&mut dyn AudioBackend>,
-        sample_loader: Option<&SampleLoader>,
+        transform: MenuTransform,
+        audio: ScreenAudio<'_>,
     ) -> PauseMenuOutcome {
-        let transform = MenuTransform::centered(screen_w, screen_h);
-
-        // Keyboard shortcuts (focus-manager behaviour).
-        match *event {
-            GameEvent::KeyDown {
-                keycode: Keycode::Escape,
-                ..
-            } => {
+        // Keyboard shortcuts (focus-manager behaviour). The pause menu has no
+        // window-close or Tab binding of its own.
+        match ScreenKey::from_event(event) {
+            Some(ScreenKey::Cancel) => {
                 self.outcome = PauseMenuOutcome::Continue;
                 return self.outcome;
             }
-            GameEvent::KeyDown {
-                keycode: Keycode::Up,
-                ..
-            } => self.move_keyboard_selection(-1),
-            GameEvent::KeyDown {
-                keycode: Keycode::Down,
-                ..
-            } => self.move_keyboard_selection(1),
-            GameEvent::KeyDown {
-                keycode: Keycode::Return,
-                ..
-            }
-            | GameEvent::KeyDown {
-                keycode: Keycode::KpEnter,
-                ..
-            } => {
+            Some(ScreenKey::Confirm) => {
                 // Return / KpEnter activate the currently-focused
                 // widget. Space is intentionally not a focus-manager
                 // activation key — don't add it.
                 self.activate(self.keyboard_selection);
                 return self.outcome;
             }
-            _ => {}
+            _ => match *event {
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } => self.move_keyboard_selection(-1),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } => self.move_keyboard_selection(1),
+                _ => {}
+            },
         }
 
         // Mouse input → widget state machine.
         self.input_state.update_from_event(event, transform);
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
-        if let (Some(sound), Some(sample_loader)) = (sound, sample_loader) {
-            widget_bridge::play_frame_widget_noise(
-                &events,
-                &self.frame,
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                sound,
-                audio_backend,
-                sample_loader,
-                &mut self.noisy_tracker,
-            );
-        }
+        let events = self.input_state.process_frame(&mut self.frame);
+        widget_bridge::play_frame_widget_noise(
+            &events,
+            &self.frame,
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            audio,
+            &mut self.noisy_tracker,
+        );
 
         // Sync keyboard selection with mouse hover.
         for w in self.frame.widgets() {
@@ -352,10 +339,10 @@ impl PauseMenu {
         briefings: Option<&ShortBriefings>,
         text_lookup: &dyn Fn(u32) -> Option<String>,
     ) {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
+        let transform = MenuTransform::for_renderer(renderer);
 
+        // Drawn inside the game frame's frozen-scene GPU phase, not a modal
+        // phase, so `ScreenFrame::begin_draw` does not apply.
         dim_screen(renderer);
 
         if let Some(briefings) = briefings {
@@ -422,8 +409,7 @@ mod tests {
                         keycode: Keycode::Return,
                         physical_key: None,
                     },
-                    640,
-                    480
+                    MenuTransform::centered(640, 480)
                 ),
                 PauseMenuOutcome::OpenCampaignManager
             );
@@ -435,8 +421,7 @@ mod tests {
                         keycode: Keycode::Escape,
                         physical_key: None,
                     },
-                    640,
-                    480
+                    MenuTransform::centered(640, 480)
                 ),
                 PauseMenuOutcome::Continue
             );
@@ -452,7 +437,7 @@ mod tests {
             physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
-            menu.handle_event(&event, 1024, 768),
+            menu.handle_event(&event, MenuTransform::centered(1024, 768)),
             PauseMenuOutcome::Continue
         );
     }
@@ -565,7 +550,7 @@ mod tests {
             physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
-            menu.handle_event(&esc, 1024, 768),
+            menu.handle_event(&esc, MenuTransform::centered(1024, 768)),
             PauseMenuOutcome::Continue
         );
     }
@@ -609,7 +594,7 @@ mod tests {
             physical_key: Some(winit::keyboard::KeyCode::Escape),
         };
         assert_eq!(
-            menu.handle_event(&esc, 1024, 768),
+            menu.handle_event(&esc, MenuTransform::centered(1024, 768)),
             PauseMenuOutcome::Continue
         );
     }

@@ -46,10 +46,48 @@ pub enum LegacyIoErrorKind {
     InvalidUtf16(#[source] std::string::FromUtf16Error),
 }
 
+/// One segment of a [`LegacyReader`] error-context path.
+///
+/// Indexed segments stay unformatted until an error is actually built, so the
+/// per-element scopes of large lists allocate nothing on the success path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LegacyContext {
+    Name(Cow<'static, str>),
+    /// Rendered as `name[index]`.
+    Indexed(&'static str, usize),
+}
+
+impl fmt::Display for LegacyContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(name) => f.write_str(name),
+            Self::Indexed(name, index) => write!(f, "{name}[{index}]"),
+        }
+    }
+}
+
+impl From<&'static str> for LegacyContext {
+    fn from(name: &'static str) -> Self {
+        Self::Name(Cow::Borrowed(name))
+    }
+}
+
+impl From<String> for LegacyContext {
+    fn from(name: String) -> Self {
+        Self::Name(Cow::Owned(name))
+    }
+}
+
+impl From<Cow<'static, str>> for LegacyContext {
+    fn from(name: Cow<'static, str>) -> Self {
+        Self::Name(name)
+    }
+}
+
 /// Typed, contextual reads over the read-only legacy-file compatibility layer.
 pub struct LegacyReader<'a> {
     file: &'a mut SbFile,
-    context: Vec<Cow<'static, str>>,
+    context: Vec<LegacyContext>,
 }
 
 impl<'a> LegacyReader<'a> {
@@ -71,13 +109,25 @@ impl<'a> LegacyReader<'a> {
     /// Add a field/container prefix for all errors produced by `read`.
     pub fn scope<T>(
         &mut self,
-        context: impl Into<Cow<'static, str>>,
+        context: impl Into<LegacyContext>,
         read: impl FnOnce(&mut Self) -> LegacyResult<T>,
     ) -> LegacyResult<T> {
         self.context.push(context.into());
         let result = read(self);
         self.context.pop();
         result
+    }
+
+    /// [`Self::scope`] for one list element, reported as `name[index]`.
+    ///
+    /// The segment is formatted only if an error is built inside `read`.
+    pub fn scope_indexed<T>(
+        &mut self,
+        name: &'static str,
+        index: usize,
+        read: impl FnOnce(&mut Self) -> LegacyResult<T>,
+    ) -> LegacyResult<T> {
+        self.scope(LegacyContext::Indexed(name, index), read)
     }
 
     pub fn invalid_value(
@@ -276,7 +326,50 @@ impl<'a> LegacyReader<'a> {
         })
     }
 
-    fn read_array<const N: usize>(&mut self, field: impl fmt::Display) -> LegacyResult<[u8; N]> {
+    /// Read a legacy unsigned 16-bit container count, rejecting it before any
+    /// allocation when it exceeds the caller-supplied limit.
+    pub fn read_count_u16(
+        &mut self,
+        field: impl fmt::Display + Copy,
+        maximum: usize,
+    ) -> LegacyResult<usize> {
+        let offset = self.offset();
+        let count = usize::from(self.read_u16(field)?);
+        if count > maximum {
+            return Err(self.invalid_value(
+                offset,
+                field,
+                count,
+                "item count within the caller-supplied limit",
+            ));
+        }
+        Ok(count)
+    }
+
+    /// Reserve `count` items, reporting allocation failure at the current
+    /// offset as `name`, then read each item with the `name[index]` context.
+    pub fn read_list<T>(
+        &mut self,
+        name: &'static str,
+        count: usize,
+        mut read_item: impl FnMut(&mut Self, LegacyContext) -> LegacyResult<T>,
+    ) -> LegacyResult<Vec<T>> {
+        let offset = self.offset();
+        let mut values = Vec::new();
+        values
+            .try_reserve_exact(count)
+            .map_err(|_| self.allocation_error(offset, name, count))?;
+        for index in 0..count {
+            values.push(read_item(self, LegacyContext::Indexed(name, index))?);
+        }
+        Ok(values)
+    }
+
+    /// Read a fixed-size raw byte array as one field.
+    pub fn read_array<const N: usize>(
+        &mut self,
+        field: impl fmt::Display,
+    ) -> LegacyResult<[u8; N]> {
         let mut bytes = [0; N];
         self.read_bytes(field, &mut bytes)?;
         Ok(bytes)
@@ -297,15 +390,149 @@ impl<'a> LegacyReader<'a> {
     }
 
     fn field_path(&self, field: impl fmt::Display) -> String {
+        use std::fmt::Write as _;
+
         let field = field.to_string();
         if self.context.is_empty() {
-            field
-        } else if field.is_empty() {
-            self.context.join(".")
-        } else {
-            format!("{}.{}", self.context.join("."), field)
+            return field;
+        }
+        let mut path = String::new();
+        for (position, segment) in self.context.iter().enumerate() {
+            if position != 0 {
+                path.push('.');
+            }
+            write!(path, "{segment}").expect("formatting into a String cannot fail");
+        }
+        if !field.is_empty() {
+            path.push('.');
+            path.push_str(&field);
+        }
+        path
+    }
+}
+
+/// `#[derive(LegacyRead)]`: field-by-field reads in declaration order. See
+/// [`LegacyRead`] for the error-context contract and the derive crate for
+/// the supported `#[legacy(..)]` attributes.
+pub use robin_state_hash_derive::LegacyRead;
+
+/// A value decoded from a positional legacy byte stream.
+///
+/// `C` is caller-supplied, non-self-describing decode context (limits,
+/// mission topology, ...). Types that need none implement the trait for
+/// every `C`, so they compose into structs that do.
+///
+/// Error-context contract: [`Self::read`] reads the value in the reader's
+/// current scope; [`Self::read_field`] reads it as the named field. Scalars
+/// report `field` directly (exactly like `reader.read_u32("field")`) and
+/// composites scope their members under it (like `reader.scope("field", ..)`).
+pub trait LegacyRead<C: ?Sized = ()>: Sized {
+    fn read(reader: &mut LegacyReader<'_>, ctx: &C) -> LegacyResult<Self>;
+
+    fn read_field(
+        reader: &mut LegacyReader<'_>,
+        field: impl Into<LegacyContext>,
+        ctx: &C,
+    ) -> LegacyResult<Self> {
+        reader.scope(field, |reader| Self::read(reader, ctx))
+    }
+}
+
+macro_rules! scalar_legacy_read {
+    ($($ty:ty => $method:ident),* $(,)?) => {$(
+        impl<C: ?Sized> LegacyRead<C> for $ty {
+            fn read(reader: &mut LegacyReader<'_>, _: &C) -> LegacyResult<Self> {
+                reader.$method("")
+            }
+
+            fn read_field(
+                reader: &mut LegacyReader<'_>,
+                field: impl Into<LegacyContext>,
+                _: &C,
+            ) -> LegacyResult<Self> {
+                reader.$method(field.into())
+            }
+        }
+    )*};
+}
+
+scalar_legacy_read!(
+    u8 => read_u8, i8 => read_i8, u16 => read_u16, i16 => read_i16,
+    u32 => read_u32, i32 => read_i32, u64 => read_u64, i64 => read_i64,
+    f32 => read_f32, f64 => read_f64, bool => read_bool,
+);
+
+/// Narrow length-prefixed string (see [`LegacyReader::read_string`]).
+impl<C: ?Sized> LegacyRead<C> for String {
+    fn read(reader: &mut LegacyReader<'_>, _: &C) -> LegacyResult<Self> {
+        reader.read_string("")
+    }
+
+    fn read_field(
+        reader: &mut LegacyReader<'_>,
+        field: impl Into<LegacyContext>,
+        _: &C,
+    ) -> LegacyResult<Self> {
+        reader.read_string(&field.into())
+    }
+}
+
+/// Fixed arrays read element by element as `field[index]`; [`Self::read`]
+/// reports the elements as `[index]` inside the current scope.
+impl<C: ?Sized, T: LegacyRead<C>, const N: usize> LegacyRead<C> for [T; N] {
+    fn read(reader: &mut LegacyReader<'_>, ctx: &C) -> LegacyResult<Self> {
+        read_legacy_array(reader, "", ctx)
+    }
+
+    fn read_field(
+        reader: &mut LegacyReader<'_>,
+        field: impl Into<LegacyContext>,
+        ctx: &C,
+    ) -> LegacyResult<Self> {
+        match field.into() {
+            LegacyContext::Name(Cow::Borrowed(name)) => read_legacy_array(reader, name, ctx),
+            field => {
+                // Owned or already indexed names are rare; format each element name.
+                let mut error = None;
+                let values = std::array::from_fn(|index| {
+                    if error.is_some() {
+                        return None;
+                    }
+                    T::read_field(reader, format!("{field}[{index}]"), ctx)
+                        .map_err(|failure| error = Some(failure))
+                        .ok()
+                });
+                finish_legacy_array(values, error)
+            }
         }
     }
+}
+
+fn read_legacy_array<C: ?Sized, T: LegacyRead<C>, const N: usize>(
+    reader: &mut LegacyReader<'_>,
+    name: &'static str,
+    ctx: &C,
+) -> LegacyResult<[T; N]> {
+    let mut error = None;
+    let values = std::array::from_fn(|index| {
+        if error.is_some() {
+            return None;
+        }
+        T::read_field(reader, LegacyContext::Indexed(name, index), ctx)
+            .map_err(|failure| error = Some(failure))
+            .ok()
+    });
+    finish_legacy_array(values, error)
+}
+
+fn finish_legacy_array<T, const N: usize>(
+    values: [Option<T>; N],
+    error: Option<LegacyIoError>,
+) -> LegacyResult<[T; N]> {
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok(values.map(|value| value.expect("every array element was read before any error")))
 }
 
 /// Typed writer for original-game authored binary layouts.
@@ -547,7 +774,7 @@ mod tests {
         assert_eq!(error.field, "characters[3].shooting");
         assert!(matches!(
             error.kind,
-            LegacyIoErrorKind::SbFile(SbFileError::Read)
+            LegacyIoErrorKind::SbFile(SbFileError::Read(_))
         ));
     }
 

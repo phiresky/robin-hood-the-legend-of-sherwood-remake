@@ -11,8 +11,6 @@ use std::{
     num::NonZeroU32,
 };
 
-use thiserror::Error;
-
 use crate::{
     element::{ActionState, Command, EntityId, Posture},
     engine::{EngineInner, LevelAssets},
@@ -29,6 +27,7 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     gate_topology::derive_legacy_gate_order,
     payload_base::{LegacyLineRef, LegacyOrderRef, LegacySectorRef},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
@@ -83,31 +82,27 @@ impl LegacySequenceTopology {
         engine: &EngineInner,
         assets: &LevelAssets,
         payloads: &LegacyElementPayloadStream,
-    ) -> Result<Self, LegacySequenceAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let retained = assets
             .navigation
             .legacy_grid_topology
             .as_ref()
-            .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
-                field: "sequence.topology",
-                identity: "retained Original grid topology".to_owned(),
+            .ok_or_else(|| {
+                missing_topology("sequence.topology", "retained Original grid topology")
             })?;
         let gates =
             derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
-                .map_err(|error| LegacySequenceAdoptError::MissingTopology {
-                field: "sequence.topology.gates",
-                identity: error.to_string(),
-            })?;
+                .map_err(|error| missing_topology("sequence.topology.gates", error.to_string()))?;
 
         if retained.jump_line_identities.len() != engine.world.fast_grid.level.jump_lines.len() {
-            return Err(LegacySequenceAdoptError::MissingTopology {
-                field: "sequence.topology.lines",
-                identity: format!(
+            return Err(missing_topology(
+                "sequence.topology.lines",
+                format!(
                     "retained {} Original jump-line identities for {} runtime jump lines",
                     retained.jump_line_identities.len(),
                     engine.world.fast_grid.level.jump_lines.len()
                 ),
-            });
+            ));
         }
         let mut lines = BTreeMap::new();
         let mut unique_line_by_layer = BTreeMap::<u16, Option<JumpLineIndex>>::new();
@@ -118,25 +113,25 @@ impl LegacySequenceTopology {
             .enumerate()
         {
             if line.layer != layer {
-                return Err(LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: format!(
+                return Err(missing_topology(
+                    "sequence.topology.lines",
+                    format!(
                         "retained jump line {runtime_index} names layer {layer}, runtime uses {}",
                         line.layer
                     ),
-                });
+                ));
             }
             let runtime_index = u32::try_from(runtime_index).map_err(|_| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: "runtime jump-line index exceeds u32".to_owned(),
-                }
+                missing_topology(
+                    "sequence.topology.lines",
+                    "runtime jump-line index exceeds u32",
+                )
             })?;
             let handle = JumpLineIndex::new(runtime_index).ok_or_else(|| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: "runtime jump-line index equals null sentinel".to_owned(),
-                }
+                missing_topology(
+                    "sequence.topology.lines",
+                    "runtime jump-line index equals null sentinel",
+                )
             })?;
             lines.insert((layer, index_in_layer), handle);
             unique_line_by_layer
@@ -153,41 +148,39 @@ impl LegacySequenceTopology {
         let mut jump_pairs = Vec::new();
         for (source_index, source) in jump_lines.iter().enumerate() {
             let source_index_u32 = u32::try_from(source_index).map_err(|_| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: format!("runtime jump-line index {source_index} exceeds u32"),
-                }
+                missing_topology(
+                    "sequence.topology.lines",
+                    format!("runtime jump-line index {source_index} exceeds u32"),
+                )
             })?;
             let Some(destination_index) = source.associated_line_index else {
                 continue;
             };
             let Some(destination) = jump_lines.get(destination_index as usize) else {
-                return Err(LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: format!(
+                return Err(missing_topology(
+                    "sequence.topology.lines",
+                    format!(
                         "jump line {source_index} associates with absent runtime line {destination_index}"
                     ),
-                });
+                ));
             };
             if destination.associated_line_index != Some(source_index_u32) {
-                return Err(LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: format!(
-                        "jump lines {source_index} and {destination_index} are not reciprocal"
-                    ),
-                });
+                return Err(missing_topology(
+                    "sequence.topology.lines",
+                    format!("jump lines {source_index} and {destination_index} are not reciprocal"),
+                ));
             }
             let source_handle = JumpLineIndex::new(source_index_u32).ok_or_else(|| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: "runtime jump-line index equals null sentinel".to_owned(),
-                }
+                missing_topology(
+                    "sequence.topology.lines",
+                    "runtime jump-line index equals null sentinel",
+                )
             })?;
             let destination_handle = JumpLineIndex::new(destination_index).ok_or_else(|| {
-                LegacySequenceAdoptError::MissingTopology {
-                    field: "sequence.topology.lines",
-                    identity: "runtime associated jump-line index equals null sentinel".to_owned(),
-                }
+                missing_topology(
+                    "sequence.topology.lines",
+                    "runtime associated jump-line index equals null sentinel",
+                )
             })?;
             jump_pairs.push(LegacyJumpPair {
                 source: source_handle,
@@ -223,14 +216,14 @@ impl LegacySequenceTopology {
             .collect();
 
         if retained.position_sector_numbers.len() != retained.sectors.len() {
-            return Err(LegacySequenceAdoptError::MissingTopology {
-                field: "sequence.topology.sectors",
-                identity: format!(
+            return Err(missing_topology(
+                "sequence.topology.sectors",
+                format!(
                     "retained position-sector map has {} entries for {} sparse Original slots",
                     retained.position_sector_numbers.len(),
                     retained.sectors.len()
                 ),
-            });
+            ));
         }
         let sectors = retained
             .position_sector_numbers
@@ -240,20 +233,16 @@ impl LegacySequenceTopology {
                 number
                     .map(|number| {
                         let raw = u16::try_from(number).map_err(|_| {
-                            LegacySequenceAdoptError::MissingTopology {
-                                field: "sequence.topology.sectors",
-                                identity: format!(
-                                    "runtime position-sector number {number} is negative"
-                                ),
-                            }
+                            missing_topology(
+                                "sequence.topology.sectors",
+                                format!("runtime position-sector number {number} is negative"),
+                            )
                         })?;
                         SectorHandle::new(raw).ok_or_else(|| {
-                            LegacySequenceAdoptError::MissingTopology {
-                                field: "sequence.topology.sectors",
-                                identity:
-                                    "runtime position-sector number equals null sentinel 0xffff"
-                                        .to_owned(),
-                            }
+                            missing_topology(
+                                "sequence.topology.sectors",
+                                "runtime position-sector number equals null sentinel 0xffff",
+                            )
                         })
                     })
                     .transpose()
@@ -271,25 +260,20 @@ impl LegacySequenceTopology {
     }
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum LegacySequenceAdoptError {
-    #[error("saved sequence field {field} has value {value}; expected {expected}")]
-    InvalidField {
-        field: &'static str,
-        value: String,
-        expected: &'static str,
-    },
-    #[error("saved sequence reference {field} names absent ID {id}")]
-    MissingIdentity { field: &'static str, id: u32 },
-    #[error(
-        "saved sequence topology reference {field} names {identity}, absent from the initialized mission"
-    )]
-    MissingTopology {
-        field: &'static str,
-        identity: String,
-    },
-    #[error("saved sequence {sequence_id} has duplicate generic field {field:?}")]
-    DuplicateGenericField { sequence_id: u32, field: Field },
+const SEQUENCE: AdoptSite = AdoptSite::new("saved sequence");
+
+fn missing_identity(field: &'static str, id: u32) -> LegacyAdoptError {
+    AdoptSite::new("saved sequence reference")
+        .field_error(field, AdoptErrorKind::MissingIdentity { id })
+}
+
+fn missing_topology(field: &'static str, identity: impl Into<String>) -> LegacyAdoptError {
+    AdoptSite::new("saved sequence topology reference").field_error(
+        field,
+        AdoptErrorKind::MissingTopology {
+            identity: identity.into(),
+        },
+    )
 }
 
 /// Fully converted manager state. Construction is read-only; applying it is
@@ -316,7 +300,7 @@ impl LegacySequenceAdoptionPlan {
         &self,
         field: &'static str,
         reference: super::payload_base::LegacySequenceElementRef,
-    ) -> Result<Option<(SequenceElementRef, &SequenceElement)>, LegacySequenceAdoptError> {
+    ) -> Result<Option<(SequenceElementRef, &SequenceElement)>, LegacyAdoptError> {
         let Some(id) = reference.0 else {
             return Ok(None);
         };
@@ -334,7 +318,7 @@ impl LegacySequenceAdoptionPlan {
                         (SequenceElementRef::new(sequence.id, element_index), element)
                     })
             })
-            .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })?;
+            .ok_or_else(|| missing_identity(field, id))?;
         Ok(Some((element_ref, element)))
     }
 
@@ -346,13 +330,13 @@ impl LegacySequenceAdoptionPlan {
         &self,
         field: &'static str,
         reference: LegacyOrderRef,
-    ) -> Result<Option<(SequenceElementRef, usize, &Order)>, LegacySequenceAdoptError> {
+    ) -> Result<Option<(SequenceElementRef, usize, &Order)>, LegacyAdoptError> {
         let Some(original_id) = reference.0 else {
             return Ok(None);
         };
         let runtime_id = original_id
             .checked_add(1)
-            .ok_or_else(|| invalid(field, original_id, "at most 0xfffffffe"))?;
+            .ok_or_else(|| SEQUENCE.invalid(field, original_id, "at most 0xfffffffe"))?;
         let resolved = self.manager.sequences.iter().find_map(|sequence| {
             sequence
                 .elements
@@ -375,10 +359,7 @@ impl LegacySequenceAdoptionPlan {
         });
         resolved
             .map(Some)
-            .ok_or(LegacySequenceAdoptError::MissingIdentity {
-                field,
-                id: original_id,
-            })
+            .ok_or_else(|| missing_identity(field, original_id))
     }
 
     /// Actor selection reconstructed by the converted manager's canonical
@@ -417,7 +398,7 @@ pub(crate) fn preflight_v48_sequence_manager(
     saved: &LegacySequenceManagerState,
     entities: &LegacyEntityFixups,
     topology: &LegacySequenceTopology,
-) -> Result<LegacySequenceAdoptionPlan, LegacySequenceAdoptError> {
+) -> Result<LegacySequenceAdoptionPlan, LegacyAdoptError> {
     // Sequence-manager restoration sets the next order ID before it reads the
     // manager-owned sequences.  Every order is then allocated with
     // Creating an order increments the next ID before saving
@@ -434,7 +415,7 @@ pub(crate) fn preflight_v48_sequence_manager(
     while let Some(sequence) = serialized_sequences.pop() {
         for element in &sequence.elements {
             let element_order_count = u32::try_from(element.base().orders.len()).map_err(|_| {
-                invalid(
+                SEQUENCE.invalid(
                     "sequences.orders.count",
                     element.base().orders.len(),
                     "a u32 order count",
@@ -443,7 +424,7 @@ pub(crate) fn preflight_v48_sequence_manager(
             deserialized_order_count = deserialized_order_count
                 .checked_add(element_order_count)
                 .ok_or_else(|| {
-                    invalid(
+                    SEQUENCE.invalid(
                         "sequences.orders.count",
                         "overflow",
                         "a combined u32 order count",
@@ -472,16 +453,15 @@ pub(crate) fn preflight_v48_sequence_manager(
         }
     }
 
+    let refs = SequenceRefs {
+        entities,
+        topology,
+        sequence_ids: &sequence_ids,
+        element_refs: &element_refs,
+    };
     let mut sequences = Vec::with_capacity(saved.sequences.len());
     for saved_sequence in &saved.sequences {
-        sequences.push(convert_sequence(
-            &saved_sequence.body,
-            true,
-            entities,
-            topology,
-            &sequence_ids,
-            &element_refs,
-        )?);
+        sequences.push(convert_sequence(&saved_sequence.body, true, refs)?);
     }
 
     let mut elements_to_go = VecDeque::with_capacity(saved.deferred_elements.len());
@@ -511,7 +491,7 @@ pub(crate) fn preflight_v48_sequence_manager(
             .checked_add(deserialized_order_count)
             .and_then(|next| next.checked_add(1))
             .ok_or_else(|| {
-                invalid(
+                SEQUENCE.invalid(
                     "order_static.next_id",
                     saved.static_ids.order_next_id,
                     "room for deserialized-order constructors and Rust's +1 identity shift",
@@ -520,17 +500,23 @@ pub(crate) fn preflight_v48_sequence_manager(
     })
 }
 
+/// Identity spaces shared by every element of one sequence conversion.
+#[derive(Clone, Copy)]
+struct SequenceRefs<'a> {
+    entities: &'a LegacyEntityFixups,
+    topology: &'a LegacySequenceTopology,
+    sequence_ids: &'a BTreeMap<u32, SequenceId>,
+    element_refs: &'a BTreeMap<u32, SequenceElementRef>,
+}
+
 fn convert_sequence(
     saved: &LegacyInlineSequence,
     manager_owned: bool,
-    entities: &LegacyEntityFixups,
-    topology: &LegacySequenceTopology,
-    sequence_ids: &BTreeMap<u32, SequenceId>,
-    element_refs: &BTreeMap<u32, SequenceElementRef>,
-) -> Result<Sequence, LegacySequenceAdoptError> {
+    refs: SequenceRefs<'_>,
+) -> Result<Sequence, LegacyAdoptError> {
     let cursor = usize::from(saved.sequence_element_cursor);
     if cursor > saved.elements.len() {
-        return Err(invalid(
+        return Err(SEQUENCE.invalid(
             "sequence_element_cursor",
             cursor,
             "an index at or before elements.len()",
@@ -543,17 +529,14 @@ fn convert_sequence(
             saved.unique_id.0,
             element,
             manager_owned,
-            entities,
-            topology,
-            sequence_ids,
-            element_refs,
+            refs,
         )?);
     }
     for pair in elements.windows(2) {
         let previous = pair[0].command_level;
         let current = pair[1].command_level;
         if current != previous && previous.checked_add(1) != Some(current) {
-            return Err(invalid(
+            return Err(SEQUENCE.invalid(
                 "command_level",
                 current,
                 "the previous command level or exactly its successor",
@@ -582,14 +565,16 @@ pub(crate) fn convert_owner_local_sequence(
     saved: &LegacyInlineSequence,
     entities: &LegacyEntityFixups,
     topology: &LegacySequenceTopology,
-) -> Result<Sequence, LegacySequenceAdoptError> {
+) -> Result<Sequence, LegacyAdoptError> {
     convert_sequence(
         saved,
         false,
-        entities,
-        topology,
-        &BTreeMap::new(),
-        &BTreeMap::new(),
+        SequenceRefs {
+            entities,
+            topology,
+            sequence_ids: &BTreeMap::new(),
+            element_refs: &BTreeMap::new(),
+        },
     )
 }
 
@@ -597,14 +582,17 @@ fn convert_element(
     sequence_id: u32,
     saved: &LegacyInlineSequenceElement,
     manager_owned: bool,
-    entities: &LegacyEntityFixups,
-    topology: &LegacySequenceTopology,
-    sequence_ids: &BTreeMap<u32, SequenceId>,
-    element_refs: &BTreeMap<u32, SequenceElementRef>,
-) -> Result<SequenceElement, LegacySequenceAdoptError> {
+    refs: SequenceRefs<'_>,
+) -> Result<SequenceElement, LegacyAdoptError> {
+    let SequenceRefs {
+        entities,
+        topology,
+        sequence_ids,
+        element_refs,
+    } = refs;
     let base = saved.base();
     let command = Command::try_from(base.command)
-        .map_err(|_| invalid("command", base.command, "a known command discriminant"))?;
+        .map_err(|_| SEQUENCE.invalid("command", base.command, "a known command discriminant"))?;
     let owner = base
         .owner
         .0
@@ -614,7 +602,7 @@ fn convert_element(
                 .get(&id)
                 .or_else(|| entities.mobile_owner_by_creation_order.get(&id))
                 .copied()
-                .ok_or(LegacySequenceAdoptError::MissingIdentity { field: "owner", id })
+                .ok_or_else(|| missing_identity("owner", id))
         })
         .transpose()?;
     let state = sequence_state(base.state)?;
@@ -685,7 +673,7 @@ fn convert_element(
                 9 => Some(crate::weapons::SwordStrike::Charge),
                 10..=14 => None,
                 value => {
-                    return Err(invalid(
+                    return Err(SEQUENCE.invalid(
                         "damage.sword_strike",
                         value,
                         "sword-strike value 0..14",
@@ -733,11 +721,10 @@ fn convert_element(
                     )?),
                     (None, None) => None,
                     _ => {
-                        return Err(LegacySequenceAdoptError::MissingTopology {
-                            field: "generic.jump_lines",
-                            identity: "JumpCmd requires line-valued source and destination fields"
-                                .to_owned(),
-                        });
+                        return Err(missing_topology(
+                            "generic.jump_lines",
+                            "JumpCmd requires line-valued source and destination fields",
+                        ));
                     }
                 }
             } else {
@@ -773,10 +760,11 @@ fn convert_element(
                     )?
                 };
                 if properties.insert(kind, value).is_some() {
-                    return Err(LegacySequenceAdoptError::DuplicateGenericField {
+                    return Err(AdoptErrorKind::DuplicateGenericField {
                         sequence_id,
                         field: kind,
-                    });
+                    }
+                    .into());
                 }
                 if let Some(raw) = raw {
                     generic_raw_unions.push((kind, raw));
@@ -791,7 +779,7 @@ fn convert_element(
         }
         LegacyInlineSequenceElement::Movement(movement) => {
             let flags = MoveFlags::from_bits(movement.flags).ok_or_else(|| {
-                invalid("movement.flags", movement.flags, "known movement-flag bits")
+                SEQUENCE.invalid("movement.flags", movement.flags, "known movement-flag bits")
             })?;
             let (action, raw_dormant_action) =
                 convert_movement_action(command, state, movement.action)?;
@@ -800,17 +788,9 @@ fn convert_element(
                 .post_seek_sequence
                 .as_deref()
                 .map(|sequence| {
-                    convert_sequence(
-                        sequence,
-                        false,
-                        entities,
-                        topology,
-                        sequence_ids,
-                        element_refs,
-                    )
-                    .and_then(|sequence| {
+                    convert_sequence(sequence, false, refs).and_then(|sequence| {
                         sequence.try_into_post_seek().map_err(|_| {
-                            invalid(
+                            SEQUENCE.invalid(
                                 "movement.post_seek_sequence",
                                 "nested continuation",
                                 "at most one post-seek level",
@@ -919,9 +899,9 @@ fn resolve_jump_pair(
     destination: LegacyLineRef,
     owner: super::payload_base::LegacyElementRef,
     topology: &LegacySequenceTopology,
-) -> Result<(JumpLineIndex, JumpLineIndex), LegacySequenceAdoptError> {
+) -> Result<(JumpLineIndex, JumpLineIndex), LegacyAdoptError> {
     let (Some(source_layer), Some(source_index)) = (source.layer, source.index) else {
-        return Err(invalid(
+        return Err(SEQUENCE.invalid(
             "generic.jump_line_source",
             format!("{:?}", (source.layer, source.index)),
             "a non-null layer plus non-negative line index",
@@ -929,14 +909,14 @@ fn resolve_jump_pair(
     };
     let (Some(destination_layer), Some(destination_index)) = (destination.layer, destination.index)
     else {
-        return Err(invalid(
+        return Err(SEQUENCE.invalid(
             "generic.jump_line_destination",
             format!("{:?}", (destination.layer, destination.index)),
             "a non-null layer plus non-negative line index",
         ));
     };
     if source_index < 0 || destination_index < 0 {
-        return Err(invalid(
+        return Err(SEQUENCE.invalid(
             "generic.jump_lines",
             format!("source index {source_index}, destination index {destination_index}"),
             "non-negative line indices",
@@ -965,29 +945,31 @@ fn resolve_jump_pair(
         return Ok((pair.source, pair.destination));
     }
     if candidates.is_empty() {
-        return Err(LegacySequenceAdoptError::MissingTopology {
-            field: "generic.jump_lines",
-            identity: format!(
+        return Err(missing_topology(
+            "generic.jump_lines",
+            format!(
                 "reciprocal jump pair from layer {source_layer}, index {source_index} to layer {destination_layer}, index {destination_index}"
             ),
-        });
+        ));
     }
 
-    let owner_id = owner.0.ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
-        field: "generic.jump_lines",
-        identity: format!(
-            "{} reciprocal layer {source_layer}->{destination_layer} pairs and no owner geometry",
-            candidates.len()
-        ),
+    let owner_id = owner.0.ok_or_else(|| {
+        missing_topology(
+            "generic.jump_lines",
+            format!(
+                "{} reciprocal layer {source_layer}->{destination_layer} pairs and no owner geometry",
+                candidates.len()
+            ),
+        )
     })?;
     let owner_location = topology.saved_actor_locations.get(&owner_id).ok_or_else(|| {
-        LegacySequenceAdoptError::MissingTopology {
-            field: "generic.jump_lines",
-            identity: format!(
+        missing_topology(
+            "generic.jump_lines",
+            format!(
                 "{} reciprocal layer {source_layer}->{destination_layer} pairs and no saved actor geometry for owner {owner_id}",
                 candidates.len()
             ),
-        }
+        )
     })?;
     candidates.sort_by(|left, right| {
         squared_distance_to_segment(owner_location.map, left.source_a, left.source_b).total_cmp(
@@ -1005,13 +987,13 @@ fn resolve_jump_pair(
         candidates[1].source_b,
     );
     if best_distance == second_distance {
-        return Err(LegacySequenceAdoptError::MissingTopology {
-            field: "generic.jump_lines",
-            identity: format!(
+        return Err(missing_topology(
+            "generic.jump_lines",
+            format!(
                 "ambiguous reciprocal layer {source_layer}->{destination_layer} pair for owner {owner_id} at ({}, {}): equal squared distance {best_distance}",
                 owner_location.map.x, owner_location.map.y
             ),
-        });
+        ));
     }
     Ok((candidates[0].source, candidates[0].destination))
 }
@@ -1067,7 +1049,7 @@ fn convert_transition_result<T>(
     dormant: bool,
     dormant_runtime_value: T,
     convert: impl FnOnce(i32) -> Option<T>,
-) -> Result<(T, Option<i32>), LegacySequenceAdoptError> {
+) -> Result<(T, Option<i32>), LegacyAdoptError> {
     // These words are scratch output from the last time instruction handling touched the
     // element, not authored state for a future instruction.  In particular,
     // a perfectly valid saved value can still be stale: Original
@@ -1081,7 +1063,7 @@ fn convert_transition_result<T>(
 
     match convert(raw) {
         Some(value) => Ok((value, None)),
-        None => Err(invalid(field, raw, expected)),
+        None => Err(SEQUENCE.invalid(field, raw, expected)),
     }
 }
 
@@ -1089,7 +1071,7 @@ fn convert_movement_action(
     command: Command,
     state: SequenceState,
     raw: i32,
-) -> Result<(OrderType, Option<i32>), LegacySequenceAdoptError> {
+) -> Result<(OrderType, Option<i32>), LegacyAdoptError> {
     let converted = u32::try_from(raw)
         .ok()
         .and_then(|raw| OrderType::try_from(raw).ok());
@@ -1133,27 +1115,28 @@ fn convert_movement_action(
     } else {
         "a known animation"
     };
-    Err(invalid("movement.action", raw, expected))
+    Err(SEQUENCE.invalid("movement.action", raw, expected))
 }
 
 fn convert_orders(
     saved: &[LegacyInlineOrder],
     entities: &LegacyEntityFixups,
-) -> Result<(Vec<Order>, Vec<LegacyV48OrderState>), LegacySequenceAdoptError> {
+) -> Result<(Vec<Order>, Vec<LegacyV48OrderState>), LegacyAdoptError> {
     let mut orders = Vec::with_capacity(saved.len());
     let mut retained = Vec::with_capacity(saved.len());
     for order in saved {
-        let action = OrderType::try_from(
-            u32::try_from(order.action)
-                .map_err(|_| invalid("order.action", order.action, "a non-negative animation"))?,
-        )
-        .map_err(|_| invalid("order.action", order.action, "a known animation"))?;
+        let action = OrderType::try_from(u32::try_from(order.action).map_err(|_| {
+            SEQUENCE.invalid("order.action", order.action, "a non-negative animation")
+        })?)
+        .map_err(|_| SEQUENCE.invalid("order.action", order.action, "a known animation"))?;
         let mapped_id = order
             .unique_id
             .0
             .checked_add(1)
             .and_then(NonZeroU32::new)
-            .ok_or_else(|| invalid("order.unique_id", order.unique_id.0, "at most 0xfffffffe"))?;
+            .ok_or_else(|| {
+                SEQUENCE.invalid("order.unique_id", order.unique_id.0, "at most 0xfffffffe")
+            })?;
         let antagonist = resolve_entity("order.antagonist", order.antagonist, entities)?;
         let mut converted = Order::new(
             action,
@@ -1189,7 +1172,7 @@ fn convert_generic_field(
     entities: &LegacyEntityFixups,
     topology: &LegacySequenceTopology,
     _sequence_id: u32,
-) -> Result<(Field, FieldValue, Option<[u8; 12]>), LegacySequenceAdoptError> {
+) -> Result<(Field, FieldValue, Option<[u8; 12]>), LegacyAdoptError> {
     use LegacyGenericFieldKind as K;
     let field = match saved.kind {
         K::Direction => Field::Direction,
@@ -1286,7 +1269,7 @@ fn convert_generic_field(
                 K::AnimationId | K::OldAnimation | K::NewAnimation => {
                     let raw_animation = values[0].to_bits();
                     FieldValue::Animation(OrderType::try_from(raw_animation).map_err(|_| {
-                        invalid(
+                        SEQUENCE.invalid(
                             "generic.animation",
                             raw_animation,
                             "a known animation discriminant",
@@ -1313,7 +1296,7 @@ fn resolve_entity(
     field: &'static str,
     reference: super::payload_base::LegacyElementRef,
     entities: &LegacyEntityFixups,
-) -> Result<Option<EntityId>, LegacySequenceAdoptError> {
+) -> Result<Option<EntityId>, LegacyAdoptError> {
     let Some(id) = reference.0 else {
         return Ok(None);
     };
@@ -1322,18 +1305,18 @@ fn resolve_entity(
         .get(&id)
         .copied()
         .map(Some)
-        .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })
+        .ok_or_else(|| missing_identity(field, id))
 }
 
 fn resolve_element_ref(
     field: &'static str,
     id: Option<u32>,
     refs: &BTreeMap<u32, SequenceElementRef>,
-) -> Result<Option<SequenceElementRef>, LegacySequenceAdoptError> {
+) -> Result<Option<SequenceElementRef>, LegacyAdoptError> {
     id.map(|id| {
         refs.get(&id)
             .copied()
-            .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })
+            .ok_or_else(|| missing_identity(field, id))
     })
     .transpose()
 }
@@ -1342,11 +1325,11 @@ fn resolve_sequence_ref(
     field: &'static str,
     id: Option<u32>,
     refs: &BTreeMap<u32, SequenceId>,
-) -> Result<Option<SequenceId>, LegacySequenceAdoptError> {
+) -> Result<Option<SequenceId>, LegacyAdoptError> {
     id.map(|id| {
         refs.get(&id)
             .copied()
-            .ok_or(LegacySequenceAdoptError::MissingIdentity { field, id })
+            .ok_or_else(|| missing_identity(field, id))
     })
     .transpose()
 }
@@ -1355,25 +1338,25 @@ fn resolve_gate(
     field: &'static str,
     reference: LegacyGateRef,
     topology: &LegacySequenceTopology,
-) -> Result<Option<DoorIndex>, LegacySequenceAdoptError> {
+) -> Result<Option<DoorIndex>, LegacyAdoptError> {
     let Some(raw) = reference.0 else {
         return Ok(None);
     };
-    let index =
-        usize::try_from(raw).map_err(|_| invalid(field, raw, "a non-negative gate-array index"))?;
-    topology.gates.get(index).copied().map(Some).ok_or_else(|| {
-        LegacySequenceAdoptError::MissingTopology {
-            field,
-            identity: format!("gate at Original gate index {index}"),
-        }
-    })
+    let index = usize::try_from(raw)
+        .map_err(|_| SEQUENCE.invalid(field, raw, "a non-negative gate-array index"))?;
+    topology
+        .gates
+        .get(index)
+        .copied()
+        .map(Some)
+        .ok_or_else(|| missing_topology(field, format!("gate at Original gate index {index}")))
 }
 
 fn resolve_line(
     field: &'static str,
     reference: LegacyLineRef,
     topology: &LegacySequenceTopology,
-) -> Result<Option<JumpLineIndex>, LegacySequenceAdoptError> {
+) -> Result<Option<JumpLineIndex>, LegacyAdoptError> {
     match (reference.layer, reference.index) {
         (None, None) => Ok(None),
         (Some(layer), Some(index)) if index >= 0 => topology
@@ -1385,11 +1368,8 @@ fn resolve_line(
             .or_else(|| topology.unique_line_by_layer.get(&layer))
             .copied()
             .map(Some)
-            .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
-                field,
-                identity: format!("line layer {layer}, index {index}"),
-            }),
-        _ => Err(invalid(
+            .ok_or_else(|| missing_topology(field, format!("line layer {layer}, index {index}"))),
+        _ => Err(SEQUENCE.invalid(
             field,
             format!("{:?}", (reference.layer, reference.index)),
             "both null sentinels or a layer plus non-negative line index",
@@ -1400,27 +1380,25 @@ fn resolve_line(
 fn resolve_sector(
     reference: LegacySectorRef,
     topology: &LegacySequenceTopology,
-) -> Result<Option<SectorHandle>, LegacySequenceAdoptError> {
+) -> Result<Option<SectorHandle>, LegacyAdoptError> {
     let Some(index) = reference.0 else {
         return Ok(None);
     };
     let Some(sector) = topology.sectors.get(usize::from(index)) else {
-        return Err(LegacySequenceAdoptError::MissingTopology {
-            field: "movement.sector",
-            identity: format!("sector index {index}"),
-        });
+        return Err(missing_topology(
+            "movement.sector",
+            format!("sector index {index}"),
+        ));
     };
-    (*sector)
-        .map(Some)
-        .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
-            field: "movement.sector",
-            identity: format!(
-                "Original sector slot {index}, which has no Rust position-sector counterpart"
-            ),
-        })
+    (*sector).map(Some).ok_or_else(|| {
+        missing_topology(
+            "movement.sector",
+            format!("Original sector slot {index}, which has no Rust position-sector counterpart"),
+        )
+    })
 }
 
-fn sequence_state(raw: i32) -> Result<SequenceState, LegacySequenceAdoptError> {
+fn sequence_state(raw: i32) -> Result<SequenceState, LegacyAdoptError> {
     Ok(match raw {
         0 => SequenceState::Terminated,
         1 => SequenceState::Done,
@@ -1429,11 +1407,11 @@ fn sequence_state(raw: i32) -> Result<SequenceState, LegacySequenceAdoptError> {
         4 => SequenceState::Postponed,
         5 => SequenceState::Impossible,
         6 => SequenceState::Interrupted,
-        _ => return Err(invalid("state", raw, "sequence state 0..6")),
+        _ => return Err(SEQUENCE.invalid("state", raw, "sequence state 0..6")),
     })
 }
 
-fn sequence_priority(raw: i32) -> Result<SequencePriority, LegacySequenceAdoptError> {
+fn sequence_priority(raw: i32) -> Result<SequencePriority, LegacyAdoptError> {
     Ok(match raw {
         0 => SequencePriority::NonInterruptable,
         1 => SequencePriority::PostponeEverythingButInjuries,
@@ -1447,20 +1425,8 @@ fn sequence_priority(raw: i32) -> Result<SequencePriority, LegacySequenceAdoptEr
         9 => SequencePriority::Wait,
         10 => SequencePriority::None,
         11 => SequencePriority::NotYetSet,
-        _ => return Err(invalid("priority", raw, "priority 0..11")),
+        _ => return Err(SEQUENCE.invalid("priority", raw, "priority 0..11")),
     })
-}
-
-fn invalid(
-    field: &'static str,
-    value: impl std::fmt::Display,
-    expected: &'static str,
-) -> LegacySequenceAdoptError {
-    LegacySequenceAdoptError::InvalidField {
-        field,
-        value: value.to_string(),
-        expected,
-    }
 }
 
 #[cfg(test)]
@@ -1830,10 +1796,11 @@ mod tests {
         );
         assert!(matches!(
             resolve_sector(LegacySectorRef(Some(1)), &topology),
-            Err(LegacySequenceAdoptError::MissingTopology {
-                field: "movement.sector",
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::MissingTopology { .. },
                 ..
-            })
+            }) if field == "movement.sector"
         ));
     }
 
@@ -1940,11 +1907,7 @@ mod tests {
         );
         assert_eq!(
             convert_movement_action(Command::Move, SequenceState::Todo, raw).unwrap_err(),
-            LegacySequenceAdoptError::InvalidField {
-                field: "movement.action",
-                value: raw.to_string(),
-                expected: "a known animation",
-            },
+            SEQUENCE.invalid("movement.action", raw, "a known animation"),
             "a queued MOVE consumes movement.action when it is instructed"
         );
     }
@@ -1964,11 +1927,7 @@ mod tests {
 
         assert_eq!(
             error,
-            LegacySequenceAdoptError::InvalidField {
-                field: "posture_after_transition",
-                value: "252736".to_owned(),
-                expected: "posture 0..24",
-            }
+            SEQUENCE.invalid("posture_after_transition", "252736", "posture 0..24")
         );
     }
 
@@ -2019,10 +1978,11 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            LegacySequenceAdoptError::MissingTopology {
-                field: "movement.gate",
+            LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::MissingTopology { .. },
                 ..
-            }
+            } if field == "movement.gate"
         ));
     }
 
@@ -2140,10 +2100,11 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            LegacySequenceAdoptError::MissingTopology {
-                field: "generic.jump_lines",
-                identity,
-            } if identity.contains("ambiguous")
+            LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::MissingTopology { identity },
+                ..
+            } if field == "generic.jump_lines" && identity.contains("ambiguous")
         ));
     }
 }

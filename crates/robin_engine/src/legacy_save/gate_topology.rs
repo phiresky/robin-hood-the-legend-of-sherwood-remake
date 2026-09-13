@@ -7,43 +7,12 @@
 //! cross-engine identity. Construction order *within* the stateful-door and
 //! stateless-jump subsequences is stable in both engines.
 
-use thiserror::Error;
-
 use crate::{
     engine::LegacyGridGateAsset,
     gate::{Door, DoorIndex, GateType},
 };
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum LegacyGateOrderError {
-    #[error(
-        "Original {kind} at gate index {saved_index} has no initialized Rust peer \
-         (retained doors={retained_doors}, jumps={retained_jumps}; \
-         initialized doors={runtime_doors}, jumps={runtime_jumps})"
-    )]
-    MissingPeer {
-        kind: &'static str,
-        saved_index: usize,
-        retained_doors: usize,
-        retained_jumps: usize,
-        runtime_doors: usize,
-        runtime_jumps: usize,
-    },
-    #[error(
-        "gate-kind counts differ (retained doors={retained_doors}, jumps={retained_jumps}; \
-         initialized doors={runtime_doors}, jumps={runtime_jumps})"
-    )]
-    CountMismatch {
-        retained_doors: usize,
-        retained_jumps: usize,
-        runtime_doors: usize,
-        runtime_jumps: usize,
-    },
-    #[error("initialized gate index {index} has unsupported kind {kind:?}")]
-    UnsupportedRuntimeKind { index: usize, kind: GateType },
-    #[error("runtime gate index {index} exceeds u32")]
-    RuntimeIndexOverflow { index: usize },
-}
+use super::adopt_common::{AdoptErrorKind, LegacyAdoptError};
 
 /// Map each Original mixed gate-array slot to its Rust runtime gate.
 ///
@@ -53,7 +22,7 @@ pub enum LegacyGateOrderError {
 pub fn derive_legacy_gate_order(
     retained: &[LegacyGridGateAsset],
     runtime: &[Door],
-) -> Result<Vec<DoorIndex>, LegacyGateOrderError> {
+) -> Result<Vec<DoorIndex>, LegacyAdoptError> {
     let retained_doors = retained
         .iter()
         .filter(|gate| matches!(gate, LegacyGridGateAsset::Door))
@@ -73,10 +42,11 @@ pub fn derive_legacy_gate_order(
         .enumerate()
         .find(|(_, gate)| !matches!(gate.gate_type, GateType::Door | GateType::Jump))
     {
-        return Err(LegacyGateOrderError::UnsupportedRuntimeKind {
+        return Err(AdoptErrorKind::UnsupportedRuntimeGateKind {
             index,
             kind: gate.gate_type,
-        });
+        }
+        .into());
     }
 
     let mut door_indices = runtime
@@ -94,7 +64,7 @@ pub fn derive_legacy_gate_order(
             LegacyGridGateAsset::Door => ("door", door_indices.next()),
             LegacyGridGateAsset::Stateless => ("jump gate", jump_indices.next()),
         };
-        let runtime_index = runtime_index.ok_or(LegacyGateOrderError::MissingPeer {
+        let runtime_index = runtime_index.ok_or(AdoptErrorKind::GateMissingPeer {
             kind,
             saved_index,
             retained_doors,
@@ -102,21 +72,21 @@ pub fn derive_legacy_gate_order(
             runtime_doors,
             runtime_jumps,
         })?;
-        let runtime_index = u32::try_from(runtime_index).map_err(|_| {
-            LegacyGateOrderError::RuntimeIndexOverflow {
+        let runtime_index =
+            u32::try_from(runtime_index).map_err(|_| AdoptErrorKind::GateRuntimeIndexOverflow {
                 index: runtime_index,
-            }
-        })?;
+            })?;
         mapped.push(DoorIndex::new(runtime_index).expect("valid door index"));
     }
 
     if door_indices.next().is_some() || jump_indices.next().is_some() {
-        return Err(LegacyGateOrderError::CountMismatch {
+        return Err(AdoptErrorKind::GateCountMismatch {
             retained_doors,
             retained_jumps,
             runtime_doors,
             runtime_jumps,
-        });
+        }
+        .into());
     }
 
     Ok(mapped)
@@ -167,8 +137,11 @@ mod tests {
         let retained = [LegacyGridGateAsset::Door, LegacyGridGateAsset::Stateless];
         assert!(matches!(
             derive_legacy_gate_order(&retained, &[gate(GateType::Door)]),
-            Err(LegacyGateOrderError::MissingPeer {
-                kind: "jump gate",
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::GateMissingPeer {
+                    kind: "jump gate",
+                    ..
+                },
                 ..
             })
         ));
@@ -181,7 +154,10 @@ mod tests {
                     gate(GateType::Jump)
                 ]
             ),
-            Err(LegacyGateOrderError::CountMismatch { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::GateCountMismatch { .. },
+                ..
+            })
         ));
     }
 }

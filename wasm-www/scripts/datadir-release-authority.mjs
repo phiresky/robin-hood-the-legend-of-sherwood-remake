@@ -3,7 +3,13 @@ import { lstat, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DEPLOYMENT } from './verify-cloudflare-deployment.mjs';
-import { verifyDatadirCorpus } from './verify-datadir-corpus.mjs';
+import {
+    DEMO_CONTENT_MANIFEST_PATH,
+    DEMO_PATH,
+    RETAINED_DEMO_GENERATIONS,
+    retainedDemoDetails,
+    verifyDatadirCorpus,
+} from './verify-datadir-corpus.mjs';
 import { verifyStaticOriginInventory } from './verify-static-origin-inventory.mjs';
 import { writeStaticOriginInventory } from './write-static-origin-inventory.mjs';
 
@@ -67,7 +73,7 @@ function parseCanonical(bytes, label) {
     return value;
 }
 
-function validateDemo(value, label) {
+function validateDemo(value, label, retainedGenerations) {
     exactKeys(value, DEMO_KEYS, label);
     for (const field of [
         'content_manifest_sha256', 'datadir_sha256', 'native_content_sha256',
@@ -77,29 +83,41 @@ function validateDemo(value, label) {
     if (!Number.isSafeInteger(value.datadir_byte_length) || value.datadir_byte_length <= 0) {
         throw new Error(`${label} datadir_byte_length must be a positive safe integer`);
     }
+    // An authority for an earlier deployment names a retained generation; it
+    // must then carry that generation's exact pinned identity.
+    const retained = retainedGenerations.map(retainedDemoDetails)
+        .find(details => details.datadir_url === value.datadir_url);
+    if (retained !== undefined) {
+        for (const field of DEMO_KEYS) exact(value[field], retained[field], `${label} retained ${field}`);
+        return;
+    }
     exact(
         value.content_manifest_url,
-        `${DEPLOYMENT.publicOrigin}/datadirs/demo-leicester/robinhood-web-content.json`,
+        `${DEPLOYMENT.publicOrigin}/${DEMO_CONTENT_MANIFEST_PATH}`,
         `${label} content_manifest_url`,
     );
     exact(
         value.datadir_url,
-        `${DEPLOYMENT.publicOrigin}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`,
+        `${DEPLOYMENT.publicOrigin}/${DEMO_PATH}`,
         `${label} datadir_url`,
     );
 }
 
-function validateSharedAuthority(value, label) {
+function validateSharedAuthority(value, label, retainedGenerations) {
     exact(value.schema_version, 1, `${label} schema_version`);
     if (!COMMIT.test(value.source_commit)) throw new Error(`${label} source_commit is invalid`);
     if (!DIGEST.test(value.inventory_sha256)) throw new Error(`${label} inventory_sha256 is invalid`);
     exact(value.worker_name, DEPLOYMENT.datadirWorker, `${label} worker_name`);
     exact(value.route_pattern, `${DEPLOYMENT.publicHost}/datadirs/*`, `${label} route_pattern`);
     exact(value.public_root_url, `${DEPLOYMENT.publicOrigin}/datadirs/`, `${label} public_root_url`);
-    validateDemo(value.demo, `${label} demo`);
+    validateDemo(value.demo, `${label} demo`, retainedGenerations);
 }
 
-export async function readDatadirReleaseAuthority(authorityPath, expectedAuthoritySha256) {
+export async function readDatadirReleaseAuthority(
+    authorityPath,
+    expectedAuthoritySha256,
+    { retainedGenerations = [] } = {},
+) {
     if (expectedAuthoritySha256 !== undefined && !DIGEST.test(expectedAuthoritySha256)) {
         throw new Error('expected datadir authority SHA-256 must be lowercase hexadecimal');
     }
@@ -110,7 +128,7 @@ export async function readDatadirReleaseAuthority(authorityPath, expectedAuthori
     }
     const authority = parseCanonical(bytes, 'datadir authority');
     exactKeys(authority, AUTHORITY_KEYS, 'datadir authority');
-    validateSharedAuthority(authority, 'datadir authority');
+    validateSharedAuthority(authority, 'datadir authority', retainedGenerations);
     if (!DIGEST.test(authority.cargo_lock_sha256)) {
         throw new Error('datadir authority cargo_lock_sha256 is invalid');
     }
@@ -123,8 +141,9 @@ export async function writeDatadirReleaseAuthority({
     cargoLockSha256,
     inventoryPath,
     authorityPath,
+    retainedGenerations = [],
 }) {
-    const corpus = await verifyDatadirCorpus(root);
+    const corpus = await verifyDatadirCorpus(root, { retainedGenerations });
     const inventory = await writeStaticOriginInventory({
         origin: 'datadir', root, sourceCommit, cargoLockSha256, output: inventoryPath,
     });
@@ -150,9 +169,12 @@ export async function verifyDatadirReleaseAuthority({
     inventoryPath,
     authorityPath,
     expectedAuthoritySha256,
+    retainedGenerations = [],
 }) {
-    const corpus = await verifyDatadirCorpus(root);
-    const verifiedAuthority = await readDatadirReleaseAuthority(authorityPath, expectedAuthoritySha256);
+    const corpus = await verifyDatadirCorpus(root, { retainedGenerations });
+    const verifiedAuthority = await readDatadirReleaseAuthority(
+        authorityPath, expectedAuthoritySha256, { retainedGenerations },
+    );
     const verifiedInventory = await verifyStaticOriginInventory({
         origin: 'datadir', root, inventoryPath,
         expectedInventorySha256: verifiedAuthority.authority.inventory_sha256,
@@ -177,9 +199,16 @@ export async function verifyDatadirReleaseAuthority({
     };
 }
 
-export async function writeDatadirDeploymentReceipt({ authorityPath, workerVersionId, output }) {
+export async function writeDatadirDeploymentReceipt({
+    authorityPath,
+    workerVersionId,
+    output,
+    retainedGenerations = [],
+}) {
     if (!VERSION_ID.test(workerVersionId)) throw new Error('datadir Worker version must be a lowercase UUID');
-    const { authority, authoritySha256 } = await readDatadirReleaseAuthority(authorityPath);
+    const { authority, authoritySha256 } = await readDatadirReleaseAuthority(
+        authorityPath, undefined, { retainedGenerations },
+    );
     const receipt = canonical({
         schema_version: 1,
         authority_sha256: authoritySha256,
@@ -200,11 +229,12 @@ export async function verifyDatadirDeploymentReceipt({
     authorityPath,
     receiptPath,
     expectedReceiptSha256,
+    retainedGenerations = [],
 }) {
     if (expectedReceiptSha256 !== undefined && !DIGEST.test(expectedReceiptSha256)) {
         throw new Error('expected datadir receipt SHA-256 must be lowercase hexadecimal');
     }
-    const verifiedAuthority = await readDatadirReleaseAuthority(authorityPath);
+    const verifiedAuthority = await readDatadirReleaseAuthority(authorityPath, undefined, { retainedGenerations });
     const receiptBytes = await readFile(receiptPath);
     const receiptSha256 = sha256(receiptBytes);
     if (expectedReceiptSha256 !== undefined && receiptSha256 !== expectedReceiptSha256) {
@@ -212,7 +242,7 @@ export async function verifyDatadirDeploymentReceipt({
     }
     const receipt = parseCanonical(receiptBytes, 'datadir deployment receipt');
     exactKeys(receipt, RECEIPT_KEYS, 'datadir deployment receipt');
-    validateSharedAuthority(receipt, 'datadir deployment receipt');
+    validateSharedAuthority(receipt, 'datadir deployment receipt', retainedGenerations);
     if (!DIGEST.test(receipt.authority_sha256)) throw new Error('receipt authority_sha256 is invalid');
     if (!VERSION_ID.test(receipt.worker_version_id)) throw new Error('receipt worker_version_id is invalid');
     exact(receipt.authority_sha256, verifiedAuthority.authoritySha256, 'receipt authority_sha256');
@@ -238,22 +268,26 @@ async function main() {
         const result = await writeDatadirReleaseAuthority({
             root: args[0], sourceCommit: args[1], cargoLockSha256: args[2],
             inventoryPath: args[3], authorityPath: args[4],
+            retainedGenerations: RETAINED_DEMO_GENERATIONS,
         });
         console.log(`authored datadir authority ${result.authoritySha256} and inventory ${result.inventorySha256}`);
     } else if (mode === 'verify' && (args.length === 3 || args.length === 4)) {
         const result = await verifyDatadirReleaseAuthority({
             root: args[0], inventoryPath: args[1], authorityPath: args[2],
             expectedAuthoritySha256: args[3],
+            retainedGenerations: RETAINED_DEMO_GENERATIONS,
         });
         console.log(`verified datadir authority ${result.authoritySha256} and inventory ${result.inventorySha256}`);
     } else if (mode === 'receipt' && args.length === 3) {
         const result = await writeDatadirDeploymentReceipt({
             authorityPath: args[0], workerVersionId: args[1], output: args[2],
+            retainedGenerations: RETAINED_DEMO_GENERATIONS,
         });
         console.log(`authored datadir deployment receipt ${result.receiptSha256}`);
     } else if (mode === 'verify-receipt' && (args.length === 2 || args.length === 3)) {
         const result = await verifyDatadirDeploymentReceipt({
             authorityPath: args[0], receiptPath: args[1], expectedReceiptSha256: args[2],
+            retainedGenerations: RETAINED_DEMO_GENERATIONS,
         });
         console.log(`verified datadir deployment receipt ${result.receiptSha256}`);
     } else {

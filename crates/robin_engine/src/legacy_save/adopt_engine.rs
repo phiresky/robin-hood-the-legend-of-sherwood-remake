@@ -16,6 +16,7 @@ use super::{
     adopt_actor_ownership::LegacyActorOwnershipAdoptionPlan,
     adopt_camera::{LegacyCameraAdoptionPlan, LegacyCameraHostState},
     adopt_campaign::LegacyCampaignAdoptionPlan,
+    adopt_common::AdoptCtx,
     adopt_dynamic_elements::LegacyDynamicElementAdoptionPlan,
     adopt_elements::LegacyStaticElementAdoption,
     adopt_grid::{LegacyFastFindGridAdoptionPlan, LegacyGridHostState},
@@ -101,6 +102,13 @@ impl LegacyKnownAdoptionPlan {
             "sequence topology",
             LegacySequenceTopology::derive(engine, assets, &body.element_payloads),
         )?;
+        let ctx = AdoptCtx {
+            engine,
+            assets,
+            entities: &entities,
+            position_topology: &position_topology,
+            sequence_topology: &sequence_topology,
+        };
         let preamble = stage(
             "engine preamble",
             LegacyLinuxPreambleState::try_from_v48(body.header.abi_profile, &body.engine),
@@ -145,24 +153,11 @@ impl LegacyKnownAdoptionPlan {
         )?;
         let object_leaves = stage(
             "object/bonus/scroll/target/FX leaf state",
-            LegacyObjectLeafAdoptionPlan::preflight(
-                engine,
-                assets,
-                &body.element_payloads,
-                &entities,
-                &vm_arena,
-            ),
+            LegacyObjectLeafAdoptionPlan::preflight(&ctx, &body.element_payloads, &vm_arena),
         )?;
         let grid = stage(
             "FastFindGrid",
-            LegacyFastFindGridAdoptionPlan::preflight(
-                engine,
-                assets,
-                &body.grid,
-                &entities,
-                &position_topology,
-                &vm_arena,
-            ),
+            LegacyFastFindGridAdoptionPlan::preflight(&ctx, &body.grid, &vm_arena),
         )?;
         let sequences = stage(
             "SequenceManager",
@@ -171,25 +166,18 @@ impl LegacyKnownAdoptionPlan {
         let pc_human = stage(
             "Human/PC leaf state",
             LegacyPcHumanAdoptionPlan::preflight(
-                engine,
+                &ctx,
                 &body.element_payloads,
                 body.header.abi_profile,
-                &entities,
-                &position_topology,
-                &sequence_topology,
                 &sequences,
                 &body.campaigns.live.campaign,
-                assets,
             ),
         )?;
         let actor_ownership = stage(
             "actor ownership/script state",
             LegacyActorOwnershipAdoptionPlan::preflight(
-                engine,
-                assets,
+                &ctx,
                 &body.element_payloads,
-                &entities,
-                &sequence_topology,
                 &sequences,
                 &vm_arena,
             ),
@@ -197,53 +185,30 @@ impl LegacyKnownAdoptionPlan {
         let hiking_tail = stage(
             "hiking paths/dead PC/shield/trajectory",
             LegacyHikingTailAdoptionPlan::preflight(
-                engine,
-                assets,
+                &ctx,
                 &body.hiking_guide,
                 &body.projectile_trajectory,
                 &body.tail,
                 body.engine.shield_protected,
-                &entities,
                 &vm_arena,
             ),
         )?;
         let tail_runtime = stage(
             "global VM/timers/camera",
-            LegacyTailRuntimeAdoptionPlan::preflight(
-                engine,
-                assets,
-                body.tail.global_script_members.as_ref(),
-                &body.tail.script_globals,
-                &body.tail.timers,
-                &entities,
-                &sequences,
-                &vm_arena,
-            ),
+            LegacyTailRuntimeAdoptionPlan::preflight(&ctx, &body.tail, &sequences, &vm_arena),
         )?;
         let paths = stage(
             "path queues/graph",
             preflight_v48_paths(
-                engine,
-                assets,
+                &ctx,
                 &body.failed_path_requests,
                 &body.tail.pathfinder,
                 &sequences,
-                &entities,
             ),
         )?;
         let simple = stage(
             "selection/feedback",
-            LegacySimpleAdoptionPlan::preflight(
-                engine,
-                &entities,
-                &body.user_lock,
-                &body.selected_elements,
-                &body.selected_before_lock,
-                &body.follow_view,
-                &body.ground_mark,
-                &body.titbits,
-                &body.minimap,
-            ),
+            LegacySimpleAdoptionPlan::preflight(&ctx, body),
         )?;
         let tail_basic = stage(
             "global AI/mission statistics",
@@ -294,6 +259,14 @@ impl LegacyKnownAdoptionPlan {
         engine: &mut EngineInner,
         assets: &LevelAssets,
     ) -> LegacyKnownHostState {
+        // Apply-order invariant: several plans store whole engine components
+        // that were cloned from this candidate during preflight and then
+        // overwritten with saved members — `elements` stores `NpcData`
+        // (including the local-AI brain) and `pc_human` stores `HumanData` and
+        // `PcData`. No plan applied before those may write the same
+        // components, or its writes are silently reverted by the stale
+        // preflight clone. Components written by more than one plan
+        // (`ElementData`/sprite, `ActorData`) stay field-wise for that reason.
         self.campaign.apply(engine);
         engine.apply_legacy_linux_preamble_state(self.preamble);
         engine.world.next_original_creation_order = self.post_dynamic_creation_counter;

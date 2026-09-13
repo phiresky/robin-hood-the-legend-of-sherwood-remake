@@ -11,7 +11,7 @@ pub fn resolve_case_insensitive(path: &Path) -> Option<PathBuf> {
 pub(super) fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf>, SbFileError> {
     let Some(path_str) = path.to_str() else {
         tracing::warn!("asset path is not UTF-8: {}", path.display());
-        return Err(SbFileError::Read);
+        return Err(SbFileError::Read(None));
     };
     let normalized = path_str.replace('\\', "/");
     // Browser-authored datadirs use exact-cased paths; there is no read_dir.
@@ -22,7 +22,7 @@ pub(super) fn try_resolve_case_insensitive(path: &Path) -> Result<Option<PathBuf
                 "asset existence check failed for {}: {error}",
                 path.display()
             );
-            SbFileError::Read
+            SbFileError::Read(None)
         })
 }
 

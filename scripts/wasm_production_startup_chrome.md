@@ -53,9 +53,12 @@ page timestamps are aligned through their absolute performance time origins.
 The local fixture has no leaderboard API, so its 404 follows the real browse-only
 failure path. Favicon 404 is also retained. Neither endpoint is fabricated.
 
-Bootstrap is a precise engine log endpoint. `--require-present` additionally requires
-`startup timing: first mission present returned` from an instrumented candidate.
-That mark indicates return from the normal mission render submission path; it is
+The startup endpoint is the engine log line
+`startup timing: first mission present returned` (the former
+`mission bootstrap: total elapsed_ms` line no longer exists). `bootstrapMs` and
+`firstMissionPresentReturnedMs` both report it; `--require-present` is accepted
+but now redundant. A console or page log (`#bp-label`, `#log`) containing
+`boot failed` ends the wait immediately. That mark indicates return from the normal mission render submission path; it is
 **not** GPU completion or compositor presentation. Screenshots are captured after
 bootstrap, two animation callbacks and 500 ms settle. Their request/completion times
 are reported separately and the images must be inspected. They demonstrate rendered

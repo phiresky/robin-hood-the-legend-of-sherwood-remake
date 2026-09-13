@@ -436,7 +436,7 @@ fn bow_range_debug(
 }
 
 pub(crate) fn engine_dump_json(engine: &Engine) -> Result<serde_json::Value, String> {
-    robin_util::json_value::to_json_value(engine).map_err(|e| e.to_string())
+    robin_engine::json_value::to_json_value(engine).map_err(|e| e.to_string())
 }
 
 pub(crate) fn level_assets_json(
@@ -616,7 +616,7 @@ where
 {
     object.insert(
         key.into(),
-        robin_util::json_value::to_json_value(value).map_err(|e| e.to_string())?,
+        robin_engine::json_value::to_json_value(value).map_err(|e| e.to_string())?,
     );
     Ok(())
 }

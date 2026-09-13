@@ -13,14 +13,13 @@
 //! Neither global AI nor Pathfinder stores its mission-sized shape. The
 //! caller must supply the seek-point, archery-sector, and path-graph topology
 //! created by the exact mission data. No boundary scanning or inferred count
-//! is used.
+//! is used. Field declaration order is wire order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::read_count_u16;
-use super::read_helpers::{hex16, read_point2, read_point3, reserve};
+use super::read_helpers::hex16;
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{
@@ -107,6 +106,14 @@ impl LegacyPostTailDecodeContext for LegacyVmMemberDecoder<'_> {
     }
 }
 
+/// Decode context shared by the engine-tail sections.
+#[derive(Clone, Copy)]
+pub struct LegacyPostTailDecode<'a> {
+    pub abi_profile: LegacySaveAbiProfile,
+    pub topology: &'a LegacyPostTailTopology,
+    pub limits: &'a LegacyPostTailLimits,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LegacyEnginePostTitbitsTail {
     pub abi_profile: LegacySaveAbiProfile,
@@ -134,6 +141,11 @@ impl LegacyEnginePostTitbitsTail {
         limits: &LegacyPostTailLimits,
         context: &dyn LegacyPostTailDecodeContext,
     ) -> LegacyResult<Self> {
+        let ctx = LegacyPostTailDecode {
+            abi_profile,
+            topology,
+            limits,
+        };
         reader.scope("post_titbits_tail", |reader| {
             validate_topology(reader, topology, limits)?;
             let start_offset = reader.offset();
@@ -147,13 +159,14 @@ impl LegacyEnginePostTitbitsTail {
                     })
                 })
                 .transpose()?;
-            let script_globals = LegacyScriptGlobals::read(reader, limits)?;
-            let timers = LegacyTimerSequenceState::read(reader, limits)?;
-            let global_ai = LegacyGlobalAiState::read(reader, abi_profile, topology)?;
-            let pathfinder = LegacyPathfinderState::read(reader, topology, limits)?;
+            let script_globals = LegacyScriptGlobals::read_field(reader, "script_globals", &ctx)?;
+            let timers = LegacyTimerSequenceState::read_field(reader, "timer_sequences", &ctx)?;
+            let global_ai = LegacyGlobalAiState::read_field(reader, "global_ai", &ctx)?;
+            let pathfinder = LegacyPathfinderState::read_field(reader, "pathfinder", &ctx)?;
             let dead_pc = read_element_ref(reader, "dead_pc")?;
-            let mission_statistics = LegacyMissionStatistics::read(reader, limits)?;
-            let shield = LegacyPendingShieldState::read(reader)?;
+            let mission_statistics =
+                LegacyMissionStatistics::read_field(reader, "mission_statistics", &ctx)?;
+            let shield = LegacyPendingShieldState::read_field(reader, "shield", &())?;
 
             let serialized_end_offset = reader.offset();
             if serialized_end_offset > topology.eof_offset {
@@ -225,94 +238,81 @@ impl LegacyEnginePostTitbitsTail {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostTailDecode<'_>)]
 pub struct LegacyScriptGlobals {
+    #[legacy(offset)]
     pub start_offset: u64,
     /// Exact two's-complement bits of the original game's signed-integer array.
+    #[legacy(count_u32 = ctx.limits.script_globals, count_name = "count")]
     pub values: Vec<i32>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyScriptGlobals {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPostTailLimits) -> LegacyResult<Self> {
-        reader.scope("script_globals", |reader| {
-            let start_offset = reader.offset();
-            let count = reader.read_count_u32("count", limits.script_globals)?;
-            let mut values = Vec::new();
-            reserve(reader, &mut values, count, "values")?;
-            for index in 0..count {
-                values.push(reader.read_i32(format!("values[{index}]"))?);
-            }
-            Ok(Self {
-                start_offset,
-                values,
-                end_offset: reader.offset(),
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostTailDecode<'_>)]
 pub struct LegacyTimerSequenceState {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(count_u32 = ctx.limits.timer_sequence_elements)]
     pub timer_elements: Vec<LegacySequenceElementRef>,
+    #[legacy(read = read_camera_element(reader))]
     pub camera_element: Option<LegacySequenceElementRef>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyTimerSequenceState {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPostTailLimits) -> LegacyResult<Self> {
-        reader.scope("timer_sequences", |reader| {
-            let start_offset = reader.offset();
-            let count =
-                reader.read_count_u32("timer_elements.count", limits.timer_sequence_elements)?;
-            let mut timer_elements = Vec::new();
-            reserve(reader, &mut timer_elements, count, "timer_elements")?;
-            for index in 0..count {
-                timer_elements.push(read_sequence_element_ref(
-                    reader,
-                    format!("timer_elements[{index}]"),
-                )?);
-            }
-            let camera_element = if reader.read_bool("camera.present")? {
-                Some(read_sequence_element_ref(reader, "camera.element")?)
-            } else {
-                None
-            };
-            Ok(Self {
-                start_offset,
-                timer_elements,
-                camera_element,
-                end_offset: reader.offset(),
-            })
-        })
+fn read_camera_element(
+    reader: &mut LegacyReader<'_>,
+) -> LegacyResult<Option<LegacySequenceElementRef>> {
+    if reader.read_bool("camera.present")? {
+        Ok(Some(read_sequence_element_ref(reader, "camera.element")?))
+    } else {
+        Ok(None)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = FINGERPRINT_SEEK_POINT, expected = "seek-point fingerprint")]
 pub struct LegacySeekPointStatus {
     pub frame_when_fully_interesting: u32,
     pub last_calculated_interest: u8,
     pub locked: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Context: the mission-created number of archery points in this sector.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = usize)]
 pub struct LegacyArcherySectorState {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = FINGERPRINT_ARCHERY_SECTOR,
+        expected = "archery-sector fingerprint"
+    )]
     pub number_of_owners: u16,
+    #[legacy(len = *ctx)]
     pub point_owners: Vec<LegacyElementRef>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyTimeT32(pub i32);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostTailDecode<'_>)]
 pub struct LegacyGlobalAiState {
+    #[legacy(value = ctx.abi_profile)]
     pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(fingerprint = FINGERPRINT_GLOBAL_AI, expected = "AI fingerprint")]
     pub stupid_soldiers_cheat: bool,
+    #[legacy(len = ctx.topology.seek_point_count)]
     pub seek_points: Vec<LegacySeekPointStatus>,
+    #[legacy(read = read_archery_sectors(reader, ctx.topology))]
     pub archery_sectors: Vec<LegacyArcherySectorState>,
     pub green_alert_soldiers: u16,
     pub yellow_alert_soldiers: u16,
@@ -321,101 +321,27 @@ pub struct LegacyGlobalAiState {
     pub overall_villain_alert_status: i32,
     /// Both supported producers are audited 32-bit builds. Their serialized
     /// `time_t` is a signed four-byte value, independent of the Rust host.
+    #[legacy(read = read_time_t32(reader, ctx.abi_profile).map(LegacyTimeT32))]
     pub saved_random_seed: LegacyTimeT32,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyGlobalAiState {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        topology: &LegacyPostTailTopology,
-    ) -> LegacyResult<Self> {
-        reader.scope("global_ai", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature("fingerprint", FINGERPRINT_GLOBAL_AI, "AI fingerprint")?;
-            let stupid_soldiers_cheat = reader.read_bool("stupid_soldiers_cheat")?;
-
-            let mut seek_points = Vec::new();
-            reserve(
-                reader,
-                &mut seek_points,
-                topology.seek_point_count,
-                "seek_points",
-            )?;
-            for index in 0..topology.seek_point_count {
-                seek_points.push(reader.scope(format!("seek_points[{index}]"), |reader| {
-                    reader.read_signature(
-                        "fingerprint",
-                        FINGERPRINT_SEEK_POINT,
-                        "seek-point fingerprint",
-                    )?;
-                    Ok(LegacySeekPointStatus {
-                        frame_when_fully_interesting: reader
-                            .read_u32("frame_when_fully_interesting")?,
-                        last_calculated_interest: reader.read_u8("last_calculated_interest")?,
-                        locked: reader.read_bool("locked")?,
-                    })
-                })?);
-            }
-
-            let mut archery_sectors = Vec::new();
-            reserve(
-                reader,
-                &mut archery_sectors,
-                topology.archery_sector_point_counts.len(),
-                "archery_sectors",
-            )?;
-            for (sector_index, &point_count) in
-                topology.archery_sector_point_counts.iter().enumerate()
-            {
-                archery_sectors.push(reader.scope(
-                    format!("archery_sectors[{sector_index}]"),
-                    |reader| {
-                        let start_offset = reader.offset();
-                        reader.read_signature(
-                            "fingerprint",
-                            FINGERPRINT_ARCHERY_SECTOR,
-                            "archery-sector fingerprint",
-                        )?;
-                        let number_of_owners = reader.read_u16("number_of_owners")?;
-                        let mut point_owners = Vec::new();
-                        reserve(reader, &mut point_owners, point_count, "point_owners")?;
-                        for point_index in 0..point_count {
-                            point_owners.push(read_element_ref(
-                                reader,
-                                format!("point_owners[{point_index}]"),
-                            )?);
-                        }
-                        Ok(LegacyArcherySectorState {
-                            start_offset,
-                            number_of_owners,
-                            point_owners,
-                            end_offset: reader.offset(),
-                        })
-                    },
-                )?);
-            }
-
-            Ok(Self {
-                abi_profile,
-                start_offset,
-                stupid_soldiers_cheat,
-                seek_points,
-                archery_sectors,
-                green_alert_soldiers: reader.read_u16("green_alert_soldiers")?,
-                yellow_alert_soldiers: reader.read_u16("yellow_alert_soldiers")?,
-                red_alert_soldiers: reader.read_u16("red_alert_soldiers")?,
-                overall_alert_status: reader.read_i32("overall_alert_status")?,
-                overall_villain_alert_status: reader.read_i32("overall_villain_alert_status")?,
-                saved_random_seed: LegacyTimeT32(read_time_t32(reader, abi_profile)?),
-                end_offset: reader.offset(),
-            })
-        })
-    }
+fn read_archery_sectors(
+    reader: &mut LegacyReader<'_>,
+    topology: &LegacyPostTailTopology,
+) -> LegacyResult<Vec<LegacyArcherySectorState>> {
+    let point_counts = &topology.archery_sector_point_counts;
+    let mut point_counts_iter = point_counts.iter();
+    reader.read_list("archery_sectors", point_counts.len(), |reader, item| {
+        let point_count = point_counts_iter
+            .next()
+            .expect("read_list requests exactly one item per archery sector");
+        LegacyArcherySectorState::read_field(reader, item, point_count)
+    })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPathRequest {
     pub action: i32,
     pub reverse: bool,
@@ -433,90 +359,50 @@ pub struct LegacyPathRequest {
     pub sequence_element: LegacySequenceElementRef,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostTailDecode<'_>)]
 pub struct LegacyPathfinderState {
+    #[legacy(offset)]
     pub start_offset: u64,
     /// The writer always emits false after excluding an ignored front request.
+    #[legacy(fingerprint = FINGERPRINT_PATHFINDER, expected = "pathfinder fingerprint")]
     pub do_not_ignore_next_path: bool,
+    #[legacy(count_u16 = ctx.limits.path_requests)]
     pub requests: Vec<LegacyPathRequest>,
     /// Mutable graph state in mission layer/area order.
+    #[legacy(read = read_layer_area_states(reader, ctx.topology))]
     pub layer_area_states: Vec<Vec<u32>>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyPathfinderState {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        topology: &LegacyPostTailTopology,
-        limits: &LegacyPostTailLimits,
-    ) -> LegacyResult<Self> {
-        reader.scope("pathfinder", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_PATHFINDER,
-                "pathfinder fingerprint",
-            )?;
-            let do_not_ignore_next_path = reader.read_bool("do_not_ignore_next_path")?;
-            let count = read_count_u16(reader, "requests.count", limits.path_requests)?;
-            let mut requests = Vec::new();
-            reserve(reader, &mut requests, count, "requests")?;
-            for index in 0..count {
-                requests.push(reader.scope(format!("requests[{index}]"), |reader| {
-                    Ok(LegacyPathRequest {
-                        action: reader.read_i32("action")?,
-                        reverse: reader.read_bool("reverse")?,
-                        use_first_point: reader.read_bool("use_first_point")?,
-                        tolerance: reader.read_f32("tolerance")?,
-                        speed: reader.read_u8("speed")?,
-                        area: reader.read_u16("area")?,
-                        half_diagonal_index: reader.read_u16("half_diagonal_index")?,
-                        layer: reader.read_u16("layer")?,
-                        sector: reader.read_u16("sector")?,
-                        goal: read_point2(reader, "goal")?,
-                        source: read_point2(reader, "source")?,
-                        actor: read_element_ref(reader, "actor")?,
-                        antagonist: read_element_ref(reader, "antagonist")?,
-                        sequence_element: read_sequence_element_ref(reader, "sequence_element")?,
-                    })
-                })?);
-            }
-
-            let mut layer_area_states = Vec::new();
-            reserve(
-                reader,
-                &mut layer_area_states,
-                topology.path_graph_area_counts.len(),
-                "layer_area_states",
-            )?;
-            for (layer_index, &area_count) in topology.path_graph_area_counts.iter().enumerate() {
-                layer_area_states.push(reader.scope(
-                    format!("layer_area_states[{layer_index}]"),
-                    |reader| {
-                        let mut states = Vec::new();
-                        reserve(reader, &mut states, area_count, "states")?;
-                        for area_index in 0..area_count {
-                            states.push(reader.read_u32(format!("states[{area_index}]"))?);
-                        }
-                        Ok(states)
-                    },
-                )?);
-            }
-
-            Ok(Self {
-                start_offset,
-                do_not_ignore_next_path,
-                requests,
-                layer_area_states,
-                end_offset: reader.offset(),
+fn read_layer_area_states(
+    reader: &mut LegacyReader<'_>,
+    topology: &LegacyPostTailTopology,
+) -> LegacyResult<Vec<Vec<u32>>> {
+    let area_counts = &topology.path_graph_area_counts;
+    let mut area_counts_iter = area_counts.iter();
+    reader.read_list("layer_area_states", area_counts.len(), |reader, item| {
+        let area_count = *area_counts_iter
+            .next()
+            .expect("read_list requests exactly one item per path-graph layer");
+        reader.scope(item, |reader| {
+            reader.read_list("states", area_count, |reader, item| {
+                u32::read_field(reader, item, &())
             })
         })
-    }
+    })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostTailDecode<'_>)]
 pub struct LegacyMissionStatistics {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = FINGERPRINT_MISSION_STAT,
+        expected = "mission-statistics fingerprint"
+    )]
     pub collected_money: u32,
     pub bonus_money: u32,
     pub soldier_money: u32,
@@ -526,74 +412,32 @@ pub struct LegacyMissionStatistics {
     pub killed_peasant_count: u32,
     pub killed_allied_count: u32,
     pub added_score: u32,
+    #[legacy(read = read_pc_names(reader, ctx.limits))]
     pub pc_names: Vec<String>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-impl LegacyMissionStatistics {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyPostTailLimits) -> LegacyResult<Self> {
-        reader.scope("mission_statistics", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_MISSION_STAT,
-                "mission-statistics fingerprint",
-            )?;
-            let collected_money = reader.read_u32("collected_money")?;
-            let bonus_money = reader.read_u32("bonus_money")?;
-            let soldier_money = reader.read_u32("soldier_money")?;
-            let living_soldier_count = reader.read_u32("living_soldier_count")?;
-            let total_soldier_count = reader.read_u32("total_soldier_count")?;
-            let new_peasant_count = reader.read_u32("new_peasant_count")?;
-            let killed_peasant_count = reader.read_u32("killed_peasant_count")?;
-            let killed_allied_count = reader.read_u32("killed_allied_count")?;
-            let added_score = reader.read_u32("added_score")?;
-            let count = reader.read_count_u32("pc_names.count", limits.mission_pc_names)?;
-            let mut pc_names = Vec::new();
-            reserve(reader, &mut pc_names, count, "pc_names")?;
-            for index in 0..count {
-                pc_names.push(reader.scope(format!("pc_names[{index}]"), |reader| {
-                    reader.read_wide_string("value", limits.wide_string_code_units)
-                })?);
-            }
-            Ok(Self {
-                start_offset,
-                collected_money,
-                bonus_money,
-                soldier_money,
-                living_soldier_count,
-                total_soldier_count,
-                new_peasant_count,
-                killed_peasant_count,
-                killed_allied_count,
-                added_score,
-                pc_names,
-                end_offset: reader.offset(),
-            })
+fn read_pc_names(
+    reader: &mut LegacyReader<'_>,
+    limits: &LegacyPostTailLimits,
+) -> LegacyResult<Vec<String>> {
+    let count = reader.read_count_u32("pc_names.count", limits.mission_pc_names)?;
+    reader.read_list("pc_names", count, |reader, item| {
+        reader.scope(item, |reader| {
+            reader.read_wide_string("value", limits.wide_string_code_units)
         })
-    }
+    })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyPendingShieldState {
+    #[legacy(offset)]
     pub start_offset: u64,
     pub danger_point: LegacyPoint3,
     pub protected_pc: LegacyElementRef,
+    #[legacy(offset)]
     pub end_offset: u64,
-}
-
-impl LegacyPendingShieldState {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("shield", |reader| {
-            let start_offset = reader.offset();
-            Ok(Self {
-                start_offset,
-                danger_point: read_point3(reader, "danger_point")?,
-                protected_pc: read_element_ref(reader, "protected_pc")?,
-                end_offset: reader.offset(),
-            })
-        })
-    }
 }
 
 fn validate_topology(

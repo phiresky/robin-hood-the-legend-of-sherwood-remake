@@ -7,10 +7,7 @@
 //! Facts discarded during level loading fail with a named, typed error rather
 //! than being reconstructed heuristically.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +18,7 @@ use crate::{
 };
 
 use super::{
+    adopt_common::{AdoptErrorKind, LegacyAdoptError},
     elements::LegacyElementClass,
     payload_ai::LegacyLocalAiKind,
     payload_context::{LegacyElementPayloadMetadata, LegacyMissionPayloadMetadata},
@@ -50,55 +48,6 @@ pub enum LegacyMissingTopologyFact {
     /// separately appended out-of-map sector.
     GridSparseSectorOrder,
 }
-
-/// Strict failure returned while deriving omitted v48 save topology.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LegacyTopologyAdapterError {
-    MissingRetainedFact {
-        fact: LegacyMissingTopologyFact,
-        original_owner: &'static str,
-        detail: &'static str,
-    },
-    MissionAttachmentMismatch {
-        fact: &'static str,
-        engine_value: String,
-        asset_value: String,
-    },
-    ElementTopologyMismatch {
-        detail: String,
-    },
-}
-
-impl fmt::Display for LegacyTopologyAdapterError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingRetainedFact {
-                fact,
-                original_owner,
-                detail,
-            } => write!(
-                formatter,
-                "cannot derive {fact:?}: Original owns it in {original_owner}; {detail}"
-            ),
-            Self::MissionAttachmentMismatch {
-                fact,
-                engine_value,
-                asset_value,
-            } => write!(
-                formatter,
-                "cannot derive {fact}: initialized engine value {engine_value} does not match attached level asset value {asset_value}"
-            ),
-            Self::ElementTopologyMismatch { detail } => {
-                write!(
-                    formatter,
-                    "cannot derive Original element topology: {detail}"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for LegacyTopologyAdapterError {}
 
 /// The original game's pre-mission initialization prefix.
 ///
@@ -140,7 +89,7 @@ pub struct LegacyStaticElementTopology {
 pub fn derive_static_element_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
-) -> Result<LegacyStaticElementTopology, LegacyTopologyAdapterError> {
+) -> Result<LegacyStaticElementTopology, LegacyAdoptError> {
     let sequence = build_original_static_element_sequence(engine, assets)?;
     let mut payload_metadata = LegacyMissionPayloadMetadata::default();
     let mut creation_order_by_entity = BTreeMap::new();
@@ -223,14 +172,6 @@ pub fn derive_static_element_topology(
     })
 }
 
-/// Derive phase-two element metadata.
-pub fn derive_element_payload_metadata(
-    engine: &EngineInner,
-    assets: &LevelAssets,
-) -> Result<LegacyMissionPayloadMetadata, LegacyTopologyAdapterError> {
-    Ok(derive_static_element_topology(engine, assets)?.payload_metadata)
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticElementSource {
     Entity(EntityId),
@@ -240,14 +181,15 @@ enum StaticElementSource {
 fn build_original_static_element_sequence(
     engine: &EngineInner,
     assets: &LevelAssets,
-) -> Result<Vec<StaticElementSource>, LegacyTopologyAdapterError> {
+) -> Result<Vec<StaticElementSource>, LegacyAdoptError> {
     let entity_assets = &assets.entities;
     if engine.world.mobile_elements.len() != entity_assets.mobile_element_count {
-        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        return Err(AdoptErrorKind::MissionAttachmentMismatch {
             fact: "mobile element count",
             engine_value: engine.world.mobile_elements.len().to_string(),
             asset_value: entity_assets.mobile_element_count.to_string(),
-        });
+        }
+        .into());
     }
 
     let patch_ids = entity_assets
@@ -343,7 +285,7 @@ fn build_original_static_element_sequence(
     let mut used = BTreeSet::new();
     let mut append_entities = |ids: &[EntityId],
                                sequence: &mut Vec<StaticElementSource>|
-     -> Result<(), LegacyTopologyAdapterError> {
+     -> Result<(), LegacyAdoptError> {
         for &id in ids {
             if !used.insert(id) {
                 return Err(element_mismatch(format!(
@@ -443,7 +385,7 @@ fn validate_typed_id_list(
     kind: &'static str,
     ids: &[EntityId],
     predicate: impl Fn(&Entity) -> bool,
-) -> Result<Vec<EntityId>, LegacyTopologyAdapterError> {
+) -> Result<Vec<EntityId>, LegacyAdoptError> {
     ids.iter()
         .copied()
         .map(|id| {
@@ -465,7 +407,7 @@ fn validate_typed_id_list(
 fn validate_mobile_children(
     engine: &EngineInner,
     used: &BTreeSet<EntityId>,
-) -> Result<(), LegacyTopologyAdapterError> {
+) -> Result<(), LegacyAdoptError> {
     for (mobile_index, mobile) in engine.world.mobile_elements.iter().enumerate() {
         if mobile.sprite_ids.is_empty() {
             return Err(element_mismatch(format!(
@@ -498,7 +440,7 @@ fn metadata_for_entity(
     engine: &EngineInner,
     entity_id: EntityId,
     entity: &Entity,
-) -> Result<LegacyElementPayloadMetadata, LegacyTopologyAdapterError> {
+) -> Result<LegacyElementPayloadMetadata, LegacyAdoptError> {
     let bound_actor_class = || {
         engine.scripts.mission.as_ref().and_then(|mission| {
             mission
@@ -577,9 +519,7 @@ fn metadata_for_entity(
     })
 }
 
-fn legacy_object_class(
-    object_type: ObjectType,
-) -> Result<LegacyElementClass, LegacyTopologyAdapterError> {
+fn legacy_object_class(object_type: ObjectType) -> Result<LegacyElementClass, LegacyAdoptError> {
     Ok(match object_type {
         ObjectType::Arrow => LegacyElementClass::Arrow,
         ObjectType::Apple => LegacyElementClass::Apple,
@@ -623,18 +563,21 @@ fn nonempty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
-fn element_mismatch(detail: impl Into<String>) -> LegacyTopologyAdapterError {
-    LegacyTopologyAdapterError::ElementTopologyMismatch {
+fn element_mismatch(detail: impl Into<String>) -> LegacyAdoptError {
+    AdoptErrorKind::TopologyMismatch {
+        what: "element",
         detail: detail.into(),
     }
+    .into()
 }
 
-fn missing_element_order(detail: &'static str) -> LegacyTopologyAdapterError {
-    LegacyTopologyAdapterError::MissingRetainedFact {
+fn missing_element_order(detail: &'static str) -> LegacyAdoptError {
+    AdoptErrorKind::MissingRetainedFact {
         fact: LegacyMissingTopologyFact::ElementCreationOrders,
         original_owner: "retained prototype/mission element construction order",
         detail,
     }
+    .into()
 }
 
 /// Derive the exact fast-grid serialization walk topology.
@@ -646,11 +589,11 @@ fn missing_element_order(detail: &'static str) -> LegacyTopologyAdapterError {
 pub fn derive_grid_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
-) -> Result<LegacyGridTopology, LegacyTopologyAdapterError> {
+) -> Result<LegacyGridTopology, LegacyAdoptError> {
     use crate::engine::{LegacyGridGateAsset, LegacyGridScriptObjectAsset, LegacyGridSectorAsset};
 
     let retained = assets.navigation.legacy_grid_topology.as_ref().ok_or(
-        LegacyTopologyAdapterError::MissingRetainedFact {
+        AdoptErrorKind::MissingRetainedFact {
             fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
             original_owner: "spatial-grid construction-time arrays",
             detail: "the attached level assets do not contain source-derived legacy grid topology",
@@ -687,11 +630,12 @@ pub fn derive_grid_topology(
         .count();
     let retained_jump_count = retained.gates.len() - retained_door_count;
     if (runtime_door_count, runtime_jump_count) != (retained_door_count, retained_jump_count) {
-        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        return Err(AdoptErrorKind::MissionAttachmentMismatch {
             fact: "door/jump gate counts",
             engine_value: format!("doors={runtime_door_count}, jumps={runtime_jump_count}"),
             asset_value: format!("doors={retained_door_count}, jumps={retained_jump_count}"),
-        });
+        }
+        .into());
     }
     if retained.script_objects.len() != assets.scripts.location_count {
         return Err(attachment_mismatch(
@@ -750,7 +694,7 @@ pub fn derive_grid_topology(
                 }),
             })
         })
-        .collect::<Result<Vec<_>, LegacyTopologyAdapterError>>()?;
+        .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
 
     Ok(LegacyGridTopology {
         patches,
@@ -791,18 +735,19 @@ fn attachment_mismatch(
     fact: &'static str,
     engine_value: usize,
     asset_value: usize,
-) -> LegacyTopologyAdapterError {
-    LegacyTopologyAdapterError::MissionAttachmentMismatch {
+) -> LegacyAdoptError {
+    AdoptErrorKind::MissionAttachmentMismatch {
         fact,
         engine_value: engine_value.to_string(),
         asset_value: asset_value.to_string(),
     }
+    .into()
 }
 
 fn validate_special_sector_counts(
     engine: &EngineInner,
     retained: &crate::engine::LegacyGridTopologyAssets,
-) -> Result<(), LegacyTopologyAdapterError> {
+) -> Result<(), LegacyAdoptError> {
     use crate::engine::LegacyGridSectorAsset;
 
     let count_runtime = |predicate: fn(crate::sector::SectorType) -> bool| {
@@ -838,7 +783,7 @@ fn validate_special_sector_counts(
             .count(),
     );
     if runtime != assets {
-        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        return Err(AdoptErrorKind::MissionAttachmentMismatch {
             fact: "door/building/lift sector counts",
             engine_value: format!(
                 "doors={}, buildings={}, lifts={}",
@@ -848,7 +793,8 @@ fn validate_special_sector_counts(
                 "doors={}, buildings={}, lifts={}",
                 assets.0, assets.1, assets.2
             ),
-        });
+        }
+        .into());
     }
     Ok(())
 }
@@ -863,15 +809,16 @@ fn validate_special_sector_counts(
 pub fn derive_hiking_guide_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
-) -> Result<LegacyHikingGuideTopology, LegacyTopologyAdapterError> {
+) -> Result<LegacyHikingGuideTopology, LegacyAdoptError> {
     let script_enabled = engine.scripts.mission.is_some();
     let asset_script_enabled = assets.scripts.mission_name.is_some();
     if script_enabled != asset_script_enabled {
-        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        return Err(AdoptErrorKind::MissionAttachmentMismatch {
             fact: "global script enablement",
             engine_value: script_enabled.to_string(),
             asset_value: asset_script_enabled.to_string(),
-        });
+        }
+        .into());
     }
 
     Ok(map_hiking_paths(
@@ -916,7 +863,7 @@ pub fn derive_post_tail_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
     eof_offset: u64,
-) -> Result<LegacyPostTailTopology, LegacyTopologyAdapterError> {
+) -> Result<LegacyPostTailTopology, LegacyAdoptError> {
     let global_script_class = match (
         engine.scripts.mission.as_ref(),
         assets.scripts.mission_name.as_deref(),
@@ -926,14 +873,15 @@ pub fn derive_post_tail_topology(
             Some("StartUp".to_owned())
         }
         (engine_script, asset_script) => {
-            return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+            return Err(AdoptErrorKind::MissionAttachmentMismatch {
                 fact: "mission script identity",
                 engine_value: engine_script.map_or_else(
                     || "disabled".to_owned(),
                     |script| script.script_name.clone(),
                 ),
                 asset_value: asset_script.unwrap_or("disabled").to_owned(),
-            });
+            }
+            .into());
         }
     };
 
@@ -952,11 +900,12 @@ pub fn derive_post_tail_topology(
         .map(Vec::len)
         .collect();
     if runtime_area_counts != asset_area_counts {
-        return Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
+        return Err(AdoptErrorKind::MissionAttachmentMismatch {
             fact: "pathfinder layer/area topology",
             engine_value: format!("{runtime_area_counts:?}"),
             asset_value: format!("{asset_area_counts:?}"),
-        });
+        }
+        .into());
     }
 
     Ok(LegacyPostTailTopology {
@@ -1040,8 +989,11 @@ mod tests {
 
         assert!(matches!(
             derive_hiking_guide_topology(&engine, &assets),
-            Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
-                fact: "global script enablement",
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissionAttachmentMismatch {
+                    fact: "global script enablement",
+                    ..
+                },
                 ..
             })
         ));
@@ -1076,8 +1028,11 @@ mod tests {
 
         assert!(matches!(
             derive_post_tail_topology(&engine, &assets, 0),
-            Err(LegacyTopologyAdapterError::MissionAttachmentMismatch {
-                fact: "pathfinder layer/area topology",
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissionAttachmentMismatch {
+                    fact: "pathfinder layer/area topology",
+                    ..
+                },
                 ..
             })
         ));
@@ -1183,8 +1138,11 @@ mod tests {
         let error = derive_static_element_topology(&engine, &assets).unwrap_err();
         assert!(matches!(
             error,
-            LegacyTopologyAdapterError::MissionAttachmentMismatch {
-                fact: "mobile element count",
+            LegacyAdoptError {
+                kind: AdoptErrorKind::MissionAttachmentMismatch {
+                    fact: "mobile element count",
+                    ..
+                },
                 ..
             }
         ));
@@ -1196,8 +1154,11 @@ mod tests {
         let mut assets = LevelAssets::new();
         assert!(matches!(
             derive_grid_topology(&engine, &assets),
-            Err(LegacyTopologyAdapterError::MissingRetainedFact {
-                fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::MissingRetainedFact {
+                    fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
+                    ..
+                },
                 ..
             })
         ));

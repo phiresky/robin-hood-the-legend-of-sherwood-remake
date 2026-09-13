@@ -2,13 +2,13 @@
 //!
 //! This stops at the exact byte where element serialization starts.
 //! Element decoding belongs to a later importer milestone; no scan or guessed
-//! byte skip is used to find that boundary.
+//! byte skip is used to find that boundary. Field declaration order is wire
+//! order.
 
 use super::read_helpers::DEFAULT_LIST_LIMIT;
-use super::read_helpers::{read_array, read_point2};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 
@@ -52,8 +52,17 @@ impl Default for LegacyEngineLimits {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Decode context for [`LegacyEnginePreamble`].
+#[derive(Clone, Copy)]
+pub struct LegacyEngineDecode<'a> {
+    pub abi_profile: LegacySaveAbiProfile,
+    pub limits: &'a LegacyEngineLimits,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyEngineDecode<'_>)]
 pub struct LegacyEnginePreamble {
+    #[legacy(offset)]
     pub start_offset: u64,
     pub cheat_used_flags: u32,
     pub shield_protected: bool,
@@ -66,6 +75,7 @@ pub struct LegacyEnginePreamble {
     pub speed_index: u16,
     pub desired_zoom_factor: f32,
     pub old_zoom_factor: f32,
+    #[legacy(read = LegacyBackgroundTransform::read(reader, ctx.abi_profile))]
     pub background_transform: LegacyBackgroundTransform,
     pub universal_frame_counter: u32,
     pub creation_counter: u32,
@@ -76,11 +86,14 @@ pub struct LegacyEnginePreamble {
     pub camera_wanted: LegacyPoint2,
     pub locker: bool,
     pub skip_data: String,
+    #[legacy(read = LegacyShortBriefings::read_field(reader, "short_briefings", ctx.limits))]
     pub short_briefings: LegacyShortBriefings,
+    #[legacy(read = LegacySound::read_field(reader, "sound", ctx.limits))]
     pub sound: LegacySound,
     pub messenger: LegacyMessenger,
     pub game: LegacyGameState,
     /// Exact first byte consumed by element serialization.
+    #[legacy(offset)]
     pub elements_offset: u64,
 }
 
@@ -90,37 +103,14 @@ impl LegacyEnginePreamble {
         abi_profile: LegacySaveAbiProfile,
         limits: &LegacyEngineLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("rhsg.engine", |reader| {
-            Ok(Self {
-                start_offset: reader.offset(),
-                cheat_used_flags: reader.read_u32("cheat_used_flags")?,
-                shield_protected: reader.read_bool("shield_protected")?,
-                freeze_all: reader.read_bool("freeze_all")?,
-                view: read_point2(reader, "view")?,
-                zoom_factor: reader.read_f32("zoom_factor")?,
-                camera_slide: read_point2(reader, "camera_slide")?,
-                fixed_camera_speed: reader.read_u16("fixed_camera_speed")?,
-                speed: reader.read_f32("speed")?,
-                speed_index: reader.read_u16("speed_index")?,
-                desired_zoom_factor: reader.read_f32("desired_zoom_factor")?,
-                old_zoom_factor: reader.read_f32("old_zoom_factor")?,
-                background_transform: LegacyBackgroundTransform::read(reader, abi_profile)?,
-                universal_frame_counter: reader.read_u32("universal_frame_counter")?,
-                creation_counter: reader.read_u32("creation_counter")?,
-                repulsive_point_counter: reader.read_u32("repulsive_point_counter")?,
-                lock_engine: reader.read_bool("lock_engine")?,
-                mission_won: reader.read_bool("mission_won")?,
-                mission_won_first_time: reader.read_bool("mission_won_first_time")?,
-                camera_wanted: read_point2(reader, "camera_wanted")?,
-                locker: reader.read_bool("locker")?,
-                skip_data: reader.read_string("skip_data")?,
-                short_briefings: LegacyShortBriefings::read(reader, limits)?,
-                sound: LegacySound::read(reader, limits)?,
-                messenger: LegacyMessenger::read(reader)?,
-                game: LegacyGameState::read(reader)?,
-                elements_offset: reader.offset(),
-            })
-        })
+        Self::read_field(
+            reader,
+            "rhsg.engine",
+            &LegacyEngineDecode {
+                abi_profile,
+                limits,
+            },
+        )
     }
 }
 
@@ -130,12 +120,13 @@ pub use super::payload_base::LegacyPoint2;
 ///
 /// The two padding members are deliberately retained because the raw save writes the
 /// complete C struct rather than serializing its logical members.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyBackgroundTransform {
     pub scroll_to_left: bool,
     pub scroll_to_up: bool,
     pub current_x_scrolling_level: u16,
     pub current_y_scrolling_level: u16,
+    #[legacy(bytes)]
     pub padding_before_surface_ids: [u8; 2],
     pub surface_id: u32,
     pub final_surface_id: u32,
@@ -145,10 +136,14 @@ pub struct LegacyBackgroundTransform {
     pub required_zoom_down: bool,
     pub zoom_count: u16,
     pub number_of_zoom_steps: u16,
+    #[legacy(scoped)]
     pub x_scrolling_values: [f32; 32],
+    #[legacy(scoped)]
     pub y_scrolling_values: [f32; 32],
     pub current_zoom_level: u16,
+    #[legacy(bytes)]
     pub padding_before_zoom_values: [u8; 2],
+    #[legacy(scoped)]
     pub zoom_values: [f32; 3],
     pub center_zoom: LegacyPoint2,
     pub clipped_zoom: LegacyPoint2,
@@ -162,139 +157,53 @@ impl LegacyBackgroundTransform {
         reader: &mut LegacyReader<'_>,
         abi_profile: LegacySaveAbiProfile,
     ) -> LegacyResult<Self> {
-        reader.scope("background_transform", |reader| {
-            let start = reader.offset();
-            // Audited MSVC Win32 and GCC i386 layouts agree for this struct.
-            // Keep the profile match explicit so adding another producer ABI
-            // cannot silently inherit this raw-layout assumption.
-            match abi_profile {
-                LegacySaveAbiProfile::RetailWindowsX86V48
-                | LegacySaveAbiProfile::PortLinuxI386V48 => {}
-            }
-
-            let scroll_to_left = reader.read_bool("scroll_to_left")?;
-            let scroll_to_up = reader.read_bool("scroll_to_up")?;
-            let current_x_scrolling_level = reader.read_u16("current_x_scrolling_level")?;
-            let current_y_scrolling_level = reader.read_u16("current_y_scrolling_level")?;
-            let padding_before_surface_ids = read_array::<2>(reader, "padding_before_surface_ids")?;
-            let surface_id = reader.read_u32("surface_id")?;
-            let final_surface_id = reader.read_u32("final_surface_id")?;
-            let zoom_to_up = reader.read_bool("zoom_to_up")?;
-            let zoom_to_down = reader.read_bool("zoom_to_down")?;
-            let required_zoom_up = reader.read_bool("required_zoom_up")?;
-            let required_zoom_down = reader.read_bool("required_zoom_down")?;
-            let zoom_count = reader.read_u16("zoom_count")?;
-            let number_of_zoom_steps = reader.read_u16("number_of_zoom_steps")?;
-            let x_scrolling_values = read_f32_array(reader, "x_scrolling_values")?;
-            let y_scrolling_values = read_f32_array(reader, "y_scrolling_values")?;
-            let current_zoom_level = reader.read_u16("current_zoom_level")?;
-            let padding_before_zoom_values = read_array::<2>(reader, "padding_before_zoom_values")?;
-            let zoom_values = read_f32_array(reader, "zoom_values")?;
-            let center_zoom = read_point2(reader, "center_zoom")?;
-            let clipped_zoom = read_point2(reader, "clipped_zoom")?;
-            let scrolling = read_point2(reader, "scrolling")?;
-
-            debug_assert_eq!(reader.offset() - start, Self::SERIALIZED_SIZE);
-            Ok(Self {
-                scroll_to_left,
-                scroll_to_up,
-                current_x_scrolling_level,
-                current_y_scrolling_level,
-                padding_before_surface_ids,
-                surface_id,
-                final_surface_id,
-                zoom_to_up,
-                zoom_to_down,
-                required_zoom_up,
-                required_zoom_down,
-                zoom_count,
-                number_of_zoom_steps,
-                x_scrolling_values,
-                y_scrolling_values,
-                current_zoom_level,
-                padding_before_zoom_values,
-                zoom_values,
-                center_zoom,
-                clipped_zoom,
-                scrolling,
-            })
-        })
+        // Audited MSVC Win32 and GCC i386 layouts agree for this struct.
+        // Keep the profile match explicit so adding another producer ABI
+        // cannot silently inherit this raw-layout assumption.
+        match abi_profile {
+            LegacySaveAbiProfile::RetailWindowsX86V48 | LegacySaveAbiProfile::PortLinuxI386V48 => {}
+        }
+        let start = reader.offset();
+        let transform = Self::read_field(reader, "background_transform", &())?;
+        debug_assert_eq!(reader.offset() - start, Self::SERIALIZED_SIZE);
+        Ok(transform)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyShortBriefing {
     pub id: u32,
     pub done: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyEngineLimits,
+    fingerprint = RH_SHORT_BRIEFINGS_FINGERPRINT,
+    expected = "short-briefings fingerprint"
+)]
 pub struct LegacyShortBriefings {
+    #[legacy(count_u32 = ctx.short_briefings, items)]
     pub primaries: Vec<LegacyShortBriefing>,
+    #[legacy(count_u32 = ctx.short_briefings, items)]
     pub secondaries: Vec<LegacyShortBriefing>,
 }
 
-impl LegacyShortBriefings {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyEngineLimits) -> LegacyResult<Self> {
-        reader.scope("short_briefings", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_SHORT_BRIEFINGS_FINGERPRINT,
-                "short-briefings fingerprint",
-            )?;
-            let primaries = read_short_briefing_vec(reader, "primaries", limits.short_briefings)?;
-            let secondaries =
-                read_short_briefing_vec(reader, "secondaries", limits.short_briefings)?;
-            Ok(Self {
-                primaries,
-                secondaries,
-            })
-        })
-    }
-}
-
-fn read_short_briefing_vec(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-    limit: usize,
-) -> LegacyResult<Vec<LegacyShortBriefing>> {
-    reader.scope(field, |reader| {
-        let count = reader.read_count_u32("count", limit)?;
-        let mut values = try_vec(reader, "items", count)?;
-        for index in 0..count {
-            values.push(reader.scope(format!("items[{index}]"), |reader| {
-                Ok(LegacyShortBriefing {
-                    id: reader.read_u32("id")?,
-                    done: reader.read_bool("done")?,
-                })
-            })?);
-        }
-        Ok(values)
-    })
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyEngineLimits)]
 pub struct LegacySound {
     /// `false` means the Original intentionally emitted no further sound data.
     pub serialized: bool,
+    #[legacy(when = serialized, flatten)]
     pub state: Option<LegacySerializedSound>,
 }
 
-impl LegacySound {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyEngineLimits) -> LegacyResult<Self> {
-        reader.scope("sound", |reader| {
-            let serialized = reader.read_bool("serialized")?;
-            let state = if serialized {
-                Some(LegacySerializedSound::read(reader, limits)?)
-            } else {
-                None
-            };
-            Ok(Self { serialized, state })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyEngineLimits,
+    fingerprint = RH_SOUND_FINGERPRINT,
+    expected = "sound fingerprint"
+)]
 pub struct LegacySerializedSound {
     pub sound_system_ready: bool,
     pub three_d_sound: bool,
@@ -305,53 +214,22 @@ pub struct LegacySerializedSound {
     pub quiet_mode_weight: u32,
     pub alert_mode_weight: u32,
     pub fight_mode_weight: u32,
+    /// The member is signed, although the legacy format uses
+    /// stored 16-bit width. Both are exactly two bytes in the supported layouts.
     pub loop_index: i16,
     pub stream_position: u32,
+    #[legacy(read = LegacySoundSourceManager::read(reader, ctx))]
     pub source_manager: LegacySoundSourceManager,
 }
 
-impl LegacySerializedSound {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyEngineLimits) -> LegacyResult<Self> {
-        reader.read_signature("fingerprint", RH_SOUND_FINGERPRINT, "sound fingerprint")?;
-        Ok(Self {
-            sound_system_ready: reader.read_bool("sound_system_ready")?,
-            three_d_sound: reader.read_bool("three_d_sound")?,
-            active: reader.read_bool("active")?,
-            geometry: LegacySoundGeometry::read(reader)?,
-            music_mode: reader.read_u8("music_mode")?,
-            dummy_channel: reader.read_i16("dummy_channel")?,
-            quiet_mode_weight: reader.read_u32("quiet_mode_weight")?,
-            alert_mode_weight: reader.read_u32("alert_mode_weight")?,
-            fight_mode_weight: reader.read_u32("fight_mode_weight")?,
-            // The member is signed, although the legacy format uses
-            // stored 16-bit width. Both are exactly two bytes in the supported layouts.
-            loop_index: reader.read_i16("loop_index")?,
-            stream_position: reader.read_u32("stream_position")?,
-            source_manager: LegacySoundSourceManager::read(reader, limits)?,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    fingerprint = RH_SOUND_GEOMETRY_FINGERPRINT,
+    expected = "sound-geometry fingerprint"
+)]
 pub struct LegacySoundGeometry {
     pub listen_point: LegacyPoint2,
     pub zoom_factor: f32,
-}
-
-impl LegacySoundGeometry {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("geometry", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_SOUND_GEOMETRY_FINGERPRINT,
-                "sound-geometry fingerprint",
-            )?;
-            Ok(Self {
-                listen_point: read_point2(reader, "listen_point")?,
-                zoom_factor: reader.read_f32("zoom_factor")?,
-            })
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -378,21 +256,20 @@ impl LegacySoundSourceManager {
                     "sound-source count within caller-supplied limit",
                 ));
             }
-            let mut slots = try_vec(reader, "slots", count)?;
-            for index in 0..count {
-                slots.push(reader.scope(format!("slots[{index}]"), |reader| {
+            let slots = reader.read_list("slots", count, |reader, item| {
+                reader.scope(item, |reader| {
                     let slot_index = reader.read_i16("slot_index")?;
                     if slot_index == -1 {
                         Ok(None)
                     } else {
                         Ok(Some(LegacySoundSourceSlot {
                             slot_index,
-                            source: LegacySoundSource::read(reader, limits)?,
+                            source: LegacySoundSource::read_field(reader, "source", limits)?,
                             registration_id: reader.read_u32("registration_id")?,
                         }))
                     }
-                })?);
-            }
+                })
+            })?;
             Ok(Self { slots })
         })
     }
@@ -405,7 +282,12 @@ pub struct LegacySoundSourceSlot {
     pub registration_id: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyEngineLimits,
+    fingerprint = RH_SOUND_SOURCE_FINGERPRINT,
+    expected = "sound-source fingerprint"
+)]
 pub struct LegacySoundSource {
     pub kind: u8,
     pub altitude: u8,
@@ -423,72 +305,32 @@ pub struct LegacySoundSource {
     pub active_first: bool,
     pub active_second: bool,
     pub former_need_update: bool,
+    #[legacy(read = read_sound_source_shape(reader, ctx))]
     pub shape: Vec<LegacyPoint2>,
 }
 
-impl LegacySoundSource {
-    fn read(reader: &mut LegacyReader<'_>, limits: &LegacyEngineLimits) -> LegacyResult<Self> {
-        reader.scope("source", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_SOUND_SOURCE_FINGERPRINT,
-                "sound-source fingerprint",
-            )?;
-            let kind = reader.read_u8("kind")?;
-            let altitude = reader.read_u8("altitude")?;
-            let id = reader.read_u32("id")?;
-            let global = reader.read_bool("global")?;
-            let inner_distance = reader.read_u16("inner_distance")?;
-            let outer_distance = reader.read_u16("outer_distance")?;
-            let noise_covering_distance = reader.read_u16("noise_covering_distance")?;
-            let inner_volume = reader.read_u16("inner_volume")?;
-            let outer_volume = reader.read_u16("outer_volume")?;
-            let min_delay = reader.read_u16("min_delay")?;
-            let max_delay = reader.read_u16("max_delay")?;
-            let delay_stepping = reader.read_u16("delay_stepping")?;
-            let timer = reader.read_u16("timer")?;
-            let active_first = reader.read_bool("active_first")?;
-            let active_second = reader.read_bool("active_second")?;
-            let former_need_update = reader.read_bool("former_need_update")?;
-            let count_offset = reader.offset();
-            let raw_count = reader.read_u16("shape.count")?;
-            let count = raw_count as usize;
-            if count > limits.sound_source_shape_points {
-                return Err(reader.invalid_value(
-                    count_offset,
-                    "shape.count",
-                    raw_count,
-                    "sound-source shape count within caller-supplied limit",
-                ));
-            }
-            let mut shape = try_vec(reader, "shape", count)?;
-            for index in 0..count {
-                shape.push(read_point2(reader, format!("shape[{index}]"))?);
-            }
-            Ok(Self {
-                kind,
-                altitude,
-                id,
-                global,
-                inner_distance,
-                outer_distance,
-                noise_covering_distance,
-                inner_volume,
-                outer_volume,
-                min_delay,
-                max_delay,
-                delay_stepping,
-                timer,
-                active_first,
-                active_second,
-                former_need_update,
-                shape,
-            })
-        })
+fn read_sound_source_shape(
+    reader: &mut LegacyReader<'_>,
+    limits: &LegacyEngineLimits,
+) -> LegacyResult<Vec<LegacyPoint2>> {
+    let count_offset = reader.offset();
+    let raw_count = reader.read_u16("shape.count")?;
+    let count = raw_count as usize;
+    if count > limits.sound_source_shape_points {
+        return Err(reader.invalid_value(
+            count_offset,
+            "shape.count",
+            raw_count,
+            "sound-source shape count within caller-supplied limit",
+        ));
     }
+    reader.read_list("shape", count, |reader, item| {
+        LegacyPoint2::read_field(reader, item, &())
+    })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = RH_MESSENGER_FINGERPRINT, expected = "messenger fingerprint")]
 pub struct LegacyMessenger {
     pub lock_view: bool,
     pub setting_watch: bool,
@@ -497,26 +339,8 @@ pub struct LegacyMessenger {
     pub draw_hidden: bool,
 }
 
-impl LegacyMessenger {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("messenger", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                RH_MESSENGER_FINGERPRINT,
-                "messenger fingerprint",
-            )?;
-            Ok(Self {
-                lock_view: reader.read_bool("lock_view")?,
-                setting_watch: reader.read_bool("setting_watch")?,
-                watch_timer: reader.read_u16("watch_timer")?,
-                action: reader.read_u16("action")?,
-                draw_hidden: reader.read_bool("draw_hidden")?,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = RH_GAME_FINGERPRINT, expected = "game fingerprint")]
 pub struct LegacyGameState {
     pub men_to_blazon_conversion: bool,
     pub campaign_map: bool,
@@ -526,50 +350,6 @@ pub struct LegacyGameState {
     pub quit_mission_disabled_temp: bool,
     pub start_mission_enabled: bool,
     pub quit_mission_enabled: bool,
-}
-
-impl LegacyGameState {
-    fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("game", |reader| {
-            reader.read_signature("fingerprint", RH_GAME_FINGERPRINT, "game fingerprint")?;
-            Ok(Self {
-                men_to_blazon_conversion: reader.read_bool("men_to_blazon_conversion")?,
-                campaign_map: reader.read_bool("campaign_map")?,
-                campaign_map_displayed: reader.read_bool("campaign_map_displayed")?,
-                post_initialized: reader.read_bool("post_initialized")?,
-                start_mission_disabled_temp: reader.read_bool("start_mission_disabled_temp")?,
-                quit_mission_disabled_temp: reader.read_bool("quit_mission_disabled_temp")?,
-                start_mission_enabled: reader.read_bool("start_mission_enabled")?,
-                quit_mission_enabled: reader.read_bool("quit_mission_enabled")?,
-            })
-        })
-    }
-}
-
-fn read_f32_array<const N: usize>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-) -> LegacyResult<[f32; N]> {
-    reader.scope(field, |reader| {
-        let mut values = [0.0; N];
-        for (index, value) in values.iter_mut().enumerate() {
-            *value = reader.read_f32(format_args!("[{index}]"))?;
-        }
-        Ok(values)
-    })
-}
-
-fn try_vec<T>(
-    reader: &mut LegacyReader<'_>,
-    field: &'static str,
-    count: usize,
-) -> LegacyResult<Vec<T>> {
-    let offset = reader.offset();
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| reader.allocation_error(offset, field, count))?;
-    Ok(values)
 }
 
 #[cfg(test)]

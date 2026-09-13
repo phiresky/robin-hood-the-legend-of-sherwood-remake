@@ -9,29 +9,26 @@
 //! the config's 0..9 tick range and only emit
 //! `UiMsg::WidgetSliderTrack` on tick transitions.
 
-use crate::gfx_types::Keycode;
 use robin_engine::coordinates::ScreenBBox;
-use robin_engine::sound_cache::SampleLoader;
 
-use crate::gfx_types::GameEvent;
 use crate::options_model::SoundSetting;
-use crate::renderer::Renderer;
-use crate::sound::{AudioBackend, SoundManager};
+use crate::sound::SoundManager;
 use crate::ui::{UiEvent, UiMsg, UiState};
 use crate::widget::{FrameWnd, Widget, WidgetSlider};
 use robin_engine::sound_config::SoundConfig;
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, align_on_first_widget, dim_screen,
-    draw_screen_background, draw_slider, enter_modal_gpu_phase, render_text_virt_font,
+    MenuRect, align_bottom_right, align_on_first_widget, draw_screen_background, draw_slider,
+    render_text_virt_font,
 };
 use super::resources::{
-    IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_SOUND_3D, MT_STR_SOUND_COMMENT_FREQUENCY,
-    MT_STR_SOUND_EAX, MT_STR_SOUND_RES_HIGH, MT_STR_SOUND_RES_LOW, MT_STR_SOUND_STEREO,
-    MT_STR_SOUND_VOL_COMMENT, MT_STR_SOUND_VOL_DIALOGUE, MT_STR_SOUND_VOL_FX,
-    MT_STR_SOUND_VOL_MUSIC, MT_TTL_SOUNDS,
+    MT_BTN_CANCEL, MT_BTN_OK, MT_STR_SOUND_3D, MT_STR_SOUND_COMMENT_FREQUENCY, MT_STR_SOUND_EAX,
+    MT_STR_SOUND_RES_HIGH, MT_STR_SOUND_RES_LOW, MT_STR_SOUND_STEREO, MT_STR_SOUND_VOL_COMMENT,
+    MT_STR_SOUND_VOL_DIALOGUE, MT_STR_SOUND_VOL_FX, MT_STR_SOUND_VOL_MUSIC, MT_TTL_SOUNDS,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{
+    self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame, ScreenKey,
+};
 
 // Widget ID ranges.
 const ID_MODE_BASE: u32 = 100; // Stereo=100, EAX=101
@@ -57,42 +54,17 @@ const SOUND_SLIDERS: [(SoundSetting, usize); 5] = [
 
 /// Display the sounds sub-screen.  Returns `true` on OK when anything changed.
 ///
-/// `sound` / `audio_backend` / `sample_loader` are threaded in so the
-/// menu can play the slider "tick" sounds
+/// `audio` is threaded in so the menu can play the slider "tick" sounds
 /// (`RHWIDGETNOISY_SLIDER << 16 | *`) as the user hovers, drags, and
-/// releases a volume slider. When any of them is `None` (e.g. the main-
-/// menu entry path has no live `SoundManager`), the slider is silent.
+/// releases a volume slider. When any of its services is `None` (e.g. the
+/// main-menu entry path has no live `SoundManager`), the slider is silent.
 pub async fn show_sounds(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     config: &mut SoundConfig,
-    mut sound: Option<&mut SoundManager>,
-    mut audio_backend: Option<&mut dyn AudioBackend>,
-    sample_loader: Option<&SampleLoader>,
+    mut audio: ScreenAudio<'_>,
 ) -> bool {
-    let transform = MenuTransform::centered(
-        renderer.screen_width() as i32,
-        renderer.screen_height() as i32,
-    );
-    let input_state = ModalInputState::from_window(event_pump, transform);
-    let mut screen = SoundsScreen::new(resources, config, input_state, sound.as_deref());
-    while !screen.done {
-        screen.tick(
-            widget_bridge::ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor: cursor.as_ref(),
-            },
-            &mut sound,
-            &mut audio_backend,
-            sample_loader,
-        );
-        // Preserve the original final-frame presentation and sleep on close.
-        crate::window::sleep_ui_frame().await;
-    }
+    let mut screen = SoundsScreen::new(io, config, audio.sound.as_deref());
+    widget_bridge::run_modal(io, |io| screen.tick(io, &mut audio)).await;
     screen.finish(config)
 }
 
@@ -114,12 +86,9 @@ struct SoundsScreen {
 }
 
 impl SoundsScreen {
-    fn new(
-        resources: &IngameMenuResources,
-        config: &SoundConfig,
-        input_state: ModalInputState,
-        sound: Option<&SoundManager>,
-    ) -> Self {
+    fn new(io: &ModalScreenIo<'_, '_>, config: &SoundConfig, sound: Option<&SoundManager>) -> Self {
+        let resources = io.resources;
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
         let edit = crate::options_model::SoundEdit::new(*config);
         let dirty = false;
 
@@ -283,46 +252,27 @@ impl SoundsScreen {
         }
     }
 
-    fn tick(
-        &mut self,
-        io: widget_bridge::ModalScreenIo<'_, '_>,
-        sound: &mut Option<&mut SoundManager>,
-        audio_backend: &mut Option<&mut dyn AudioBackend>,
-        sample_loader: Option<&SampleLoader>,
-    ) {
-        let widget_bridge::ModalScreenIo {
-            window: event_pump,
-            renderer,
-            resources,
-            cursor,
-        } = io;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        for event in events {
-            self.input_state.update_from_event(&event, transform);
-            match event {
-                GameEvent::Quit => self.done = true,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
+    /// Poll and draw one frame. The frame that closes the screen is still
+    /// drawn and paced: `Some(())` is only reported on the following tick.
+    fn tick(&mut self, io: &mut ModalScreenIo<'_, '_>, audio: &mut ScreenAudio<'_>) -> Option<()> {
+        if self.done {
+            return Some(());
+        }
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit | ScreenKey::Cancel => self.done = true,
+                ScreenKey::Confirm => {
                     self.accepted = true;
                     self.done = true;
                 }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => self.done = true,
-                _ => {}
+                ScreenKey::Next => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
+        // The first activation may be a slider drag release; button
+        // activations are filtered from `button_events` below instead.
+        let (events, _) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
 
         // Apply slider value updates + slider activations to the edit.working
         // config.  Track events carry the new tick value via
@@ -354,37 +304,26 @@ impl SoundsScreen {
         partition_widget_events(events, &mut self.slider_events, &mut self.button_events);
 
         // Observe buttons even on silent mouse-leave frames to rearm hover.
-        if let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader) {
-            let backend: Option<&mut dyn AudioBackend> = audio_backend
-                .as_mut()
-                .map(|b| &mut **b as &mut dyn AudioBackend);
-            widget_bridge::play_frame_widget_noise(
-                &self.button_events,
-                &self.frame,
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                snd,
-                backend,
-                loader,
-                &mut self.noisy_tracker,
-            );
-        }
+        widget_bridge::play_frame_widget_noise(
+            &self.button_events,
+            &self.frame,
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            audio.reborrow(),
+            &mut self.noisy_tracker,
+        );
         for e in &self.slider_events {
             let state = self
                 .frame
                 .widget(e.origin_widget_id)
                 .map(|w| w.base().state)
                 .unwrap_or(UiState::Default);
-            let backend: Option<&mut dyn AudioBackend> = audio_backend
-                .as_mut()
-                .map(|b| &mut **b as &mut dyn AudioBackend);
-            dispatch_noise(
+            widget_bridge::play_widget_noise_tracked(
                 std::slice::from_ref(e),
                 widget_bridge::WIDGET_NOISY_SLIDER,
-                sound.as_deref_mut(),
-                backend,
-                sample_loader,
+                audio.reborrow(),
                 Some(&mut self.noisy_tracker),
                 state,
+                false,
             );
         }
 
@@ -424,8 +363,10 @@ impl SoundsScreen {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.menu_bg[0] {
             draw_screen_background(renderer, &bg);
@@ -488,11 +429,8 @@ impl SoundsScreen {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
 
-        if let Some(c) = &cursor {
-            c.draw(renderer, transform, &self.input_state);
-        }
-
-        renderer.present();
+        screen.finish(io, &self.input_state);
+        None
     }
 
     fn finish(self, config: &mut SoundConfig) -> bool {
@@ -569,36 +507,6 @@ mod screen_state_tests {
 
 fn is_slider_id(id: u32) -> bool {
     (ID_SLIDER_BASE..ID_SLIDER_BASE + SOUND_SLIDERS.len() as u32).contains(&id)
-}
-
-/// Forward to [`widget_bridge::play_widget_noise_tracked`] only when
-/// the caller supplied a live `SoundManager` + `SampleLoader`.
-/// Extracted so that each call inside the main loop fully releases
-/// its borrow of the `sound` / `audio_backend` slots at the
-/// `}`-boundary, which lets the borrow-checker accept multiple
-/// back-to-back dispatches (buttons + sliders) within the same
-/// iteration.
-fn dispatch_noise(
-    events: &[UiEvent],
-    noisy_id: u32,
-    sound: Option<&mut SoundManager>,
-    audio_backend: Option<&mut dyn AudioBackend>,
-    sample_loader: Option<&SampleLoader>,
-    tracker: Option<&mut widget_bridge::NoisyTracker>,
-    current_state: crate::ui::UiState,
-) {
-    if let (Some(snd), Some(loader)) = (sound, sample_loader) {
-        widget_bridge::play_widget_noise_tracked(
-            events,
-            noisy_id,
-            snd,
-            audio_backend,
-            loader,
-            tracker,
-            current_state,
-            false,
-        );
-    }
 }
 
 fn slider_value(config: &SoundConfig, idx: usize) -> u16 {

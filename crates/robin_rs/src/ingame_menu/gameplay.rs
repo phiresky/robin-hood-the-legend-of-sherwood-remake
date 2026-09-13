@@ -9,20 +9,16 @@
 //! Toggle buttons and OK/Cancel are driven by the [`crate::widget`]
 //! system via the [`super::widget_bridge`].
 
-use crate::gfx_types::GameEvent;
-use crate::gfx_types::Keycode;
 use crate::localization::PortTextKey;
-use crate::renderer::Renderer;
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
 use super::ModalScreenOutcome;
 use super::layout::{
-    MenuTransform, TooltipState, align_bottom_right, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt_font,
+    MenuTransform, TooltipState, align_bottom_right, draw_screen_background, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
-use super::widget_bridge::{self, ModalCursor, ModalInputState};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenFrame, ScreenKey};
 
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
@@ -268,43 +264,23 @@ fn build_standalone_frame(
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
+///
+/// The frame loop stays here instead of `run_modal` because a frame may
+/// request the nested Spellforge content screen, which must be awaited.
 pub async fn show_gameplay(
     application_context: &crate::host::ApplicationContext,
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    mut cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     config: &mut GameplayConfig,
     sherwood_trading_editable: bool,
 ) -> bool {
-    let mut state = GameplayScreenState::new(
-        application_context,
-        event_pump,
-        renderer,
-        resources,
-        config,
-        sherwood_trading_editable,
-    );
+    let mut state =
+        GameplayScreenState::new(application_context, io, config, sherwood_trading_editable);
     loop {
-        let outcome = state.tick(
-            application_context,
-            &mut widget_bridge::ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor: cursor.as_ref(),
-            },
-        );
+        let outcome = state.tick(application_context, io);
         if state.take_content_request() {
-            super::spellforge_content::show_spellforge_content_settings(
-                application_context,
-                event_pump,
-                renderer,
-                resources,
-                cursor.as_mut().map(|cursor| cursor.reborrow()),
-            )
-            .await;
-            state.resume_after_content(event_pump, renderer);
+            super::spellforge_content::show_spellforge_content_settings(application_context, io)
+                .await;
+            state.resume_after_content(io);
             continue;
         }
         if let Some(outcome) = outcome {
@@ -328,7 +304,6 @@ pub struct GameplayScreenState {
     frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
-    transform: MenuTransform,
     sherwood_trading_editable: bool,
     content_requested: bool,
 }
@@ -336,27 +311,21 @@ pub struct GameplayScreenState {
 impl GameplayScreenState {
     pub fn new(
         application_context: &crate::host::ApplicationContext,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-        resources: &IngameMenuResources,
+        io: &ModalScreenIo<'_, '_>,
         config: &GameplayConfig,
         sherwood_trading_editable: bool,
     ) -> Self {
-        let sw = renderer.screen_width() as i32;
-        let sh = renderer.screen_height() as i32;
-        let transform = MenuTransform::centered(sw, sh);
-
         let working = *config;
 
         let page = 0;
         let frame = build_standalone_frame(
             application_context,
-            resources,
+            io.resources,
             page,
             sherwood_trading_editable,
         );
 
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(io.window, io.renderer);
 
         Self {
             localized: LocalizedGameplayText::from_application_context(application_context),
@@ -366,7 +335,6 @@ impl GameplayScreenState {
             frame,
             input_state,
             tooltip: TooltipState::new(),
-            transform,
             sherwood_trading_editable,
             content_requested: false,
         }
@@ -389,58 +357,32 @@ impl GameplayScreenState {
         std::mem::take(&mut self.content_requested)
     }
 
-    fn resume_after_content(
-        &mut self,
-        event_pump: &crate::window::GameWindow,
-        renderer: &Renderer,
-    ) {
-        self.transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
+    fn resume_after_content(&mut self, io: &ModalScreenIo<'_, '_>) {
         self.input_state
-            .seed_mouse_from_window(event_pump, self.transform);
+            .seed_mouse_from_window(io.window, MenuTransform::for_renderer(io.renderer));
     }
 
     pub fn tick(
         &mut self,
         application_context: &crate::host::ApplicationContext,
-        io: &mut widget_bridge::ModalScreenIo<'_, '_>,
+        io: &mut ModalScreenIo<'_, '_>,
     ) -> Option<ModalScreenOutcome<GameplayConfig>> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         let mut outcome = None;
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
-        self.transform = transform;
-        for event in events {
-            self.input_state.update_from_event(&event, self.transform);
-            match event {
-                GameEvent::Quit => outcome = Some(ModalScreenOutcome::ExitRequested),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } => {
+        let screen = ScreenFrame::begin(io, &mut self.input_state);
+        for key in screen.keys() {
+            match key {
+                ScreenKey::Quit => outcome = Some(ModalScreenOutcome::ExitRequested),
+                ScreenKey::Confirm => {
                     outcome = Some(ModalScreenOutcome::Accepted(self.working));
                 }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => outcome = Some(ModalScreenOutcome::Cancelled),
-                _ => {}
+                ScreenKey::Cancel => outcome = Some(ModalScreenOutcome::Cancelled),
+                ScreenKey::Next => {}
             }
         }
 
-        let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
-        self.input_state.end_frame();
+        let (_, activated) = ScreenFrame::dispatch(&mut self.input_state, &mut self.frame);
 
-        if let Some(id) = widget_bridge::find_activated(&events) {
+        if let Some(id) = activated {
             match id {
                 ID_OK => {
                     outcome = Some(ModalScreenOutcome::Accepted(self.working));
@@ -448,11 +390,11 @@ impl GameplayScreenState {
                 ID_CANCEL => outcome = Some(ModalScreenOutcome::Cancelled),
                 ID_PREVIOUS_PAGE if self.page > 0 => {
                     self.page -= 1;
-                    self.rebuild_page(application_context, resources);
+                    self.rebuild_page(application_context, io.resources);
                 }
                 ID_NEXT_PAGE if self.page + 1 < standalone_page_count() => {
                     self.page += 1;
-                    self.rebuild_page(application_context, resources);
+                    self.rebuild_page(application_context, io.resources);
                 }
                 ID_CONTENT => {
                     self.content_requested = true;
@@ -471,8 +413,10 @@ impl GameplayScreenState {
             }
         }
 
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        let transform = screen.transform;
+        let renderer = &mut *io.renderer;
+        let resources = io.resources;
+        screen.begin_draw(renderer);
 
         if let Some(bg) = resources.menu_bg[0] {
             draw_screen_background(renderer, &bg);
@@ -480,17 +424,10 @@ impl GameplayScreenState {
 
         if let Some(font) = resources.title_font_any() {
             let tw = font.text_width("Gameplay");
-            render_text_virt_font(
-                renderer,
-                font,
-                self.transform,
-                "Gameplay",
-                (490 - tw) / 2,
-                20,
-            );
+            render_text_virt_font(renderer, font, transform, "Gameplay", (490 - tw) / 2, 20);
         }
         if let Some(font) = resources.label_font_any() {
-            render_text_virt_font(renderer, font, self.transform, "Gameplay Tweaks", 30, 80);
+            render_text_virt_font(renderer, font, transform, "Gameplay Tweaks", 30, 80);
         }
 
         for i in 0..GameplaySetting::ALL.len() as u32 {
@@ -498,7 +435,7 @@ impl GameplayScreenState {
                 widget_bridge::draw_widget_radio(
                     renderer,
                     resources,
-                    self.transform,
+                    transform,
                     w,
                     is_option_selected(&self.working, i as usize),
                 );
@@ -513,7 +450,7 @@ impl GameplayScreenState {
             render_text_virt_font(
                 renderer,
                 font,
-                self.transform,
+                transform,
                 self.localized
                     .campaign_presentation(self.working.campaign_presentation),
                 30,
@@ -522,24 +459,24 @@ impl GameplayScreenState {
         }
 
         if let Some(widget) = self.frame.widget(ID_CONTENT) {
-            widget_bridge::draw_widget_button(renderer, resources, self.transform, widget, false);
+            widget_bridge::draw_widget_button(renderer, resources, transform, widget, false);
         }
 
         for id in [ID_PREVIOUS_PAGE, ID_NEXT_PAGE] {
             if let Some(w) = self.frame.widget(id) {
-                widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+                widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
             }
         }
         if let Some(font) = resources.label_font_any() {
             let page_label = format!("Page {} / {}", self.page + 1, standalone_page_count());
-            render_text_virt_font(renderer, font, self.transform, &page_label, 30, 362);
+            render_text_virt_font(renderer, font, transform, &page_label, 30, 362);
         }
 
         if let Some(w) = self.frame.widget(ID_OK) {
-            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
         if let Some(w) = self.frame.widget(ID_CANCEL) {
-            widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
+            widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
 
         let mouse_point = robin_engine::coordinates::ScreenPoint::new(
@@ -549,14 +486,10 @@ impl GameplayScreenState {
         self.tooltip.update(&self.frame, mouse_point);
         if let Some(font) = resources.popup_font_any() {
             self.tooltip
-                .draw(renderer, font, self.transform, &self.frame, mouse_point);
+                .draw(renderer, font, transform, &self.frame, mouse_point);
         }
 
-        if let Some(c) = cursor {
-            c.draw(renderer, self.transform, &self.input_state);
-        }
-
-        renderer.present();
+        screen.finish(io, &self.input_state);
         outcome
     }
 

@@ -5,20 +5,18 @@
 
 use crate::gfx_types::Keycode;
 use robin_engine::coordinates as engine_coordinates;
-use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
 use crate::savegame::{SaveGame, SaveGameManager, SlotName};
-use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
 use std::borrow::Cow;
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, fitting_grapheme_prefix_by, render_text_virt_font,
+    MenuRect, MenuTransform, TruncationMarker, align_bottom_right, draw_screen_background,
+    render_text_virt_font, truncate_to_pixel_width,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_MSG_REALLY_DELETE_SAVEGAME,
@@ -27,7 +25,7 @@ pub(crate) use super::save_picker::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
     PickerSlot, PickerTarget, retire_thumbnail,
 };
-use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
+use super::widget_bridge::{self, ModalInputState, ModalScreenIo, ScreenAudio, ScreenFrame};
 use super::yesno::YesNoModalState;
 
 /// Which flavour of slot picker to show.
@@ -73,11 +71,7 @@ impl LoadPickerModalState {
         multiplayer_connected: bool,
     ) -> Self {
         save_manager.sort_by_time();
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let input_state = ModalInputState::from_window(event_pump, transform);
+        let input_state = ModalInputState::for_screen(event_pump, renderer);
         let row_height = if detailed_metadata {
             DETAILED_ROW_HEIGHT
         } else {
@@ -108,14 +102,8 @@ impl LoadPickerModalState {
         &mut self,
         io: &mut ModalScreenIo<'_, '_>,
         save_manager: &mut SaveGameManager,
-        sound: Option<&mut SoundManager>,
-        audio_backend: Option<&mut dyn AudioBackend>,
-        sample_loader: Option<&SampleLoader>,
+        audio: ScreenAudio<'_>,
     ) -> Option<SaveLoadOutcome> {
-        let event_pump = &mut *io.window;
-        let renderer = &mut *io.renderer;
-        let resources = io.resources;
-        let cursor = io.cursor;
         self.model.refresh(picker_slots(save_manager));
         if self.error_notice.is_none()
             && let Some(error) = self.model.operation_error()
@@ -123,15 +111,10 @@ impl LoadPickerModalState {
             self.error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_string()));
         }
         if let Some(notice) = &mut self.error_notice {
-            if notice.tick(&mut ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor,
-            }) {
+            if notice.tick(io) {
                 self.error_notice = None;
                 self.model.dismiss_error();
-                if event_pump.close_requested {
+                if io.window.close_requested {
                     return Some(SaveLoadOutcome::Cancel);
                 }
             }
@@ -140,12 +123,7 @@ impl LoadPickerModalState {
             return None;
         }
         if let Some(confirmation) = self.delete_confirmation.as_mut() {
-            let outcome = confirmation.tick(&mut ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor,
-            });
+            let outcome = confirmation.tick(io);
             let confirmed = outcome?;
             self.delete_confirmation = None;
             finish_picker_delete(&mut self.model, save_manager, confirmed);
@@ -154,7 +132,7 @@ impl LoadPickerModalState {
                 &mut self.thumb_widget,
                 self.model.selected_manager_index(),
                 save_manager,
-                renderer,
+                io.renderer,
                 SaveLoadMode::Load,
             );
             return None;
@@ -162,7 +140,11 @@ impl LoadPickerModalState {
 
         let visible = self.model.visible();
 
-        let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
+        // The picker controller updates its own input per event (list drag and
+        // wheel hit-testing read it), so events are polled without `begin`.
+        let screen = ScreenFrame::poll(io);
+        let transform = screen.transform;
+        let resources = io.resources;
         let row_height = if self.detailed_metadata {
             DETAILED_ROW_HEIGHT
         } else {
@@ -205,26 +187,22 @@ impl LoadPickerModalState {
             .configure_list(&mut self.model, LOAD_LIST_RECT, row_height, resources);
         self.controller
             .begin_frame(&self.model, &btn_positions, btn_w, btn_h);
-        for event in events {
+        for event in &screen.events {
             self.controller
-                .handle_event(&mut self.model, &event, transform);
+                .handle_event(&mut self.model, event, transform);
         }
         let selected = self.model.selected_row();
         let widget_events = self.controller.process_widgets(&self.model);
         let widget_input = self.controller.input.as_widget_input();
         let mouse_virt = widget_input.mouse_position;
         self.controller.input.end_frame();
-        if let (Some(sound), Some(loader)) = (sound, sample_loader) {
-            widget_bridge::play_frame_widget_noise(
-                &widget_events,
-                self.controller.frame(),
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                sound,
-                audio_backend,
-                loader,
-                &mut self.noise_tracker,
-            );
-        }
+        widget_bridge::play_frame_widget_noise(
+            &widget_events,
+            self.controller.frame(),
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            audio,
+            &mut self.noise_tracker,
+        );
         match self.controller.take_action() {
             Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
             Some(PickerAction::Accept(PickerTarget::Existing(name))) => {
@@ -239,7 +217,10 @@ impl LoadPickerModalState {
                 if begin_picker_delete(&mut self.model, name) {
                     let message = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
                     self.delete_confirmation = Some(YesNoModalState::new(
-                        event_pump, renderer, resources, message,
+                        io.window,
+                        io.renderer,
+                        resources,
+                        message,
                     ));
                 }
             }
@@ -249,6 +230,7 @@ impl LoadPickerModalState {
             None => {}
         }
 
+        let renderer = &mut *io.renderer;
         sync_thumbnail_cache(
             &mut self.thumb_cache,
             &mut self.thumb_widget,
@@ -257,8 +239,7 @@ impl LoadPickerModalState {
             renderer,
             SaveLoadMode::Load,
         );
-        enter_modal_gpu_phase(renderer);
-        dim_screen(renderer);
+        screen.begin_draw(renderer);
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
@@ -294,7 +275,12 @@ impl LoadPickerModalState {
                 continue;
             };
             let raw_label = row_label(row, save_manager, &visible, &metadata_text);
-            let label = truncate_to_pixel_width(font, &raw_label, row_area_w);
+            let label = truncate_to_pixel_width(
+                font,
+                &raw_label,
+                row_area_w,
+                TruncationMarker::AsciiEllipsis,
+            );
             if !label.is_empty() {
                 render_text_virt_font(renderer, font, transform, &label, row_area_x, row_y);
             }
@@ -311,7 +297,12 @@ impl LoadPickerModalState {
             .filter(|line| !line.is_empty())
             .enumerate()
             {
-                let detail = truncate_to_pixel_width(font, detail, row_area_w);
+                let detail = truncate_to_pixel_width(
+                    font,
+                    detail,
+                    row_area_w,
+                    TruncationMarker::AsciiEllipsis,
+                );
                 if !detail.is_empty() {
                     render_text_virt_font(
                         renderer,
@@ -325,25 +316,21 @@ impl LoadPickerModalState {
             }
         }
         view.draw_scrollbar(renderer, transform, resources);
-        draw_preview(
-            renderer,
-            transform,
+        SavePreview {
             selected,
-            &visible,
-            self.thumb_cache.as_ref(),
-            &self.thumb_widget,
+            visible: &visible,
+            thumb_cache: self.thumb_cache.as_ref(),
+            thumb_widget: &self.thumb_widget,
             save_manager,
             resources,
             now_unix,
-            self.local_time_zone.as_ref(),
-            &metadata_text,
-            self.detailed_metadata,
-        );
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, self.controller.frame());
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.controller.input);
+            local_time_zone: self.local_time_zone.as_ref(),
+            text: &metadata_text,
+            detailed_metadata: self.detailed_metadata,
         }
-        renderer.present();
+        .draw(renderer, transform);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, self.controller.frame());
+        screen.finish(io, &self.controller.input);
         None
     }
 
@@ -542,33 +529,28 @@ const MAX_NAME_LEN: usize = 45;
 /// Main-menu load picker. Mission-time loading drives the same state one tick
 /// at a time; saving belongs to the cooperative in-mission save task.
 pub async fn show_load_picker(
-    event_pump: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<ModalCursor<'_>>,
+    io: &mut ModalScreenIo<'_, '_>,
     save_manager: &mut SaveGameManager,
     detailed_metadata: bool,
 ) -> SaveLoadOutcome {
-    let mut state =
-        LoadPickerModalState::new(event_pump, renderer, save_manager, detailed_metadata, false);
-    loop {
-        if let Some(outcome) = state.tick(
-            &mut ModalScreenIo {
-                window: event_pump,
-                renderer,
-                resources,
-                cursor: cursor.as_ref(),
-            },
-            save_manager,
-            None,
-            None,
-            None,
-        ) {
-            state.close(renderer);
-            return outcome;
-        }
-        crate::window::sleep_ui_frame().await;
-    }
+    let mut state = LoadPickerModalState::new(
+        io.window,
+        io.renderer,
+        save_manager,
+        detailed_metadata,
+        false,
+    );
+    let outcome = widget_bridge::run_modal(io, |io| {
+        let no_audio = ScreenAudio {
+            sound: None,
+            backend: None,
+            sample_loader: None,
+        };
+        state.tick(io, save_manager, no_audio)
+    })
+    .await;
+    state.close(io.renderer);
+    outcome
 }
 
 /// Tracks a loaded thumbnail so we don't rebuild the GPU surface on
@@ -645,85 +627,101 @@ fn clear_thumbnail_cache(
     widget.reset_alternate_picture();
 }
 
-fn draw_preview(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
+/// Everything the load picker's right-hand preview column reads for one frame.
+struct SavePreview<'a> {
     selected: Option<ListRow>,
-    visible: &[usize],
-    thumb_cache: Option<&ThumbnailCache>,
-    thumb_widget: &crate::widget::WidgetPicture,
-    save_manager: &SaveGameManager,
-    resources: &IngameMenuResources,
+    visible: &'a [usize],
+    thumb_cache: Option<&'a ThumbnailCache>,
+    thumb_widget: &'a crate::widget::WidgetPicture,
+    save_manager: &'a SaveGameManager,
+    resources: &'a IngameMenuResources,
     now_unix: Option<u64>,
-    local_time_zone: Option<&TimeZone>,
-    text: &SaveMetadataText<'_>,
+    local_time_zone: Option<&'a TimeZone>,
+    text: &'a SaveMetadataText<'a>,
     detailed_metadata: bool,
-) {
-    let slot = match selected {
-        Some(ListRow::Existing(v)) => *visible
-            .get(v)
-            .expect("selected visible row must resolve to a save slot"),
-        _ => return,
-    };
+}
 
-    // Thumbnail image. The original game's load/save menu disables the picture
-    // widget when there is no selected save or no thumbnail file; it
-    // does not draw a placeholder frame or metadata panel.
-    if let Some(cache) = thumb_cache
-        && cache.slot
-            == save_manager
-                .slot_name(slot)
-                .expect("preview slot must have a validated identity")
-    {
-        renderer
-            .surface_dimensions(cache.surface.handle())
-            .expect("thumbnail drawing requires its originating renderer");
-        let mut widget = thumb_widget.clone();
-        widget
-            .base
-            .set_position(engine_coordinates::ScreenBBox::from_coords(
-                (THUMB_RECT.x + 4) as f32,
-                (THUMB_RECT.y + 4) as f32,
-                (THUMB_RECT.x + THUMB_RECT.w - 4) as f32,
-                (THUMB_RECT.y + THUMB_RECT.h - 4) as f32,
-            ));
-        widget_bridge::draw_picture_alternate_surface(
-            renderer,
-            transform,
-            &widget,
-            i32::from(cache.width),
-            i32::from(cache.height),
-            true,
-        );
-    }
+impl SavePreview<'_> {
+    fn draw(&self, renderer: &mut Renderer, transform: MenuTransform) {
+        let SavePreview {
+            selected,
+            visible,
+            thumb_cache,
+            thumb_widget,
+            save_manager,
+            resources,
+            now_unix,
+            local_time_zone,
+            text,
+            detailed_metadata,
+        } = *self;
+        let slot = match selected {
+            Some(ListRow::Existing(v)) => *visible
+                .get(v)
+                .expect("selected visible row must resolve to a save slot"),
+            _ => return,
+        };
 
-    if !detailed_metadata {
-        return;
-    }
-
-    let save = save_manager
-        .get(slot)
-        .expect("selected visible slot must resolve to a save");
-    let Some(font) = resources.list_font(false, true) else {
-        return;
-    };
-    let panel_x = THUMB_RECT.x + 4;
-    let panel_y = THUMB_RECT.y + THUMB_RECT.h + 8;
-    let panel_w = THUMB_RECT.w - 8;
-    for (line_index, line) in selected_metadata_lines(save, now_unix, local_time_zone, text)
-        .iter()
-        .enumerate()
-    {
-        let fitted = truncate_to_pixel_width(font, line, panel_w);
-        if !fitted.is_empty() {
-            render_text_virt_font(
+        // Thumbnail image. The original game's load/save menu disables the picture
+        // widget when there is no selected save or no thumbnail file; it
+        // does not draw a placeholder frame or metadata panel.
+        if let Some(cache) = thumb_cache
+            && cache.slot
+                == save_manager
+                    .slot_name(slot)
+                    .expect("preview slot must have a validated identity")
+        {
+            renderer
+                .surface_dimensions(cache.surface.handle())
+                .expect("thumbnail drawing requires its originating renderer");
+            let mut widget = thumb_widget.clone();
+            widget
+                .base
+                .set_position(engine_coordinates::ScreenBBox::from_coords(
+                    (THUMB_RECT.x + 4) as f32,
+                    (THUMB_RECT.y + 4) as f32,
+                    (THUMB_RECT.x + THUMB_RECT.w - 4) as f32,
+                    (THUMB_RECT.y + THUMB_RECT.h - 4) as f32,
+                ));
+            widget_bridge::draw_picture_alternate_surface(
                 renderer,
-                font,
                 transform,
-                &fitted,
-                panel_x,
-                panel_y + line_index as i32 * DETAIL_LINE_HEIGHT,
+                &widget,
+                i32::from(cache.width),
+                i32::from(cache.height),
+                true,
             );
+        }
+
+        if !detailed_metadata {
+            return;
+        }
+
+        let save = save_manager
+            .get(slot)
+            .expect("selected visible slot must resolve to a save");
+        let Some(font) = resources.list_font(false, true) else {
+            return;
+        };
+        let panel_x = THUMB_RECT.x + 4;
+        let panel_y = THUMB_RECT.y + THUMB_RECT.h + 8;
+        let panel_w = THUMB_RECT.w - 8;
+        for (line_index, line) in selected_metadata_lines(save, now_unix, local_time_zone, text)
+            .iter()
+            .enumerate()
+        {
+            let fitted =
+                truncate_to_pixel_width(font, line, panel_w, TruncationMarker::AsciiEllipsis);
+            if !fitted.is_empty() {
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    &fitted,
+                    panel_x,
+                    panel_y + line_index as i32 * DETAIL_LINE_HEIGHT,
+                );
+            }
         }
     }
 }
@@ -998,41 +996,6 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
     }
 }
 
-/// Truncate `text` to the longest prefix that fits in `max_w` pixels
-/// when rendered with `font`. Oversize text gets an ASCII ellipsis so
-/// clipped metadata is visibly abbreviated instead of looking like a
-/// broken string.
-pub(crate) fn truncate_to_pixel_width<'a>(
-    font: &crate::native_font::Font,
-    text: &'a str,
-    max_w: i32,
-) -> Cow<'a, str> {
-    truncate_to_pixel_width_by(text, max_w, |candidate| font.text_width(candidate))
-}
-
-fn truncate_to_pixel_width_by(
-    text: &str,
-    max_w: i32,
-    measure: impl Fn(&str) -> i32,
-) -> Cow<'_, str> {
-    if max_w <= 0 {
-        return Cow::Borrowed("");
-    }
-    if measure(text) <= max_w {
-        return Cow::Borrowed(text);
-    }
-
-    let ellipsis = "...";
-    let ellipsis_w = measure(ellipsis);
-    if ellipsis_w > max_w {
-        return Cow::Borrowed("");
-    }
-
-    let budget = max_w - ellipsis_w;
-    let prefix = fitting_grapheme_prefix_by(text, budget, measure);
-    Cow::Owned(format!("{prefix}{ellipsis}"))
-}
-
 /// Resync the input-field widget to the current selection. In Save
 /// mode, an existing-slot selection prefills the widget with that
 /// slot's display text (so the user can edit in place and overwrite);
@@ -1220,16 +1183,18 @@ mod tests {
 
     #[test]
     fn save_text_truncation_borrows_unchanged_text() {
+        use crate::ingame_menu::layout::truncate_to_pixel_width_by;
+        const POLICY: TruncationMarker = TruncationMarker::AsciiEllipsis;
         let text = String::from("café");
         let measure = |text: &str| text.chars().count() as i32;
-        let fitted = super::truncate_to_pixel_width_by(&text, 4, measure);
+        let fitted = truncate_to_pixel_width_by(&text, 4, POLICY, measure);
         assert!(matches!(fitted, std::borrow::Cow::Borrowed(_)));
         assert_eq!(fitted.as_ptr(), text.as_ptr());
         for width in [0, 1, 2] {
-            let empty = super::truncate_to_pixel_width_by(&text, width, measure);
+            let empty = truncate_to_pixel_width_by(&text, width, POLICY, measure);
             assert!(matches!(empty, std::borrow::Cow::Borrowed("")));
         }
-        let shortened = super::truncate_to_pixel_width_by(&text, 3, measure);
+        let shortened = truncate_to_pixel_width_by(&text, 3, POLICY, measure);
         assert!(matches!(shortened, std::borrow::Cow::Owned(_)));
         assert_eq!(shortened, "...");
     }
@@ -1252,9 +1217,36 @@ mod tests {
             ("ab cd ef", 6, "ab ..."),
         ] {
             assert_eq!(
-                super::truncate_to_pixel_width_by(text, width, measure),
+                crate::ingame_menu::layout::truncate_to_pixel_width_by(
+                    text,
+                    width,
+                    TruncationMarker::AsciiEllipsis,
+                    measure
+                ),
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn clip_truncation_keeps_whole_graphemes_without_marker() {
+        let measure = |text: &str| text.chars().count() as i32;
+        for (text, width, expected) in [
+            ("abcdef", 6, "abcdef"),
+            ("abcdef", 4, "abcd"),
+            ("abcdef", 0, ""),
+            ("abcdef", -1, ""),
+            ("e\u{301}clair", 1, ""),
+            ("e\u{301}clair", 3, "e\u{301}c"),
+        ] {
+            let fitted = crate::ingame_menu::layout::truncate_to_pixel_width_by(
+                text,
+                width,
+                TruncationMarker::Clip,
+                measure,
+            );
+            assert!(matches!(fitted, std::borrow::Cow::Borrowed(_)));
+            assert_eq!(fitted, expected);
         }
     }
 
