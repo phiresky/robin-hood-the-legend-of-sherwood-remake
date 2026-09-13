@@ -915,9 +915,12 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventTimer {
             self.base
                 .face_position_3d_with_ctx(self.base.seek_position, ctx);
-            self.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
-            self.base
-                .launch_timer(parameters_ai::AI_FIRST_LOOK_TIME as u32, ctx.frame);
+            self.set_state_with_timer(
+                AiState::Wondering,
+                Substate::WonderingWatchingWhistling,
+                parameters_ai::AI_FIRST_LOOK_TIME as u32,
+                ctx,
+            );
         }
         false
     }
@@ -1041,11 +1044,12 @@ impl EnemyAi {
                     }
                 }
                 StimulusType::EventReachPoint => {
-                    self.set_state(
+                    self.set_state_with_timer(
                         AiState::Wondering,
                         Substate::WonderingAppleChasingChildWaiting,
+                        10,
+                        ctx,
                     );
-                    self.base.launch_timer(10, ctx.frame);
                 }
                 _ => {}
             }
@@ -1506,13 +1510,12 @@ impl EnemyAi {
             let dist = dx.abs().max(dy.abs());
             if dist > 100.0 {
                 // Too far — let Looting handle re-entry.
-                self.set_state(AiState::Wondering, Substate::WonderingLooting);
                 // Kick the state machine via a 1-tick timer;
                 // the Looting arm handles the follow-up.  We
                 // can't re-enter `think()` from inside an arm,
                 // so fall back to a short timer that reaches
                 // the same code path.
-                self.base.launch_timer(1, ctx.frame);
+                self.set_state_with_timer(AiState::Wondering, Substate::WonderingLooting, 1, ctx);
             } else if is_tied {
                 // Spot the tied body and transition to
                 // body-seek; emit the reconnaissance report
@@ -1521,10 +1524,9 @@ impl EnemyAi {
                 self.base
                     .my_reconnaissance_report
                     .update(ReportType::Body, body_pos);
-                self.set_state(AiState::Seeking, Substate::SeekingBody);
                 // Re-issue Think(EventReachPoint) via a 1-tick
                 // timer (see comment above).
-                self.base.launch_timer(1, ctx.frame);
+                self.set_state_with_timer(AiState::Seeking, Substate::SeekingBody, 1, ctx);
             } else {
                 // Start SEARCH sequence, transition to Looting.
                 use crate::element::Command;
@@ -1741,11 +1743,12 @@ impl EnemyAi {
                             to_whole_patrol: false,
                         },
                     );
-                    self.set_state(
+                    self.set_state_with_timer(
                         AiState::Wondering,
                         Substate::WonderingOfficerFinishingBrawlWaiting,
+                        10,
+                        ctx,
                     );
-                    self.base.launch_timer(10, ctx.frame);
                 } else {
                     self.return_to_duty_default(env);
                 }
@@ -2286,9 +2289,12 @@ impl EnemyAi {
                 self.seek_point_view_directions.remove(0);
                 self.base.face_direction(dir, ctx);
                 self.base.number_of_looks = 0;
-                self.set_state(AiState::Seeking, Substate::SeekingSeekpointWatching);
-                self.base
-                    .launch_timer(parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Seeking,
+                    Substate::SeekingSeekpointWatching,
+                    parameters_ai::AI_SEEKPOINT_LOOK_TIME as u32,
+                    ctx,
+                );
             } else {
                 // No directions left — move to next seek point
                 self.seek_next_point(env, global);
@@ -2538,11 +2544,12 @@ impl EnemyAi {
                     .actor
                     .say_on_target
                     .push((beggar, crate::ai::Remark::CivBeggarIdentifiesHimself));
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSeekpointIdentifyingBeggar2,
+                    50,
+                    ctx,
                 );
-                self.base.launch_timer(50, ctx.frame);
             } else {
                 // Disguised PC detected! Set as primary target
                 // and begin combat.
@@ -3344,11 +3351,12 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventTimer {
             let seek_pos = self.base.seek_position;
             self.base.face_position_3d_with_ctx(seek_pos, ctx);
-            self.set_state(
+            self.set_state_with_timer(
                 AiState::Seeking,
                 Substate::SeekingGetAlertingReportFromCivilianLook,
+                30,
+                ctx,
             );
-            self.base.launch_timer(30, ctx.frame);
         }
         false
     }
@@ -3816,11 +3824,12 @@ impl EnemyAi {
                             info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                         },
                     );
-                    self.set_state(
+                    self.set_state_with_timer(
                         AiState::Seeking,
                         Substate::SeekingSoldierGetInstructedByOfficer,
+                        20,
+                        ctx,
                     );
-                    self.base.launch_timer(20, ctx.frame);
                     self.base
                         .say_with_flags(Remark::AwaitsOrders, SpeechFlags::MYTALK_1);
                 } else {
@@ -3887,9 +3896,13 @@ impl EnemyAi {
                             info: StimulusInfo::None,
                         },
                     );
-                    self.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
                     // Re-dispatch as reachpoint.
-                    self.base.launch_timer(1, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Seeking,
+                        Substate::SeekingSoldierReturnToOfficer,
+                        1,
+                        ctx,
+                    );
                 } else {
                     self.base
                         .say_with_flags(Remark::GiveOrReceiveOrder, SpeechFlags::MYTALK_2);
@@ -5363,8 +5376,7 @@ impl EnemyAi {
                                 self.previous_substate
                             )
                         });
-                    self.set_state(previous_state, previous_substate);
-                    self.base.launch_timer(10, ctx.frame);
+                    self.set_state_with_timer(previous_state, previous_substate, 10, ctx);
                 }
                 _ => {
                     // Soldier, Knight, or officer with no alerted
@@ -5776,11 +5788,12 @@ impl EnemyAi {
                     .ai_substate
                     == Substate::SeekingWaitForAlertingCivilian;
                 if officer_waiting {
-                    self.set_state(
+                    self.set_state_with_timer(
                         AiState::Seeking,
                         Substate::SeekingCivilianGiveAlertingReportToSoldierStart,
+                        10,
+                        ctx,
                     );
-                    self.base.launch_timer(10, ctx.frame);
                 } else {
                     self.return_to_duty_default(env);
                 }

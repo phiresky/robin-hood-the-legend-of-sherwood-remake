@@ -1699,9 +1699,12 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                     self.base.primary_target = target;
                     let _target = target.expect("Menace decision requires a primary target");
-                    self.set_state(AiState::Menacing, Substate::MenacingPcInComa);
-                    self.base
-                        .launch_timer(parameters_ai::AI_MENACING_PATIENCE as u32, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Menacing,
+                        Substate::MenacingPcInComa,
+                        parameters_ai::AI_MENACING_PATIENCE as u32,
+                        ctx,
+                    );
                 }
 
                 Decision::CoverBehindShieldBearer => {
@@ -3696,8 +3699,12 @@ impl EnemyAi {
                 } else {
                     let aim_time =
                         ((110u32).saturating_sub(self.get_shooting_ability(ctx) as u32)) / 2;
-                    self.set_state(AiState::Attacking, Substate::AttackingBowAiming);
-                    self.base.launch_timer(aim_time.max(5), ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingBowAiming,
+                        aim_time.max(5),
+                        ctx,
+                    );
                 }
             } else {
                 self.base.stop_all();

@@ -967,11 +967,12 @@ impl EnemyAi {
             // the raw cursor rather than its 0..15 projection.
             self.gather_position = chosen_officer_position;
             self.gather_direction = chosen_direction_raw;
-            self.set_state(
+            self.set_state_with_timer(
                 AiState::Seeking,
                 Substate::SeekingOfficerWaitInsideHouseToInstructGroup,
+                50,
+                ctx,
             );
-            self.base.launch_timer(50, ctx.frame);
         } else {
             // Indoor alert, no place outside.
             self.set_state_with_timer(

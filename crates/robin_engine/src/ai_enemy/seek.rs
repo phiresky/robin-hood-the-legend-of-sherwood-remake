@@ -396,11 +396,12 @@ impl EnemyAi {
         } else {
             // Inside a building: delay before seeking.
             self.seek_point_view_directions.clear();
-            self.set_state(
+            self.set_state_with_timer(
                 AiState::Seeking,
                 Substate::SeekingSeekpointWatchingSidewards,
+                3,
+                ctx,
             );
-            self.base.launch_timer(3, ctx.frame);
         }
     }
 

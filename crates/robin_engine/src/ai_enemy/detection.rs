@@ -290,11 +290,12 @@ impl EnemyAi {
         } = env;
         match continuation {
             ThinkResultContinuation::SoldierFinishedAlertReportStart => {
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSoldierGiveAlertingReportToOfficerPoint,
+                    100,
+                    ctx,
                 );
-                self.base.launch_timer(100, ctx.frame);
             }
             ThinkResultContinuation::OfficerCalledSoldier => {
                 if accepted {
@@ -332,11 +333,12 @@ impl EnemyAi {
                     if self.alerted_us.is_empty() {
                         self.return_to_duty_default(env);
                     } else {
-                        self.set_state(
+                        self.set_state_with_timer(
                             AiState::Seeking,
                             Substate::SeekingOfficerWaitForInstructedGroup,
+                            30,
+                            ctx,
                         );
-                        self.base.launch_timer(30, ctx.frame);
                     }
                 }
             }

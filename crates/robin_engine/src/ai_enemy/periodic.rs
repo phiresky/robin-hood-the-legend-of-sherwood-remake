@@ -424,11 +424,12 @@ impl EnemyAi {
             } else {
                 // Multiple near — defer the look so a second nearby
                 // point can join the decision.
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointRight,
+                    3,
+                    ctx,
                 );
-                self.base.launch_timer(3, ctx.frame);
             }
         } else {
             // ---- Point on the left ----
@@ -445,11 +446,12 @@ impl EnemyAi {
                 );
                 self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
             } else {
-                self.set_state(
+                self.set_state_with_timer(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointLeft,
+                    3,
+                    ctx,
                 );
-                self.base.launch_timer(3, ctx.frame);
             }
         }
     }

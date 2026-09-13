@@ -191,9 +191,12 @@ impl EnemyAi {
             self.set_alert_status(AlertLevel::Green);
             self.base.face_entity(charly, ctx);
             if self.base.current_state == AiState::Default {
-                self.set_state(AiState::Default, Substate::DefaultDetectedCharly);
-                self.base
-                    .launch_timer(parameters_ai::AI_CHARLY_LOOK_TIME as u32, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Default,
+                    Substate::DefaultDetectedCharly,
+                    parameters_ai::AI_CHARLY_LOOK_TIME as u32,
+                    ctx,
+                );
             } else {
                 // Stash previous state, unalert seekers, transition to
                 // SEEKING_DETECTED_CHARLY.
@@ -203,9 +206,12 @@ impl EnemyAi {
                     CharlySeekerTarget::Npc(charly),
                     self.base.antagonist,
                 );
-                self.set_state(AiState::Seeking, Substate::SeekingDetectedCharly);
-                self.base
-                    .launch_timer(parameters_ai::AI_CHARLY_LOOK_TIME as u32, ctx.frame);
+                self.set_state_with_timer(
+                    AiState::Seeking,
+                    Substate::SeekingDetectedCharly,
+                    parameters_ai::AI_CHARLY_LOOK_TIME as u32,
+                    ctx,
+                );
             }
             return;
         }
@@ -578,8 +584,7 @@ impl EnemyAi {
                 } else {
                     Substate::WonderingBrawlReactiontime
                 };
-                self.set_state(AiState::Wondering, next);
-                self.base.launch_timer(30, ctx.frame);
+                self.set_state_with_timer(AiState::Wondering, next, 30, ctx);
             }
 
             // Officer tells a soldier brawling for money to stop. Receiver
@@ -817,8 +822,12 @@ impl EnemyAi {
                     self.base.primary_target = dc.adversary;
                     self.base.seek_position = dc.goal;
                     self.gather_direction = dc.direction;
-                    self.set_state(AiState::Attacking, Substate::AttackingDoorFightDelay);
-                    self.base.launch_timer(dc.delay as u32, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Attacking,
+                        Substate::AttackingDoorFightDelay,
+                        dc.delay as u32,
+                        ctx,
+                    );
                 }
             }
 
@@ -2427,8 +2436,12 @@ impl EnemyAi {
                     // This follows the CALL_ALERT civilian branch.
                     self.base.outbox.actor.queue_halt();
                     self.base.face_entity(civilian, ctx);
-                    self.set_state(AiState::Seeking, Substate::SeekingWaitForAlertingCivilian);
-                    self.base.launch_timer(20, ctx.frame);
+                    self.set_state_with_timer(
+                        AiState::Seeking,
+                        Substate::SeekingWaitForAlertingCivilian,
+                        20,
+                        ctx,
+                    );
                     self.base
                         .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
                     return true;
@@ -2464,8 +2477,12 @@ impl EnemyAi {
                         self.base.friends_are_alerted = true;
                         self.officers_position = caller.position;
                         self.base.face_position_3d_with_ctx(caller.position, ctx);
-                        self.set_state(AiState::Seeking, Substate::SeekingGroupCalledByOfficer);
-                        self.base.launch_timer(20, ctx.frame);
+                        self.set_state_with_timer(
+                            AiState::Seeking,
+                            Substate::SeekingGroupCalledByOfficer,
+                            20,
+                            ctx,
+                        );
                         self.base
                             .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
                         return true;
@@ -2493,11 +2510,12 @@ impl EnemyAi {
                         self.base.outbox.actor.queue_halt();
                         self.base.friends_are_alerted = true;
                         self.base.face_entity(civilian, ctx);
-                        self.set_state(
+                        self.set_state_with_timer(
                             AiState::Seeking,
                             Substate::SeekingOfficerWaitForAlertingSoldier,
+                            20,
+                            ctx,
                         );
-                        self.base.launch_timer(20, ctx.frame);
                         self.base
                             .set_transient_emoticon(EmoticonType::QuestionMark, 20, ctx.frame);
                         return true;
