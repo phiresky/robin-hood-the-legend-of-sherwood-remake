@@ -6,6 +6,16 @@ use crate::parameters_ai;
 
 use super::{AmbushPointStatus, EnemyAi, ProfileRank, ThinkEnv};
 
+/// Ambush refresh reads only its owner, never another actor's AI observation.
+/// Keep this input separate so the per-soldier update cannot rebuild the world.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(crate) struct AmbushPointContext {
+    pub frame: u32,
+    pub position: Position,
+    pub direction: u16,
+    pub intelligence: u16,
+}
+
 impl EnemyAi {
     // -----------------------------------------------------------------------
     // Every-16-frame periodic tasks
@@ -268,15 +278,15 @@ impl EnemyAi {
     // based on proximity + LOS, and dispatches `check_ambush_point`
     // when the NPC enters LOS for the first time.
     // -----------------------------------------------------------------------
-    pub fn refresh_ambush_points(
+    pub(crate) fn refresh_ambush_points(
         &mut self,
-        ctx: &AiContext,
+        ctx: &AmbushPointContext,
         eyes: crate::coordinates::WorldPoint3D,
         ambush_points: &[crate::ai::AmbushPoint],
         obstacles: crate::sight_obstacle::ObstacleList<'_>,
     ) {
         // Early-out for low-IQ NPCs.
-        if self.get_iq(ctx) <= parameters_ai::AI_MIN_IQ_TO_CONTROL_AMBUSH_POINTS as u16 {
+        if ctx.intelligence <= parameters_ai::AI_MIN_IQ_TO_CONTROL_AMBUSH_POINTS as u16 {
             return;
         }
 
@@ -395,7 +405,7 @@ impl EnemyAi {
         ambush_x: f32,
         ambush_y: f32,
         more_than_one_near: bool,
-        ctx: &AiContext,
+        ctx: &AmbushPointContext,
     ) {
         // direction_vector.Det(ambush_pos - my_pos)
         // The original game's determinant is the standard 2D cross product.
@@ -424,12 +434,11 @@ impl EnemyAi {
             } else {
                 // Multiple near — defer the look so a second nearby
                 // point can join the decision.
-                self.set_state_with_timer(
+                self.set_state(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointRight,
-                    3,
-                    ctx,
                 );
+                self.base.launch_timer(3, ctx.frame);
             }
         } else {
             // ---- Point on the left ----
@@ -446,12 +455,11 @@ impl EnemyAi {
                 );
                 self.base.outbox.actor.look_sidewards = Some(LookDirection::Left);
             } else {
-                self.set_state_with_timer(
+                self.set_state(
                     AiState::Seeking,
                     Substate::SeekingSeekpointPassedAmbushPointLeft,
-                    3,
-                    ctx,
                 );
+                self.base.launch_timer(3, ctx.frame);
             }
         }
     }

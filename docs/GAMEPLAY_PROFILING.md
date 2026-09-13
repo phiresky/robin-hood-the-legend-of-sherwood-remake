@@ -36,5 +36,8 @@ perf record -D 6000 -e cycles:u -F 999 -o target/york-perf.data -- \
   --mission Str03_Yor_MK
 ```
 
-Use `--fast-forward` when measuring simulation throughput. Without it, the
-`pacing` bucket intentionally contains the sleep used to maintain game speed.
+Use `--fast-forward` when measuring throughput. It disables both the pacing
+sleep and VSync during gameplay, while continuing to render each frame. The
+saved graphics preference is preserved, and accepting in-game options cannot
+re-enable VSync for that fast-forward run. Without the flag, the `pacing` bucket
+intentionally contains the sleep used to maintain game speed.

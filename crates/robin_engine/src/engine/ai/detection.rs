@@ -2032,7 +2032,7 @@ impl EngineInner {
         // The original game's detectable cleanup and visibility calculation use live
         // human pointers. Rebuild the target records at this creation
         // slot, but let the NPC's detectable list dictate scan order.
-        let enemy_target_ids: std::collections::HashSet<_> = self
+        let mut enemy_target_ids: Vec<_> = self
             .world
             .entities
             .get(npc_id)
@@ -2042,6 +2042,9 @@ impl EngineInner {
             .iter()
             .filter_map(|detectable| detectable.element)
             .collect();
+        // Retain occupied-slot order and deduplication without scanning humans.
+        enemy_target_ids.sort_unstable_by_key(|id| id.index());
+        enemy_target_ids.dedup();
         let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
             assets,
             world,
@@ -2675,10 +2678,6 @@ impl EngineInner {
                 ai.max_visibility = max_sharpness;
             }
 
-            if npc.ai_brain.enemy().is_some() {
-                aggregate = build_enemy_detection_aggregate(world, npc_id, viewer.camp, &diplomacy);
-            }
-
             // Running worst-detected-type (smallest enum value
             // wins).  We only drive Enemy detection here right now,
             // so the guard collapses to "promote from None / higher
@@ -2895,6 +2894,11 @@ impl EngineInner {
                     enemy_targets,
                 );
             }
+            // Only a nonempty Enemy stimulus block consumes this immutable
+            // frame aggregate. No Think has run during the scan.
+            if !enemy_stimuli.is_empty() && npc.ai_brain.enemy().is_some() {
+                aggregate = build_enemy_detection_aggregate(world, npc_id, viewer.camp, &diplomacy);
+            }
         }
 
         // SoldierSightContext rejected dead, unconscious and tied viewers at
@@ -2929,14 +2933,26 @@ impl EngineInner {
         &self,
         assets: &LevelAssets,
         world: &DetectionFrameState,
-        required_targets: Option<&std::collections::HashSet<EntityId>>,
+        required_targets: Option<&[EntityId]>,
     ) -> Vec<EnemyOpticalTarget> {
-        self.world
-            .entities
-            .humans()
-            .filter(|(id, _)| {
-                required_targets.is_none_or(|required| required.contains(&EntityId::from(*id)))
-            })
+        let all_targets;
+        let target_ids = match required_targets {
+            Some(ids) => ids,
+            None => {
+                all_targets = self
+                    .world
+                    .entities
+                    .humans()
+                    .map(|(id, _)| EntityId::from(id))
+                    .collect::<Vec<_>>();
+                &all_targets
+            }
+        };
+        target_ids.iter().filter_map(|&id| {
+            // Removed targets are intentionally absent from the snapshot:
+            // detectable cleanup below handles their stale list entries.
+            self.world.entities.get(id).map(|entity| (id, entity))
+        })
             .filter_map(|(id, entity)| match entity {
                 Entity::Pc(pc) => {
                     let entity_id: EntityId = id.into();
@@ -2985,11 +3001,18 @@ impl EngineInner {
                     let ground_z = pc.element.position().z;
                     let stored_map = (&pc.element).position_map();
                     let stored_world = (&pc.element).position();
-                    let order_type = self
+                    // Both fields describe the same selected element in this
+                    // immutable snapshot. A command may have no queued order.
+                    let selected_element = self
                         .orders
                         .sequence_manager
-                        .current_order_for_actor(entity_id)
-                        .map(|(_, _, order)| order.order_type)
+                        .current_element_for_actor(entity_id)
+                        .and_then(|(sequence_id, element_index)| {
+                            self.orders.sequence_manager.get_element(sequence_id, element_index)
+                        });
+                    let order_type = selected_element
+                        .and_then(|element| element.current_order())
+                        .map(|order| order.order_type)
                         .unwrap_or(crate::order::OrderType::Invalid);
                     Some(EnemyOpticalTarget {
                         id: entity_id,
@@ -3020,10 +3043,8 @@ impl EngineInner {
                         // sequence element is PassDoor.  The sprite-side
                         // active door pointer can already be null while that
                         // command is still selected.
-                        passing_door: optical_target_is_passing_door(
-                            &self.orders.sequence_manager,
-                            entity_id,
-                        ),
+                        passing_door: selected_element
+                            .is_some_and(|element| element.command == crate::element::Command::PassDoor),
                         obstacle_idx: pc.element.obstacle_index(),
                         is_pc: true,
                         is_soldier: false,
@@ -3086,7 +3107,7 @@ impl EngineInner {
                     })
                 }
                 Entity::Civilian(_) => None,
-                _ => unreachable!("Entities::humans returned a non-human entity"),
+                _ => None,
             })
             .collect()
     }
@@ -4282,7 +4303,14 @@ impl OwnerViewRadiusCache {
         if let Some(radius) = persistent.get(None, viewer, frame) {
             cache.values.borrow_mut().insert(None, radius);
         }
-        for index in 0..persistent.obstacles.len() {
+        for (index, entry) in persistent.obstacles.iter().enumerate() {
+            // Most entries belong to an earlier viewer or frame. Reject them
+            // before handle conversion and the instrumented cache lookup.
+            if !entry.is_some_and(|entry| {
+                entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0
+            }) {
+                continue;
+            }
             let Some(handle) = u32::try_from(index)
                 .ok()
                 .and_then(crate::position_interface::ObstacleHandle::new)

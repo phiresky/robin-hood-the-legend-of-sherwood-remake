@@ -1139,6 +1139,13 @@ impl EngineInner {
             return;
         }
 
+        // Civilian periodic work starts at the every-64-frame suffix. Keep
+        // the synchronous drain, but avoid constructing an unused context.
+        if matches!(entity, Entity::Civilian(_)) && (frame_phase & 63) != 0 {
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+            return;
+        }
+
         // sequence launch notification with no incoming element.
         // Civilians consume this entry-time value directly. Enemy
         // The periodic update can synchronously register work during
@@ -1326,24 +1333,29 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let building_sector = self.entity_building_sector(entity.element_data().sector());
-        let ctx =
-            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
+        let is_beggar =
+            civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar;
+        // The former full owner context required a position layer even when
+        // the spatial view was unavailable. Preserve that invariant check.
+        let _ = entity.element_data().layer();
+        let animation = entity_has_ai_view(entity).then(|| {
+            self.live_actor_animation(npc_id)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd)
+        });
         let entity = self.expect_entity_mut(npc_id, "random-speech NPC before call");
         if let Some(creation_order) = debug_creation_order {
             Self::trace_civilian_random_speech_before_call(
                 [current_frame, creation_order],
                 npc_id,
                 entity,
-                &ctx,
+                animation,
             );
         }
         {
             entity
                 .friendly_ai_mut()
                 .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
-                .random_speech(sim, 0, &ctx);
+                .random_speech_for_owner(sim, is_beggar, animation);
         }
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
@@ -1402,7 +1414,7 @@ impl EngineInner {
         [current_frame, creation_order]: [u32; 2],
         npc_id: EntityId,
         entity: &Entity,
-        ctx: &crate::ai::AiContext,
+        source_animation: Option<crate::order::OrderType>,
     ) {
         let Entity::Civilian(civilian) = entity else {
             panic!(
@@ -1413,9 +1425,6 @@ impl EngineInner {
         let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
             panic!("random-speech civilian {} changed AI kind", npc_id.index())
         };
-        let source_animation = ctx
-            .entity_view(ai.base.me)
-            .map(|view| view.current_animation);
         eprintln!(
             "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
             npc_id.index(),
@@ -1492,6 +1501,74 @@ impl EngineInner {
     // slot status vector and may transition the AI substate via
     // `check_ambush_point`.
 
+    pub(in crate::engine) fn ambush_point_context(
+        &self,
+        npc_id: EntityId,
+    ) -> crate::ai_enemy::AmbushPointContext {
+        let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
+        let enemy = owner.enemy_ai().unwrap_or_else(|| {
+            panic!(
+                "soldier {} has no enemy AI for ambush refresh",
+                npc_id.index()
+            )
+        });
+        let element = owner.element_data();
+        // Match AiContext's owner position: ordinary actors use their literal
+        // position; a door-passing actor uses its committed AI gate side.
+        let position = if owner
+            .actor_data()
+            .is_some_and(|actor| actor.active_door_pass.is_some())
+        {
+            assert!(
+                entity_has_ai_view(owner),
+                "door-passing ambush owner lacks an AI position"
+            );
+            let doors = self
+                .scripts
+                .mission
+                .as_ref()
+                .map(|_| self.script_domains.interactables.doors.as_slice())
+                .unwrap_or(&[]);
+            resolve_ai_position_with(
+                &self.world.entities,
+                doors,
+                &self.orders.sequence_manager,
+                npc_id,
+                |id| {
+                    let element = self
+                        .expect_entity(id, "ambush AI position owner")
+                        .element_data();
+                    crate::ai::Position {
+                        x: element.position_map().x,
+                        y: element.position_map().y,
+                        sector: ai_view_position_sector(self, element),
+                        level: element.layer(),
+                    }
+                },
+            )
+            .effective
+        } else {
+            crate::ai::Position {
+                x: element.position_map().x,
+                y: element.position_map().y,
+                sector: element.sector(),
+                level: element.layer(),
+            }
+        };
+        crate::ai_enemy::AmbushPointContext {
+            frame: self.control.frame_counter,
+            position,
+            direction: element.direction() as u16,
+            intelligence: enemy.iq_for_difficulty(
+                self.control.sim_config.difficulty,
+                self.mission_domain
+                    .diplomacy
+                    .relationship_to_player(owner.camp())
+                    == crate::diplomacy::Relationship::Hostile,
+            ),
+        }
+    }
+
     pub(in crate::engine) fn tick_refresh_ambush_points_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1505,9 +1582,7 @@ impl EngineInner {
             return;
         }
 
-        // Civilian ambush-point refresh is a no-op in the original game. Check
-        // that before scratch construction, which can draw BuildingExitGate
-        // RNG while forecasting unrelated door-passing actors.
+        // Civilian ambush-point refresh is a no-op in the original game.
         let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
         if matches!(owner, Entity::Civilian(_)) {
             return;
@@ -1517,27 +1592,13 @@ impl EngineInner {
             "soldier {} has no enemy AI for ambush refresh",
             npc_id.index()
         );
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
-
-        let frame = self.control.frame_counter;
-        // Phase 1: read-only — gather context + eyes point + LOS scope.
-        let (ctx, eyes) = {
-            let entity = self.expect_entity(npc_id, "ambush-refresh NPC");
-            assert!(
-                entity.enemy_ai().is_some(),
-                "soldier {} has no enemy AI for ambush refresh",
+        let eyes = owner.compute_eyes_point(None).unwrap_or_else(|| {
+            panic!(
+                "soldier {} has no eye point for ambush refresh",
                 npc_id.index()
-            );
-            let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
-                panic!(
-                    "soldier {} has no eye point for ambush refresh",
-                    npc_id.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            (ctx, eyes)
-        };
+            )
+        });
+        let ctx = self.ambush_point_context(npc_id);
 
         // Build the obstacle view from individual disjoint fields
         // so the borrow checker can split it from the mut borrow
@@ -1590,6 +1651,15 @@ impl EngineInner {
             )
         };
         if !fire {
+            return;
+        }
+
+        if !execute {
+            self.world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("elapsed macro-timer NPC"))
+                .macro_timer_is_running = false;
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
             return;
         }
 
