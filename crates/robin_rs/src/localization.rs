@@ -579,10 +579,7 @@ fn find_loose_root(definition: &LanguageDefinition, files: &SbFileSystem) -> Opt
     std::iter::once(definition.lcid)
         .chain(std::iter::once(definition.locale))
         .chain(definition.aliases.iter().copied())
-        .find(|root| {
-            loose_path_exists(root, "Data/Text/Level.res", files)
-                || loose_path_exists(root, "Data/Interface/Start.sxt", files)
-        })
+        .find(|root| loose_path_exists(root, "Data/Text/Level.res", files))
         .map(str::to_owned)
 }
 
@@ -606,28 +603,15 @@ fn validate_loose_pack(
     files: &Arc<SbFileSystem>,
 ) -> Result<(), LocalizationError> {
     let mut resources = ResourceManager::with_files(files.clone());
-    let mut attached = 0usize;
-    for relative in ["Data/Text/Level.res", "Data/Interface/Start.sxt"] {
-        let path = format!("{root}/{relative}");
-        if files
-            .try_exists(&path)
-            .map_err(LocalizationError::FileLookup)?
-        {
-            resources.attach_resource_file(&path).map_err(|error| {
-                LocalizationError::InvalidCoreText {
-                    locale: locale.to_owned(),
-                    reason: format!("cannot parse {relative}: {error:#}"),
-                }
-            })?;
-            attached += 1;
-        }
-    }
-    if attached == 0 {
-        return Err(LocalizationError::InvalidCoreText {
+    // Menu strings are in Level.res. Start.sxt is a standalone loading
+    // picture, not a resource archive, and is unrelated to text validation.
+    let path = format!("{root}/Data/Text/Level.res");
+    resources
+        .attach_resource_file(&path)
+        .map_err(|error| LocalizationError::InvalidCoreText {
             locale: locale.to_owned(),
-            reason: "neither Level.res nor Start.sxt exists".to_owned(),
-        });
-    }
+            reason: format!("cannot parse Data/Text/Level.res: {error:#}"),
+        })?;
 
     let usable = MENU_TEXT_TABLES.iter().any(|table| {
         resources
@@ -646,10 +630,10 @@ fn validate_loose_pack(
 }
 
 fn validate_shipping_pack(locale: &str, assets: &ShippingLocale) -> Result<(), LocalizationError> {
-    let usable = ["text/level.res", "interface/start.sxt"]
-        .iter()
-        .filter_map(|path| assets.res_files.get(*path))
-        .any(|resources| {
+    let usable = assets
+        .res_files
+        .get("text/level.res")
+        .is_some_and(|resources| {
             MENU_TEXT_TABLES.iter().any(|table| {
                 resources
                     .resident_string_count(*table)
@@ -1175,6 +1159,63 @@ pub fn format_port_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loose_pack_validates_level_text_independently_of_loading_picture() {
+        use robin_assets::picture::{Picture, PixelFormat, SixteenPacking};
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("1031/Data");
+        std::fs::create_dir_all(root.join("Text")).unwrap();
+        std::fs::create_dir_all(root.join("Interface")).unwrap();
+        let files = Arc::new(SbFileSystem::new(Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        files
+            .set_primary_path(dir.path().to_str().unwrap())
+            .unwrap();
+        let mut text = b"SRES\0\x01\0\0\x01\0\0\0TEXT".to_vec();
+        text.extend_from_slice(&MENU_TEXT_TABLES[0].to_le_bytes());
+        text.extend_from_slice(&0u32.to_le_bytes());
+        text.extend_from_slice(&(MINIMUM_CORE_MENU_STRINGS as u16).to_le_bytes());
+        for _ in 0..MINIMUM_CORE_MENU_STRINGS {
+            text.extend_from_slice(&1u16.to_le_bytes());
+            text.extend_from_slice(&(b'A' as u16).to_le_bytes());
+        }
+        let level = root.join("Text/Level.res");
+        let start = root.join("Interface/Start.sxt");
+        std::fs::write(&level, &text).unwrap();
+        let picture = Picture {
+            width: 2,
+            height: 2,
+            pitch: 4,
+            pixel_format: PixelFormat::Rgb16,
+            data: vec![0; 8],
+            palette: None,
+        };
+        for packing in [SixteenPacking::None, SixteenPacking::Bzip] {
+            std::fs::write(&start, picture.write_sixteen_to_bytes(packing).unwrap()).unwrap();
+            validate_loose_pack("de-DE", "1031", &files).unwrap();
+        }
+        // A loading image is not required for language validation, and a
+        // corrupt one is the picture loader's concern.
+        for corrupt in [&b"\0\x04\0\x03"[..], &b"SRES"[..]] {
+            std::fs::write(&start, corrupt).unwrap();
+            validate_loose_pack("de-DE", "1031", &files).unwrap();
+        }
+        std::fs::remove_file(&start).unwrap();
+        validate_loose_pack("de-DE", "1031", &files).unwrap();
+        // Neither missing nor malformed menu text can be accepted.
+        std::fs::remove_file(&level).unwrap();
+        assert!(find_loose_root(&LANGUAGE_DEFINITIONS[1], &files).is_none());
+        assert!(validate_loose_pack("de-DE", "1031", &files).is_err());
+        std::fs::write(&level, b"SRES").unwrap();
+        assert!(matches!(
+            validate_loose_pack("de-DE", "1031", &files),
+            Err(LocalizationError::InvalidCoreText { reason, .. })
+                if reason.contains("cannot parse Data/Text/Level.res")
+        ));
+    }
 
     #[test]
     fn legacy_preferences_without_visibility_migrate() {
