@@ -5,6 +5,7 @@
 //! identity. Display metadata is retained for audit UI but never participates
 //! in admission authority.
 
+use crate::blob_store::{BlobStore as _, BlobStoreError, open_platform_store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -317,58 +318,40 @@ impl SpellforgeTrustStore {
     fn store_path(directory: &str) -> PathBuf {
         Path::new(directory).join(NATIVE_STORE_FILE)
     }
-}
 
-#[cfg(not(target_arch = "wasm32"))]
-fn load_serialized(directory: &str) -> Result<Option<String>, String> {
-    let path = SpellforgeTrustStore::store_path(directory);
-    match std::fs::read_to_string(&path) {
-        Ok(serialized) => Ok(Some(serialized)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("read {}: {error}", path.display())),
+    /// Browser trust grants are global to the page's localStorage.
+    #[cfg(target_arch = "wasm32")]
+    fn store_path(_directory: &str) -> &'static str {
+        BROWSER_STORE_KEY
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+fn load_serialized(directory: &str) -> Result<Option<String>, String> {
+    let key = SpellforgeTrustStore::store_path(directory);
+    open_platform_store()
+        .and_then(|store| store.read_text(&key))
+        .map_err(|error| describe_store_error(error, "read", &key))
+}
+
+/// Native publication goes through `desktop_persistence` (staged write, file
+/// sync, atomic rename, directory sync); the parent directory is created.
 fn save_serialized(directory: &str, serialized: &str) -> Result<(), String> {
-    use std::io::Write as _;
+    let key = SpellforgeTrustStore::store_path(directory);
+    open_platform_store()
+        .and_then(|store| store.write_text(&key, serialized))
+        .map_err(|error| describe_store_error(error, "persist", &key))
+}
 
-    std::fs::create_dir_all(directory)
-        .map_err(|error| format!("create Spellforge trust directory {directory}: {error}"))?;
-    let destination = SpellforgeTrustStore::store_path(directory);
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)
-        .map_err(|error| format!("create temporary Spellforge trust store: {error}"))?;
-    temporary
-        .write_all(serialized.as_bytes())
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|error| format!("write temporary Spellforge trust store: {error}"))?;
-    temporary.persist(&destination).map_err(|error| {
-        format!(
-            "atomically replace Spellforge trust store {}: {}",
-            destination.display(),
-            error.error
-        )
-    })?;
-    Ok(())
+#[cfg(not(target_arch = "wasm32"))]
+fn describe_store_error(error: BlobStoreError, operation: &str, path: &Path) -> String {
+    format!("{operation} {}: {error}", path.display())
 }
 
 #[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, String> {
-    crate::browser_storage::local_storage()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn load_serialized(_directory: &str) -> Result<Option<String>, String> {
-    browser_storage()?
-        .get_item(BROWSER_STORE_KEY)
-        .map_err(|error| format!("read browser Spellforge trust store: {error:?}"))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn save_serialized(_directory: &str, serialized: &str) -> Result<(), String> {
-    browser_storage()?
-        .set_item(BROWSER_STORE_KEY, serialized)
-        .map_err(|error| format!("persist browser Spellforge trust store: {error:?}"))
+fn describe_store_error(error: BlobStoreError, operation: &str, _key: &str) -> String {
+    error
+        .into_io(&format!("{operation} browser Spellforge trust store"))
+        .to_string()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -7,9 +7,8 @@
 //! deliberately absent from simulation saves, hashes, replays, and network
 //! commands.
 
+use crate::blob_store::BlobStore as _;
 use std::borrow::Cow;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -830,15 +829,16 @@ fn persist_preferences(
         .expect("LocalizationPreferences serialization cannot fail");
     match store {
         #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Native(path) => persist_native(path, encoded.as_bytes()),
+        PreferenceStore::Native(path) => crate::blob_store::NativeFileStore
+            .write_text(path, &encoded)
+            .map_err(|error| LocalizationError::PersistPreferences {
+                path: path.clone(),
+                source: error.into_io("persist language preferences"),
+            }),
         #[cfg(target_arch = "wasm32")]
-        PreferenceStore::Browser => {
-            let storage = crate::browser_storage::local_storage()
-                .map_err(LocalizationError::BrowserStorage)?;
-            storage
-                .set_item(BROWSER_PREFERENCES_KEY, &encoded)
-                .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
-        }
+        PreferenceStore::Browser => crate::blob_store::BrowserLocalStorage::open()
+            .and_then(|storage| storage.write_text(BROWSER_PREFERENCES_KEY, &encoded))
+            .map_err(|error| LocalizationError::BrowserStorage(error.to_string())),
         PreferenceStore::Memory => Ok(()),
     }
 }
@@ -846,34 +846,18 @@ fn persist_preferences(
 fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationError> {
     match store {
         #[cfg(not(target_arch = "wasm32"))]
-        PreferenceStore::Native(path) => match std::fs::read_to_string(path) {
-            Ok(encoded) => Ok(Some(encoded)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(source) => Err(LocalizationError::ReadPreferences {
+        PreferenceStore::Native(path) => crate::blob_store::NativeFileStore
+            .read_text(path)
+            .map_err(|error| LocalizationError::ReadPreferences {
                 path: path.clone(),
-                source,
+                source: error.into_io("read language preferences"),
             }),
-        },
         #[cfg(target_arch = "wasm32")]
-        PreferenceStore::Browser => {
-            let storage = crate::browser_storage::local_storage()
-                .map_err(LocalizationError::BrowserStorage)?;
-            storage
-                .get_item(BROWSER_PREFERENCES_KEY)
-                .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
-        }
+        PreferenceStore::Browser => crate::blob_store::BrowserLocalStorage::open()
+            .and_then(|storage| storage.read_text(BROWSER_PREFERENCES_KEY))
+            .map_err(|error| LocalizationError::BrowserStorage(error.to_string())),
         PreferenceStore::Memory => Ok(None),
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn persist_native(path: &Path, bytes: &[u8]) -> Result<(), LocalizationError> {
-    crate::desktop_persistence::write_bytes(path, bytes).map_err(|source| {
-        LocalizationError::PersistPreferences {
-            path: path.to_owned(),
-            source,
-        }
-    })
 }
 
 fn store_display_path(store: &PreferenceStore) -> PathBuf {

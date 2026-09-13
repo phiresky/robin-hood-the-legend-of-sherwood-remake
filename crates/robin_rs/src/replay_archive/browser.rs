@@ -5,6 +5,7 @@
 //! idempotent even if the page closes between commit and journal retirement.
 
 use super::{MANIFEST, MAX_BYTES};
+use crate::blob_store::{BlobStore as _, BrowserLocalStorage};
 use anyhow::{Context, Result, ensure};
 use base64::Engine as _;
 use js_sys::Uint8Array;
@@ -88,11 +89,6 @@ thread_local! { static SESSION: RefCell<Option<Session>> = const { RefCell::new(
 
 fn db_error(error: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("browser replay IndexedDB: {error}")
-}
-fn storage() -> Result<web_sys::Storage> {
-    crate::browser_storage::local_storage()
-        .map_err(anyhow::Error::msg)
-        .context("replay journal unavailable")
 }
 fn with_session<T>(f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
     SESSION.with(|slot| {
@@ -187,18 +183,20 @@ impl Journal {
         self.validate()?;
         let key = journal_key(self);
         if self.batches.is_empty() {
-            storage()?
-                .remove_item(&key)
-                .map_err(|e| anyhow::anyhow!("retire replay journal: {e:?}"))?;
+            BrowserLocalStorage::open()
+                .context("replay journal unavailable")?
+                .remove(&key)
+                .map_err(|e| anyhow::anyhow!("retire replay journal: {e}"))?;
         } else {
             let encoded = serde_json::to_string(self)?;
             ensure!(
                 encoded.len() <= JOURNAL_BYTES,
                 "pending browser replay journal exceeds {JOURNAL_BYTES} bytes; previous durable history is preserved"
             );
-            storage()?
-                .set_item(&key, &encoded)
-                .map_err(|e| anyhow::anyhow!("persist replay recovery journal: {e:?}"))?;
+            BrowserLocalStorage::open()
+                .context("replay journal unavailable")?
+                .write_text(&key, &encoded)
+                .map_err(|e| anyhow::anyhow!("persist replay recovery journal: {e}"))?;
         }
         Ok(())
     }
@@ -219,36 +217,31 @@ pub async fn initialize() -> Result<()> {
             .await
             .map_err(db_error)?,
     );
-    let storage = storage()?;
+    let storage = BrowserLocalStorage::open().context("replay journal unavailable")?;
     let mut pending = Vec::new();
     let mut legacy = Vec::new();
-    for i in 0..storage
-        .length()
-        .map_err(|e| anyhow::anyhow!("enumerate replay journals: {e:?}"))?
+    for key in storage
+        .keys()
+        .map_err(|e| anyhow::anyhow!("enumerate replay journals: {e}"))?
     {
-        if let Some(key) = storage
-            .key(i)
-            .map_err(|e| anyhow::anyhow!("read replay journal key: {e:?}"))?
+        if key.starts_with(JOURNAL_PREFIX) {
+            pending.push(key);
+        } else if let Some(path) = key.strip_prefix("robin:replay:")
+            && (path.ends_with(".rhrec.jsonl")
+                || matches!(
+                    Path::new(path).file_name().and_then(|p| p.to_str()),
+                    Some(MANIFEST | "ranked.json")
+                ))
         {
-            if key.starts_with(JOURNAL_PREFIX) {
-                pending.push(key);
-            } else if let Some(path) = key.strip_prefix("robin:replay:")
-                && (path.ends_with(".rhrec.jsonl")
-                    || matches!(
-                        Path::new(path).file_name().and_then(|p| p.to_str()),
-                        Some(MANIFEST | "ranked.json")
-                    ))
-            {
-                legacy.push(key);
-            }
+            legacy.push(key);
         }
     }
     // Stream legacy files directly into IndexedDB before needing any journal
     // quota. Do not preload every historical mission into the live cache.
     for key in legacy {
         let Some(encoded) = storage
-            .get_item(&key)
-            .map_err(|e| anyhow::anyhow!("read legacy replay: {e:?}"))?
+            .read_text(&key)
+            .map_err(|e| anyhow::anyhow!("read legacy replay: {e}"))?
         else {
             continue;
         };
@@ -271,8 +264,8 @@ pub async fn initialize() -> Result<()> {
     }
     for key in pending {
         let Some(encoded) = storage
-            .get_item(&key)
-            .map_err(|e| anyhow::anyhow!("read replay journal: {e:?}"))?
+            .read_text(&key)
+            .map_err(|e| anyhow::anyhow!("read replay journal: {e}"))?
         else {
             continue;
         };
@@ -288,14 +281,14 @@ pub async fn initialize() -> Result<()> {
         commit(&db, &journal).await?;
         // Another tab may have appended while IndexedDB was committing.
         if storage
-            .get_item(&key)
-            .map_err(|e| anyhow::anyhow!("reread replay journal: {e:?}"))?
+            .read_text(&key)
+            .map_err(|e| anyhow::anyhow!("reread replay journal: {e}"))?
             .as_deref()
             == Some(&encoded)
         {
             storage
-                .remove_item(&key)
-                .map_err(|e| anyhow::anyhow!("retire recovered replay journal: {e:?}"))?;
+                .remove(&key)
+                .map_err(|e| anyhow::anyhow!("retire recovered replay journal: {e}"))?;
         }
     }
     let mut nonce = [0u8; 16];
@@ -646,9 +639,10 @@ async fn load_file(path: &Path, required: bool) -> Result<()> {
     // page initialized. Retire the old key only after the atomic import commits.
     let bytes = match bytes {
         Some(bytes) => Some(bytes),
-        None => storage()?
-            .get_item(&format!("robin:replay:{key}"))
-            .map_err(|e| anyhow::anyhow!("read legacy replay: {e:?}"))?
+        None => BrowserLocalStorage::open()
+            .context("replay journal unavailable")?
+            .read_text(&format!("robin:replay:{key}"))
+            .map_err(|e| anyhow::anyhow!("read legacy replay: {e}"))?
             .map(String::into_bytes),
     };
     let Some(bytes) = bytes else {
@@ -721,17 +715,17 @@ async fn import_legacy(db: &Rexie, path: &str, bytes: &[u8]) -> Result<FileIndex
 }
 
 fn retire_legacy(key: &str, imported: &str) -> Result<()> {
-    let storage = storage()?;
+    let storage = BrowserLocalStorage::open().context("replay journal unavailable")?;
     // Never delete a legacy tab's newer write while an import was awaiting I/O.
     if storage
-        .get_item(key)
-        .map_err(|e| anyhow::anyhow!("reread legacy replay: {e:?}"))?
+        .read_text(key)
+        .map_err(|e| anyhow::anyhow!("reread legacy replay: {e}"))?
         .as_deref()
         == Some(imported)
     {
         storage
-            .remove_item(key)
-            .map_err(|e| anyhow::anyhow!("retire imported replay: {e:?}"))?;
+            .remove(key)
+            .map_err(|e| anyhow::anyhow!("retire imported replay: {e}"))?;
     }
     Ok(())
 }
@@ -867,9 +861,9 @@ mod tests {
         load_file(&path, true).await.unwrap();
         assert_eq!(read_bounded(&path, MAX_BYTES).unwrap(), first);
         assert!(
-            storage()
+            BrowserLocalStorage::open()
                 .unwrap()
-                .get_item(&journal_key(&first_journal))
+                .read_text(&journal_key(&first_journal))
                 .unwrap()
                 .is_none()
         );
@@ -966,9 +960,9 @@ mod tests {
         let legacy = PathBuf::from(&directory).join("legacy.rhrec.jsonl");
         let legacy_key = format!("robin:replay:{}", legacy.display());
         let legacy_bytes = "l".repeat(JOURNAL_BYTES + 17);
-        storage()
+        BrowserLocalStorage::open()
             .unwrap()
-            .set_item(&legacy_key, &legacy_bytes)
+            .write_text(&legacy_key, &legacy_bytes)
             .unwrap();
         restart().await; // Startup migrates old files without filling the cache.
         assert!(with_session(|s| Ok(s.files.is_empty())).unwrap());
@@ -979,7 +973,13 @@ mod tests {
             read_bounded(&legacy, MAX_BYTES).unwrap(),
             legacy_bytes.as_bytes()
         );
-        assert!(storage().unwrap().get_item(&legacy_key).unwrap().is_none());
+        assert!(
+            BrowserLocalStorage::open()
+                .unwrap()
+                .read_text(&legacy_key)
+                .unwrap()
+                .is_none()
+        );
 
         // Capacity failure cannot advance the journaled offset or replace the
         // last durable recovery record. Errors ignored by Write consumers stay
@@ -989,7 +989,10 @@ mod tests {
         checkpoint().unwrap();
         let before = with_session(|s| Ok(s.journal.clone())).unwrap();
         let key = journal_key(&before);
-        let saved = storage().unwrap().get_item(&key).unwrap();
+        let saved = BrowserLocalStorage::open()
+            .unwrap()
+            .read_text(&key)
+            .unwrap();
         change(&huge, &vec![0; JOURNAL_BYTES], true, false).unwrap();
         assert!(
             checkpoint()
@@ -997,7 +1000,13 @@ mod tests {
                 .to_string()
                 .contains("journal exceeds")
         );
-        assert_eq!(storage().unwrap().get_item(&key).unwrap(), saved);
+        assert_eq!(
+            BrowserLocalStorage::open()
+                .unwrap()
+                .read_text(&key)
+                .unwrap(),
+            saved
+        );
         assert_eq!(
             with_session(|s| Ok(s.files[&huge].index.as_ref().unwrap().len)).unwrap(),
             0
@@ -1177,7 +1186,10 @@ mod tests {
         let mut archive = MissionArchive::open(&directory).unwrap();
         let before = with_session(|s| Ok(s.journal.clone())).unwrap();
         let key = journal_key(&before);
-        let saved = storage().unwrap().get_item(&key).unwrap();
+        let saved = BrowserLocalStorage::open()
+            .unwrap()
+            .read_text(&key)
+            .unwrap();
         assert!(archive.stage_continuation(2, None).is_err());
         SESSION.with(|slot| {
             let session = slot.borrow();
@@ -1189,7 +1201,13 @@ mod tests {
                 serde_json::to_value(&before).unwrap()
             );
         });
-        assert_eq!(storage().unwrap().get_item(&key).unwrap(), saved);
+        assert_eq!(
+            BrowserLocalStorage::open()
+                .unwrap()
+                .read_text(&key)
+                .unwrap(),
+            saved
+        );
         assert!(
             flush_pending()
                 .await

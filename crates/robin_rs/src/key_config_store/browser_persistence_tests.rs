@@ -6,8 +6,8 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test]
 fn durable_key_config_reload_rejects_unknown_schema() {
-    let storage = browser_key_config_storage().unwrap();
-    storage.remove_item(BROWSER_KEY_CONFIG_STORE_KEY).unwrap();
+    let storage = crate::blob_store::BrowserLocalStorage::open().unwrap();
+    storage.remove(BROWSER_KEY_CONFIG_STORE_KEY).unwrap();
 
     let mut first = KeyConfigStore::load("browser-save").unwrap();
     first
@@ -30,7 +30,7 @@ fn durable_key_config_reload_rejects_unknown_schema() {
     assert_eq!(reloaded.save_directory, "ignored-after-load");
 
     storage
-        .set_item(
+        .write_text(
             BROWSER_KEY_CONFIG_STORE_KEY,
             r#"{"schema_version":999,"store":{}}"#,
         )
@@ -45,5 +45,5 @@ fn durable_key_config_reload_rejects_unknown_schema() {
         .to_string()
         .contains("limit")
     );
-    storage.remove_item(BROWSER_KEY_CONFIG_STORE_KEY).unwrap();
+    storage.remove(BROWSER_KEY_CONFIG_STORE_KEY).unwrap();
 }
