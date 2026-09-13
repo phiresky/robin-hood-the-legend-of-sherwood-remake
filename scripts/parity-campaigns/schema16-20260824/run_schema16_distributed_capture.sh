@@ -5,7 +5,10 @@ set -euo pipefail
 # locks are host-local, so hosts own disjoint save shards. Remote publications
 # are first copied into an incoming directory, checked, and atomically moved.
 
-script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Finished-campaign supervisor kept with its manifest; the workspace is three
+# levels up, and the campaign scripts sit at the same relative path on remotes.
+campaign_scripts_rel=scripts/parity-campaigns/schema16-20260824
+script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 workspace=${SCHEMA16_DISTRIBUTED_WORKSPACE:-$script_workspace}
 ssh_config=${SCHEMA16_DISTRIBUTED_SSH_CONFIG:-$workspace/tmp/ssh_config}
 remote_host=${SCHEMA16_DISTRIBUTED_REMOTE_HOST:-robin-worker}
@@ -115,7 +118,7 @@ prepare_remote() {
     local campaign=$1 remote_campaign relative
     relative=${campaign#"$workspace"/}
     remote_campaign="$remote_root/$relative"
-    ssh_worker "mkdir -p '$remote_root/original-game/scripts' '$remote_root/original-game/runtime-i386' '$remote_root/reference-saves' '$remote_root/${recorder_rel%/*}' '$remote_root/scripts' '$remote_campaign'"
+    ssh_worker "mkdir -p '$remote_root/original-game/scripts' '$remote_root/original-game/runtime-i386' '$remote_root/reference-saves' '$remote_root/${recorder_rel%/*}' '$remote_root/$campaign_scripts_rel' '$remote_campaign'"
     rsync -a -e "ssh -F $ssh_config" \
         "$workspace/original-game/runtime-i386/" \
         "$remote_host:$remote_root/original-game/runtime-i386/"
@@ -125,8 +128,8 @@ prepare_remote() {
         "$workspace/original-game/scripts/capture_parity_save_replays.sh" \
         "$remote_host:$remote_root/original-game/scripts/"
     rsync -a -e "ssh -F $ssh_config" \
-        "$workspace/scripts/run_schema16_distributed_capture.sh" \
-        "$remote_host:$remote_root/scripts/"
+        "$workspace/$campaign_scripts_rel/run_schema16_distributed_capture.sh" \
+        "$remote_host:$remote_root/$campaign_scripts_rel/"
     rsync -a -e "ssh -F $ssh_config" "$workspace/$recorder_rel" \
         "$remote_host:$remote_root/$recorder_rel"
     ssh_worker "test \"\$(sha256sum '$remote_root/$recorder_rel' | cut -d' ' -f1)\" = '$recorder_sha'; '$remote_root/original-game/runtime-i386/ld-linux.so.2' --library-path '$remote_root/original-game/runtime-i386:$remote_root/original-game/runtime-i386/pulseaudio' --list '$remote_root/$recorder_rel' >/dev/null"
@@ -189,8 +192,8 @@ start_local_shard() {
     local campaign=$1 local_command
     [[ ! -e "$campaign/.distributed-shard-0.complete" ]] || return 0
     tmux has-session -t "$local_session" 2>/dev/null && return 0
-    local_command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q bash scripts/run_schema16_distributed_capture.sh capture-shard %q 0 %q %q >> %q 2>&1' \
-        "$workspace" "$workspace" "$campaign" "$shard_count" "$local_jobs" "$campaign/capture-distributed-local.log")
+    local_command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q bash %q capture-shard %q 0 %q %q >> %q 2>&1' \
+        "$workspace" "$workspace" "$campaign_scripts_rel/run_schema16_distributed_capture.sh" "$campaign" "$shard_count" "$local_jobs" "$campaign/capture-distributed-local.log")
     tmux new-session -d -s "$local_session" "$local_command"
 }
 
@@ -201,8 +204,9 @@ start_remote_shard() {
     if ssh_worker "test -e '$remote_campaign/.distributed-shard-$shard.complete' || tmux has-session -t '$session' 2>/dev/null"; then
         return 0
     fi
-    remote_command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q SCHEMA16_DISTRIBUTED_LOADER=%q bash scripts/run_schema16_distributed_capture.sh capture-shard %q %q %q %q >> %q 2>&1' \
-        "$remote_root" "$remote_root" "$remote_root/original-game/runtime-i386/ld-linux.so.2" "$remote_campaign" "$shard" "$shard_count" "$remote_jobs" "$remote_campaign/capture-distributed-remote-$shard.log")
+    remote_command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q SCHEMA16_DISTRIBUTED_LOADER=%q bash %q capture-shard %q %q %q %q >> %q 2>&1' \
+        "$remote_root" "$remote_root" "$remote_root/original-game/runtime-i386/ld-linux.so.2" \
+        "$campaign_scripts_rel/run_schema16_distributed_capture.sh" "$remote_campaign" "$shard" "$shard_count" "$remote_jobs" "$remote_campaign/capture-distributed-remote-$shard.log")
     ssh_worker "tmux new-session -d -s '$session' $(printf %q "$remote_command")"
 }
 
@@ -223,10 +227,11 @@ restart_external_ladder() {
             | sort -n | tail -n 1 | cut -d' ' -f2-)
     fi
     [[ -n "$audit_dir" ]] || { printf 'error: set SCHEMA16_DISTRIBUTED_AUDIT_DIR\n' >&2; exit 2; }
-    command=$(printf 'cd %q && exec env SCHEMA16_LADDER_RECORDER=%q SCHEMA16_LADDER_RECORDER_SHA=%q SCHEMA16_LADDER_AUDIT_DIR=%q SCHEMA16_LADDER_FIRST_SEED_BASE=%q SCHEMA16_LADDER_CAPTURE_EXTERNALLY=1 SCHEMA16_LADDER_POLL_SECONDS=%q bash scripts/run_schema16_corpus_ladder.sh >> %q 2>&1' \
+    command=$(printf 'cd %q && exec env SCHEMA16_LADDER_RECORDER=%q SCHEMA16_LADDER_RECORDER_SHA=%q SCHEMA16_LADDER_AUDIT_DIR=%q SCHEMA16_LADDER_FIRST_SEED_BASE=%q SCHEMA16_LADDER_CAPTURE_EXTERNALLY=1 SCHEMA16_LADDER_POLL_SECONDS=%q bash %q >> %q 2>&1' \
         "$workspace" "$workspace/$recorder_rel" "$recorder_sha" \
         "$audit_dir" \
         "$(campaign_value "$1" PARITY_INPUT_SEED_BASE)" "$poll_seconds" \
+        "$campaign_scripts_rel/run_schema16_corpus_ladder.sh" \
         "$workspace/parity-save-replays/60s-random-input/schema16-corpus-ladder-distributed.log")
     tmux new-session -d -s "$ladder_session" "$command"
 }
@@ -255,9 +260,9 @@ migrate() {
 start_collector() {
     local campaign=$1 command
     tmux has-session -t "$collector_session" 2>/dev/null && return 0
-    command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q SCHEMA16_DISTRIBUTED_AUDIT_DIR=%q SCHEMA16_DISTRIBUTED_SHARDS=%q SCHEMA16_DISTRIBUTED_LOCAL_JOBS=%q SCHEMA16_DISTRIBUTED_REMOTE_JOBS=%q bash scripts/run_schema16_distributed_capture.sh watch %q >> %q 2>&1' \
+    command=$(printf 'cd %q && exec env SCHEMA16_DISTRIBUTED_WORKSPACE=%q SCHEMA16_DISTRIBUTED_AUDIT_DIR=%q SCHEMA16_DISTRIBUTED_SHARDS=%q SCHEMA16_DISTRIBUTED_LOCAL_JOBS=%q SCHEMA16_DISTRIBUTED_REMOTE_JOBS=%q bash %q watch %q >> %q 2>&1' \
         "$workspace" "$workspace" "$audit_dir" "$shard_count" "$local_jobs" \
-        "$remote_jobs" "$campaign" "$campaign/capture-distributed-collector.log")
+        "$remote_jobs" "$campaign_scripts_rel/run_schema16_distributed_capture.sh" "$campaign" "$campaign/capture-distributed-collector.log")
     tmux new-session -d -s "$collector_session" "$command"
 }
 
