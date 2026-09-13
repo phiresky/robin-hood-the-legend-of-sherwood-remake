@@ -6,11 +6,8 @@
 //! including owner-local quick-action sequences and the PC status alias into
 //! the live campaign character table.
 
-use thiserror::Error;
-
 use crate::{
     character_kind::CharacterKind,
-    coordinates::{MapPoint, WorldPoint3D},
     element::{
         Entity, EntityId, EntityIdKind, HumanBoundingBox2State, HumanData, HumanPlaneState,
         HumanRepulsivePointState, HumanShieldPointState, HumanShieldState, HumanSwordSweepState,
@@ -27,12 +24,11 @@ use crate::{
 use super::{
     LegacySaveAbiProfile,
     adopt::{
-        LegacyEntityFixups, LegacyLineTopology, LegacyLineTopologyError, LegacyPositionTopology,
-        LegacySaveAdoptError,
+        LegacyEntityFixups, LegacyLineTopology, LegacyPositionTopology, missing_creation_order,
     },
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError, point2, point3},
     adopt_sequences::{
-        LegacySequenceAdoptError, LegacySequenceAdoptionPlan, LegacySequenceTopology,
-        convert_owner_local_sequence,
+        LegacySequenceAdoptionPlan, LegacySequenceTopology, convert_owner_local_sequence,
     },
     campaign::LegacyCampaign,
     payload_actors::{LegacyPcPayload, LegacyPcStatus},
@@ -44,131 +40,12 @@ use super::{
     payload_sequences::LegacyInlineSequence,
 };
 
-#[derive(Debug, Error)]
-pub enum LegacyPcHumanAdoptError {
-    #[error(transparent)]
-    Identity(#[from] LegacySaveAdoptError),
-    #[error(transparent)]
-    Line(#[from] LegacyLineTopologyError),
-    #[error(transparent)]
-    Sequence(#[from] LegacySequenceAdoptError),
-    #[error(
-        "saved Human creation order {creation_order} resolved to non-Human runtime entity {entity_id}"
-    )]
-    ExpectedHuman {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved PC creation order {creation_order} resolved to non-PC runtime entity {entity_id}"
-    )]
-    ExpectedPc {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved Human creation order {creation_order} field {field} references {entity_id}, expected {expected}"
-    )]
-    ReferenceKind {
-        creation_order: u32,
-        field: &'static str,
-        entity_id: EntityId,
-        expected: &'static str,
-    },
-    #[error(
-        "saved Human creation order {creation_order} field {field} has value {value}; expected {expected}"
-    )]
-    InvalidField {
-        creation_order: u32,
-        field: &'static str,
-        value: String,
-        expected: &'static str,
-    },
-    #[error(
-        "saved PC creation order {creation_order} references campaign character {character_index}, but the live campaign contains {character_count} characters"
-    )]
-    MissingCampaignCharacter {
-        creation_order: u32,
-        character_index: usize,
-        character_count: usize,
-    },
-    #[error(
-        "saved PC creation order {creation_order} campaign character {character_index} has no character profile"
-    )]
-    MissingCampaignProfile {
-        creation_order: u32,
-        character_index: usize,
-    },
-    #[error(
-        "saved PC creation order {creation_order} campaign character {character_index} references missing character profile {profile_index}"
-    )]
-    UnknownCampaignProfile {
-        creation_order: u32,
-        character_index: usize,
-        profile_index: u32,
-    },
-    #[error(
-        "saved PC creation order {creation_order} contains two different playability values: member={member}, interface={interface}"
-    )]
-    PlayabilityMismatch {
-        creation_order: u32,
-        member: bool,
-        interface: bool,
-    },
-    #[error(
-        "saved PC creation order {creation_order} contains two different portrait-display values: interface={interface}, portrait={portrait}"
-    )]
-    PortraitDisplayMismatch {
-        creation_order: u32,
-        interface: bool,
-        portrait: bool,
-    },
-    #[error(
-        "saved PC creation order {creation_order} quick-action slot {slot} combines Quickito {quickito:?} with an inline sequence"
-    )]
-    QuickitoSequenceConflict {
-        creation_order: u32,
-        slot: usize,
-        quickito: QuickAction,
-    },
-    #[error(
-        "saved PC creation order {creation_order} Quickito slot {slot} has invalid interactor/button metadata for {quickito:?}: interactor={interactor:?}, button={button}"
-    )]
-    InvalidQuickitoMetadata {
-        creation_order: u32,
-        slot: usize,
-        quickito: QuickAction,
-        interactor: Option<EntityId>,
-        button: u16,
-    },
-    #[error(
-        "saved PC creation order {creation_order} portrait quantities {actual:?} disagree with status/profile-derived quantities {expected:?}"
-    )]
-    PortraitQuantityMismatch {
-        creation_order: u32,
-        actual: [u16; 3],
-        expected: [u16; 3],
-    },
-    #[error(
-        "saved PC creation order {creation_order} portrait two-buttons flag {actual} disagrees with profile-derived value {expected}"
-    )]
-    PortraitButtonModeMismatch {
-        creation_order: u32,
-        actual: bool,
-        expected: bool,
-    },
-    #[error(
-        "saved PC creation order {creation_order} portrait life bits 0x{actual:08x} disagree with PC-status life bits 0x{expected:08x}"
-    )]
-    PortraitLifeMismatch {
-        creation_order: u32,
-        actual: u32,
-        expected: u32,
-    },
-    #[error(
-        "saved Human creation order {creation_order} shoot-list entry {index} does not reference an Interaction element"
-    )]
-    ShootNotInteraction { creation_order: u32, index: usize },
+fn human_site(creation_order: u32) -> AdoptSite {
+    AdoptSite::element("saved Human", creation_order)
+}
+
+fn pc_site(creation_order: u32) -> AdoptSite {
+    AdoptSite::element("saved PC", creation_order)
 }
 
 #[derive(Debug)]
@@ -238,7 +115,7 @@ impl LegacyPcHumanAdoptionPlan {
         sequences: &LegacySequenceAdoptionPlan,
         live_campaign: &LegacyCampaign,
         assets: &LevelAssets,
-    ) -> Result<Self, LegacyPcHumanAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let line_topology = LegacyLineTopology::derive(engine, assets)?;
         let mut records = Vec::new();
         for record in &payloads.records {
@@ -253,18 +130,20 @@ impl LegacyPcHumanAdoptionPlan {
                 .by_creation_order
                 .get(&creation_order)
                 .copied()
-                .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
-            let runtime = engine.world.entities.get(entity_id).ok_or(
-                LegacyPcHumanAdoptError::ExpectedHuman {
-                    creation_order,
+                .ok_or_else(|| missing_creation_order(creation_order))?;
+            let expected_human = || {
+                human_site(creation_order).error(AdoptErrorKind::WrongEntityKind {
                     entity_id,
-                },
-            )?;
+                    expected: "Human",
+                })
+            };
+            let runtime = engine
+                .world
+                .entities
+                .get(entity_id)
+                .ok_or_else(expected_human)?;
             if runtime.human_data().is_none() {
-                return Err(LegacyPcHumanAdoptError::ExpectedHuman {
-                    creation_order,
-                    entity_id,
-                });
+                return Err(expected_human());
             }
             let human = convert_human(
                 engine,
@@ -279,10 +158,12 @@ impl LegacyPcHumanAdoptionPlan {
             let pc = saved_pc
                 .map(|saved| {
                     let Entity::Pc(runtime_pc) = runtime else {
-                        return Err(LegacyPcHumanAdoptError::ExpectedPc {
-                            creation_order,
-                            entity_id,
-                        });
+                        return Err(pc_site(creation_order).error(
+                            AdoptErrorKind::WrongEntityKind {
+                                entity_id,
+                                expected: "PC",
+                            },
+                        ));
                     };
                     convert_pc(
                         saved,
@@ -374,7 +255,7 @@ fn convert_human(
     position_topology: &LegacyPositionTopology,
     line_topology: &LegacyLineTopology,
     sequences: &LegacySequenceAdoptionPlan,
-) -> Result<ConvertedHuman, LegacyPcHumanAdoptError> {
+) -> Result<ConvertedHuman, LegacyAdoptError> {
     let carrier = checked_ref(
         entities.resolve_element(saved.carrier)?,
         creation_order,
@@ -394,12 +275,7 @@ fn convert_human(
                 is_human_kind,
             )?
             .ok_or_else(|| {
-                invalid(
-                    creation_order,
-                    "opponents.opponent",
-                    "null",
-                    "non-null Human",
-                )
+                human_site(creation_order).invalid("opponents.opponent", "null", "non-null Human")
             })?,
         );
         opponent_jump_lines
@@ -417,12 +293,7 @@ fn convert_human(
                 is_human_kind,
             )?
             .ok_or_else(|| {
-                invalid(
-                    creation_order,
-                    "sword_strike_victims",
-                    "null",
-                    "non-null Human",
-                )
+                human_site(creation_order).invalid("sword_strike_victims", "null", "non-null Human")
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -430,12 +301,15 @@ fn convert_human(
     for (index, reference) in saved.shoots.iter().enumerate() {
         let (element_ref, element) = sequences
             .resolve_element("human.shoots", *reference)?
-            .ok_or_else(|| invalid(creation_order, "shoots", "null", "non-null Interaction"))?;
+            .ok_or_else(|| {
+                human_site(creation_order).invalid("shoots", "null", "non-null Interaction")
+            })?;
         if !matches!(element.data, SequenceElementData::Interaction { .. }) {
-            return Err(LegacyPcHumanAdoptError::ShootNotInteraction {
-                creation_order,
-                index,
-            });
+            return Err(human_site(creation_order).invalid(
+                format!("shoots[{index}]"),
+                format!("{:?} element", element.command),
+                "an Interaction sequence element",
+            ));
         }
         pending_shoots.push(element_ref);
     }
@@ -502,10 +376,9 @@ fn convert_building_sector(
     abi_profile: LegacySaveAbiProfile,
     creation_order: u32,
     position_topology: &LegacyPositionTopology,
-) -> Result<Option<SectorHandle>, LegacyPcHumanAdoptError> {
+) -> Result<Option<SectorHandle>, LegacyAdoptError> {
     if abi_profile == LegacySaveAbiProfile::PortLinuxI386V48 {
-        return checked_sector(
-            creation_order,
+        return human_site(creation_order).checked_sector(
             "building",
             saved.building.0,
             &position_topology.sectors,
@@ -531,8 +404,7 @@ fn convert_building_sector(
         return Ok(direct);
     }
 
-    let position_sector = checked_sector(
-        creation_order,
+    let position_sector = human_site(creation_order).checked_sector(
         "actor.position.sector",
         saved.actor.element.sprite.position.sector.0,
         &position_topology.sectors,
@@ -548,68 +420,70 @@ fn convert_pc(
     sequence_topology: &LegacySequenceTopology,
     live_campaign: &LegacyCampaign,
     profiles: &ProfileManager,
-) -> Result<ConvertedPc, LegacyPcHumanAdoptError> {
+) -> Result<ConvertedPc, LegacyAdoptError> {
     let character_index = saved.pre_human.description.0 as usize;
-    let description = live_campaign.characters.get(character_index).ok_or(
-        LegacyPcHumanAdoptError::MissingCampaignCharacter {
-            creation_order,
-            character_index,
-            character_count: live_campaign.characters.len(),
-        },
-    )?;
-    let profile_index = description.character_profile_index.ok_or(
-        LegacyPcHumanAdoptError::MissingCampaignProfile {
-            creation_order,
-            character_index,
-        },
-    )?;
-    let profile = profiles.get_character(profile_index).ok_or(
-        LegacyPcHumanAdoptError::UnknownCampaignProfile {
-            creation_order,
-            character_index,
-            profile_index,
-        },
-    )?;
+    let pc = pc_site(creation_order);
+    let description = live_campaign
+        .characters
+        .get(character_index)
+        .ok_or_else(|| {
+            pc.out_of_range(
+                "description",
+                "campaign character",
+                character_index,
+                live_campaign.characters.len(),
+            )
+        })?;
+    let campaign_character = || format!("campaign characters[{character_index}]");
+    let profile_index = description.character_profile_index.ok_or_else(|| {
+        pc.field_error(
+            campaign_character(),
+            AdoptErrorKind::Missing {
+                what: "character profile",
+            },
+        )
+    })?;
+    let profile = profiles.get_character(profile_index).ok_or_else(|| {
+        pc.field_error(
+            campaign_character(),
+            AdoptErrorKind::MissingCharacterProfile { profile_index },
+        )
+    })?;
     let kind = CharacterKind::from_profile(&profile.filename, &profile.profile_name);
     let (has_lockpick, has_climb, has_jump) = PcData::movement_auth_from_profile(profile);
     if saved.pre_human.playable_member != saved.pre_human.playable_interface {
-        return Err(LegacyPcHumanAdoptError::PlayabilityMismatch {
-            creation_order,
+        return Err(pc.error(AdoptErrorKind::PlayabilityMismatch {
             member: saved.pre_human.playable_member,
             interface: saved.pre_human.playable_interface,
-        });
+        }));
     }
     if saved.pre_human.interface_displayed != saved.portrait.displayed {
-        return Err(LegacyPcHumanAdoptError::PortraitDisplayMismatch {
-            creation_order,
+        return Err(pc.error(AdoptErrorKind::PortraitDisplayMismatch {
             interface: saved.pre_human.interface_displayed,
             portrait: saved.portrait.displayed,
-        });
+        }));
     }
     let status = pc_status(&saved.post_human.status);
     let expected_quantities = profile.actions.map(|action| status.get_ammo(action));
     if saved.portrait.quantities != expected_quantities {
-        return Err(LegacyPcHumanAdoptError::PortraitQuantityMismatch {
-            creation_order,
+        return Err(pc.error(AdoptErrorKind::PortraitQuantityMismatch {
             actual: saved.portrait.quantities,
             expected: expected_quantities,
-        });
+        }));
     }
     let expected_two_buttons = profile.actions[2] == crate::profiles::Action::NoAction;
     if saved.portrait.two_buttons_mode != expected_two_buttons {
-        return Err(LegacyPcHumanAdoptError::PortraitButtonModeMismatch {
-            creation_order,
+        return Err(pc.error(AdoptErrorKind::PortraitButtonModeMismatch {
             actual: saved.portrait.two_buttons_mode,
             expected: expected_two_buttons,
-        });
+        }));
     }
     let expected_life = f32::from(status.life_points).to_bits();
     if saved.portrait.life_level.to_bits() != expected_life {
-        return Err(LegacyPcHumanAdoptError::PortraitLifeMismatch {
-            creation_order,
+        return Err(pc.error(AdoptErrorKind::PortraitLifeMismatch {
             actual: saved.portrait.life_level.to_bits(),
             expected: expected_life,
-        });
+        }));
     }
     let mut quick_action_types = Vec::with_capacity(3);
     let mut quick_action_sequences = Vec::with_capacity(3);
@@ -624,11 +498,7 @@ fn convert_pc(
         if quickito != QuickAction::None
             && (action.sequences.action.is_some() || action.sequences.seek.is_some())
         {
-            return Err(LegacyPcHumanAdoptError::QuickitoSequenceConflict {
-                creation_order,
-                slot,
-                quickito,
-            });
+            return Err(pc.error(AdoptErrorKind::QuickitoSequenceConflict { slot, quickito }));
         }
         let valid_metadata = match quickito {
             QuickAction::None => true,
@@ -640,13 +510,12 @@ fn convert_pc(
             }
         };
         if !valid_metadata {
-            return Err(LegacyPcHumanAdoptError::InvalidQuickitoMetadata {
-                creation_order,
+            return Err(pc.error(AdoptErrorKind::InvalidQuickitoMetadata {
                 slot,
                 quickito,
                 interactor,
                 button: action.metadata.button,
-            });
+            }));
         }
         quick_action_types.push(quickito);
         quick_action_sequences.push(
@@ -680,8 +549,7 @@ fn convert_pc(
     let carried_posture =
         preserve_dormant_carried_posture(saved.post_human.carried_posture, carried.is_some())
             .map_err(|value| {
-                invalid(
-                    creation_order,
+                human_site(creation_order).invalid(
                     "carried_posture",
                     value,
                     "posture 0..24 while a carried human is present",
@@ -711,8 +579,7 @@ fn convert_pc(
             -1
         } else {
             i16::try_from(saved.pre_human.beam_me_index).map_err(|_| {
-                invalid(
-                    creation_order,
+                human_site(creation_order).invalid(
                     "beam_me_index",
                     saved.pre_human.beam_me_index,
                     "0..=32767 or 0xffff",
@@ -1026,57 +893,23 @@ fn bbox2(saved: LegacyBoundingBox2) -> HumanBoundingBox2State {
     }
 }
 
-fn point2(saved: super::payload_base::LegacyPoint2) -> MapPoint {
-    MapPoint::new(saved.x, saved.y)
-}
-
-fn point3(saved: super::payload_base::LegacyPoint3) -> WorldPoint3D {
-    WorldPoint3D::new(saved.x, saved.y, saved.z)
-}
-
-fn checked_sector(
-    creation_order: u32,
-    field: &'static str,
-    raw: Option<u16>,
-    sectors: &[Option<SectorHandle>],
-) -> Result<Option<SectorHandle>, LegacyPcHumanAdoptError> {
-    let Some(index) = raw else {
-        return Ok(None);
-    };
-    let Some(sector) = sectors.get(usize::from(index)) else {
-        return Err(invalid(
-            creation_order,
-            field,
-            index,
-            "an initialized Original sector index",
-        ));
-    };
-    (*sector).map(Some).ok_or_else(|| {
-        invalid(
-            creation_order,
-            field,
-            index,
-            "an Original sector slot with a Rust position-sector counterpart",
-        )
-    })
-}
-
 fn checked_ref(
     entity_id: Option<EntityId>,
     creation_order: u32,
     field: &'static str,
     expected: &'static str,
     accepts: impl FnOnce(EntityIdKind) -> bool,
-) -> Result<Option<EntityId>, LegacyPcHumanAdoptError> {
+) -> Result<Option<EntityId>, LegacyAdoptError> {
     if let Some(entity_id) = entity_id
         && !accepts(entity_id.kind())
     {
-        return Err(LegacyPcHumanAdoptError::ReferenceKind {
-            creation_order,
+        return Err(human_site(creation_order).field_error(
             field,
-            entity_id,
-            expected,
-        });
+            AdoptErrorKind::WrongEntityKind {
+                entity_id,
+                expected,
+            },
+        ));
     }
     Ok(entity_id)
 }
@@ -1095,23 +928,18 @@ fn preserve_dormant_carried_posture(raw: u32, carried_is_present: bool) -> Resul
     Ok(raw)
 }
 
-fn action(
-    raw: u32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<Action, LegacyPcHumanAdoptError> {
+fn action(raw: u32, creation_order: u32, field: &'static str) -> Result<Action, LegacyAdoptError> {
     Action::try_from(raw)
-        .map_err(|_| invalid(creation_order, field, raw, "a known action discriminant"))
+        .map_err(|_| human_site(creation_order).invalid(field, raw, "a known action discriminant"))
 }
 
-fn quick_action(raw: u32, creation_order: u32) -> Result<QuickAction, LegacyPcHumanAdoptError> {
+fn quick_action(raw: u32, creation_order: u32) -> Result<QuickAction, LegacyAdoptError> {
     match raw {
         0 => Ok(QuickAction::None),
         1 => Ok(QuickAction::GoDown),
         2 => Ok(QuickAction::GoUp),
         3 => Ok(QuickAction::Interact),
-        _ => Err(invalid(
-            creation_order,
+        _ => Err(human_site(creation_order).invalid(
             "quick_actions.quickito",
             raw,
             "quick-action slot 0..3",
@@ -1119,7 +947,7 @@ fn quick_action(raw: u32, creation_order: u32) -> Result<QuickAction, LegacyPcHu
     }
 }
 
-fn work_icon(raw: u32, creation_order: u32) -> Result<WorkIcon, LegacyPcHumanAdoptError> {
+fn work_icon(raw: u32, creation_order: u32) -> Result<WorkIcon, LegacyAdoptError> {
     match raw {
         0 => Ok(WorkIcon::Arrows),
         1 => Ok(WorkIcon::Purses),
@@ -1134,11 +962,11 @@ fn work_icon(raw: u32, creation_order: u32) -> Result<WorkIcon, LegacyPcHumanAdo
         10 => Ok(WorkIcon::SwordTraining),
         11 => Ok(WorkIcon::Regeneration),
         12 => Ok(WorkIcon::None),
-        _ => Err(invalid(creation_order, "work_icon", raw, "work icon 0..12")),
+        _ => Err(human_site(creation_order).invalid("work_icon", raw, "work icon 0..12")),
     }
 }
 
-fn smalltalk_hint(raw: u32, creation_order: u32) -> Result<SmalltalkHint, LegacyPcHumanAdoptError> {
+fn smalltalk_hint(raw: u32, creation_order: u32) -> Result<SmalltalkHint, LegacyAdoptError> {
     // Sword-strike values: NONE=11, SMALLTALK_LEFT=12,
     // SMALLTALK_RIGHT=13, LEGS=14. No other strike is valid in this member.
     match raw {
@@ -1146,26 +974,11 @@ fn smalltalk_hint(raw: u32, creation_order: u32) -> Result<SmalltalkHint, Legacy
         12 => Ok(SmalltalkHint::Left),
         13 => Ok(SmalltalkHint::Right),
         14 => Ok(SmalltalkHint::Legs),
-        _ => Err(invalid(
-            creation_order,
+        _ => Err(human_site(creation_order).invalid(
             "smalltalk_hint",
             raw,
             "SWORDSTRIKE_NONE/SMALLTALK_LEFT/SMALLTALK_RIGHT/LEGS (11..14)",
         )),
-    }
-}
-
-fn invalid(
-    creation_order: u32,
-    field: &'static str,
-    value: impl ToString,
-    expected: &'static str,
-) -> LegacyPcHumanAdoptError {
-    LegacyPcHumanAdoptError::InvalidField {
-        creation_order,
-        field,
-        value: value.to_string(),
-        expected,
     }
 }
 

@@ -9,7 +9,8 @@
 use super::read_helpers::DEFAULT_LIST_LIMIT;
 use enum_map::enum_map;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
+use super::adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError};
 
 use crate::campaign::{Campaign, CampaignValue, PcDescription};
 use crate::legacy_io::{LegacyReader, LegacyResult};
@@ -253,24 +254,22 @@ impl LegacyCampaign {
         &self,
         profiles: &ProfileManager,
         header_mission_id: u32,
-    ) -> Result<LegacyCampaignBootstrap, LegacyCampaignMappingError> {
+    ) -> Result<LegacyCampaignBootstrap, LegacyAdoptError> {
         let header_profile_index = profiles
             .missions
             .iter()
             .position(|profile| profile.id == header_mission_id)
-            .ok_or(LegacyCampaignMappingError::MissingHeaderMissionProfile {
+            .ok_or(AdoptErrorKind::MissingHeaderMissionProfile {
                 mission_id: header_mission_id,
             })?;
         let campaign_mission_index = self
             .missions
             .iter()
             .position(|mission| mission.profile_index == Some(header_profile_index as u32))
-            .ok_or(
-                LegacyCampaignMappingError::HeaderMissionMissingFromCampaign {
-                    mission_id: header_mission_id,
-                    profile_index: header_profile_index,
-                },
-            )?;
+            .ok_or(AdoptErrorKind::HeaderMissionMissingFromCampaign {
+                mission_id: header_mission_id,
+                profile_index: header_profile_index,
+            })?;
 
         let missions = self
             .missions
@@ -288,9 +287,10 @@ impl LegacyCampaign {
         let character_count = characters.len();
 
         if self.last_played_missions.len() > 3 {
-            return Err(LegacyCampaignMappingError::TooManyRecentMissions {
+            return Err(AdoptErrorKind::TooManyRecentMissions {
                 count: self.last_played_missions.len(),
-            });
+            }
+            .into());
         }
 
         let accessible_mission_indices =
@@ -441,7 +441,7 @@ impl LegacyMission {
         &self,
         profiles: &ProfileManager,
         mission_index: usize,
-    ) -> Result<Mission, LegacyCampaignMappingError> {
+    ) -> Result<Mission, LegacyAdoptError> {
         let profile_idx = required_profile_link(
             self.profile_index,
             profiles.missions.len(),
@@ -574,7 +574,7 @@ impl LegacyPcDescription {
         &self,
         profiles: &ProfileManager,
         character_index: usize,
-    ) -> Result<PcDescription, LegacyCampaignMappingError> {
+    ) -> Result<PcDescription, LegacyAdoptError> {
         let profile_index = required_profile_link(
             self.character_profile_index,
             profiles.characters.len(),
@@ -640,20 +640,20 @@ impl LegacyProductionSector {
         &self,
         character_count: usize,
         sector_index: usize,
-    ) -> Result<SectorProduction, LegacyCampaignMappingError> {
+    ) -> Result<SectorProduction, LegacyAdoptError> {
         let prod_type = Type::from_script_i32(self.production_type as i32).ok_or_else(|| {
-            LegacyCampaignMappingError::InvalidEnum {
-                field: format!("production_sectors[{sector_index}].production_type"),
-                value: self.production_type,
-                expected: "production sector type 0..12",
-            }
+            CAMPAIGN.invalid(
+                format!("production_sectors[{sector_index}].production_type"),
+                self.production_type,
+                "production sector type 0..12",
+            )
         })?;
         let occupants = self
             .occupants
             .iter()
             .enumerate()
             .map(|(occupant_index, occupant)| {
-                let pc_description_idx = checked_reference(
+                let pc_description_idx = checked_collection_index(
                     occupant.character_index as usize,
                     character_count,
                     format!(
@@ -669,7 +669,7 @@ impl LegacyProductionSector {
                     ),
                 })
             })
-            .collect::<Result<Vec<_>, LegacyCampaignMappingError>>()?;
+            .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
         Ok(SectorProduction {
             prod_type,
             script_zone: None,
@@ -699,34 +699,8 @@ pub struct LegacyCampaignBootstrap {
     pub identity: LegacyMissionIdentity,
 }
 
-#[derive(Debug, Error)]
-pub enum LegacyCampaignMappingError {
-    #[error("save header mission id {mission_id} has no matching static mission profile")]
-    MissingHeaderMissionProfile { mission_id: u32 },
-    #[error(
-        "save header mission id {mission_id} (profile index {profile_index}) is absent from the campaign"
-    )]
-    HeaderMissionMissingFromCampaign {
-        mission_id: u32,
-        profile_index: usize,
-    },
-    #[error("{field} reference {index} is outside collection length {length}")]
-    InvalidReference {
-        field: String,
-        index: usize,
-        length: usize,
-    },
-    #[error("{field} is unexpectedly null")]
-    NullReference { field: String },
-    #[error("{field} has invalid enum value {value}; expected {expected}")]
-    InvalidEnum {
-        field: String,
-        value: u32,
-        expected: &'static str,
-    },
-    #[error("Original campaign has {count} recent missions; format permits at most 3")]
-    TooManyRecentMissions { count: usize },
-}
+/// Error context for campaign-stream reference and enum validation.
+const CAMPAIGN: AdoptSite = AdoptSite::new("saved campaign");
 
 fn read_vec<T>(
     reader: &mut LegacyReader<'_>,
@@ -764,19 +738,15 @@ fn read_profile_link(
     Ok((index != NULL_PROFILE_INDEX).then_some(index))
 }
 
-fn checked_reference(
+fn checked_collection_index(
     index: usize,
     length: usize,
     field: impl Into<String>,
-) -> Result<usize, LegacyCampaignMappingError> {
+) -> Result<usize, LegacyAdoptError> {
     if index < length {
         Ok(index)
     } else {
-        Err(LegacyCampaignMappingError::InvalidReference {
-            field: field.into(),
-            index,
-            length,
-        })
+        Err(CAMPAIGN.out_of_range(field.into(), "index", index, length))
     }
 }
 
@@ -784,21 +754,20 @@ fn required_profile_link(
     index: Option<u32>,
     length: usize,
     field: impl Into<String>,
-) -> Result<usize, LegacyCampaignMappingError> {
+) -> Result<usize, LegacyAdoptError> {
     let field = field.into();
-    let index = index.ok_or_else(|| LegacyCampaignMappingError::NullReference {
-        field: field.clone(),
-    })?;
-    checked_reference(index as usize, length, field)
+    let index =
+        index.ok_or_else(|| CAMPAIGN.field_error(field.clone(), AdoptErrorKind::NullReference))?;
+    checked_collection_index(index as usize, length, field)
 }
 
 fn map_optional_mission_link(
     index: Option<u16>,
     length: usize,
     field: impl Into<String>,
-) -> Result<Option<usize>, LegacyCampaignMappingError> {
+) -> Result<Option<usize>, LegacyAdoptError> {
     index
-        .map(|index| checked_reference(index as usize, length, field))
+        .map(|index| checked_collection_index(index as usize, length, field))
         .transpose()
 }
 
@@ -806,16 +775,16 @@ fn map_required_mission_links(
     links: &[Option<u16>],
     length: usize,
     field: &str,
-) -> Result<Vec<usize>, LegacyCampaignMappingError> {
+) -> Result<Vec<usize>, LegacyAdoptError> {
     links
         .iter()
         .enumerate()
         .map(|(position, link)| {
             let item_field = format!("{field}[{position}]");
-            let index = link.ok_or_else(|| LegacyCampaignMappingError::NullReference {
-                field: item_field.clone(),
+            let index = link.ok_or_else(|| {
+                CAMPAIGN.field_error(item_field.clone(), AdoptErrorKind::NullReference)
             })?;
-            checked_reference(index as usize, length, item_field)
+            checked_collection_index(index as usize, length, item_field)
         })
         .collect()
 }
@@ -824,12 +793,12 @@ fn map_character_links(
     links: &[u32],
     length: usize,
     field: &str,
-) -> Result<Vec<usize>, LegacyCampaignMappingError> {
+) -> Result<Vec<usize>, LegacyAdoptError> {
     links
         .iter()
         .enumerate()
         .map(|(position, &index)| {
-            checked_reference(index as usize, length, format!("{field}[{position}]"))
+            checked_collection_index(index as usize, length, format!("{field}[{position}]"))
         })
         .collect()
 }
@@ -837,16 +806,12 @@ fn map_character_links(
 fn map_mission_status(
     value: u32,
     field: impl Into<String>,
-) -> Result<MissionStatus, LegacyCampaignMappingError> {
+) -> Result<MissionStatus, LegacyAdoptError> {
     match value {
         0 => Ok(MissionStatus::Available),
         1 => Ok(MissionStatus::Won),
         2 => Ok(MissionStatus::Lost),
-        _ => Err(LegacyCampaignMappingError::InvalidEnum {
-            field: field.into(),
-            value,
-            expected: "mission status 0..2",
-        }),
+        _ => Err(CAMPAIGN.invalid(field.into(), value, "mission status 0..2")),
     }
 }
 

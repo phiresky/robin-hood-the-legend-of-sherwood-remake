@@ -8,8 +8,6 @@
 
 use std::collections::HashSet;
 
-use thiserror::Error;
-
 use crate::{
     coordinates::MapPoint,
     element::{Command, EntityId, Posture},
@@ -22,73 +20,19 @@ use crate::{
 };
 
 use super::{
-    LegacySaveAbiProfile,
     adopt::LegacyEntityFixups,
-    adopt_sequences::{LegacySequenceAdoptError, LegacySequenceAdoptionPlan},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_sequences::LegacySequenceAdoptionPlan,
     payload_base::{LegacyElementRef, LegacyPoint2, LegacySequenceElementRef},
     post_simple::LegacyFailedPathRequests,
     post_tail::{LegacyPathRequest, LegacyPathfinderState},
 };
 
-#[derive(Debug, Error)]
-pub enum LegacyPathAdoptError {
-    #[error("path adoption only supports Linux i386 v48, not {profile:?}")]
-    UnsupportedAbi { profile: LegacySaveAbiProfile },
-    #[error(transparent)]
-    Sequence(#[from] LegacySequenceAdoptError),
-    #[error("saved path reference {field} cannot be resolved: {detail}")]
-    EntityReference { field: &'static str, detail: String },
-    #[error("saved path request {queue}[{index}] has null {field}")]
-    NullReference {
-        queue: &'static str,
-        index: usize,
-        field: &'static str,
-    },
-    #[error(
-        "saved path request {queue}[{index}] field {field} has value {value}; expected {expected}"
-    )]
-    InvalidRequest {
-        queue: &'static str,
-        index: usize,
-        field: &'static str,
-        value: String,
-        expected: &'static str,
-    },
-    #[error(
-        "saved path request {queue}[{index}] actor {actor:?} does not match sequence-element owner {owner:?}"
-    )]
-    OwnerMismatch {
-        queue: &'static str,
-        index: usize,
-        actor: EntityId,
-        owner: Option<EntityId>,
-    },
-    #[error("saved pending path FIFO contains actor {actor:?} more than once")]
-    DuplicatePendingActor { actor: EntityId },
-    #[error(
-        "saved pathfinder state shape at layer {layer:?}: saved {saved}, initialized graph {graph}, runtime {runtime}"
-    )]
-    StateShape {
-        layer: Option<usize>,
-        saved: usize,
-        graph: usize,
-        runtime: usize,
-    },
-    #[error(
-        "initialized path graph motion obstacle references grid line {line}, but runtime grid has only {line_count} lines"
-    )]
-    MissingGridLine { line: usize, line_count: usize },
-    #[error("initialized path graph motion obstacle has no fast-grid sector binding")]
-    MissingGridSectorBinding,
-    #[error(
-        "initialized path graph motion obstacle references grid sector {sector}, but runtime grid has only {sector_count} sectors"
-    )]
-    MissingGridSector { sector: usize, sector_count: usize },
-    #[error(
-        "saved pathfinder has do_not_ignore_next_path=true; the v48 writer always emits false after excluding an ignored head"
-    )]
-    IgnoredHeadNotRepresentable,
+fn request_site(queue: &'static str, index: usize) -> AdoptSite {
+    AdoptSite::owned(format!("saved path request {queue}[{index}]"))
 }
+
+const MOTION_OBSTACLE: AdoptSite = AdoptSite::new("initialized path graph motion obstacle");
 
 /// Fully preflighted path-owned state. Applying this value cannot fail and
 /// cannot expose a mix of old queues with newly restored graph state.
@@ -125,9 +69,9 @@ pub(crate) fn preflight_v48_paths(
     pathfinder: &LegacyPathfinderState,
     sequences: &LegacySequenceAdoptionPlan,
     entities: &LegacyEntityFixups,
-) -> Result<LegacyPathAdoptionPlan, LegacyPathAdoptError> {
+) -> Result<LegacyPathAdoptionPlan, LegacyAdoptError> {
     if pathfinder.do_not_ignore_next_path {
-        return Err(LegacyPathAdoptError::IgnoredHeadNotRepresentable);
+        return Err(AdoptErrorKind::IgnoredHeadNotRepresentable.into());
     }
 
     let mut converted_failed = Vec::with_capacity(failed.requests.len());
@@ -172,9 +116,10 @@ pub(crate) fn preflight_v48_paths(
             SavedRequest::from_pending(saved),
         )?;
         if !pending_actors.insert(request.owner) {
-            return Err(LegacyPathAdoptError::DuplicatePendingActor {
+            return Err(AdoptErrorKind::DuplicatePendingActor {
                 actor: request.owner,
-            });
+            }
+            .into());
         }
         converted_pending.push(request);
     }
@@ -239,8 +184,9 @@ fn convert_request(
     queue: &'static str,
     index: usize,
     saved: SavedRequest,
-) -> Result<PendingPathRequest, LegacyPathAdoptError> {
-    let actor = resolve_required_entity(entities, queue, index, "actor", saved.actor)?;
+) -> Result<PendingPathRequest, LegacyAdoptError> {
+    let site = request_site(queue, index);
+    let actor = resolve_required_entity(entities, &site, "actor", saved.actor)?;
     let antagonist = resolve_optional_entity(entities, "antagonist", saved.antagonist)?;
     if engine
         .world
@@ -249,18 +195,10 @@ fn convert_request(
         .and_then(|entity| entity.actor_data())
         .is_none()
     {
-        return Err(invalid(
-            queue,
-            index,
-            "actor",
-            format!("{actor:?}"),
-            "a live actor entity",
-        ));
+        return Err(site.invalid("actor", format!("{actor:?}"), "a live actor entity"));
     }
     if antagonist.is_some_and(|id| engine.world.entities.get(id).is_none()) {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "antagonist",
             format!("{antagonist:?}"),
             "null or a live entity",
@@ -268,16 +206,12 @@ fn convert_request(
     }
 
     let Some(sequence_element_id) = saved.sequence_element.0 else {
-        return Err(LegacyPathAdoptError::NullReference {
-            queue,
-            index,
-            field: "sequence_element",
-        });
+        return Err(site.field_error("sequence_element", AdoptErrorKind::NullReference));
     };
     let (element_ref, element) = sequences
         .resolve_element("path_request.sequence_element", saved.sequence_element)?
         .expect("non-null sequence-element reference resolves to Some");
-    validate_movement_element(queue, index, actor, sequence_element_id, element)?;
+    validate_movement_element(&site, actor, sequence_element_id, element)?;
 
     let (flags, posture, action_state) = match &element.data {
         SequenceElementData::Movement { flags, .. } => (
@@ -288,25 +222,18 @@ fn convert_request(
         _ => unreachable!("validate_movement_element accepted non-movement element"),
     };
 
-    let move_action = OrderType::try_from(u32::try_from(saved.action).map_err(|_| {
-        invalid(
-            queue,
-            index,
-            "action",
-            saved.action,
-            "a non-negative animation",
-        )
-    })?)
-    .map_err(|_| invalid(queue, index, "action", saved.action, "a known animation"))?;
+    let move_action = OrderType::try_from(
+        u32::try_from(saved.action)
+            .map_err(|_| site.invalid("action", saved.action, "a non-negative animation"))?,
+    )
+    .map_err(|_| site.invalid("action", saved.action, "a known animation"))?;
     let speed = match saved.speed {
         0 => PathFinderSpeed::Fast,
         1 => PathFinderSpeed::Medium,
         2 => PathFinderSpeed::Slow,
         3 => PathFinderSpeed::VerySlow,
         value => {
-            return Err(invalid(
-                queue,
-                index,
+            return Err(site.invalid(
                 "speed",
                 value,
                 "PATHFINDERSPEED_FAST..=PATHFINDERSPEED_VERY_SLOW (0..=3)",
@@ -314,18 +241,16 @@ fn convert_request(
         }
     };
 
-    validate_finite(queue, index, "tolerance", saved.tolerance)?;
+    site.finite("tolerance", saved.tolerance)?;
     if saved.tolerance < 0.0 {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "tolerance",
             saved.tolerance,
             "a finite non-negative distance",
         ));
     }
-    validate_point(queue, index, "source", saved.source)?;
-    validate_point(queue, index, "goal", saved.goal)?;
+    site.finite_point("source", saved.source)?;
+    site.finite_point("goal", saved.goal)?;
 
     let layer = usize::from(saved.layer);
     let graph_layer = assets
@@ -333,32 +258,20 @@ fn convert_request(
         .pathfinder_graph
         .states
         .get(layer)
-        .ok_or_else(|| {
-            invalid(
-                queue,
-                index,
-                "layer",
-                saved.layer,
-                "an initialized path-graph layer",
-            )
-        })?;
+        .ok_or_else(|| site.invalid("layer", saved.layer, "an initialized path-graph layer"))?;
     let area = assets
         .navigation
         .pathfinder_graph
         .try_convert_sector(saved.area)
         .ok_or_else(|| {
-            invalid(
-                queue,
-                index,
+            site.invalid(
                 "area",
                 saved.area,
                 "an Original sector present in the graph conversion table",
             )
         })?;
     if usize::from(area) >= graph_layer.len() {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "area",
             saved.area,
             "a sector mapping inside the saved layer",
@@ -372,9 +285,7 @@ fn convert_request(
             .half_diagonals
             .len()
     {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "half_diagonal_index",
             saved.half_diagonal_index,
             "an initialized pathfinder move-box index",
@@ -412,42 +323,33 @@ fn convert_request(
 }
 
 fn validate_movement_element(
-    queue: &'static str,
-    index: usize,
+    site: &AdoptSite,
     actor: EntityId,
     sequence_element_id: u32,
     element: &SequenceElement,
-) -> Result<(), LegacyPathAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     if element.owner != Some(actor) {
-        return Err(LegacyPathAdoptError::OwnerMismatch {
-            queue,
-            index,
+        return Err(site.error(AdoptErrorKind::PathOwnerMismatch {
             actor,
             owner: element.owner,
-        });
+        }));
     }
     if !matches!(element.data, SequenceElementData::Movement { .. }) {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "sequence_element",
             sequence_element_id,
             "a movement sequence element",
         ));
     }
     if element.command != Command::MoveWaiting {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "sequence_element.command",
             format!("{:?}", element.command),
             "MoveWaiting",
         ));
     }
     if element.state != SequenceState::InProgress {
-        return Err(invalid(
-            queue,
-            index,
+        return Err(site.invalid(
             "sequence_element.state",
             format!("{:?}", element.state),
             "InProgress",
@@ -458,66 +360,60 @@ fn validate_movement_element(
 
 fn resolve_required_entity(
     entities: &LegacyEntityFixups,
-    queue: &'static str,
-    index: usize,
+    site: &AdoptSite,
     field: &'static str,
     reference: LegacyElementRef,
-) -> Result<EntityId, LegacyPathAdoptError> {
-    resolve_optional_entity(entities, field, reference)?.ok_or(
-        LegacyPathAdoptError::NullReference {
-            queue,
-            index,
-            field,
-        },
-    )
+) -> Result<EntityId, LegacyAdoptError> {
+    resolve_optional_entity(entities, field, reference)?
+        .ok_or_else(|| site.field_error(field, AdoptErrorKind::NullReference))
 }
 
 fn resolve_optional_entity(
     entities: &LegacyEntityFixups,
     field: &'static str,
     reference: LegacyElementRef,
-) -> Result<Option<EntityId>, LegacyPathAdoptError> {
+) -> Result<Option<EntityId>, LegacyAdoptError> {
     entities
         .resolve_element(reference)
-        .map_err(|error| LegacyPathAdoptError::EntityReference {
-            field,
-            detail: error.to_string(),
-        })
+        .map_err(|error| error.context(format!("saved path reference {field} cannot be resolved")))
 }
 
 fn preflight_graph_states(
     engine: &EngineInner,
     assets: &LevelAssets,
     saved: &[Vec<u32>],
-) -> Result<(Vec<Vec<u32>>, Vec<(usize, bool)>, Vec<(usize, bool)>), LegacyPathAdoptError> {
+) -> Result<(Vec<Vec<u32>>, Vec<(usize, bool)>, Vec<(usize, bool)>), LegacyAdoptError> {
     let graph = assets.navigation.pathfinder_graph.as_ref();
     if saved.len() != graph.states.len() || saved.len() != engine.world.pathfinder.states.len() {
-        return Err(LegacyPathAdoptError::StateShape {
+        return Err(AdoptErrorKind::PathStateShape {
             layer: None,
             saved: saved.len(),
             graph: graph.states.len(),
             runtime: engine.world.pathfinder.states.len(),
-        });
+        }
+        .into());
     }
     for (layer, saved_areas) in saved.iter().enumerate() {
         let graph_areas = graph.states[layer].len();
         let runtime_areas = engine.world.pathfinder.states[layer].len();
         if saved_areas.len() != graph_areas || saved_areas.len() != runtime_areas {
-            return Err(LegacyPathAdoptError::StateShape {
+            return Err(AdoptErrorKind::PathStateShape {
                 layer: Some(layer),
                 saved: saved_areas.len(),
                 graph: graph_areas,
                 runtime: runtime_areas,
-            });
+            }
+            .into());
         }
     }
     if graph.static_data.move_layers.len() != saved.len() {
-        return Err(LegacyPathAdoptError::StateShape {
+        return Err(AdoptErrorKind::PathStateShape {
             layer: None,
             saved: saved.len(),
             graph: graph.static_data.move_layers.len(),
             runtime: engine.world.pathfinder.states.len(),
-        });
+        }
+        .into());
     }
 
     let mut line_updates = Vec::new();
@@ -525,36 +421,43 @@ fn preflight_graph_states(
     for (layer, states) in saved.iter().enumerate() {
         let move_areas = &graph.static_data.move_layers[layer];
         if move_areas.len() != states.len() {
-            return Err(LegacyPathAdoptError::StateShape {
+            return Err(AdoptErrorKind::PathStateShape {
                 layer: Some(layer),
                 saved: states.len(),
                 graph: move_areas.len(),
                 runtime: engine.world.pathfinder.states[layer].len(),
-            });
+            }
+            .into());
         }
         for (area, state) in move_areas.iter().zip(states) {
             for obstacle in &area.motion_obstacles {
                 let active = (obstacle.state_id & *state) == obstacle.state_id;
-                let sector = obstacle
-                    .grid_sector_index
-                    .ok_or(LegacyPathAdoptError::MissingGridSectorBinding)?;
+                let sector = obstacle.grid_sector_index.ok_or_else(|| {
+                    MOTION_OBSTACLE.error(AdoptErrorKind::Missing {
+                        what: "fast-grid sector binding",
+                    })
+                })?;
                 let index =
                     usize::try_from(sector.get()).expect("u32 sector index does not fit usize");
                 let sector_count = engine.world.fast_grid.sector_active.len();
                 if index >= sector_count {
-                    return Err(LegacyPathAdoptError::MissingGridSector {
-                        sector: index,
+                    return Err(MOTION_OBSTACLE.out_of_range(
+                        "grid_sector_index",
+                        "grid sector",
+                        index,
                         sector_count,
-                    });
+                    ));
                 }
                 sector_updates.push((index, active));
                 for &line in &obstacle.grid_line_indices {
                     let index = usize::from(line);
                     if index >= engine.world.fast_grid.line_active.len() {
-                        return Err(LegacyPathAdoptError::MissingGridLine {
-                            line: index,
-                            line_count: engine.world.fast_grid.line_active.len(),
-                        });
+                        return Err(MOTION_OBSTACLE.out_of_range(
+                            "grid_line_indices",
+                            "grid line",
+                            index,
+                            engine.world.fast_grid.line_active.len(),
+                        ));
                     }
                     line_updates.push((index, active));
                 }
@@ -563,45 +466,6 @@ fn preflight_graph_states(
     }
 
     Ok((saved.to_vec(), line_updates, sector_updates))
-}
-
-fn validate_point(
-    queue: &'static str,
-    index: usize,
-    field: &'static str,
-    point: LegacyPoint2,
-) -> Result<(), LegacyPathAdoptError> {
-    validate_finite(queue, index, field, point.x)?;
-    validate_finite(queue, index, field, point.y)
-}
-
-fn validate_finite(
-    queue: &'static str,
-    index: usize,
-    field: &'static str,
-    value: f32,
-) -> Result<(), LegacyPathAdoptError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(invalid(queue, index, field, value, "a finite f32"))
-    }
-}
-
-fn invalid(
-    queue: &'static str,
-    index: usize,
-    field: &'static str,
-    value: impl std::fmt::Display,
-    expected: &'static str,
-) -> LegacyPathAdoptError {
-    LegacyPathAdoptError::InvalidRequest {
-        queue,
-        index,
-        field,
-        value: value.to_string(),
-        expected,
-    }
 }
 
 #[cfg(test)]
@@ -744,7 +608,10 @@ mod tests {
 
         assert!(matches!(
             preflight_graph_states(&engine, &assets, &[vec![1, 2]]),
-            Err(LegacyPathAdoptError::StateShape { layer: Some(0), .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::PathStateShape { layer: Some(0), .. },
+                ..
+            })
         ));
         assert_eq!(engine.world.pathfinder.states, vec![vec![1]]);
     }

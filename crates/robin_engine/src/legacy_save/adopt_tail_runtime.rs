@@ -6,8 +6,6 @@
 //! complete slice against the initialized mission and the converted sequence
 //! plan before changing any candidate state.
 
-use thiserror::Error;
-
 use crate::{
     element::{Command, Entity},
     engine::{EngineInner, LevelAssets, TimerEntry},
@@ -16,97 +14,19 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    adopt_sequences::{LegacySequenceAdoptError, LegacySequenceAdoptionPlan},
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
+    adopt::LegacyEntityFixups,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_sequences::LegacySequenceAdoptionPlan,
+    adopt_vm_arena::{LegacyVmArenaOwner, LegacyVmArenaPlan},
     payload_vm::{
         LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberSection, LegacyVmMemberValue,
     },
     post_tail::{LegacyScriptGlobals, LegacyTimerSequenceState},
-    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
+    vm_schema::{HANDLE_INDEX_MAX, check_location_topology},
 };
 
-#[derive(Debug, Error)]
-pub enum LegacyTailRuntimeAdoptError {
-    #[error(transparent)]
-    VmArena(#[from] LegacyVmArenaError),
-    #[error("saved global VM members exist, but the initialized mission has no global script VM")]
-    MissingGlobalVm,
-    #[error(
-        "saved global VM class is {saved:?}, but the initialized global VM class is {runtime:?}"
-    )]
-    GlobalVmClassMismatch { saved: String, runtime: String },
-    #[error(
-        "saved global VM member count is {saved}, but initialized class {class_name:?} has {runtime}"
-    )]
-    GlobalVmMemberCountMismatch {
-        class_name: String,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error("saved global VM member {index} schema mismatch: {detail}")]
-    GlobalVmSchemaMismatch { index: usize, detail: String },
-    #[error(
-        "initialized global VM heap has {heap_len} bytes, but member {member:?} requires byte range {address}..{end}"
-    )]
-    GlobalVmHeapRange {
-        member: String,
-        heap_len: usize,
-        address: usize,
-        end: usize,
-    },
-    #[error(transparent)]
-    EntityReference(#[from] LegacySaveAdoptError),
-    #[error("saved global VM {kind} member {member:?} resolves to wrong entity class {entity_id}")]
-    WrongEntityClass {
-        kind: &'static str,
-        member: String,
-        entity_id: crate::element::EntityId,
-    },
-    #[error(
-        "saved global VM member {member:?} requires unrepresentable script handle index {index}"
-    )]
-    HandleIndexOverflow { member: String, index: usize },
-    #[error(
-        "saved global VM location member {member:?} names sector {sector}, outside Original sector topology count {count}"
-    )]
-    MissingLocationSector {
-        member: String,
-        sector: u16,
-        count: usize,
-    },
-    #[error(
-        "saved global VM location member {member:?} names layer {layer}, outside initialized layer count {count}"
-    )]
-    MissingLocationLayer {
-        member: String,
-        layer: u16,
-        count: usize,
-    },
-    #[error(transparent)]
-    SequenceReference(#[from] LegacySequenceAdoptError),
-    #[error("saved timer list entry {index} contains a null sequence-element pointer")]
-    NullTimerReference { index: usize },
-    #[error(
-        "saved timer list entry {index} resolves to command {command:?} in state {state:?}; expected an active Timer"
-    )]
-    InvalidTimerElement {
-        index: usize,
-        command: Command,
-        state: SequenceState,
-    },
-    #[error("saved timer list entry {index} has no integer Timer property")]
-    InvalidTimerProperty { index: usize },
-    #[error("saved camera-present flag contains a null sequence-element pointer")]
-    NullCameraReference,
-    #[error(
-        "saved camera sequence resolves to command {command:?} in state {state:?}; expected a nonterminal CameraGoto or ZoomLevel"
-    )]
-    InvalidCameraElement {
-        command: Command,
-        state: SequenceState,
-    },
-}
+const GLOBAL_VM: AdoptSite = AdoptSite::new("saved global");
+const TIMERS: AdoptSite = AdoptSite::new("saved timer list");
 
 /// Mutation-only state for the first tail slice. Apply this after applying
 /// the `LegacySequenceAdoptionPlan` used during preflight.
@@ -133,7 +53,7 @@ impl LegacyTailRuntimeAdoptionPlan {
         entities: &LegacyEntityFixups,
         sequences: &LegacySequenceAdoptionPlan,
         vm_arena: &LegacyVmArenaPlan,
-    ) -> Result<Self, LegacyTailRuntimeAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let global_vm = global_members
             .map(|members| {
                 let location_prefix = vm_arena.owner_prefix(LegacyVmArenaOwner::Global, members)?;
@@ -145,13 +65,20 @@ impl LegacyTailRuntimeAdoptionPlan {
         for (index, &saved_ref) in timers.timer_elements.iter().enumerate() {
             let (element_ref, element) = sequences
                 .resolve_element("timer_elements", saved_ref)?
-                .ok_or(LegacyTailRuntimeAdoptError::NullTimerReference { index })?;
+                .ok_or_else(|| {
+                    TIMERS.field_error(
+                        format!("timer_elements[{index}]"),
+                        AdoptErrorKind::NullReference,
+                    )
+                })?;
             if !is_active_original_timer(element.command, element.state) {
-                return Err(LegacyTailRuntimeAdoptError::InvalidTimerElement {
-                    index,
-                    command: element.command,
-                    state: element.state,
-                });
+                return Err(TIMERS.field_error(
+                    format!("timer_elements[{index}]"),
+                    AdoptErrorKind::InvalidTimerElement {
+                        command: element.command,
+                        state: element.state,
+                    },
+                ));
             }
             let remaining = match element.get_property(Field::Timer) {
                 // Signed `int` in the Original; the property word is stored
@@ -159,7 +86,12 @@ impl LegacyTailRuntimeAdoptionPlan {
                 // saved game must reinterpret rather than saturate.
                 Some(FieldValue::Integer(value)) => *value as i32,
                 _ => {
-                    return Err(LegacyTailRuntimeAdoptError::InvalidTimerProperty { index });
+                    return Err(TIMERS.field_error(
+                        format!("timer_elements[{index}]"),
+                        AdoptErrorKind::Missing {
+                            what: "integer Timer property",
+                        },
+                    ));
                 }
             };
             planned_timers.push(TimerEntry {
@@ -173,17 +105,23 @@ impl LegacyTailRuntimeAdoptionPlan {
             Some(saved_ref) => {
                 let (element_ref, element) = sequences
                     .resolve_element("camera_element", saved_ref)?
-                    .ok_or(LegacyTailRuntimeAdoptError::NullCameraReference)?;
+                    .ok_or_else(|| {
+                        AdoptSite::new("saved camera sequence")
+                            .field_error("camera_element", AdoptErrorKind::NullReference)
+                    })?;
                 if !matches!(element.command, Command::CameraGoto | Command::ZoomLevel)
                     || !matches!(
                         element.state,
                         SequenceState::InProgress | SequenceState::Todo | SequenceState::Postponed
                     )
                 {
-                    return Err(LegacyTailRuntimeAdoptError::InvalidCameraElement {
-                        command: element.command,
-                        state: element.state,
-                    });
+                    return Err(AdoptSite::new("saved camera sequence").field_error(
+                        "camera_element",
+                        AdoptErrorKind::InvalidCameraElement {
+                            command: element.command,
+                            state: element.state,
+                        },
+                    ));
                 }
                 Some(element_ref)
             }
@@ -222,25 +160,25 @@ fn preflight_global_vm(
     saved: &LegacyVmMemberSection,
     entities: &LegacyEntityFixups,
     preserved_location_prefix: usize,
-) -> Result<PlannedGlobalVm, LegacyTailRuntimeAdoptError> {
-    let mission = engine
-        .scripts
-        .mission
-        .as_ref()
-        .ok_or(LegacyTailRuntimeAdoptError::MissingGlobalVm)?;
+) -> Result<PlannedGlobalVm, LegacyAdoptError> {
+    let mission = engine.scripts.mission.as_ref().ok_or_else(|| {
+        AdoptSite::new("initialized mission").error(AdoptErrorKind::Missing {
+            what: "global script VM",
+        })
+    })?;
     let (class, current_heap) = mission.global_vm_class_and_heap();
     if saved.class_name != class.class_name {
-        return Err(LegacyTailRuntimeAdoptError::GlobalVmClassMismatch {
+        return Err(GLOBAL_VM.error(AdoptErrorKind::VmClassMismatch {
             saved: saved.class_name.clone(),
             runtime: class.class_name.clone(),
-        });
+        }));
     }
     if saved.members.len() != class.member_variables.len() {
-        return Err(LegacyTailRuntimeAdoptError::GlobalVmMemberCountMismatch {
+        return Err(GLOBAL_VM.error(AdoptErrorKind::VmMemberCountMismatch {
             class_name: class.class_name.clone(),
             saved: saved.members.len(),
             runtime: class.member_variables.len(),
-        });
+        }));
     }
 
     let mut heap = current_heap.to_vec();
@@ -264,13 +202,21 @@ fn preflight_global_vm(
         let address = usize::try_from(saved_member.schema.address)
             .expect("u32 member address is representable on supported hosts");
         let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
-            LegacyTailRuntimeAdoptError::GlobalVmHeapRange {
-                member: saved_member.schema.name.clone(),
-                heap_len: heap.len(),
-                address,
-                end,
-            }
+            GLOBAL_VM.field_error(
+                saved_member.schema.name.clone(),
+                AdoptErrorKind::VmHeapRange {
+                    heap_len: heap.len(),
+                    address,
+                    end,
+                },
+            )
         })?;
+        let overflow = |index| {
+            GLOBAL_VM.field_error(
+                saved_member.schema.name.clone(),
+                AdoptErrorKind::VmHandleOverflow { index },
+            )
+        };
 
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
@@ -281,52 +227,35 @@ fn preflight_global_vm(
                     *reference,
                     Entity::is_actor,
                 )
-                .map_err(|error| entity_handle_error(error, &saved_member.schema.name, "Actor"))?
+                .map_err(|error| error.at(&GLOBAL_VM, &saved_member.schema.name, "Actor"))?
             }
             (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
                 super::vm_schema::resolve_entity_handle(engine, entities, *reference, |entity| {
                     matches!(entity, Entity::Scroll(_))
                 })
-                .map_err(|error| entity_handle_error(error, &saved_member.schema.name, "Scroll"))?
+                .map_err(|error| error.at(&GLOBAL_VM, &saved_member.schema.name, "Scroll"))?
             }
             (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
                 let storage_index = preserved_location_prefix
                     .checked_add(computed_locations.len())
-                    .ok_or_else(|| LegacyTailRuntimeAdoptError::HandleIndexOverflow {
-                        member: saved_member.schema.name.clone(),
-                        index: usize::MAX,
-                    })?;
+                    .ok_or_else(|| overflow(usize::MAX))?;
 
                 if let Some(location) = location {
-                    if let Some(sector) = location.sector.0
-                        && usize::from(sector) >= sector_count
-                    {
-                        return Err(LegacyTailRuntimeAdoptError::MissingLocationSector {
-                            member: saved_member.schema.name.clone(),
-                            sector,
-                            count: sector_count,
-                        });
-                    }
-                    if usize::from(location.layer) >= layer_count {
-                        return Err(LegacyTailRuntimeAdoptError::MissingLocationLayer {
-                            member: saved_member.schema.name.clone(),
-                            layer: location.layer,
-                            count: layer_count,
-                        });
-                    }
+                    check_location_topology(
+                        &GLOBAL_VM,
+                        &saved_member.schema.name,
+                        location.sector.0,
+                        sector_count,
+                        location.layer,
+                        layer_count,
+                    )?;
                     let handle_index = assets
                         .scripts
                         .location_count
                         .checked_add(storage_index)
-                        .ok_or_else(|| LegacyTailRuntimeAdoptError::HandleIndexOverflow {
-                            member: saved_member.schema.name.clone(),
-                            index: usize::MAX,
-                        })?;
+                        .ok_or_else(|| overflow(usize::MAX))?;
                     if handle_index > HANDLE_INDEX_MAX {
-                        return Err(LegacyTailRuntimeAdoptError::HandleIndexOverflow {
-                            member: saved_member.schema.name.clone(),
-                            index: handle_index,
-                        });
+                        return Err(overflow(handle_index));
                     }
                     computed_locations.push(Some(ComputedScriptLocation {
                         position: (location.position.x, location.position.y),
@@ -346,10 +275,10 @@ fn preflight_global_vm(
                 }
             }
             _ => {
-                return Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch {
+                return Err(GLOBAL_VM.error(AdoptErrorKind::VmSchemaMismatch {
                     index,
                     detail: "decoded value variant does not match decoded member kind".to_owned(),
-                });
+                }));
             }
         };
         heap[address..end].copy_from_slice(&bits.to_le_bytes());
@@ -362,32 +291,9 @@ fn validate_member_schema(
     index: usize,
     saved: &LegacyVmMemberSchema,
     runtime: &crate::scb::MemberVariable,
-) -> Result<(), LegacyTailRuntimeAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     super::vm_schema::check_member_schema(saved, runtime)
-        .map_err(|detail| LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch { index, detail })
-}
-
-fn entity_handle_error(
-    error: EntityHandleError,
-    member: &str,
-    kind: &'static str,
-) -> LegacyTailRuntimeAdoptError {
-    match error {
-        EntityHandleError::Reference(error) => LegacyTailRuntimeAdoptError::EntityReference(error),
-        EntityHandleError::WrongEntity(entity_id) => {
-            LegacyTailRuntimeAdoptError::WrongEntityClass {
-                kind,
-                member: member.to_owned(),
-                entity_id,
-            }
-        }
-        EntityHandleError::IndexOverflow(index) => {
-            LegacyTailRuntimeAdoptError::HandleIndexOverflow {
-                member: member.to_owned(),
-                index,
-            }
-        }
-    }
+        .map_err(|detail| GLOBAL_VM.error(AdoptErrorKind::VmSchemaMismatch { index, detail }))
 }
 
 #[cfg(test)]
@@ -482,7 +388,10 @@ mod tests {
         saved.members[0].schema.name = "wrong".to_owned();
         assert!(matches!(
             preflight_global_vm(&engine, &assets, &saved, &empty_fixups(), 0),
-            Err(LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch { index: 0, .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::VmSchemaMismatch { index: 0, .. },
+                ..
+            })
         ));
         let (_, heap) = engine
             .scripts

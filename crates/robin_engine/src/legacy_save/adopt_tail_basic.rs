@@ -5,8 +5,6 @@
 //! their geometry. Mission statistics are fully serialized and replace their
 //! initialized counterpart.
 
-use thiserror::Error;
-
 use crate::{
     ai::AlertLevel,
     element::EntityId,
@@ -15,23 +13,12 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt::LegacyEntityFixups,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     post_tail::{LegacyGlobalAiState, LegacyMissionStatistics},
 };
 
-#[derive(Debug, Error)]
-pub enum LegacyTailBasicAdoptError {
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error("saved global AI {field} count is {saved}, initialized mission count is {runtime}")]
-    CountMismatch {
-        field: &'static str,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error("saved global AI field {field} has unknown alert value {value}")]
-    UnknownAlert { field: &'static str, value: i32 },
-}
+const GLOBAL_AI: AdoptSite = AdoptSite::new("saved global AI");
 
 #[derive(Clone, Debug)]
 pub struct LegacyTailBasicAdoptionPlan {
@@ -58,7 +45,7 @@ impl LegacyTailBasicAdoptionPlan {
         entities: &LegacyEntityFixups,
         global_ai: &LegacyGlobalAiState,
         statistics: &LegacyMissionStatistics,
-    ) -> Result<Self, LegacyTailBasicAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         require_count(
             "seek_points",
             global_ai.seek_points.len(),
@@ -178,22 +165,24 @@ fn require_count(
     field: &'static str,
     saved: usize,
     runtime: usize,
-) -> Result<(), LegacyTailBasicAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     if saved != runtime {
-        return Err(LegacyTailBasicAdoptError::CountMismatch {
-            field,
-            saved,
-            runtime,
-        });
+        return Err(GLOBAL_AI.field_error(field, AdoptErrorKind::CountMismatch { saved, runtime }));
     }
     Ok(())
 }
 
-fn alert(field: &'static str, value: i32) -> Result<AlertLevel, LegacyTailBasicAdoptError> {
-    let value_u32 = u32::try_from(value)
-        .map_err(|_| LegacyTailBasicAdoptError::UnknownAlert { field, value })?;
-    AlertLevel::try_from(value_u32)
-        .map_err(|_| LegacyTailBasicAdoptError::UnknownAlert { field, value })
+fn alert(field: &'static str, value: i32) -> Result<AlertLevel, LegacyAdoptError> {
+    let unknown = || {
+        GLOBAL_AI.field_error(
+            field,
+            AdoptErrorKind::UnknownEnum {
+                value: i64::from(value),
+            },
+        )
+    };
+    let value_u32 = u32::try_from(value).map_err(|_| unknown())?;
+    AlertLevel::try_from(value_u32).map_err(|_| unknown())
 }
 
 #[cfg(test)]

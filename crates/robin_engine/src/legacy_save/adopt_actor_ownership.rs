@@ -8,8 +8,6 @@
 //! truth. The genuinely actor-owned post-seek sequence and script VM heap are
 //! restored after that validation succeeds.
 
-use thiserror::Error;
-
 use crate::{
     element::{Command, Entity, EntityId, InstalledActorOrder},
     engine::{EngineInner, LevelAssets},
@@ -18,90 +16,16 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    adopt_object_leaves::{LegacyObjectLeafAdoptError, LegacyVmOwnerKind, preflight_vm},
+    adopt::{LegacyEntityFixups, missing_creation_order},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_object_leaves::{LegacyVmOwnerKind, preflight_vm},
     adopt_sequences::{
-        LegacySequenceAdoptError, LegacySequenceAdoptionPlan, LegacySequenceTopology,
-        convert_owner_local_sequence,
+        LegacySequenceAdoptionPlan, LegacySequenceTopology, convert_owner_local_sequence,
     },
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaPlan},
+    adopt_vm_arena::LegacyVmArenaPlan,
     payload_base::LegacyActorPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
 };
-
-#[derive(Debug, Error)]
-pub enum LegacyActorOwnershipAdoptError {
-    #[error(transparent)]
-    VmArena(#[from] LegacyVmArenaError),
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error(transparent)]
-    Sequence(#[from] LegacySequenceAdoptError),
-    #[error(transparent)]
-    Vm(#[from] LegacyObjectLeafAdoptError),
-    #[error("saved actor creation order {creation_order} resolves to missing entity {entity_id}")]
-    MissingEntity {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error("saved actor creation order {creation_order} resolves to non-actor entity {entity_id}")]
-    ExpectedActor {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved actor creation order {creation_order} field {field} resolves to sequence element {reference:?} owned by {actual:?}, expected {expected}"
-    )]
-    WrongSequenceOwner {
-        creation_order: u32,
-        field: &'static str,
-        reference: SequenceElementRef,
-        actual: Option<EntityId>,
-        expected: EntityId,
-    },
-    #[error(
-        "saved actor creation order {creation_order} wait_sequence_element resolves to command {command:?}, expected Wait or Freeze"
-    )]
-    WrongWaitCommand {
-        creation_order: u32,
-        command: Command,
-    },
-    #[error(
-        "saved actor creation order {creation_order} selected sequence element is {saved:?}, but the converted manager reconstructs {runtime:?}"
-    )]
-    SelectedElementMismatch {
-        creation_order: u32,
-        saved: Option<SequenceElementRef>,
-        runtime: Option<SequenceElementRef>,
-    },
-    #[error(
-        "saved actor creation order {creation_order} order pointer resolves to {order_element:?} order index {order_index}, but selected element is {selected:?}"
-    )]
-    OrderElementMismatch {
-        creation_order: u32,
-        order_element: SequenceElementRef,
-        order_index: usize,
-        selected: Option<SequenceElementRef>,
-    },
-    #[error(
-        "saved actor creation order {creation_order} order pointer resolves to index {order_index}, but selected element's current order is index zero"
-    )]
-    OrderCursorMismatch {
-        creation_order: u32,
-        order_index: usize,
-    },
-    #[error(
-        "saved actor creation order {creation_order} has selected element {selected:?} but a null order pointer while that element has a current order"
-    )]
-    MissingOrder {
-        creation_order: u32,
-        selected: SequenceElementRef,
-    },
-    #[error(
-        "saved actor creation order {creation_order} has an order pointer but no selected sequence element"
-    )]
-    OrderWithoutElement { creation_order: u32 },
-}
 
 #[derive(Debug)]
 pub(crate) struct LegacyActorOwnershipAdoptionPlan {
@@ -131,29 +55,28 @@ impl LegacyActorOwnershipAdoptionPlan {
         sequence_topology: &LegacySequenceTopology,
         sequences: &LegacySequenceAdoptionPlan,
         vm_arena: &LegacyVmArenaPlan,
-    ) -> Result<Self, LegacyActorOwnershipAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut records = Vec::new();
         for record in &payloads.records {
             let Some(saved) = actor_payload(&record.payload) else {
                 continue;
             };
             let creation_order = record.header.creation_order;
+            let site = AdoptSite::element("saved actor", creation_order);
             let entity = entities
                 .by_creation_order
                 .get(&creation_order)
                 .copied()
-                .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
-            let runtime = engine.world.entities.get(entity).ok_or(
-                LegacyActorOwnershipAdoptError::MissingEntity {
-                    creation_order,
-                    entity_id: entity,
-                },
-            )?;
+                .ok_or_else(|| missing_creation_order(creation_order))?;
+            let runtime =
+                engine.world.entities.get(entity).ok_or_else(|| {
+                    site.error(AdoptErrorKind::MissingEntity { entity_id: entity })
+                })?;
             if !runtime.is_actor() {
-                return Err(LegacyActorOwnershipAdoptError::ExpectedActor {
-                    creation_order,
+                return Err(site.error(AdoptErrorKind::WrongEntityKind {
                     entity_id: entity,
-                });
+                    expected: "actor",
+                }));
             }
 
             let selected_element = resolve_owned_element(
@@ -175,10 +98,12 @@ impl LegacyActorOwnershipAdoptionPlan {
                     .resolve_element("wait_sequence_element", saved.wait_sequence_element)?
                     .expect("non-null preflighted wait element disappeared");
                 if !matches!(element.command, Command::Wait | Command::Freeze) {
-                    return Err(LegacyActorOwnershipAdoptError::WrongWaitCommand {
-                        creation_order,
-                        command: element.command,
-                    });
+                    return Err(site.field_error(
+                        "wait_sequence_element",
+                        AdoptErrorKind::WrongWaitCommand {
+                            command: element.command,
+                        },
+                    ));
                 }
                 debug_assert_eq!(
                     wait,
@@ -191,11 +116,10 @@ impl LegacyActorOwnershipAdoptionPlan {
 
             let reconstructed = sequences.current_element_for_actor(entity);
             if reconstructed != selected_element {
-                return Err(LegacyActorOwnershipAdoptError::SelectedElementMismatch {
-                    creation_order,
+                return Err(site.error(AdoptErrorKind::SelectedElementMismatch {
                     saved: selected_element,
                     runtime: reconstructed,
-                });
+                }));
             }
 
             let resolved_order = sequences.resolve_order("order", saved.order)?;
@@ -205,27 +129,21 @@ impl LegacyActorOwnershipAdoptionPlan {
             });
             match (selected_element, resolved_order) {
                 (None, Some(_)) => {
-                    return Err(LegacyActorOwnershipAdoptError::OrderWithoutElement {
-                        creation_order,
-                    });
+                    return Err(site.error(AdoptErrorKind::OrderWithoutElement));
                 }
                 (Some(selected), Some((order_element, order_index, _))) => {
                     if order_element != selected {
-                        return Err(LegacyActorOwnershipAdoptError::OrderElementMismatch {
-                            creation_order,
+                        return Err(site.error(AdoptErrorKind::OrderElementMismatch {
                             order_element,
                             order_index,
                             selected: Some(selected),
-                        });
+                        }));
                     }
                     // Rust pops completed orders from the front just like
                     // sequence progression; the executing order must be
                     // the front of the restored queue.
                     if order_index != 0 {
-                        return Err(LegacyActorOwnershipAdoptError::OrderCursorMismatch {
-                            creation_order,
-                            order_index,
-                        });
+                        return Err(site.error(AdoptErrorKind::OrderCursorMismatch { order_index }));
                     }
                 }
                 (Some(selected), None) => {
@@ -233,10 +151,7 @@ impl LegacyActorOwnershipAdoptionPlan {
                         .resolve_element("sequence_element", saved.sequence_element)?
                         .expect("non-null preflighted selected element disappeared");
                     if element.current_order().is_some() {
-                        return Err(LegacyActorOwnershipAdoptError::MissingOrder {
-                            creation_order,
-                            selected,
-                        });
+                        return Err(site.error(AdoptErrorKind::MissingOrder { selected }));
                     }
                 }
                 (None, None) => {}
@@ -249,11 +164,11 @@ impl LegacyActorOwnershipAdoptionPlan {
                     convert_owner_local_sequence(sequence, entities, sequence_topology).and_then(
                         |sequence| {
                             sequence.try_into_post_seek().map_err(|_| {
-                                LegacySequenceAdoptError::InvalidField {
-                                    field: "actor.post_seek_sequence",
-                                    value: "nested continuation".to_owned(),
-                                    expected: "at most one post-seek level",
-                                }
+                                AdoptSite::new("saved sequence").invalid(
+                                    "actor.post_seek_sequence",
+                                    "nested continuation",
+                                    "at most one post-seek level",
+                                )
                             })
                         },
                     )
@@ -334,18 +249,21 @@ fn resolve_owned_element(
     owner: EntityId,
     field: &'static str,
     reference: super::payload_base::LegacySequenceElementRef,
-) -> Result<Option<SequenceElementRef>, LegacyActorOwnershipAdoptError> {
+) -> Result<Option<SequenceElementRef>, LegacyAdoptError> {
     let Some((reference, element)) = sequences.resolve_element(field, reference)? else {
         return Ok(None);
     };
     if element.owner != Some(owner) {
-        return Err(LegacyActorOwnershipAdoptError::WrongSequenceOwner {
-            creation_order,
-            field,
-            reference,
-            actual: element.owner,
-            expected: owner,
-        });
+        return Err(
+            AdoptSite::element("saved actor", creation_order).field_error(
+                field,
+                AdoptErrorKind::WrongSequenceOwner {
+                    reference,
+                    actual: element.owner,
+                    expected: owner,
+                },
+            ),
+        );
     }
     Ok(Some(reference))
 }

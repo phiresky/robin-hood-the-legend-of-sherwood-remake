@@ -7,8 +7,6 @@
 //! target. This module reproduces those read-side rules while keeping the
 //! deterministic director camera separate from the host display mirror.
 
-use thiserror::Error;
-
 use crate::{
     coordinates::{MapPoint, MapVec},
     engine::{BackgroundTransform, DisplayOpCode, EngineInner, peripherals::HostDisplayState},
@@ -16,8 +14,12 @@ use crate::{
 
 use super::{
     LegacySaveAbiProfile,
+    adopt_common::{AdoptSite, LegacyAdoptError},
     engine::{LegacyBackgroundTransform, LegacyEnginePreamble, LegacyPoint2},
 };
+
+const CAMERA: AdoptSite = AdoptSite::new("saved camera");
+const BACKGROUND: AdoptSite = AdoptSite::new("saved background");
 
 const MAX_SCROLL_LEVEL: u16 = 31;
 const MAX_ZOOM_LEVEL: u16 = 2;
@@ -57,42 +59,22 @@ pub(crate) struct LegacyCameraAdoptionPlan {
     locker: bool,
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
-pub(crate) enum LegacyCameraAdoptionError {
-    #[error("saved camera field {field} contains non-finite value {value}")]
-    NonFinite { field: String, value: f32 },
-    #[error("saved camera zoom_factor must be positive, got {value}")]
-    NonPositiveZoom { value: f32 },
-    #[error(
-        "saved background current_x_scrolling_level {value} exceeds the Original 32-entry table"
-    )]
-    XScrollLevelOutOfRange { value: u16 },
-    #[error(
-        "saved background current_y_scrolling_level {value} exceeds the Original 32-entry table"
-    )]
-    YScrollLevelOutOfRange { value: u16 },
-    #[error("saved background current_zoom_level {value} exceeds the Original three-level table")]
-    ZoomLevelOutOfRange { value: u16 },
-}
-
 impl LegacyCameraAdoptionPlan {
     pub(crate) fn preflight(
         engine: &EngineInner,
         _abi: LegacySaveAbiProfile,
         saved: &LegacyEnginePreamble,
-    ) -> Result<Self, LegacyCameraAdoptionError> {
+    ) -> Result<Self, LegacyAdoptError> {
         validate_point("view", saved.view)?;
-        validate_finite("zoom_factor", saved.zoom_factor)?;
+        CAMERA.finite("zoom_factor", saved.zoom_factor)?;
         // The raw parser retains old_zoom_factor for binary layout fidelity,
         // but adoption ignores this unused Original interpolation scratch.
         // Retail restart saves can contain an uninitialized NaN here.
         if saved.zoom_factor <= 0.0 {
-            return Err(LegacyCameraAdoptionError::NonPositiveZoom {
-                value: saved.zoom_factor,
-            });
+            return Err(CAMERA.invalid("zoom_factor", saved.zoom_factor, "a positive zoom"));
         }
         validate_point("camera_slide", saved.camera_slide)?;
-        validate_finite("desired_zoom_factor", saved.desired_zoom_factor)?;
+        CAMERA.finite("desired_zoom_factor", saved.desired_zoom_factor)?;
         validate_point("camera_wanted", saved.camera_wanted)?;
         validate_background(&saved.background_transform)?;
 
@@ -222,30 +204,38 @@ fn convert_background(
     }
 }
 
-fn validate_background(saved: &LegacyBackgroundTransform) -> Result<(), LegacyCameraAdoptionError> {
+const SCROLL_LEVEL_EXPECTED: &str = "an index into the Original 32-entry table";
+
+fn validate_background(saved: &LegacyBackgroundTransform) -> Result<(), LegacyAdoptError> {
     if saved.current_x_scrolling_level > MAX_SCROLL_LEVEL {
-        return Err(LegacyCameraAdoptionError::XScrollLevelOutOfRange {
-            value: saved.current_x_scrolling_level,
-        });
+        return Err(BACKGROUND.invalid(
+            "current_x_scrolling_level",
+            saved.current_x_scrolling_level,
+            SCROLL_LEVEL_EXPECTED,
+        ));
     }
     if saved.current_y_scrolling_level > MAX_SCROLL_LEVEL {
-        return Err(LegacyCameraAdoptionError::YScrollLevelOutOfRange {
-            value: saved.current_y_scrolling_level,
-        });
+        return Err(BACKGROUND.invalid(
+            "current_y_scrolling_level",
+            saved.current_y_scrolling_level,
+            SCROLL_LEVEL_EXPECTED,
+        ));
     }
     if saved.current_zoom_level > MAX_ZOOM_LEVEL {
-        return Err(LegacyCameraAdoptionError::ZoomLevelOutOfRange {
-            value: saved.current_zoom_level,
-        });
+        return Err(BACKGROUND.invalid(
+            "current_zoom_level",
+            saved.current_zoom_level,
+            "an index into the Original three-level table",
+        ));
     }
     for (index, value) in saved.x_scrolling_values.iter().copied().enumerate() {
-        validate_finite(format!("background.x_scrolling_values[{index}]"), value)?;
+        CAMERA.finite(format!("background.x_scrolling_values[{index}]"), value)?;
     }
     for (index, value) in saved.y_scrolling_values.iter().copied().enumerate() {
-        validate_finite(format!("background.y_scrolling_values[{index}]"), value)?;
+        CAMERA.finite(format!("background.y_scrolling_values[{index}]"), value)?;
     }
     for (index, value) in saved.zoom_values.iter().copied().enumerate() {
-        validate_finite(format!("background.zoom_values[{index}]"), value)?;
+        CAMERA.finite(format!("background.zoom_values[{index}]"), value)?;
     }
     validate_point("background.center_zoom", saved.center_zoom)?;
     validate_point("background.clipped_zoom", saved.clipped_zoom)?;
@@ -253,24 +243,9 @@ fn validate_background(saved: &LegacyBackgroundTransform) -> Result<(), LegacyCa
     Ok(())
 }
 
-fn validate_point(
-    field: impl Into<String>,
-    value: LegacyPoint2,
-) -> Result<(), LegacyCameraAdoptionError> {
-    let field = field.into();
-    validate_finite(format!("{field}.x"), value.x)?;
-    validate_finite(format!("{field}.y"), value.y)
-}
-
-fn validate_finite(field: impl Into<String>, value: f32) -> Result<(), LegacyCameraAdoptionError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(LegacyCameraAdoptionError::NonFinite {
-            field: field.into(),
-            value,
-        })
-    }
+fn validate_point(field: &str, value: LegacyPoint2) -> Result<(), LegacyAdoptError> {
+    CAMERA.finite(format!("{field}.x"), value.x)?;
+    CAMERA.finite(format!("{field}.y"), value.y)
 }
 
 fn point(value: LegacyPoint2) -> MapPoint {
@@ -284,6 +259,7 @@ fn vector(value: LegacyPoint2) -> MapVec {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::legacy_save::adopt_common::AdoptErrorKind;
     use crate::{
         coordinates::MapSize,
         engine::{EngineInner, peripherals::HostDisplayState},
@@ -445,15 +421,18 @@ mod tests {
         saved.current_x_scrolling_level = 32;
         assert_eq!(
             validate_background(&saved),
-            Err(LegacyCameraAdoptionError::XScrollLevelOutOfRange { value: 32 })
+            Err(BACKGROUND.invalid("current_x_scrolling_level", 32, SCROLL_LEVEL_EXPECTED))
         );
 
         saved.current_x_scrolling_level = 0;
         saved.scrolling.y = f32::NAN;
         assert!(matches!(
             validate_background(&saved),
-            Err(LegacyCameraAdoptionError::NonFinite { field, .. })
-                if field == "background.scrolling.y"
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::NonFinite { .. },
+                ..
+            }) if field == "background.scrolling.y"
         ));
     }
 
@@ -494,8 +473,11 @@ mod tests {
             saved.zoom_factor = zoom;
             assert!(matches!(
                 LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved),
-                Err(LegacyCameraAdoptionError::NonFinite { field, .. })
-                    if field == "zoom_factor"
+                Err(LegacyAdoptError {
+                    field: Some(field),
+                    kind: AdoptErrorKind::NonFinite { .. },
+                    ..
+                }) if field == "zoom_factor"
             ));
         }
         for zoom in [0.0, -1.0] {
@@ -503,7 +485,11 @@ mod tests {
             saved.zoom_factor = zoom;
             assert!(matches!(
                 LegacyCameraAdoptionPlan::preflight(&baseline, abi, &saved),
-                Err(LegacyCameraAdoptionError::NonPositiveZoom { .. })
+                Err(LegacyAdoptError {
+                    field: Some(field),
+                    kind: AdoptErrorKind::InvalidValue { .. },
+                    ..
+                }) if field == "zoom_factor"
             ));
         }
     }

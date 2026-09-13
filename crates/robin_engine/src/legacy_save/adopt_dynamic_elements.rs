@@ -16,8 +16,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use thiserror::Error;
-
 use crate::{
     character_kind::CharacterKind,
     coordinates::{MapVec, MoveBox},
@@ -33,6 +31,7 @@ use crate::{
 
 use super::{
     adopt::LegacyEntityFixups,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     campaign::LegacyPcDescription,
     elements::{
         LegacyDynamicElementFactory, LegacyElementClass, LegacyElementEnvelope,
@@ -41,107 +40,15 @@ use super::{
     topology_adapter::LegacyStaticElementTopology,
 };
 
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum LegacyDynamicElementAdoptionError {
-    #[error(
-        "initialized engine contains non-static entity {entity_id}; dynamic save adoption requires a clean mission-start candidate"
-    )]
-    PreexistingDynamicEntity { entity_id: EntityId },
-    #[error(
-        "saved element slot {slot} creation order {creation_order} uses static resolution at or beyond boundary {boundary}"
-    )]
-    InvalidStaticResolution {
-        slot: usize,
-        creation_order: u32,
-        boundary: u32,
-    },
-    #[error(
-        "saved element slot {slot} creation order {creation_order} uses dynamic resolution below boundary {boundary}"
-    )]
-    InvalidDynamicResolution {
-        slot: usize,
-        creation_order: u32,
-        boundary: u32,
-    },
-    #[error(
-        "saved element slot {slot} creation order {creation_order} class {saved:?} does not match initialized class {initialized:?}"
-    )]
-    StaticClassMismatch {
-        slot: usize,
-        creation_order: u32,
-        saved: LegacyElementClass,
-        initialized: LegacyElementClass,
-    },
-    #[error(
-        "saved element slot {slot} creation order {creation_order} resolves to an Original mobile master, which has no Rust entity identity"
-    )]
-    UnsupportedMobileMaster { slot: usize, creation_order: u32 },
-    #[error(
-        "saved element slot {slot} creation order {creation_order} class {class:?} has no initialized entity and no Original load factory"
-    )]
-    MissingStaticEntity {
-        slot: usize,
-        creation_order: u32,
-        class: LegacyElementClass,
-    },
-    #[error(
-        "saved element slot {slot} class {class:?} names factory {factory:?}, but that class maps to {expected:?}"
-    )]
-    FactoryClassMismatch {
-        slot: usize,
-        class: LegacyElementClass,
-        factory: LegacyDynamicElementFactory,
-        expected: Option<LegacyDynamicElementFactory>,
-    },
-    #[error("dynamic factory {factory:?} requires missing object sprite master {object_type:?}")]
-    MissingObjectSpriteMaster {
-        factory: LegacyDynamicElementFactory,
-        object_type: ObjectType,
-    },
-    #[error("dynamic PC slot {slot} omits its campaign description index")]
-    MissingPcDescriptionIndex { slot: usize },
-    #[error(
-        "dynamic PC slot {slot} references campaign description {description_index}, but only {description_count} descriptions were decoded"
-    )]
-    PcDescriptionOutOfRange {
-        slot: usize,
-        description_index: u32,
-        description_count: usize,
-    },
-    #[error("dynamic PC description {description_index} has no character profile")]
-    MissingPcProfileLink { description_index: u32 },
-    #[error(
-        "dynamic PC description {description_index} references missing character profile {profile_index}"
-    )]
-    MissingPcProfile {
-        description_index: u32,
-        profile_index: u32,
-    },
-    #[error(
-        "dynamic PC description {description_index} requires missing character sprite master for profile {profile_index}"
-    )]
-    MissingPcSpriteMaster {
-        description_index: u32,
-        profile_index: u32,
-    },
-    #[error(
-        "dynamic PC description {description_index} profile {profile_index} requires pathfinder move-box index {pathfinder_index}, but the loaded grid has only {move_box_count} entries"
-    )]
-    MissingPcMoveBox {
-        description_index: u32,
-        profile_index: u32,
-        pathfinder_index: u8,
-        move_box_count: usize,
-    },
-    #[error("dynamic PC description index {description_index} does not fit PcData::list_index")]
-    PcDescriptionIndexOverflow { description_index: u32 },
-    #[error(
-        "saved Original creation counter {saved_creation_counter} overflows after {construction_count} dynamic constructions"
-    )]
-    CreationCounterOverflow {
-        saved_creation_counter: u32,
-        construction_count: usize,
-    },
+/// Error context for one saved element-envelope record.
+fn record_site(record: &LegacyElementRecord) -> AdoptSite {
+    let mut site = AdoptSite::owned(format!("saved element slot {}", record.slot));
+    site.creation_order = Some(record.creation_order);
+    site
+}
+
+fn pc_description_site(description_index: u32) -> AdoptSite {
+    AdoptSite::owned(format!("dynamic PC description {description_index}"))
 }
 
 enum PlannedElement {
@@ -166,13 +73,11 @@ impl LegacyDynamicElementAdoptionPlan {
         topology: &LegacyStaticElementTopology,
         campaign_characters: &[LegacyPcDescription],
         saved_creation_counter: u32,
-    ) -> Result<Self, LegacyDynamicElementAdoptionError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let static_ids: BTreeSet<_> = topology.creation_order_by_entity.keys().copied().collect();
         for (entity_id, _) in engine.world.entities.occupied() {
             if !static_ids.contains(&entity_id) {
-                return Err(
-                    LegacyDynamicElementAdoptionError::PreexistingDynamicEntity { entity_id },
-                );
+                return Err(AdoptErrorKind::PreexistingDynamicEntity { entity_id }.into());
             }
         }
 
@@ -188,11 +93,11 @@ impl LegacyDynamicElementAdoptionPlan {
             let planned = match record.resolution {
                 LegacyElementResolution::ResolveStatic { fallback_factory } => {
                     if record.creation_order >= topology.static_creation_order_boundary {
-                        return Err(LegacyDynamicElementAdoptionError::InvalidStaticResolution {
-                            slot: record.slot,
-                            creation_order: record.creation_order,
-                            boundary: topology.static_creation_order_boundary,
-                        });
+                        return Err(record_site(record).error(
+                            AdoptErrorKind::InvalidStaticResolution {
+                                boundary: topology.static_creation_order_boundary,
+                            },
+                        ));
                     }
                     if let Some(entity_id) = initialized_by_creation_order
                         .get(&record.creation_order)
@@ -205,12 +110,12 @@ impl LegacyDynamicElementAdoptionPlan {
                             .expect("entity topology and payload metadata are built together")
                             .class;
                         if initialized != record.class {
-                            return Err(LegacyDynamicElementAdoptionError::StaticClassMismatch {
-                                slot: record.slot,
-                                creation_order: record.creation_order,
-                                saved: record.class,
-                                initialized,
-                            });
+                            return Err(record_site(record).error(
+                                AdoptErrorKind::StaticClassMismatch {
+                                    saved: record.class,
+                                    initialized,
+                                },
+                            ));
                         }
                         PlannedElement::Existing(entity_id)
                     } else if let Some(&mobile_index) = topology
@@ -218,12 +123,12 @@ impl LegacyDynamicElementAdoptionPlan {
                         .get(&record.creation_order)
                     {
                         if record.class != LegacyElementClass::Mobile {
-                            return Err(LegacyDynamicElementAdoptionError::StaticClassMismatch {
-                                slot: record.slot,
-                                creation_order: record.creation_order,
-                                saved: record.class,
-                                initialized: LegacyElementClass::Mobile,
-                            });
+                            return Err(record_site(record).error(
+                                AdoptErrorKind::StaticClassMismatch {
+                                    saved: record.class,
+                                    initialized: LegacyElementClass::Mobile,
+                                },
+                            ));
                         }
                         PlannedElement::MobileMaster(mobile_index)
                     } else if let Some(factory) = fallback_factory {
@@ -237,22 +142,20 @@ impl LegacyDynamicElementAdoptionPlan {
                             campaign_characters,
                         )?)
                     } else {
-                        return Err(LegacyDynamicElementAdoptionError::MissingStaticEntity {
-                            slot: record.slot,
-                            creation_order: record.creation_order,
-                            class: record.class,
-                        });
+                        return Err(AdoptSite::element("saved element", record.creation_order)
+                            .error(AdoptErrorKind::MissingStaticEntity {
+                                slot: record.slot,
+                                class: record.class,
+                            }));
                     }
                 }
                 LegacyElementResolution::ConstructDynamic { factory } => {
                     if record.creation_order < topology.static_creation_order_boundary {
-                        return Err(
-                            LegacyDynamicElementAdoptionError::InvalidDynamicResolution {
-                                slot: record.slot,
-                                creation_order: record.creation_order,
+                        return Err(record_site(record).error(
+                            AdoptErrorKind::InvalidDynamicResolution {
                                 boundary: topology.static_creation_order_boundary,
                             },
-                        );
+                        ));
                     }
                     validate_factory(record, factory)?;
                     construction_count += 1;
@@ -268,18 +171,15 @@ impl LegacyDynamicElementAdoptionPlan {
             elements.push((record.slot, record.creation_order, planned));
         }
 
-        let construction_count_u32 = u32::try_from(construction_count).map_err(|_| {
-            LegacyDynamicElementAdoptionError::CreationCounterOverflow {
-                saved_creation_counter,
-                construction_count,
-            }
-        })?;
+        let counter_overflow = AdoptErrorKind::CreationCounterOverflow {
+            saved_creation_counter,
+            construction_count,
+        };
+        let construction_count_u32 =
+            u32::try_from(construction_count).map_err(|_| counter_overflow.clone())?;
         let post_load_creation_counter = saved_creation_counter
             .checked_add(construction_count_u32)
-            .ok_or(LegacyDynamicElementAdoptionError::CreationCounterOverflow {
-                saved_creation_counter,
-                construction_count,
-            })?;
+            .ok_or(counter_overflow)?;
 
         tracing::trace!(
             target: "robin_engine::creation_order",
@@ -374,15 +274,18 @@ impl LegacyDynamicElementAdoptionPlan {
 fn validate_factory(
     record: &LegacyElementRecord,
     factory: LegacyDynamicElementFactory,
-) -> Result<(), LegacyDynamicElementAdoptionError> {
+) -> Result<(), LegacyAdoptError> {
     let expected = record.class.dynamic_factory();
     if expected != Some(factory) {
-        return Err(LegacyDynamicElementAdoptionError::FactoryClassMismatch {
-            slot: record.slot,
-            class: record.class,
-            factory,
-            expected,
-        });
+        return Err(
+            AdoptSite::owned(format!("saved element slot {}", record.slot)).error(
+                AdoptErrorKind::FactoryClassMismatch {
+                    class: record.class,
+                    factory,
+                    expected,
+                },
+            ),
+        );
     }
     Ok(())
 }
@@ -393,7 +296,7 @@ fn construct_entity(
     assets: &LevelAssets,
     fast_grid: &FastFindGrid,
     campaign_characters: &[LegacyPcDescription],
-) -> Result<Entity, LegacyDynamicElementAdoptionError> {
+) -> Result<Entity, LegacyAdoptError> {
     if factory == LegacyDynamicElementFactory::ActorPc {
         return construct_pc(record, assets, fast_grid, campaign_characters);
     }
@@ -403,12 +306,10 @@ fn construct_entity(
         .accessory_sprite_prototypes
         .get(&object_type)
         .cloned()
-        .ok_or(
-            LegacyDynamicElementAdoptionError::MissingObjectSpriteMaster {
-                factory,
-                object_type,
-            },
-        )?;
+        .ok_or(AdoptErrorKind::MissingObjectSpriteMaster {
+            factory,
+            object_type,
+        })?;
     let element = {
         let mut initial_element = ElementData::default();
         initial_element.kind = kind;
@@ -450,43 +351,55 @@ fn construct_pc(
     assets: &LevelAssets,
     fast_grid: &FastFindGrid,
     campaign_characters: &[LegacyPcDescription],
-) -> Result<Entity, LegacyDynamicElementAdoptionError> {
-    let description_index = record.pc_description_index.ok_or(
-        LegacyDynamicElementAdoptionError::MissingPcDescriptionIndex { slot: record.slot },
-    )?;
-    let description = campaign_characters.get(description_index as usize).ok_or(
-        LegacyDynamicElementAdoptionError::PcDescriptionOutOfRange {
-            slot: record.slot,
-            description_index,
-            description_count: campaign_characters.len(),
-        },
-    )?;
-    let raw_profile_index = description
-        .character_profile_index
-        .ok_or(LegacyDynamicElementAdoptionError::MissingPcProfileLink { description_index })?;
+) -> Result<Entity, LegacyAdoptError> {
+    let pc_slot = || AdoptSite::owned(format!("dynamic PC slot {}", record.slot));
+    let description_index = record.pc_description_index.ok_or_else(|| {
+        pc_slot().error(AdoptErrorKind::Missing {
+            what: "campaign description index",
+        })
+    })?;
+    let description = campaign_characters
+        .get(description_index as usize)
+        .ok_or_else(|| {
+            pc_slot().out_of_range(
+                "pc_description_index",
+                "campaign description",
+                description_index as usize,
+                campaign_characters.len(),
+            )
+        })?;
+    let raw_profile_index = description.character_profile_index.ok_or_else(|| {
+        pc_description_site(description_index).error(AdoptErrorKind::Missing {
+            what: "character profile",
+        })
+    })?;
     let profile_index = CharacterProfileIdx(raw_profile_index);
-    let profile = assets.profile_manager.get_character(profile_index).ok_or(
-        LegacyDynamicElementAdoptionError::MissingPcProfile {
-            description_index,
-            profile_index: raw_profile_index,
-        },
-    )?;
+    let profile = assets
+        .profile_manager
+        .get_character(profile_index)
+        .ok_or_else(|| {
+            pc_description_site(description_index).error(AdoptErrorKind::MissingCharacterProfile {
+                profile_index: raw_profile_index,
+            })
+        })?;
     let mut sprite = assets
         .character_sprite_prototypes
         .get(&profile_index)
         .cloned()
-        .ok_or(LegacyDynamicElementAdoptionError::MissingPcSpriteMaster {
-            description_index,
-            profile_index: raw_profile_index,
+        .ok_or_else(|| {
+            pc_description_site(description_index).error(AdoptErrorKind::MissingPcSpriteMaster {
+                profile_index: raw_profile_index,
+            })
         })?;
     let pathfinder_index = profile.pathfinder_index;
     let half_diagonal = fast_grid
         .try_move_box_half_diagonal(pathfinder_index as usize)
-        .ok_or(LegacyDynamicElementAdoptionError::MissingPcMoveBox {
-            description_index,
-            profile_index: raw_profile_index,
-            pathfinder_index,
-            move_box_count: fast_grid.level.move_box_half_diagonals.len(),
+        .ok_or_else(|| {
+            pc_description_site(description_index).error(AdoptErrorKind::MissingPcMoveBox {
+                profile_index: raw_profile_index,
+                pathfinder_index,
+                move_box_count: fast_grid.level.move_box_half_diagonals.len(),
+            })
         })?;
     // Player-actor initialization rebuilds these fields from the
     // character profile and the loaded spatial grid. Position-interface
@@ -501,7 +414,11 @@ fn construct_pc(
         MapVec::new(half_diagonal.x, half_diagonal.y),
     ));
     let list_index = u8::try_from(description_index).map_err(|_| {
-        LegacyDynamicElementAdoptionError::PcDescriptionIndexOverflow { description_index }
+        pc_description_site(description_index).invalid(
+            "description_index",
+            description_index,
+            "an index fitting PcData::list_index",
+        )
     })?;
     let kind = CharacterKind::from_profile(&profile.filename, &profile.profile_name);
     let (has_lockpick, has_climb, has_jump) = PcData::movement_auth_from_profile(profile);
@@ -756,10 +673,10 @@ mod tests {
 
         assert_eq!(
             error,
-            LegacyDynamicElementAdoptionError::MissingObjectSpriteMaster {
+            LegacyAdoptError::from(AdoptErrorKind::MissingObjectSpriteMaster {
                 factory: LegacyDynamicElementFactory::Net,
                 object_type: ObjectType::Net,
-            }
+            })
         );
         assert_eq!(engine.world.entities.occupied().count(), 0);
     }
@@ -788,12 +705,11 @@ mod tests {
 
         assert_eq!(
             error,
-            LegacyDynamicElementAdoptionError::FactoryClassMismatch {
-                slot: 0,
+            AdoptSite::new("saved element slot 0").error(AdoptErrorKind::FactoryClassMismatch {
                 class: LegacyElementClass::Arrow,
                 factory: LegacyDynamicElementFactory::Stone,
                 expected: Some(LegacyDynamicElementFactory::Arrow),
-            }
+            })
         );
     }
 
@@ -887,12 +803,11 @@ mod tests {
 
         assert_eq!(
             error,
-            LegacyDynamicElementAdoptionError::MissingPcMoveBox {
-                description_index: 0,
+            AdoptSite::new("dynamic PC description 0").error(AdoptErrorKind::MissingPcMoveBox {
                 profile_index: 0,
                 pathfinder_index: 3,
                 move_box_count: 0,
-            }
+            })
         );
         assert_eq!(engine.world.entities.occupied().count(), 0);
     }

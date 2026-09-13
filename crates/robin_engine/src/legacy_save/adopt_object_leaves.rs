@@ -6,8 +6,6 @@
 //! kind, enum, reference, patch index, and script heap is validated before
 //! [`LegacyObjectLeafAdoptionPlan::apply`] touches the candidate engine.
 
-use thiserror::Error;
-
 use crate::{
     coordinates::{WorldPoint3D, WorldVec3D},
     element::{
@@ -22,14 +20,15 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaPlan},
+    adopt::{LegacyEntityFixups, missing_creation_order},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_vm_arena::LegacyVmArenaPlan,
     payload_base::LegacyFxPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_nonactors::LegacyObjectPayload,
     payload_objects::{LegacyObjectItemPayload, LegacyProjectilePayload},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
-    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
+    vm_schema::{HANDLE_INDEX_MAX, check_location_topology},
 };
 
 /// Serialized object fields that Original overwrites before consulting them,
@@ -46,170 +45,6 @@ use super::{
 /// its live collision semantics rather than retaining another unread copy.
 pub const OVERWRITTEN_OR_UNUSED_OBJECT_FIELDS: &[&str] =
     &["object register number", "object repulsive point"];
-
-#[derive(Debug, Error)]
-pub enum LegacyObjectLeafAdoptError {
-    #[error(transparent)]
-    VmArena(#[from] LegacyVmArenaError),
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error("saved leaf creation order {creation_order} resolves to missing entity {entity_id}")]
-    MissingEntity {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved {saved_kind} creation order {creation_order} resolves to incompatible Rust entity {entity_id} ({runtime_kind})"
-    )]
-    WrongEntityKind {
-        creation_order: u32,
-        saved_kind: &'static str,
-        entity_id: EntityId,
-        runtime_kind: &'static str,
-    },
-    #[error(
-        "saved object creation order {creation_order} field {field} has unknown enum value {value}"
-    )]
-    UnknownEnum {
-        creation_order: u32,
-        field: &'static str,
-        value: u32,
-    },
-    #[error(
-        "saved leaf creation order {creation_order} field {field} contains non-finite value {value}"
-    )]
-    NonFinite {
-        creation_order: u32,
-        field: &'static str,
-        value: f32,
-    },
-    #[error(
-        "saved FX creation order {creation_order} references negative patch index {patch_index}"
-    )]
-    NegativePatch {
-        creation_order: u32,
-        patch_index: i16,
-    },
-    #[error(
-        "saved FX creation order {creation_order} references patch {patch_index}, but initialized mission has {patch_count} patches"
-    )]
-    MissingPatch {
-        creation_order: u32,
-        patch_index: usize,
-        patch_count: usize,
-    },
-    #[error("saved target creation order {creation_order} linked_fxs[{index}] is null")]
-    NullLinkedFx { creation_order: u32, index: usize },
-    #[error("saved net creation order {creation_order} victims[{index}] is null")]
-    NullNetVictim { creation_order: u32, index: usize },
-    #[error(
-        "saved target creation order {creation_order} linked_fxs[{index}] resolves to non-FX entity {entity_id}"
-    )]
-    WrongLinkedFx {
-        creation_order: u32,
-        index: usize,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} script VM presence is {saved}, initialized presence is {runtime}"
-    )]
-    VmPresenceMismatch {
-        owner_kind: &'static str,
-        creation_order: u32,
-        saved: bool,
-        runtime: bool,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM class is {saved:?}, initialized class is {runtime:?}"
-    )]
-    VmClassMismatch {
-        owner_kind: &'static str,
-        creation_order: u32,
-        saved: String,
-        runtime: String,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM member count is {saved}, initialized class {class_name:?} has {runtime}"
-    )]
-    VmMemberCountMismatch {
-        owner_kind: &'static str,
-        creation_order: u32,
-        class_name: String,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM member {index} schema mismatch: {detail}"
-    )]
-    VmSchemaMismatch {
-        owner_kind: &'static str,
-        creation_order: u32,
-        index: usize,
-        detail: String,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM member {member:?} requires bytes {address}..{end}, outside initialized heap length {heap_len}"
-    )]
-    VmHeapRange {
-        owner_kind: &'static str,
-        creation_order: u32,
-        member: String,
-        heap_len: usize,
-        address: usize,
-        end: usize,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM {member_kind} member {member:?} resolves to wrong entity {entity_id}"
-    )]
-    VmWrongEntity {
-        owner_kind: &'static str,
-        creation_order: u32,
-        member_kind: &'static str,
-        member: String,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM member {member:?} requires unrepresentable handle index {index}"
-    )]
-    VmHandleOverflow {
-        owner_kind: &'static str,
-        creation_order: u32,
-        member: String,
-        index: usize,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM location {member:?} references sector {sector}, but initialized topology has {count} sector slots"
-    )]
-    VmMissingSector {
-        owner_kind: &'static str,
-        creation_order: u32,
-        member: String,
-        sector: u16,
-        count: usize,
-    },
-    #[error(
-        "saved {owner_kind} creation order {creation_order} VM location {member:?} references layer {layer}, but initialized topology has {count} layers"
-    )]
-    VmMissingLayer {
-        owner_kind: &'static str,
-        creation_order: u32,
-        member: String,
-        layer: u16,
-        count: usize,
-    },
-    #[error(
-        "saved object-item creation order {creation_order} is a mobile master; mobile state belongs to the mobile adoption stage"
-    )]
-    MobileMaster { creation_order: u32 },
-    #[error(
-        "saved arrow creation order {creation_order} references missing bow profile {profile_index} (initialized profile count {profile_count})"
-    )]
-    MissingBowProfile {
-        creation_order: u32,
-        profile_index: u32,
-        profile_count: usize,
-    },
-}
 
 #[derive(Debug)]
 pub struct LegacyObjectLeafAdoptionPlan {
@@ -335,12 +170,13 @@ pub(crate) enum LegacyVmOwnerKind {
 }
 
 impl LegacyVmOwnerKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Actor => "actor",
-            Self::Target => "target",
-            Self::Scroll => "scroll",
-        }
+    fn site(self, creation_order: u32) -> AdoptSite {
+        let subject = match self {
+            Self::Actor => "saved actor",
+            Self::Target => "saved target",
+            Self::Scroll => "saved scroll",
+        };
+        AdoptSite::element(subject, creation_order)
     }
 }
 
@@ -353,7 +189,7 @@ impl LegacyObjectLeafAdoptionPlan {
         payloads: &LegacyElementPayloadStream,
         entities: &LegacyEntityFixups,
         vm_arena: &LegacyVmArenaPlan,
-    ) -> Result<Self, LegacyObjectLeafAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut records = Vec::new();
         for record in &payloads.records {
             if matches!(
@@ -367,13 +203,11 @@ impl LegacyObjectLeafAdoptionPlan {
                 .by_creation_order
                 .get(&creation_order)
                 .copied()
-                .ok_or(LegacySaveAdoptError::MissingCreationOrderReference { creation_order })?;
-            let runtime = engine.world.entities.get(entity_id).ok_or(
-                LegacyObjectLeafAdoptError::MissingEntity {
-                    creation_order,
-                    entity_id,
-                },
-            )?;
+                .ok_or_else(|| missing_creation_order(creation_order))?;
+            let runtime = engine.world.entities.get(entity_id).ok_or_else(|| {
+                AdoptSite::element("saved leaf", creation_order)
+                    .error(AdoptErrorKind::MissingEntity { entity_id })
+            })?;
             let planned = match &record.payload {
                 LegacyElementPayload::ActorPc(_)
                 | LegacyElementPayload::ActorNpcSoldier(_)
@@ -412,10 +246,13 @@ impl LegacyObjectLeafAdoptionPlan {
                     let status = i32::try_from(saved.status)
                         .ok()
                         .filter(|v| (0..=3).contains(v))
-                        .ok_or(LegacyObjectLeafAdoptError::UnknownEnum {
-                            creation_order,
-                            field: "scroll status",
-                            value: saved.status,
+                        .ok_or_else(|| {
+                            AdoptSite::element("saved object", creation_order).field_error(
+                                "scroll status",
+                                AdoptErrorKind::UnknownEnum {
+                                    value: i64::from(saved.status),
+                                },
+                            )
                         })?;
                     PlannedLeaf::Scroll {
                         entity: entity_id,
@@ -437,22 +274,26 @@ impl LegacyObjectLeafAdoptionPlan {
                         .iter()
                         .enumerate()
                         .map(|(index, reference)| {
-                            let entity = entities.resolve_element(*reference)?.ok_or(
-                                LegacyObjectLeafAdoptError::NullLinkedFx {
-                                    creation_order,
-                                    index,
-                                },
-                            )?;
+                            let target = AdoptSite::element("saved target", creation_order);
+                            let entity =
+                                entities.resolve_element(*reference)?.ok_or_else(|| {
+                                    target.field_error(
+                                        format!("linked_fxs[{index}]"),
+                                        AdoptErrorKind::NullReference,
+                                    )
+                                })?;
                             if !matches!(engine.world.entities.get(entity), Some(Entity::Fx(_))) {
-                                return Err(LegacyObjectLeafAdoptError::WrongLinkedFx {
-                                    creation_order,
-                                    index,
-                                    entity_id: entity,
-                                });
+                                return Err(target.field_error(
+                                    format!("linked_fxs[{index}]"),
+                                    AdoptErrorKind::WrongEntityKind {
+                                        entity_id: entity,
+                                        expected: "FX",
+                                    },
+                                ));
                             }
                             Ok(entity)
                         })
-                        .collect::<Result<Vec<_>, LegacyObjectLeafAdoptError>>()?;
+                        .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
                     let vm_heap = preflight_vm(
                         engine,
                         assets,
@@ -466,7 +307,8 @@ impl LegacyObjectLeafAdoptionPlan {
                     )?;
                     PlannedLeaf::Target {
                         entity: entity_id,
-                        animation: order_type(saved.animation, creation_order, "target animation")?,
+                        animation: AdoptSite::element("saved object", creation_order)
+                            .enum_value("target animation", saved.animation)?,
                         progression: saved.progression,
                         linked_fxs,
                         fx: preflight_fx(engine, &saved.fx, creation_order)?,
@@ -494,11 +336,8 @@ impl LegacyObjectLeafAdoptionPlan {
                         "masked FX",
                         |entity| matches!(entity, Entity::Fx(fx) if fx.fx.mobile_index.is_some()),
                     )?;
-                    finite(
-                        saved.animation_speed,
-                        creation_order,
-                        "masked effect animation speed",
-                    )?;
+                    AdoptSite::element("saved leaf", creation_order)
+                        .finite("masked effect animation speed", saved.animation_speed)?;
                     PlannedLeaf::FxMasked {
                         entity: entity_id,
                         animation_speed: saved.animation_speed,
@@ -701,7 +540,7 @@ fn preflight_object_item(
     creation_order: u32,
     entities: &LegacyEntityFixups,
     profiles: &ProfileManager,
-) -> Result<PlannedLeaf, LegacyObjectLeafAdoptError> {
+) -> Result<PlannedLeaf, LegacyAdoptError> {
     if let LegacyObjectItemPayload::Wasp(payload) = saved {
         require_kind(
             runtime,
@@ -710,9 +549,10 @@ fn preflight_object_item(
             "wasp",
             Entity::is_projectile,
         )?;
-        finite(payload.movement.x, creation_order, "wasp movement x")?;
-        finite(payload.movement.y, creation_order, "wasp movement y")?;
-        finite(payload.movement.z, creation_order, "wasp movement z")?;
+        let leaf = AdoptSite::element("saved leaf", creation_order);
+        leaf.finite("wasp movement x", payload.movement.x)?;
+        leaf.finite("wasp movement y", payload.movement.y)?;
+        leaf.finite("wasp movement z", payload.movement.z)?;
         return Ok(PlannedLeaf::Wasp {
             entity: entity_id,
             object: preflight_object(&payload.object, creation_order)?,
@@ -800,7 +640,8 @@ fn preflight_object_item(
             |entity| matches!(entity, Entity::Net(_)),
         ),
         LegacyObjectItemPayload::Mobile(_) => {
-            return Err(LegacyObjectLeafAdoptError::MobileMaster { creation_order });
+            return Err(AdoptSite::element("saved object-item", creation_order)
+                .error(AdoptErrorKind::MobileMasterLeaf));
         }
     };
     require_kind(runtime, entity_id, creation_order, saved_kind, predicate)?;
@@ -836,12 +677,12 @@ fn preflight_object_item(
                     .copied()
                     .enumerate()
                     .map(|(index, victim)| {
-                        entities.resolve_element(victim)?.ok_or(
-                            LegacyObjectLeafAdoptError::NullNetVictim {
-                                creation_order,
-                                index,
-                            },
-                        )
+                        entities.resolve_element(victim)?.ok_or_else(|| {
+                            AdoptSite::element("saved net", creation_order).field_error(
+                                format!("victims[{index}]"),
+                                AdoptErrorKind::NullReference,
+                            )
+                        })
                     })
                     .collect::<Result<Vec<_>, _>>()?,
                 time_till_unfolding: payload.time_until_unfolding,
@@ -875,7 +716,7 @@ fn saved_arrow_damage(
     bow: Option<Option<u32>>,
     flat_shot: bool,
     creation_order: u32,
-) -> Result<u16, LegacyObjectLeafAdoptError> {
+) -> Result<u16, LegacyAdoptError> {
     let Some(Some(profile_index)) = bow else {
         // A null bow/profile is representable in a default-constructed saved
         // arrow. Original only dereferences it if that arrow later hits a
@@ -886,13 +727,14 @@ fn saved_arrow_damage(
     // the zero-based vector offset. This is deliberately not
     // `ProfileManager::get_bow`: that API accepts the one-based weapon id
     // stored on character/soldier profiles.
-    let profile = profiles.bows.get(profile_index as usize).ok_or(
-        LegacyObjectLeafAdoptError::MissingBowProfile {
-            creation_order,
-            profile_index,
-            profile_count: profiles.bows.len(),
-        },
-    )?;
+    let profile = profiles.bows.get(profile_index as usize).ok_or_else(|| {
+        AdoptSite::element("saved arrow", creation_order).out_of_range(
+            "bow.profile",
+            "bow profile",
+            profile_index as usize,
+            profiles.bows.len(),
+        )
+    })?;
     Ok(if flat_shot {
         profile.normal_shoot.damage
     } else {
@@ -904,24 +746,23 @@ fn preflight_projectile(
     saved: &LegacyProjectilePayload,
     creation_order: u32,
     entities: &LegacyEntityFixups,
-) -> Result<PlannedProjectile, LegacyObjectLeafAdoptError> {
+) -> Result<PlannedProjectile, LegacyAdoptError> {
+    let leaf = AdoptSite::element("saved leaf", creation_order);
     let point = |saved: super::payload_base::LegacyPoint3,
                  field: &'static str|
-     -> Result<WorldPoint3D, LegacyObjectLeafAdoptError> {
-        finite(saved.x, creation_order, field)?;
-        finite(saved.y, creation_order, field)?;
-        finite(saved.z, creation_order, field)?;
+     -> Result<WorldPoint3D, LegacyAdoptError> {
+        leaf.finite(field, saved.x)?;
+        leaf.finite(field, saved.y)?;
+        leaf.finite(field, saved.z)?;
         Ok(WorldPoint3D::new(saved.x, saved.y, saved.z))
     };
-    finite(
-        saved.trajectory_origin_map.x,
-        creation_order,
+    leaf.finite(
         "projectile trajectory start x",
+        saved.trajectory_origin_map.x,
     )?;
-    finite(
-        saved.trajectory_origin_map.y,
-        creation_order,
+    leaf.finite(
         "projectile trajectory start y",
+        saved.trajectory_origin_map.y,
     )?;
     let trajectory = saved
         .trajectory
@@ -932,7 +773,7 @@ fn preflight_projectile(
                 time: saved.time,
             })
         })
-        .collect::<Result<Vec<_>, LegacyObjectLeafAdoptError>>()?;
+        .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
     let trajectory_runtime = saved
         .trajectory
         .iter()
@@ -1007,21 +848,17 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
 fn preflight_object(
     saved: &LegacyObjectPayload,
     creation_order: u32,
-) -> Result<PlannedObject, LegacyObjectLeafAdoptError> {
+) -> Result<PlannedObject, LegacyAdoptError> {
     // Object reference/back-pointer fields are not serialized by
     // the object element. Projectile-family leaf plans own those references.
+    let object = AdoptSite::element("saved object", creation_order);
     Ok(PlannedObject {
         terminate: saved.terminate,
         quantity: saved.quantity,
-        animation: order_type(saved.animation, creation_order, "object animation")?,
+        animation: object.enum_value("object animation", saved.animation)?,
         object_type: object_type(saved.object_type, creation_order)?,
-        associated_action: Action::try_from(saved.associated_action).map_err(|_| {
-            LegacyObjectLeafAdoptError::UnknownEnum {
-                creation_order,
-                field: "object associated action",
-                value: saved.associated_action,
-            }
-        })?,
+        associated_action: object
+            .enum_value("object associated action", saved.associated_action)?,
         belongs_to_beggar: saved.belongs_to_beggar,
         taken: saved.taken,
     })
@@ -1041,30 +878,21 @@ fn preflight_fx(
     engine: &EngineInner,
     saved: &LegacyFxPayload,
     creation_order: u32,
-) -> Result<PlannedFx, LegacyObjectLeafAdoptError> {
+) -> Result<PlannedFx, LegacyAdoptError> {
     let patch_index = saved
         .patch
         .0
         .map(|raw| {
-            let raw =
-                u16::try_from(raw).map_err(|_| LegacyObjectLeafAdoptError::NegativePatch {
-                    creation_order,
-                    patch_index: raw,
-                })?;
+            let fx = AdoptSite::element("saved FX", creation_order);
+            let raw = u16::try_from(raw)
+                .map_err(|_| fx.invalid("patch", raw, "a non-negative patch index"))?;
             let index = usize::from(raw);
             let patch_count = engine.script_domains.interactables.patches.len();
             if index >= patch_count {
-                return Err(LegacyObjectLeafAdoptError::MissingPatch {
-                    creation_order,
-                    patch_index: index,
-                    patch_count,
-                });
+                return Err(fx.out_of_range("patch", "patch", index, patch_count));
             }
-            PatchIndex::new(u32::from(raw)).ok_or(LegacyObjectLeafAdoptError::MissingPatch {
-                creation_order,
-                patch_index: index,
-                patch_count,
-            })
+            PatchIndex::new(u32::from(raw))
+                .ok_or_else(|| fx.out_of_range("patch", "patch", index, patch_count))
         })
         .transpose()?;
     Ok(PlannedFx {
@@ -1090,7 +918,7 @@ pub(crate) fn preflight_vm(
     saved: Option<&LegacyVmMemberSection>,
     location_prefix: usize,
     computed_locations: &mut Vec<Option<ComputedScriptLocation>>,
-) -> Result<Option<Vec<u8>>, LegacyObjectLeafAdoptError> {
+) -> Result<Option<Vec<u8>>, LegacyAdoptError> {
     let handle = ScriptHandleCodec::actor_handle(owner);
     let runtime = engine
         .scripts
@@ -1114,13 +942,12 @@ pub(crate) fn preflight_vm(
         // does.
         return Ok(None);
     }
+    let site = || owner_kind.site(creation_order);
     if saved.is_some() != runtime.is_some() {
-        return Err(LegacyObjectLeafAdoptError::VmPresenceMismatch {
-            owner_kind: owner_kind.name(),
-            creation_order,
+        return Err(site().error(AdoptErrorKind::VmPresenceMismatch {
             saved: saved.is_some(),
             runtime: runtime.is_some(),
-        });
+        }));
     }
     let (Some(saved), Some((class, current_heap))) = (saved, runtime) else {
         return Ok(None);
@@ -1135,21 +962,17 @@ pub(crate) fn preflight_vm(
     // Targets and scrolls do not use this actor-specific initialized-binding
     // guard, so retain strict class identity for them.
     if saved.class_name != class.class_name && !matches!(owner_kind, LegacyVmOwnerKind::Actor) {
-        return Err(LegacyObjectLeafAdoptError::VmClassMismatch {
-            owner_kind: owner_kind.name(),
-            creation_order,
+        return Err(site().error(AdoptErrorKind::VmClassMismatch {
             saved: saved.class_name.clone(),
             runtime: class.class_name.clone(),
-        });
+        }));
     }
     if saved.members.len() != class.member_variables.len() {
-        return Err(LegacyObjectLeafAdoptError::VmMemberCountMismatch {
-            owner_kind: owner_kind.name(),
-            creation_order,
+        return Err(site().error(AdoptErrorKind::VmMemberCountMismatch {
             class_name: class.class_name.clone(),
             saved: saved.members.len(),
             runtime: class.member_variables.len(),
-        });
+        }));
     }
     let mut heap = current_heap.to_vec();
     for (index, (saved_member, runtime_member)) in saved
@@ -1158,25 +981,25 @@ pub(crate) fn preflight_vm(
         .zip(&class.member_variables)
         .enumerate()
     {
-        super::vm_schema::check_member_schema(&saved_member.schema, runtime_member).map_err(
-            |detail| LegacyObjectLeafAdoptError::VmSchemaMismatch {
-                owner_kind: owner_kind.name(),
-                creation_order,
-                index,
-                detail,
-            },
-        )?;
+        super::vm_schema::check_member_schema(&saved_member.schema, runtime_member)
+            .map_err(|detail| site().error(AdoptErrorKind::VmSchemaMismatch { index, detail }))?;
         let address = saved_member.schema.address as usize;
         let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
-            LegacyObjectLeafAdoptError::VmHeapRange {
-                owner_kind: owner_kind.name(),
-                creation_order,
-                member: saved_member.schema.name.clone(),
-                heap_len: heap.len(),
-                address,
-                end,
-            }
+            site().field_error(
+                saved_member.schema.name.clone(),
+                AdoptErrorKind::VmHeapRange {
+                    heap_len: heap.len(),
+                    address,
+                    end,
+                },
+            )
         })?;
+        let overflow = |index| {
+            site().field_error(
+                saved_member.schema.name.clone(),
+                AdoptErrorKind::VmHandleOverflow { index },
+            )
+        };
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
             (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
@@ -1186,39 +1009,18 @@ pub(crate) fn preflight_vm(
                     *reference,
                     Entity::is_actor,
                 )
-                .map_err(|error| {
-                    vm_entity_handle_error(
-                        error,
-                        owner_kind,
-                        creation_order,
-                        &saved_member.schema.name,
-                        "Actor",
-                    )
-                })?
+                .map_err(|error| error.at(&site(), &saved_member.schema.name, "Actor"))?
             }
             (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
                 super::vm_schema::resolve_entity_handle(engine, entities, *reference, |entity| {
                     matches!(entity, Entity::Scroll(_))
                 })
-                .map_err(|error| {
-                    vm_entity_handle_error(
-                        error,
-                        owner_kind,
-                        creation_order,
-                        &saved_member.schema.name,
-                        "Scroll",
-                    )
-                })?
+                .map_err(|error| error.at(&site(), &saved_member.schema.name, "Scroll"))?
             }
             (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
                 let storage_index = location_prefix
                     .checked_add(computed_locations.len())
-                    .ok_or_else(|| LegacyObjectLeafAdoptError::VmHandleOverflow {
-                        owner_kind: owner_kind.name(),
-                        creation_order,
-                        member: saved_member.schema.name.clone(),
-                        index: usize::MAX,
-                    })?;
+                    .ok_or_else(|| overflow(usize::MAX))?;
 
                 if let Some(location) = location {
                     let sector_count = assets
@@ -1228,44 +1030,21 @@ pub(crate) fn preflight_vm(
                         .map_or(engine.world.fast_grid.level.sectors.len(), |topology| {
                             topology.sectors.len()
                         });
-                    if let Some(sector) = location.sector.0
-                        && usize::from(sector) >= sector_count
-                    {
-                        return Err(LegacyObjectLeafAdoptError::VmMissingSector {
-                            owner_kind: owner_kind.name(),
-                            creation_order,
-                            member: saved_member.schema.name.clone(),
-                            sector,
-                            count: sector_count,
-                        });
-                    }
-                    let layer_count = engine.world.fast_grid.level.layers.len();
-                    if usize::from(location.layer) >= layer_count {
-                        return Err(LegacyObjectLeafAdoptError::VmMissingLayer {
-                            owner_kind: owner_kind.name(),
-                            creation_order,
-                            member: saved_member.schema.name.clone(),
-                            layer: location.layer,
-                            count: layer_count,
-                        });
-                    }
+                    check_location_topology(
+                        &site(),
+                        &saved_member.schema.name,
+                        location.sector.0,
+                        sector_count,
+                        location.layer,
+                        engine.world.fast_grid.level.layers.len(),
+                    )?;
                     let handle_index = assets
                         .scripts
                         .location_count
                         .checked_add(storage_index)
-                        .ok_or_else(|| LegacyObjectLeafAdoptError::VmHandleOverflow {
-                            owner_kind: owner_kind.name(),
-                            creation_order,
-                            member: saved_member.schema.name.clone(),
-                            index: usize::MAX,
-                        })?;
+                        .ok_or_else(|| overflow(usize::MAX))?;
                     if handle_index > HANDLE_INDEX_MAX {
-                        return Err(LegacyObjectLeafAdoptError::VmHandleOverflow {
-                            owner_kind: owner_kind.name(),
-                            creation_order,
-                            member: saved_member.schema.name.clone(),
-                            index: handle_index,
-                        });
+                        return Err(overflow(handle_index));
                     }
                     computed_locations.push(Some(ComputedScriptLocation {
                         position: (location.position.x, location.position.y),
@@ -1283,42 +1062,15 @@ pub(crate) fn preflight_vm(
                 }
             }
             _ => {
-                return Err(LegacyObjectLeafAdoptError::VmSchemaMismatch {
-                    owner_kind: owner_kind.name(),
-                    creation_order,
+                return Err(site().error(AdoptErrorKind::VmSchemaMismatch {
                     index,
                     detail: "decoded value variant does not match decoded member kind".to_owned(),
-                });
+                }));
             }
         };
         heap[address..end].copy_from_slice(&bits.to_le_bytes());
     }
     Ok(Some(heap))
-}
-
-fn vm_entity_handle_error(
-    error: EntityHandleError,
-    owner_kind: LegacyVmOwnerKind,
-    creation_order: u32,
-    member: &str,
-    member_kind: &'static str,
-) -> LegacyObjectLeafAdoptError {
-    match error {
-        EntityHandleError::Reference(error) => LegacyObjectLeafAdoptError::Reference(error),
-        EntityHandleError::WrongEntity(entity_id) => LegacyObjectLeafAdoptError::VmWrongEntity {
-            owner_kind: owner_kind.name(),
-            creation_order,
-            member_kind,
-            member: member.to_owned(),
-            entity_id,
-        },
-        EntityHandleError::IndexOverflow(index) => LegacyObjectLeafAdoptError::VmHandleOverflow {
-            owner_kind: owner_kind.name(),
-            creation_order,
-            member: member.to_owned(),
-            index,
-        },
-    }
 }
 
 fn require_kind(
@@ -1327,61 +1079,20 @@ fn require_kind(
     creation_order: u32,
     saved_kind: &'static str,
     predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<(), LegacyObjectLeafAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     if predicate(runtime) {
         return Ok(());
     }
-    Err(LegacyObjectLeafAdoptError::WrongEntityKind {
-        creation_order,
-        saved_kind,
-        entity_id,
-        runtime_kind: entity_kind(runtime),
-    })
+    // The runtime kind is part of `EntityId`'s Display.
+    Err(
+        AdoptSite::element("saved leaf", creation_order).error(AdoptErrorKind::WrongEntityKind {
+            entity_id,
+            expected: saved_kind,
+        }),
+    )
 }
 
-fn entity_kind(entity: &Entity) -> &'static str {
-    match entity {
-        Entity::Pc(_) => "PC",
-        Entity::Soldier(_) => "soldier",
-        Entity::Civilian(_) => "civilian",
-        Entity::Fx(_) => "FX",
-        Entity::Target(_) => "target",
-        Entity::Bonus(_) => "bonus",
-        Entity::Scroll(_) => "scroll",
-        Entity::Projectile(_) => "projectile",
-        Entity::Net(_) => "net",
-    }
-}
-
-fn finite(
-    value: f32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<(), LegacyObjectLeafAdoptError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(LegacyObjectLeafAdoptError::NonFinite {
-            creation_order,
-            field,
-            value,
-        })
-    }
-}
-
-fn order_type(
-    value: u32,
-    creation_order: u32,
-    field: &'static str,
-) -> Result<OrderType, LegacyObjectLeafAdoptError> {
-    OrderType::try_from(value).map_err(|_| LegacyObjectLeafAdoptError::UnknownEnum {
-        creation_order,
-        field,
-        value,
-    })
-}
-
-fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyObjectLeafAdoptError> {
+fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyAdoptError> {
     use ObjectType::*;
     let result = match value {
         0 => None,
@@ -1418,11 +1129,14 @@ fn object_type(value: u32, creation_order: u32) -> Result<ObjectType, LegacyObje
         31 => BonusDomesdayBook,
         32 => BonusSwordOfTheState,
         _ => {
-            return Err(LegacyObjectLeafAdoptError::UnknownEnum {
-                creation_order,
-                field: "object type",
-                value,
-            });
+            return Err(
+                AdoptSite::element("saved object", creation_order).field_error(
+                    "object type",
+                    AdoptErrorKind::UnknownEnum {
+                        value: i64::from(value),
+                    },
+                ),
+            );
         }
     };
     Ok(result)
@@ -1460,10 +1174,14 @@ mod tests {
         assert_eq!(saved_arrow_damage(&profiles, None, false, 97).unwrap(), 0);
         assert!(matches!(
             saved_arrow_damage(&profiles, Some(Some(1)), false, 97),
-            Err(LegacyObjectLeafAdoptError::MissingBowProfile {
-                creation_order: 97,
-                profile_index: 1,
-                profile_count: 1,
+            Err(LegacyAdoptError {
+                creation_order: Some(97),
+                kind: AdoptErrorKind::OutOfRange {
+                    what: "bow profile",
+                    index: 1,
+                    count: 1,
+                },
+                ..
             })
         ));
     }
@@ -1479,11 +1197,12 @@ mod tests {
         );
         assert!(matches!(
             object_type(33, 17),
-            Err(LegacyObjectLeafAdoptError::UnknownEnum {
-                creation_order: 17,
-                field: "object type",
-                value: 33,
-            })
+            Err(LegacyAdoptError {
+                creation_order: Some(17),
+                field: Some(field),
+                kind: AdoptErrorKind::UnknownEnum { value: 33 },
+                ..
+            }) if field == "object type"
         ));
     }
 

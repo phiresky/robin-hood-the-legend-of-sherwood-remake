@@ -18,6 +18,7 @@ pub mod adopt;
 pub mod adopt_actor_ownership;
 pub mod adopt_camera;
 pub mod adopt_campaign;
+pub mod adopt_common;
 pub mod adopt_dynamic_elements;
 pub mod adopt_elements;
 pub mod adopt_engine;

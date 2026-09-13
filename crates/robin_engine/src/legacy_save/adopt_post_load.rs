@@ -8,8 +8,6 @@
 //! been fixed. The remaining click/selection/trajectory values are host-owned
 //! transient state in Rust and are returned as an explicit output.
 
-use thiserror::Error;
-
 use crate::{
     ai::Remark,
     element::{Entity, EntityId},
@@ -17,8 +15,8 @@ use crate::{
 };
 
 use super::{
-    LegacySaveAbiProfile,
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
+    adopt::{LegacyEntityFixups, missing_creation_order},
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     post_tail::LegacyGlobalAiState,
 };
@@ -88,28 +86,6 @@ impl LegacyPostLoadHostOutput {
     };
 }
 
-#[derive(Debug, Error)]
-pub enum LegacyPostLoadAdoptError {
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error("post-load consequences currently support Linux-i386 v48 saves, not {0:?}")]
-    UnsupportedAbi(LegacySaveAbiProfile),
-    #[error("saved NPC creation order {creation_order} resolves to missing entity {entity_id}")]
-    MissingNpc {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error("saved NPC creation order {creation_order} resolves to non-NPC entity {entity_id}")]
-    WrongEntityKind {
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error(
-        "saved NPC creation order {creation_order} has unknown current-remark enum value {value}"
-    )]
-    UnknownCurrentRemark { creation_order: u32, value: i32 },
-}
-
 /// Fully validated, infallible post-load mutation plan.
 #[derive(Clone, Debug)]
 pub struct LegacyPostLoadAdoptionPlan {
@@ -125,7 +101,7 @@ impl LegacyPostLoadAdoptionPlan {
         global_ai: &LegacyGlobalAiState,
         entities: &LegacyEntityFixups,
         rng_policy: LegacyRngRestorePolicy,
-    ) -> Result<Self, LegacyPostLoadAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut active_remark_completions = Vec::new();
         for record in &payloads.records {
             let local_ai = match &record.payload {
@@ -133,32 +109,34 @@ impl LegacyPostLoadAdoptionPlan {
                 LegacyElementPayload::ActorNpcCivilian(saved) => &saved.npc.local_ai,
                 _ => continue,
             };
+            let site = AdoptSite::element("saved NPC", record.header.creation_order);
             let raw = local_ai.common.current_remark;
             let remark = u32::try_from(raw)
                 .ok()
                 .and_then(|value| Remark::try_from(value).ok())
-                .ok_or(LegacyPostLoadAdoptError::UnknownCurrentRemark {
-                    creation_order: record.header.creation_order,
-                    value: raw,
+                .ok_or_else(|| {
+                    site.field_error(
+                        "current_remark",
+                        AdoptErrorKind::UnknownEnum {
+                            value: i64::from(raw),
+                        },
+                    )
                 })?;
             let entity_id = entities
                 .by_creation_order
                 .get(&record.header.creation_order)
                 .copied()
-                .ok_or(LegacySaveAdoptError::MissingCreationOrderReference {
-                    creation_order: record.header.creation_order,
-                })?;
-            let runtime = engine.world.entities.get(entity_id).ok_or(
-                LegacyPostLoadAdoptError::MissingNpc {
-                    creation_order: record.header.creation_order,
-                    entity_id,
-                },
-            )?;
+                .ok_or_else(|| missing_creation_order(record.header.creation_order))?;
+            let runtime = engine
+                .world
+                .entities
+                .get(entity_id)
+                .ok_or_else(|| site.error(AdoptErrorKind::MissingEntity { entity_id }))?;
             if !matches!(runtime, Entity::Soldier(_) | Entity::Civilian(_)) {
-                return Err(LegacyPostLoadAdoptError::WrongEntityKind {
-                    creation_order: record.header.creation_order,
+                return Err(site.error(AdoptErrorKind::WrongEntityKind {
                     entity_id,
-                });
+                    expected: "NPC",
+                }));
             }
             if remark != Remark::TheSoundOfSilence {
                 active_remark_completions.push((entity_id, local_ai.common.current_remark_flags));
