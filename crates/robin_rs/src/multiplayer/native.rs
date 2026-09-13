@@ -56,7 +56,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 // lock of the shared peer state into a second panic.
 #[cfg(test)]
 use super::clock::checked_epoch_ms;
-use super::clock::try_current_epoch_ms as current_epoch_ms;
+use super::clock::try_current_epoch_ms;
 use parking_lot::Mutex;
 use robin_engine::multiplayer::{
     BrowserPeerAuth, LeaderboardCoSignResponse, browser_seat_proof_message,
@@ -1306,7 +1306,7 @@ mod tests {
 
     #[test]
     fn native_clock_returns_a_real_post_epoch_timestamp() {
-        assert!(super::current_epoch_ms().expect("native system clock") > 0);
+        assert!(super::try_current_epoch_ms().expect("native system clock") > 0);
     }
 
     #[test]

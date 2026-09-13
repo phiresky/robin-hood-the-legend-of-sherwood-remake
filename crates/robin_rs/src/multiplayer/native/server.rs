@@ -138,7 +138,7 @@ impl ServerHandle {
             &self.host_key,
             &self.endpoint_addr,
             self.session_id.0,
-            current_epoch_ms()? / 1000,
+            try_current_epoch_ms()? / 1000,
             content_edition,
             content_identity_sha256,
             self.mission_id.clone(),
@@ -413,7 +413,7 @@ pub(super) fn maybe_begin_sim_locked(
     ) else {
         return Ok(None);
     };
-    let start_epoch_ms = current_epoch_ms()?
+    let start_epoch_ms = try_current_epoch_ms()?
         .checked_add(500)
         .ok_or_else(|| "multiplayer BeginSim timestamp exceeds the u64 Unix range".to_owned())?;
     let senders = peers
@@ -921,7 +921,7 @@ pub(super) fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u
         .map(|(frame, _)| *frame);
     let begin_frame = snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
     let begin_start_epoch_ms = if begin_frame != frame {
-        match current_epoch_ms().and_then(|now| {
+        match try_current_epoch_ms().and_then(|now| {
             now.checked_add(100).ok_or_else(|| {
                 "multiplayer ranked preflight timestamp exceeds the u64 Unix range".to_owned()
             })
@@ -1623,7 +1623,7 @@ pub(super) fn prepare_peer_session(
                 let begin_frame =
                     snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
                 let begin_start_epoch_ms = if begin_frame != frame {
-                    current_epoch_ms()?.checked_add(100).ok_or_else(|| {
+                    try_current_epoch_ms()?.checked_add(100).ok_or_else(|| {
                         "multiplayer reconnect timestamp exceeds the u64 Unix range".to_owned()
                     })?
                 } else {
@@ -1922,7 +1922,7 @@ pub(super) fn authenticate_peer(
     } else {
         crate::multiplayer::join_ticket::InvitationUse::Initial
     };
-    ticket.validate_use_at(current_epoch_ms()? / 1000, use_kind)?;
+    ticket.validate_use_at(try_current_epoch_ms()? / 1000, use_kind)?;
     let public_key = iroh::PublicKey::from_bytes(&auth.durable_public_key)
         .map_err(|error| format!("invalid durable browser public key: {error}"))?;
     let signature_bytes: [u8; iroh::Signature::LENGTH] = auth
