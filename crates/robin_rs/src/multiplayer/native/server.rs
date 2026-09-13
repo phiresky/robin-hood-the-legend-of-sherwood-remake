@@ -460,75 +460,21 @@ pub(super) fn fail_server(context: &ServerContext, error: String) {
     let _ = context.shutdown_tx.send(true);
 }
 
-/// Start with an explicit identity key. Tests use this to
-/// avoid touching the per-install on-disk identity.
+/// Start with an explicit identity key and a throwaway campaign. Tests use
+/// this to avoid touching the per-install on-disk identity; production hosting
+/// uses [`start_server_in_campaign`].
 #[cfg(test)]
-pub fn start_server_with_key(
+pub(in crate::multiplayer) fn start_server_with_key(
     key: SecretKey,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<String>,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
-    expected_players: u32,
-) -> std::io::Result<ServerHandle> {
-    start_server_inner(
-        &MultiplayerCampaignSession::default(),
-        key,
-        ServerConfig {
-            host_nickname: host_nickname,
-            mission_id: mission_id,
-            mission_seed: mission_seed,
-            sim_config: sim_config,
-            speech_timing_locale: speech_timing_locale,
-            expected_players: expected_players,
-            browser_join_enabled: false,
-        },
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
-        None,
-    )
-}
-
-/// Test-only explicit-key entry point for an exact hosted package. Browser
-/// ticket publication is disabled; production hosting uses
-/// [`start_server_in_campaign`].
-#[cfg(test)]
-pub(in crate::multiplayer) fn start_server_with_key_and_content(
-    key: SecretKey,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
-    expected_players: u32,
+    config: ServerConfig,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
         &MultiplayerCampaignSession::default(),
         key,
-        ServerConfig {
-            host_nickname: host_nickname,
-            mission_id: mission_id,
-            mission_seed: mission_seed,
-            sim_config: sim_config,
-            speech_timing_locale: None,
-            expected_players: expected_players,
-            browser_join_enabled: false,
-        },
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
+        config,
+        channels,
         content,
     )
 }
@@ -545,24 +491,51 @@ pub struct ServerConfig {
     pub browser_join_enabled: bool,
 }
 
+/// The transport-side ends of one mission's game-loop channels. The matching
+/// ends stay in the [`NetChannels`](crate::multiplayer::NetChannels) created
+/// alongside them by [`NetChannels::new_server`](crate::multiplayer::NetChannels::new_server).
+///
+/// Not serde: these are live channel ends and shared slots, not data.
+pub struct ServerChannels {
+    /// Events the server publishes to the game loop.
+    pub incoming_tx: Sender<NetEvent>,
+    /// Messages the game loop queues for broadcast.
+    pub outgoing_rx: Receiver<NetOutbound>,
+    /// The game loop's current simulation frame.
+    pub frame_cursor: FrameCursor,
+    /// Latest full snapshot handed to joining peers.
+    pub initial_snapshot: InitialSnapshot,
+}
+
+impl crate::multiplayer::NetChannels {
+    /// [`NetChannels::new`](Self::new) with the transport-side ends bundled
+    /// for [`start_server_in_campaign`].
+    pub fn new_server() -> (Self, ServerChannels) {
+        let (channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) = Self::new();
+        (
+            channels,
+            ServerChannels {
+                incoming_tx,
+                outgoing_rx,
+                frame_cursor,
+                initial_snapshot,
+            },
+        )
+    }
+}
+
 /// Start a mission transport within an explicitly owned campaign.
 pub fn start_server_in_campaign(
     campaign: &MultiplayerCampaignSession,
     config: ServerConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
         campaign,
         game_secret_key().map_err(std::io::Error::other)?,
         config,
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
+        channels,
         content,
     )
 }
@@ -571,10 +544,7 @@ pub(super) fn start_server_inner(
     campaign: &MultiplayerCampaignSession,
     key: SecretKey,
     config: ServerConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     let ServerConfig {
@@ -586,6 +556,14 @@ pub(super) fn start_server_inner(
         expected_players,
         browser_join_enabled,
     } = config;
+    // Unpacked before the first fallible step, so every channel end is moved
+    // or dropped at exactly the points the former by-value parameters were.
+    let ServerChannels {
+        incoming_tx,
+        outgoing_rx,
+        frame_cursor,
+        initial_snapshot,
+    } = channels;
     let campaign_lease = campaign.reserve_server()?;
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;

@@ -10,7 +10,7 @@ use super::{
 use crate::leaderboard_ranked_session::{
     OfficialRankedSessionSetupV1, RankedRunPreflightAdmissionV1,
 };
-use crate::multiplayer::ServerConfig;
+use crate::multiplayer::{ServerChannels, ServerConfig};
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::multiplayer::{NetEvent, NetOutbound};
 use robin_engine::player_command::PlayerId;
@@ -937,7 +937,7 @@ fn failed_campaign_server_start_keeps_handoff_and_releases_lease() {
         relay_url: None,
     };
     super::publish_host_session_continuation(campaign.state(), continuation.clone());
-    let (_channels, incoming, outgoing, cursor, snapshot) = crate::multiplayer::NetChannels::new();
+    let (_channels, server_channels) = crate::multiplayer::NetChannels::new_server();
     let result = super::start_server_inner(
         &campaign,
         key,
@@ -950,10 +950,7 @@ fn failed_campaign_server_start_keeps_handoff_and_releases_lease() {
             expected_players: 3,
             browser_join_enabled: false,
         },
-        incoming,
-        outgoing,
-        cursor,
-        snapshot,
+        server_channels,
         None,
     );
     let Err(error) = result else {
@@ -1242,16 +1239,22 @@ fn real_iroh_ranked_admission_uses_durable_key_and_gates_begin_and_reconnect() {
     let (server_out_tx, server_out_rx) = channel();
     let mut server = start_server_with_key(
         host_key,
-        "host".into(),
-        "Dem_Lei_MP".into(),
-        7,
-        robin_engine::engine::SimConfig::default(),
-        Some("en-US".into()),
-        server_in_tx,
-        server_out_rx,
-        Arc::new(AtomicU32::new(0)),
-        Arc::new(StdMutex::new(None)),
-        2,
+        ServerConfig {
+            host_nickname: "host".into(),
+            mission_id: "Dem_Lei_MP".into(),
+            mission_seed: 7,
+            sim_config: robin_engine::engine::SimConfig::default(),
+            speech_timing_locale: Some("en-US".into()),
+            expected_players: 2,
+            browser_join_enabled: false,
+        },
+        ServerChannels {
+            incoming_tx: server_in_tx,
+            outgoing_rx: server_out_rx,
+            frame_cursor: Arc::new(AtomicU32::new(0)),
+            initial_snapshot: Arc::new(StdMutex::new(None)),
+        },
+        None,
     )
     .expect("start real iroh ranked host");
     server
@@ -1434,16 +1437,22 @@ fn real_iroh_ready_before_browse_downgrade_still_begins_gameplay() {
     let (server_out_tx, server_out_rx) = channel();
     let mut server = start_server_with_key(
         iroh::SecretKey::generate(),
-        "host".into(),
-        "Dem_Lei_MP".into(),
-        7,
-        robin_engine::engine::SimConfig::default(),
-        Some("en-US".into()),
-        server_in_tx,
-        server_out_rx,
-        Arc::new(AtomicU32::new(0)),
-        Arc::new(StdMutex::new(None)),
-        2,
+        ServerConfig {
+            host_nickname: "host".into(),
+            mission_id: "Dem_Lei_MP".into(),
+            mission_seed: 7,
+            sim_config: robin_engine::engine::SimConfig::default(),
+            speech_timing_locale: Some("en-US".into()),
+            expected_players: 2,
+            browser_join_enabled: false,
+        },
+        ServerChannels {
+            incoming_tx: server_in_tx,
+            outgoing_rx: server_out_rx,
+            frame_cursor: Arc::new(AtomicU32::new(0)),
+            initial_snapshot: Arc::new(StdMutex::new(None)),
+        },
+        None,
     )
     .expect("start real iroh browse-only host");
     let (client_in_tx, client_in_rx) = channel();

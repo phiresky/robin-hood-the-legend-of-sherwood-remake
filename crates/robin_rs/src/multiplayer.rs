@@ -156,7 +156,6 @@ mod tests {
     };
     use crate::multiplayer::native::{
         HostedModContent, connect_client, connect_client_with_key, start_server_with_key,
-        start_server_with_key_and_content,
     };
     use robin_engine::multiplayer::LeaderboardCoSignResponse;
     use robin_engine::multiplayer::new_frame_cursor;
@@ -176,20 +175,20 @@ mod tests {
     }
 
     fn start_owned_server() -> (NetChannels, String) {
-        let (mut channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
-            NetChannels::new();
+        let (mut channels, server_channels) = NetChannels::new_server();
         let handle = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            incoming_tx,
-            outgoing_rx,
-            frame_cursor,
-            initial_snapshot,
-            1,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 1,
+                browser_join_enabled: false,
+            },
+            server_channels,
+            None,
         )
         .expect("start server on an ephemeral iroh identity");
         let connect_string = handle.connect_string();
@@ -982,16 +981,22 @@ mod tests {
         };
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            expected_config,
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: expected_config,
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start_server");
         _server
@@ -1097,16 +1102,22 @@ mod tests {
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start server");
         _server
@@ -1167,17 +1178,23 @@ mod tests {
         let server_key = iroh::SecretKey::generate();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let _server = start_server_with_key_and_content(
+        let _server = start_server_with_key(
             server_key,
-            "host".into(),
-            "TestMission".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "TestMission".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: None,
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
             Some(hosted),
         )
         .expect("start content server");
@@ -1350,16 +1367,22 @@ mod tests {
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start_server");
         let (client_in_tx, client_in_rx) = channel::<NetEvent>();

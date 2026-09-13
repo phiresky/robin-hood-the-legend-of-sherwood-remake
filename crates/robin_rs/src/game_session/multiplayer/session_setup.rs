@@ -51,7 +51,7 @@ pub(super) async fn establish(
                 .map_err(|error| {
                     format!("multiplayer: cannot select authoritative speech timing: {error}")
                 })?;
-            let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
+            let (mut channels, server_channels) = NetChannels::new_server();
             let content = args
                 .pending_distributed_mod
                 .as_ref()
@@ -72,10 +72,7 @@ pub(super) async fn establish(
                     expected_players: args.mp_expected_players.unwrap_or(1),
                     browser_join_enabled: publish_browser_links,
                 },
-                in_tx,
-                out_rx,
-                frame_cursor,
-                snapshot_slot,
+                server_channels,
                 content,
             );
             match started {

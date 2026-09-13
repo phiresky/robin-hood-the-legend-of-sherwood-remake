@@ -50,8 +50,8 @@ pub mod rendezvous;
 pub(super) mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerConfig, ServerHandle,
-    connect_client, connect_client_in_campaign, start_server_in_campaign,
+    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerChannels, ServerConfig,
+    ServerHandle, connect_client, connect_client_in_campaign, start_server_in_campaign,
 };
 
 #[cfg(target_arch = "wasm32")]
