@@ -62,6 +62,36 @@ impl Entities {
         Self { slots, generations }
     }
 
+    /// In-memory equivalent of a save/load round trip, used by
+    /// `PersistedWorldState::capture` (which also runs without serialization
+    /// for replay/rollback save markers). Sprites and NPC AI brains drop their
+    /// runtime-only state; generations restart empty.
+    ///
+    /// TODO: PC-owned `PcData::ai` brains are cloned raw, matching the removed
+    /// `Persisted*` mirrors, although serde projects them; decide whether the
+    /// in-memory projection should project them too.
+    pub(crate) fn persisted_projection(&self) -> Self {
+        let slots = self
+            .slots
+            .iter()
+            .map(|slot| {
+                slot.as_ref().map(|entity| {
+                    let mut entity = entity.clone();
+                    let element = entity.element_data_mut();
+                    element.sprite = element.sprite.persisted_projection();
+                    if let Some(npc) = entity.npc_data_mut() {
+                        npc.ai.ai_brain = npc.ai.ai_brain.persisted_projection();
+                    }
+                    entity
+                })
+            })
+            .collect();
+        Self {
+            slots,
+            generations: Vec::new(),
+        }
+    }
+
     /// Exact sparse slots used by the current native engine snapshot codec.
     pub(crate) fn snapshot_slots(&self) -> &[Option<Entity>] {
         &self.slots
@@ -743,6 +773,16 @@ mod generation_tests {
         let entities =
             Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
         let restored = serde_json::from_value(serde_json::to_value(&entities).unwrap()).unwrap();
+        assert_restored_append_generations(restored);
+    }
+
+    #[test]
+    fn append_after_persisted_restore_keeps_generations_aligned() {
+        let mut entities =
+            Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
+        let _slot = &mut entities[ScrollId(0)];
+        assert_eq!(entities.generation(ScrollId(0)), 1);
+        let restored = entities.persisted_projection();
         assert_restored_append_generations(restored);
     }
 }

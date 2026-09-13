@@ -145,7 +145,7 @@ impl PersistedWorldState {
             original_repulsive_point_counter: _,
         } = value;
         Self {
-            entities: value.entities.clone(),
+            entities: value.entities.persisted_projection(),
             pc_ids: value.pc_ids.clone(),
             original_pc_registry_ids: value.original_pc_registry_ids.clone(),
             fast_grid: crate::fast_find_grid::FastFindGridSnapshot::capture(&value.fast_grid),

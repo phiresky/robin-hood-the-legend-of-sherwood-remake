@@ -558,6 +558,17 @@ impl Sprite {
         }
     }
 
+    /// In-memory save projection: the serialized fields only, with every
+    /// runtime-only `#[serde(skip)]` field (scripts, alternate_scripts,
+    /// conversion, alternate_conversion, last_motion_state) reset exactly as
+    /// a save/load round trip resets it. `from_snapshot` must mirror the
+    /// serde(skip) set.
+    pub(crate) fn persisted_projection(&self) -> Self {
+        Self::from_snapshot(<Self as crate::bitcode_adapters::NativeBitcode>::to_wire(
+            self,
+        ))
+    }
+
     pub(crate) fn sprite_row_diagnostic_pre(&self) -> SpriteRowDiagnosticPre {
         let num_frames = self.num_frames_for_row(self.current_row);
         let current_frame = self.current_frame.min(num_frames.saturating_sub(1));

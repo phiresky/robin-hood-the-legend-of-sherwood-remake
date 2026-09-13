@@ -1773,3 +1773,111 @@ fn entity_table_encodings_match_golden_digests_body() {
     restored.entities = from_bitcode;
     assert_eq!(world_entities_golden_digests(&restored), GOLDEN);
 }
+
+/// `PersistedWorldState::capture` is also used without serialization (replay
+/// save markers, rollback-safe snapshots), so its in-memory entity projection
+/// must equal a JSON save/load round trip, including runtime-only state that
+/// neither bitcode nor the state hash observe.
+#[test]
+fn entity_persisted_projection_matches_json_round_trip() {
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(entity_persisted_projection_matches_json_round_trip_body)
+        .expect("spawn projection thread")
+        .join()
+        .expect("projection thread panicked");
+}
+
+fn entity_persisted_projection_matches_json_round_trip_body() {
+    use robin_util::state_hash::compute;
+
+    let mut entities = golden_entities_fixture();
+    let soldier_id = EntityId::Soldier(crate::entity_id::SoldierId(2));
+    let civilian_id = EntityId::Civilian(crate::entity_id::CivilianId(3));
+    for id in [soldier_id, civilian_id] {
+        let entity = entities.get_mut(id).expect("fixture npc");
+        let sprite = &mut entity.element_data_mut().sprite;
+        sprite.alternate_scripts = Some(std::sync::Arc::new(vec![
+            crate::sprite_script::SpriteScript::default(),
+        ]));
+        sprite.alternate_conversion = Some(std::sync::Arc::new(vec![4, 5]));
+        sprite.last_motion_state = Some(crate::sprite::MotionState::InProgress);
+        let ai = entity
+            .npc_data_mut()
+            .unwrap()
+            .ai_brain
+            .base_mut()
+            .expect("fixture brain");
+        ai.open_end_think_frames = 2;
+        ai.engine_deferred_end_think_frames = 1;
+        ai.engine_completion_verdict_resolved = true;
+    }
+
+    let projected = entities.persisted_projection();
+    let json_round_trip: crate::entities::Entities =
+        serde_json::from_str(&serde_json::to_string(&entities).unwrap()).unwrap();
+
+    assert_eq!(
+        bitcode::encode(&projected),
+        bitcode::encode(&json_round_trip)
+    );
+    assert_eq!(compute(&projected), compute(&json_round_trip));
+    assert_eq!(
+        serde_json::to_string(&projected).unwrap(),
+        serde_json::to_string(&json_round_trip).unwrap()
+    );
+    assert_eq!(bitcode::encode(&projected), bitcode::encode(&entities));
+    assert_eq!(compute(&projected), compute(&entities));
+
+    let runtime_only = |entities: &crate::entities::Entities, id| {
+        let entity = entities.get(id).unwrap();
+        let sprite = &entity.element_data().sprite;
+        let ai = entity.npc_data().unwrap().ai_brain.base().unwrap();
+        (
+            sprite.scripts.len(),
+            sprite.alternate_scripts.is_some(),
+            sprite.conversion.len(),
+            sprite.alternate_conversion.is_some(),
+            sprite.last_motion_state,
+            ai.open_end_think_frames,
+            ai.engine_deferred_end_think_frames,
+            ai.engine_completion_verdict_resolved,
+        )
+    };
+    for id in [soldier_id, civilian_id] {
+        assert_eq!(
+            runtime_only(&entities, id),
+            (
+                1,
+                true,
+                3,
+                true,
+                Some(crate::sprite::MotionState::InProgress),
+                2,
+                1,
+                true
+            )
+        );
+        assert_eq!(
+            runtime_only(&projected, id),
+            runtime_only(&json_round_trip, id)
+        );
+        assert_eq!(
+            runtime_only(&projected, id),
+            (0, false, 0, false, None, 0, 0, false)
+        );
+    }
+
+    // The world save capture is the projection, and restores it unchanged.
+    let mut world = crate::engine::state::WorldState::new();
+    world.entities = entities;
+    let restored = crate::engine::state::PersistedWorldState::capture(&world)
+        .into_runtime()
+        .entities;
+    for id in [soldier_id, civilian_id] {
+        assert_eq!(
+            runtime_only(&restored, id),
+            runtime_only(&json_round_trip, id)
+        );
+    }
+}
