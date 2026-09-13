@@ -2099,7 +2099,7 @@ impl EngineInner {
             // The original game's detectable cleanup and visibility calculation use live
             // human pointers. Rebuild the target records at this creation
             // slot, but let the NPC's detectable list dictate scan order.
-            let enemy_target_ids: std::collections::HashSet<_> = self
+            let mut enemy_target_ids: Vec<_> = self
                 .world
                 .entities
                 .get(npc_id)
@@ -2109,6 +2109,10 @@ impl EngineInner {
                 .iter()
                 .filter_map(|detectable| detectable.element)
                 .collect();
+            // Preserve the old occupied-slot order and deduplication, but
+            // resolve only listed targets rather than scanning every human.
+            enemy_target_ids.sort_unstable_by_key(|id| id.index());
+            enemy_target_ids.dedup();
             let enemy_targets = self.tick_enemy_ai_build_live_enemy_optical_targets(
                 assets,
                 world,
@@ -3144,14 +3148,26 @@ impl EngineInner {
             EntityId,
             &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         )>,
-        required_targets: Option<&std::collections::HashSet<EntityId>>,
+        required_targets: Option<&[EntityId]>,
     ) -> Vec<EnemyOpticalTarget> {
-        self.world
-            .entities
-            .humans()
-            .filter(|(id, _)| {
-                required_targets.is_none_or(|required| required.contains(&EntityId::from(*id)))
-            })
+        let all_targets;
+        let target_ids = match required_targets {
+            Some(ids) => ids,
+            None => {
+                all_targets = self
+                    .world
+                    .entities
+                    .humans()
+                    .map(|(id, _)| EntityId::from(id))
+                    .collect::<Vec<_>>();
+                &all_targets
+            }
+        };
+        target_ids.iter().filter_map(|&id| {
+            // Removed targets are intentionally absent from the snapshot:
+            // detectable cleanup below handles their stale list entries.
+            self.world.entities.get(id).map(|entity| (id, entity))
+        })
             .filter_map(|(id, entity)| match entity {
                 Entity::Pc(pc) => {
                     let entity_id: EntityId = id.into();
@@ -3311,7 +3327,7 @@ impl EngineInner {
                     })
                 }
                 Entity::Civilian(_) => None,
-                _ => unreachable!("Entities::humans returned a non-human entity"),
+                _ => None,
             })
             .collect()
     }
@@ -4514,7 +4530,14 @@ impl OwnerViewRadiusCache {
         if let Some(radius) = persistent.get(None, viewer, frame) {
             cache.values.borrow_mut().insert(None, radius);
         }
-        for index in 0..persistent.obstacles.len() {
+        for (index, entry) in persistent.obstacles.iter().enumerate() {
+            // Most entries belong to an earlier viewer or frame. Reject them
+            // before handle conversion and the instrumented cache lookup.
+            if !entry.is_some_and(|entry| {
+                entry.viewer == viewer && entry.frame == frame && entry.radius != 0.0
+            }) {
+                continue;
+            }
             let Some(handle) = u32::try_from(index)
                 .ok()
                 .and_then(crate::position_interface::ObstacleHandle::new)

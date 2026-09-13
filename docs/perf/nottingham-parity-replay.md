@@ -151,3 +151,40 @@ All 61 checkpoint/hash pairs matched the previous optimized run exactly.
 with none lost; its whole-capture sample shares also include idle frames after
 replay EOF. The timeout ended the graphical process after playback completed.
 The client library suite passed 2,196 tests, with 17 existing ignored tests.
+
+## Detection preparation follow-up
+
+Starting from `30e29cc5e`, replace per-owner target HashSet construction and
+the subsequent full human scan with sorted, deduplicated target IDs and direct
+live entity lookup. Slot order and stale-target omission remain unchanged.
+Owner view-radius cache import rejects mismatched viewer/frame and zero entries
+before handle conversion and instrumented lookup. It still copies the same
+matching values and preserves surface ownership and zero-as-miss behavior.
+
+The separate parity build and full `robin_engine` suite passed (4,749 unit
+tests, 15 integration checks, 38 doctests; existing ignores unchanged).
+Both graphical captures matched all 61 replay checkpoints, but unrelated phases
+slowed substantially in the modified capture, making that wall-time comparison
+inconclusive. Artifacts: `target/nottingham-detection-{before,after}.{log,data}`.
+
+Complete headless replays, measured with Linux `perf stat -e
+instructions:u,cycles:u,task-clock`, both exited successfully and matched all
+61 checkpoint/hash pairs. These runs include loading and execute the same
+1,503-frame recording. Artifacts:
+`target/nottingham-detection-{before,after}-headless.{log,stat}`.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| User-space instructions, billions | 94.94 | 85.47 |
+| CPU task time, seconds | 20.54 | 18.77 |
+| Whole-process elapsed seconds | 20.68 | 19.11 |
+| Detection, ms/tick over first 1,400 ticks | 3.858 | 3.050 |
+| Simulation, ms/frame over first 1,440 frames | 8.761 | 7.863 |
+| Total headless frame, ms/frame over first 1,440 frames | 11.483 | 10.564 |
+
+This measured 10% fewer instructions, 8.6% less CPU time, and 21% lower
+detection time. Exact wall-time gains remain sensitive to shared-machine load.
+
+TODO: Profile remaining detection-context collection and diplomacy work before
+changing its lifetime. Cache import still scans the obstacle array; a sparse
+index would need correct invalidation across writes, restores, and owner changes.
