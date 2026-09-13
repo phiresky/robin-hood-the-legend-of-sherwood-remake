@@ -1,9 +1,13 @@
 //! Replay attempt ownership. Live writers and playback snapshots never escape
 //! through mutable getters: lifecycle transitions retire all related state.
 
-use super::{BootstrapSaveBoundary, MissionFrame, ReplayFrameOrdinal, TimelineFrame};
+use super::{
+    BootstrapSaveBoundary, MissionFrame, RecorderFrameState, ReplayFrameOrdinal, TimelineFrame,
+};
 use crate::game_session::MissionError;
 use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
+use robin_engine::engine::Engine;
+use robin_engine::player_command::PlayerCommand;
 #[cfg(test)]
 use robin_engine::replay::ReplayRecorder;
 use robin_engine::replay::{ReplayHeader, ReplayPlayer, ReplaySaveMarker};
@@ -73,7 +77,19 @@ impl RecordingState {
     }
 }
 
-pub(super) struct ReplayLifecycle {
+/// Borrowed frame boundary that one applied save load rewrites.
+pub(super) struct RestoreBoundary<'a> {
+    pub(super) recording_index: &'a crate::mission_replays::RecordingIndex,
+    pub(super) frame: &'a mut MissionFrame,
+    pub(super) engine: &'a Engine,
+}
+
+pub(in crate::game_session) struct ReplayLifecycle {
+    /// Dense host-record position, separate from the lockstep cursor owned
+    /// by `TimelineRuntime`.
+    pub(super) ordinal: ReplayFrameOrdinal,
+    start_paused: bool,
+    pub(in crate::game_session) finished_logged: bool,
     recording: RecordingState,
     bootstrap_save: Option<(ReplaySaveIdentity, ReplaySaveMarker)>,
     // Runtime/session markers (including bootstrap), not the durable archive
@@ -95,8 +111,12 @@ impl ReplayLifecycle {
         recorder: Option<crate::replay_recording::SharedReplayRecorder>,
         player: Option<ReplayPlayer>,
         control: crate::replay_service::ReplayRecordingControl,
+        start_paused: bool,
     ) -> Self {
         Self {
+            ordinal: ReplayFrameOrdinal::ZERO,
+            start_paused,
+            finished_logged: false,
             recording: recorder.map_or(RecordingState::Inactive, RecordingState::Recording),
             bootstrap_save: None,
             saved_frames: BTreeMap::new(),
@@ -148,12 +168,315 @@ impl ReplayLifecycle {
         Ok(Some(boundary))
     }
 
-    pub(super) fn is_recording(&self) -> bool {
+    pub(in crate::game_session) fn is_recording(&self) -> bool {
         matches!(self.recording, RecordingState::Recording(_))
     }
 
-    pub(super) fn playback(&self) -> Option<&ReplayPlayer> {
+    pub(in crate::game_session) fn playback(&self) -> Option<&ReplayPlayer> {
         self.player.as_ref()
+    }
+
+    pub(in crate::game_session) fn start_paused(&self) -> bool {
+        self.start_paused
+    }
+
+    /// Recorder cadence sample for the current host ordinal: only an active
+    /// recording hashes, and only at every 25th dense record.
+    pub(super) fn recorder_hash(&self, engine: &Engine) -> Option<u64> {
+        self.is_recording().then_some(()).and_then(|_| {
+            self.ordinal
+                .number()
+                .is_multiple_of(25)
+                .then(|| robin_engine::replay::state_hash(engine))
+        })
+    }
+
+    /// Save capture may insert host-only records during the open input phase.
+    /// Resample cadence at the new ordinal before queued commands are applied.
+    pub(in crate::game_session) fn synchronize_save_boundary(
+        &mut self,
+        frame: &mut MissionFrame,
+        engine: &Engine,
+    ) {
+        if let Some(ordinal) = self.next_ordinal()
+            && ordinal != self.ordinal.number()
+        {
+            self.ordinal = ReplayFrameOrdinal::from_wire(ordinal);
+            frame.recorder_hash = ordinal
+                .is_multiple_of(25)
+                .then(|| robin_engine::replay::state_hash(engine));
+        }
+    }
+
+    pub(in crate::game_session) fn begin_recording(
+        &mut self,
+        frame: &mut MissionFrame,
+        enabled: bool,
+    ) {
+        if !self.is_recording() || !enabled {
+            return;
+        }
+        frame.open_recording();
+    }
+
+    /// Seal the recorder after the deterministic quit-mission update has
+    /// committed. Ranked replay validation requires that terminal command to
+    /// be the final replay record; narrative/stat modal dismissals are host UI
+    /// and must not extend the canonical simulation artifact.
+    pub(in crate::game_session) fn seal_terminal_recording(
+        &mut self,
+        frame: &MissionFrame,
+    ) -> bool {
+        let terminal_count = frame
+            .commands
+            .commands
+            .iter()
+            .chain(frame.post_commands.commands.iter())
+            .filter(|input| {
+                matches!(
+                    &input.command,
+                    PlayerCommand::ApplyQuitMissionUpdates { .. }
+                )
+            })
+            .count();
+        if terminal_count == 0 {
+            return false;
+        }
+        assert_eq!(
+            terminal_count, 1,
+            "one mission frame cannot contain multiple terminal updates"
+        );
+        assert_eq!(
+            frame.recorder_state,
+            RecorderFrameState::Finished,
+            "terminal replay must be sealed after recorder finalization"
+        );
+        if self.is_recording() {
+            self.seal();
+            tracing::debug!(
+                replay_ordinal = self.ordinal.number(),
+                "sealed canonical replay at terminal mission record"
+            );
+        }
+        true
+    }
+
+    /// A completed in-mission save at the lockstep cursor `timeline`.
+    ///
+    /// A save at a clean pre-command boundary becomes a save-marker record
+    /// (state hash + frame) so a later load of it can be expressed as a
+    /// load-back.
+    pub(super) fn note_save_written(
+        &mut self,
+        identity: ReplaySaveIdentity,
+        timeline: TimelineFrame,
+        frame: &mut MissionFrame,
+        engine: &Engine,
+    ) {
+        let replay_ordinal = self.ordinal;
+        if !self.is_recording() {
+            return;
+        }
+        if self.saved_frame(identity).is_some() {
+            self.synchronize_save_boundary(frame, engine);
+            return;
+        }
+        // Gameplay input remains queued until after save processing.
+        // A nonempty command queue is not evidence of a mid-frame capture.
+        let hash = robin_engine::replay::state_hash(engine);
+        let marker_timeline = timeline;
+        self.record_save(identity, replay_ordinal, marker_timeline, hash);
+        tracing::info!(
+            replay_ordinal = replay_ordinal.number(),
+            timeline_frame = marker_timeline.number(),
+            hash = format!("{hash:016x}"),
+            "replay: save marker recorded"
+        );
+    }
+
+    /// A completed in-mission load, applied while the lockstep cursor was at
+    /// `current`.
+    ///
+    /// A load drops commands already dispatched this frame (their effects were
+    /// overwritten wholesale) and records a load-back to the linked mission
+    /// archive marker, including saves made by earlier processes.
+    /// `rebase_history` resets every reconstruction consumer (cursor, network
+    /// inputs, rewind history) onto its target; it is called exactly once at
+    /// the same point of each path that the old single-owner body reset them.
+    pub(super) fn note_load_applied(
+        &mut self,
+        snapshot: Vec<u8>,
+        identity: ReplaySaveIdentity,
+        is_continue: bool,
+        current: TimelineFrame,
+        boundary: RestoreBoundary<'_>,
+        rebase_history: impl FnOnce(TimelineFrame),
+    ) {
+        match self.restore_archive(&snapshot) {
+            Ok(Some(restored)) => {
+                self.adopt_archive_restore(
+                    restored,
+                    snapshot,
+                    is_continue,
+                    boundary,
+                    rebase_history,
+                );
+            }
+            Ok(None) => self.record_session_load(
+                snapshot,
+                identity,
+                is_continue,
+                current,
+                boundary,
+                rebase_history,
+            ),
+            Err(error) => {
+                self.invalidate(format!("replay history unavailable after load: {error}"));
+                boundary.frame.recorder_state = RecorderFrameState::Inactive;
+                boundary.frame.recorder_hash = None;
+            }
+        }
+    }
+
+    /// The durable mission archive resolved the loaded save to a restore
+    /// boundary: continue its attempt at the archive's ordinal and timeline.
+    fn adopt_archive_restore(
+        &mut self,
+        restored: crate::replay_recording::ReplayRestoreBoundary,
+        snapshot: Vec<u8>,
+        is_continue: bool,
+        boundary: RestoreBoundary<'_>,
+        rebase_history: impl FnOnce(TimelineFrame),
+    ) {
+        let RestoreBoundary {
+            recording_index,
+            frame,
+            engine,
+        } = boundary;
+        let crate::replay_recording::ReplayRestoreBoundary {
+            ordinal,
+            timeline_frame: timeline,
+            marker_ordinal: target,
+        } = restored;
+        self.ordinal = ReplayFrameOrdinal::from_wire(ordinal);
+        let timeline = TimelineFrame::from_wire(timeline);
+        rebase_history(timeline);
+        let recorder_state = frame.recorder_state;
+        frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
+        frame.recorder_state = recorder_state;
+        frame.rebind_timeline_after_discontinuity(timeline);
+        frame.recorder_hash = ordinal
+            .is_multiple_of(25)
+            .then(|| robin_engine::replay::state_hash(engine));
+        if let Some(target) = target {
+            self.record_load_back(
+                self.ordinal,
+                ReplayFrameOrdinal::from_wire(target),
+                is_continue,
+            );
+        } else {
+            self.record_load_snapshot(self.ordinal, snapshot, timeline, is_continue);
+        }
+        self.record_taints([robin_engine::replay_rankability::InputTaintKind::StateLoad]);
+        match self.commit_restore_boundary(
+            timeline,
+            robin_engine::replay::state_hash(engine),
+            recording_index,
+        ) {
+            Ok(next) => {
+                self.ordinal = ReplayFrameOrdinal::from_wire(next);
+                frame.recorder_hash = next
+                    .is_multiple_of(25)
+                    .then(|| robin_engine::replay::state_hash(engine));
+            }
+            Err(error) => {
+                self.invalidate(format!("failed to persist replay restore: {error}"));
+                frame.recorder_state = RecorderFrameState::Inactive;
+                frame.recorder_hash = None;
+            }
+        }
+    }
+
+    /// No archive boundary: reopen a sealed attempt if needed, then express
+    /// the load as a load-back to a session save marker or an embedded
+    /// snapshot.
+    fn record_session_load(
+        &mut self,
+        snapshot: Vec<u8>,
+        identity: ReplaySaveIdentity,
+        is_continue: bool,
+        current: TimelineFrame,
+        boundary: RestoreBoundary<'_>,
+        rebase_history: impl FnOnce(TimelineFrame),
+    ) {
+        let RestoreBoundary {
+            recording_index,
+            frame,
+            engine,
+        } = boundary;
+        let reopened = self.reopen_after_restore(identity, recording_index);
+        if reopened {
+            self.ordinal = ReplayFrameOrdinal::ZERO;
+            // The load replaced every effect admitted before it. Keep
+            // this host frame's scheduling flags, but give the new
+            // attempt a clean recording transaction.
+            frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
+        }
+        let replay_ordinal = self.ordinal;
+        self.record_taints([robin_engine::replay_rankability::InputTaintKind::StateLoad]);
+        // The engine state jumped; buffered rewind history no longer
+        // describes this timeline's future.
+        let recorded_save = self.saved_frame(identity);
+        let target = recorded_save.map_or(current, |(_, timeline)| timeline);
+        rebase_history(target);
+        frame.rebind_timeline_after_discontinuity(target);
+        if !frame.commands().is_empty() {
+            tracing::debug!(
+                dropped = frame.commands().len(),
+                "replay: dropping commands dispatched before the load; \
+                 their effects were overwritten by the loaded state"
+            );
+            frame.discard_commands();
+        }
+        if !self.is_recording() {
+            frame.recorder_state = RecorderFrameState::Inactive;
+            frame.recorder_hash = None;
+            return;
+        }
+        if let Some((to_ordinal, _)) = recorded_save {
+            frame.recorder_hash = replay_ordinal
+                .number()
+                .is_multiple_of(25)
+                .then(|| robin_engine::replay::state_hash(engine));
+            self.record_load_back(replay_ordinal, to_ordinal, is_continue);
+            tracing::info!(
+                replay_ordinal = replay_ordinal.number(),
+                to_ordinal = to_ordinal.number(),
+                "replay: load recorded as linear load-back"
+            );
+        } else {
+            // TODO(replay): deduplicate repeated external-save payloads
+            // within an attempt without losing their restore boundaries.
+            self.record_load_snapshot(replay_ordinal, snapshot, target, is_continue);
+            let recorder_state = frame.recorder_state;
+            frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
+            frame.recorder_state = recorder_state;
+        }
+    }
+
+    /// Consume a replay record outside the normal outer-frame lifecycle.
+    /// Debugger/manual stepping owns its own transaction, so it advances the
+    /// dense replay ordinal immediately instead of deferring it to
+    /// `TimelineRuntime::finish_recording`.
+    pub(in crate::game_session) fn consume_frame_for_step(
+        &mut self,
+        timeline: TimelineFrame,
+    ) -> Result<super::ReplayStepAdmission, MissionError> {
+        let admission = self.consume_step(timeline)?;
+        if matches!(admission, super::ReplayStepAdmission::Recorded(_)) {
+            self.ordinal.advance();
+        }
+        Ok(admission)
     }
 
     pub(super) fn inject_replay_input(&mut self, frame: &mut MissionFrame) {
@@ -162,7 +485,7 @@ impl ReplayLifecycle {
         }
     }
 
-    pub(super) fn resolve_ordinal(
+    pub(in crate::game_session) fn resolve_ordinal(
         &self,
         target: TimelineFrame,
     ) -> Result<Option<ReplayFrameOrdinal>, MissionError> {
@@ -191,11 +514,11 @@ impl ReplayLifecycle {
             .transpose()
     }
 
-    pub(super) fn consume_step(
+    fn consume_step(
         &mut self,
-        ordinal: ReplayFrameOrdinal,
         timeline: TimelineFrame,
     ) -> Result<super::ReplayStepAdmission, MissionError> {
+        let ordinal = self.ordinal;
         let Some(player) = &mut self.player else {
             return Ok(super::ReplayStepAdmission::NoActiveReplay);
         };
@@ -226,7 +549,6 @@ impl ReplayLifecycle {
 
     pub(super) fn apply_playback_boundary(
         &mut self,
-        ordinal: ReplayFrameOrdinal,
         timeline: TimelineFrame,
         rewind: &mut crate::rewind::RewindBuffer,
         host: &mut crate::host::Host,
@@ -234,6 +556,7 @@ impl ReplayLifecycle {
         manager: &mut robin_engine::engine_manager::EngineManager,
         assets: &robin_engine::engine::LevelAssets,
     ) -> Result<Option<TimelineFrame>, MissionError> {
+        let ordinal = self.ordinal;
         let Some(player) = self.player.as_ref().filter(|player| !player.is_finished()) else {
             return Ok(None);
         };
@@ -357,11 +680,14 @@ impl ReplayLifecycle {
             .write_load_snapshot(ordinal.number(), snapshot, timeline.number(), is_continue);
     }
 
-    pub(super) fn record_taints(
+    /// Attach source evidence observed outside the deterministic command
+    /// value (notably HTTP player-command and stepping ingress) to the current
+    /// streaming replay ordinal.
+    pub(in crate::game_session) fn record_taints(
         &mut self,
-        ordinal: ReplayFrameOrdinal,
         taints: impl IntoIterator<Item = robin_engine::replay_rankability::InputTaintKind>,
     ) {
+        let ordinal = self.ordinal;
         if let Some(recorder) = self.recording.recorder_mut() {
             for kind in taints {
                 recorder.record_input_taint(kind, ordinal.number());
@@ -391,7 +717,7 @@ impl ReplayLifecycle {
             )
     }
 
-    pub(super) fn seal(&mut self) {
+    pub(in crate::game_session) fn seal(&mut self) {
         self.control.checkpoint_ranked_input();
         self.recording = match std::mem::replace(&mut self.recording, RecordingState::Inactive) {
             RecordingState::Recording(recorder) => {
@@ -453,11 +779,18 @@ impl ReplayLifecycle {
         }
     }
 
-    pub(super) fn register_bootstrap(
+    /// Register a successfully completed bootstrap Restart save at frame zero.
+    ///
+    /// That save is captured during mission setup, immediately before
+    /// runtime construction, so its payload is exactly the frame-0
+    /// boundary state the replay header reconstructs.  Registering it here
+    /// lets a later script-triggered restart record as a load-back to
+    /// frame 0 instead of a timeline discontinuity.
+    pub(in crate::game_session) fn register_bootstrap(
         &mut self,
-        ordinal: ReplayFrameOrdinal,
         completed: Option<BootstrapSaveBoundary>,
     ) {
+        let ordinal = self.ordinal;
         let Some(BootstrapSaveBoundary { identity, marker }) = completed else {
             return;
         };
@@ -481,7 +814,7 @@ impl ReplayLifecycle {
     }
 
     #[cfg(test)]
-    pub(super) fn install_test_recorder(&mut self, recorder: ReplayRecorder) {
+    pub(in crate::game_session) fn install_test_recorder(&mut self, recorder: ReplayRecorder) {
         assert!(matches!(self.recording, RecordingState::Inactive));
         assert!(self.saved_frames.is_empty());
         self.recording = RecordingState::Recording(recorder.into());
@@ -553,13 +886,13 @@ mod tests {
             &Default::default(),
         )
         .unwrap();
-        ReplayLifecycle::new(Some(recorder.into()), None, service.recording())
+        ReplayLifecycle::new(Some(recorder.into()), None, service.recording(), false)
     }
 
     #[test]
     fn sealing_and_invalidation_are_idempotent_without_creating_a_writer() {
         let service = Arc::new(crate::replay_service::ReplayService::default());
-        let mut inactive = ReplayLifecycle::new(None, None, service.recording());
+        let mut inactive = ReplayLifecycle::new(None, None, service.recording(), false);
         inactive.seal();
         inactive.invalidate("disabled");
         inactive.seal();
@@ -600,16 +933,13 @@ mod tests {
         let mut lifecycle = recording(&service);
         let bootstrap = ReplaySaveIdentity::SessionRestart(1);
         let later = ReplaySaveIdentity::Payload([2; 32]);
-        lifecycle.register_bootstrap(
-            ReplayFrameOrdinal::ZERO,
-            Some(BootstrapSaveBoundary {
-                identity: bootstrap,
-                marker: ReplaySaveMarker {
-                    state_hash: 17,
-                    timeline_frame: 0,
-                },
-            }),
-        );
+        lifecycle.register_bootstrap(Some(BootstrapSaveBoundary {
+            identity: bootstrap,
+            marker: ReplaySaveMarker {
+                state_hash: 17,
+                timeline_frame: 0,
+            },
+        }));
         // Save markers belong to the next dense record boundary, not an
         // arbitrary future ordinal. Advance a real attempt before saving.
         for frame in 0..3 {
@@ -686,7 +1016,7 @@ mod tests {
         let mut player =
             ReplayPlayer::new(service.exports().snapshot().unwrap().parse_sync().unwrap());
         player.seek_ordinal(ReplayFrameOrdinal::from_wire(2));
-        let playback = ReplayLifecycle::new(None, Some(player), service.recording());
+        let playback = ReplayLifecycle::new(None, Some(player), service.recording(), false);
         assert_eq!(
             playback.resolve_ordinal(TimelineFrame::ZERO).unwrap(),
             Some(ReplayFrameOrdinal::ZERO)

@@ -901,7 +901,7 @@ impl InteractiveFrameSimulation {
                 post_render_engine_cleanup(
                     frame,
                     host.transport.local_seat(),
-                    runtime.playback().is_some(),
+                    runtime.replay().playback().is_some(),
                 );
             }
             let menu_resources =
@@ -1271,7 +1271,7 @@ impl InteractiveFrameSimulation {
         if ui_task_exit_requested {
             let application_context = host.application_context().clone();
             let requested = frame.begin_post_initialize();
-            let post_initialized = runtime.cross_post_initialize(|| {
+            let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
                     &mut host.audio,
@@ -1298,7 +1298,7 @@ impl InteractiveFrameSimulation {
                 );
             }
             runtime.finish_recording(&mut frame);
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                 GameCode::Quit,
             )));
@@ -1306,7 +1306,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
-            playing_back: runtime.playback().is_some(),
+            playing_back: runtime.replay().playback().is_some(),
             host,
             game,
             manager,
@@ -1329,7 +1329,7 @@ impl InteractiveFrameSimulation {
         {
             let application_context = host.application_context().clone();
             let requested = frame.begin_post_initialize();
-            let post_initialized = runtime.cross_post_initialize(|| {
+            let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
                     &mut host.audio,
@@ -1356,13 +1356,15 @@ impl InteractiveFrameSimulation {
                 );
             }
             runtime.finish_recording(&mut frame);
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                 GameCode::Quit,
             )));
         }
 
-        runtime.trace(FrameContractStage::ModalDrain);
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::ModalDrain);
         Ok(FrameSimulationOutcome::Present(FramePresentationHandoff {
             frame,
             rewind_active,
@@ -1395,8 +1397,12 @@ impl InteractiveFrameSimulation {
         // pass). The hash itself was computed at the top of the
         // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
-        runtime.begin_recording(frame, execution.records_commands());
-        runtime.trace(FrameContractStage::Simulation);
+        runtime
+            .replay_mut()
+            .begin_recording(frame, execution.records_commands());
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::Simulation);
 
         // ── Engine tick ──
         // The pause menu freezes the simulation by skipping the
@@ -1404,8 +1410,8 @@ impl InteractiveFrameSimulation {
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
-        let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
-        let tick_exit_code = runtime.run_simulation(|| {
+        let replay_idle = runtime.replay().playback().is_some() && !frame.has_recorded_input();
+        let tick_exit_code = runtime.lifecycle_mut().run_simulation(|| {
             if replay_idle {
                 frame.admit_simulation();
                 return None;
@@ -1480,7 +1486,9 @@ impl InteractiveFrameSimulation {
         }
         frame.commit_timeline_after(runtime.current_frame());
 
-        runtime.trace(FrameContractStage::HostRpcAndTimelineCommit);
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::HostRpcAndTimelineCommit);
         tick_exit_code
     }
 
@@ -1579,15 +1587,13 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        http.set_replay_status(
-            runtime
-                .playback()
-                .map(|p| crate::http_server::ReplayStatus {
-                    frame: p.current_frame(),
-                    total: p.total_frames(),
-                    paused: *manual_pause,
-                }),
-        );
+        http.set_replay_status(runtime.replay().playback().map(|p| {
+            crate::http_server::ReplayStatus {
+                frame: p.current_frame(),
+                total: p.total_frames(),
+                paused: *manual_pause,
+            }
+        }));
 
         // ── Keyboard-driven single-frame step (`.` / `,`) ──
         // Same bookkeeping as the HTTP `/step-forward` / `/step-back`
@@ -1627,12 +1633,12 @@ impl InteractiveFrameSimulation {
             }
         } else if keyboard_step == KeyboardStep::Back {
             if let Some(target) = runtime.current_frame().previous()
-                && let Some(oldest) = runtime.retained_history().oldest_reachable_frame()
+                && let Some(oldest) = runtime.history().buffer().oldest_reachable_frame()
                 && target.number() >= oldest
             {
-                runtime.begin_rewind_session();
+                runtime.history_mut().begin_rewind_session();
                 let restored = runtime.restore_retained_frame(manager, assets, target);
-                runtime.end_rewind_session();
+                runtime.history_mut().end_rewind_session();
                 if !restored {
                     tracing::warn!("step-back: rewind_to({}) failed", target.number());
                 }

@@ -5,7 +5,7 @@ use crate::rollback_checker::RollbackChecker;
 use robin_engine::engine::{Engine, SimulationFrameInput};
 use serde::{Serialize, Serializer};
 
-pub(super) struct ReconstructionHistory {
+pub(in crate::game_session) struct ReconstructionHistory {
     pub(super) buffer: RewindBuffer,
     checker: Option<RollbackChecker>,
 }
@@ -15,7 +15,44 @@ impl ReconstructionHistory {
         Self { buffer, checker }
     }
 
-    pub(super) fn reset_checker(&mut self) {
+    /// Read-only view of retained reconstruction frames. Mutation stays behind
+    /// the lifecycle methods so the checker resets with the buffer.
+    pub(in crate::game_session) fn buffer(&self) -> &RewindBuffer {
+        &self.buffer
+    }
+
+    pub(in crate::game_session) fn begin_rewind_session(&mut self) {
+        self.buffer.begin_session();
+    }
+
+    pub(in crate::game_session) fn end_rewind_session(&mut self) {
+        self.buffer.end_session();
+    }
+
+    pub(in crate::game_session) fn checkpoint_recent(&mut self, frame: u32, engine: &Engine) {
+        self.buffer.checkpoint_recent(frame, engine);
+    }
+
+    #[cfg(test)]
+    pub(in crate::game_session) fn append_fixture(&mut self, input: SimulationFrameInput) {
+        self.buffer.end_frame_input(input);
+    }
+
+    #[cfg(test)]
+    pub(in crate::game_session) fn clear_recent_fixture(&mut self) {
+        self.buffer.clear_recent_checkpoints();
+    }
+
+    #[cfg(test)]
+    pub(in crate::game_session) fn reconstruct_fixture(
+        &mut self,
+        assets: &robin_engine::engine::LevelAssets,
+        frame: u32,
+    ) -> Option<Engine> {
+        self.buffer.rewind_to(assets, frame)
+    }
+
+    pub(in crate::game_session) fn reset_checker(&mut self) {
         if let Some(checker) = self.checker.as_mut() {
             checker.reset();
         }
@@ -34,7 +71,7 @@ impl ReconstructionHistory {
         self.buffer.truncate_recent_after(frame);
     }
 
-    pub(super) fn commit(&mut self, input: SimulationFrameInput, engine: &Engine) {
+    pub(in crate::game_session) fn commit(&mut self, input: SimulationFrameInput, engine: &Engine) {
         self.buffer.end_frame_input(input);
         if let Some(checker) = self.checker.as_mut() {
             checker.check_after_commit(&self.buffer, engine);

@@ -90,7 +90,7 @@ fn suppress_load_requests_during_playback(
     runtime: &crate::game_session::runtime::TimelineRuntime,
     callbacks: &mut RustCallbacks,
 ) {
-    if runtime.playback().is_some()
+    if runtime.replay().playback().is_some()
         && callbacks
             .pending_request()
             .is_some_and(|request| !request.writes_save_payload())
@@ -140,7 +140,9 @@ pub(super) async fn process_operation_and_save(
     let presentation = &mut frontend.presentation;
 
     // ── Process game operations (save/load/quit/win/lose) ──
-    runtime.trace(FrameContractStage::OperationAndSave);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::OperationAndSave);
     //
     // The Game state machine queues save/load intents on the
     // callbacks; `perform_pending_save_load` then flushes them to
@@ -153,7 +155,7 @@ pub(super) async fn process_operation_and_save(
     let autosave_allowed = crate::autosave::session_allows_autosave(
         callbacks.autosave_enabled(),
         host.transport.net().is_some(),
-        runtime.playback().is_some(),
+        runtime.replay().playback().is_some(),
         args.headless,
     );
     let snapshot_available = callbacks
@@ -321,9 +323,11 @@ pub(super) async fn process_operation_and_save(
     )
     .await;
     if save_load.processed() {
-        runtime.reset_rollback_checker();
+        runtime.history_mut().reset_checker();
     }
-    runtime.synchronize_save_boundary(&mut frame, &manager.engine);
+    runtime
+        .replay_mut()
+        .synchronize_save_boundary(&mut frame, &manager.engine);
     if let Some(event) = save_load.event.take() {
         runtime.note_save_load_event(
             host.application_context().recording_index(),
@@ -340,7 +344,7 @@ pub(super) async fn process_operation_and_save(
     // campaign/RNG/SimConfig checkpoint.
     if save_load.restart_requested() {
         game.operation.set(GameCode::LevelRestart);
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             GameCode::LevelRestart,
         ))));
@@ -355,7 +359,7 @@ pub(super) async fn process_operation_and_save(
     if let Some(transition) = save_load.take_transition() {
         *campaign_transition = Some(transition);
         game.operation.set(GameCode::LevelLoad);
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             GameCode::LevelLoad,
         ))));
@@ -368,13 +372,13 @@ pub(super) async fn process_operation_and_save(
     // variant succeeds, threading the slot type back out of the
     // save-I/O layer.
     if let Some(sync) = save_load.restore() {
-        runtime.note_state_restored();
+        runtime.lifecycle_mut().note_state_restored();
         game.apply_post_load_sync(sync.is_continue);
         game.post_load_resolution_resync();
     }
 
     if let Some(exit_code) = exit_code {
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             exit_code,
         ))));

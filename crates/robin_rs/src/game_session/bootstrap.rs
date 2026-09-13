@@ -458,12 +458,16 @@ impl MissionBootstrap {
             wait_for_multiplayer_start,
             self.host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST,
         );
-        debug_assert_eq!(timeline.frame_contract(), contract);
-        timeline.register_bootstrap_save(match self.restart_save {
-            RestartSaveState::Absent => None,
-            RestartSaveState::Completed(boundary) => Some(boundary),
-            RestartSaveState::Pending(_) => panic!("runtime opened before Restart save completion"),
-        });
+        debug_assert_eq!(timeline.lifecycle().contract(), contract);
+        timeline
+            .replay_mut()
+            .register_bootstrap(match self.restart_save {
+                RestartSaveState::Absent => None,
+                RestartSaveState::Completed(boundary) => Some(boundary),
+                RestartSaveState::Pending(_) => {
+                    panic!("runtime opened before Restart save completion")
+                }
+            });
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
@@ -482,8 +486,11 @@ impl MissionBootstrap {
         } else {
             manager.engine.initial_mission_night_color()
         };
-        let control =
-            MissionControl::new(timeline.initially_paused(), visual_shadow, visual_ambiance);
+        let control = MissionControl::new(
+            timeline.replay().start_paused(),
+            visual_shadow,
+            visual_ambiance,
+        );
         let http = self
             .host
             .application_context()

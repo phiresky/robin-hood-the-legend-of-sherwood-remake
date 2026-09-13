@@ -67,7 +67,7 @@ impl NetworkReconciliation {
         self.peer_hashes.insert(frame, hash);
     }
 
-    pub(super) fn remember_local_hash(&mut self, frame: u32, hash: u64) {
+    pub(in crate::game_session) fn remember_local_hash(&mut self, frame: u32, hash: u64) {
         // Preserve the first pre-tick sample across repeated paused presentations.
         self.local_hashes.entry(frame).or_insert(hash);
         while self.local_hashes.len() > 256 {
@@ -75,16 +75,16 @@ impl NetworkReconciliation {
         }
     }
 
-    pub(super) fn has_local_hash(&self, frame: u32) -> bool {
+    pub(in crate::game_session) fn has_local_hash(&self, frame: u32) -> bool {
         self.local_hashes.contains_key(&frame)
     }
 
-    pub(super) fn invalidate_after(&mut self, frame: u32) {
+    pub(in crate::game_session) fn invalidate_after(&mut self, frame: u32) {
         // Input F changes post-F state; the pre-F sample remains authoritative.
         self.local_hashes.retain(|&f, _| f <= frame);
     }
 
-    pub(super) fn clear_local_hashes(&mut self) {
+    pub(in crate::game_session) fn clear_local_hashes(&mut self) {
         self.local_hashes.clear();
     }
 

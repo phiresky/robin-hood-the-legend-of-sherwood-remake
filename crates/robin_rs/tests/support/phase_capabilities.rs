@@ -298,13 +298,7 @@ fn replay_authority_has_no_process_singleton() {
 fn timeline_reconciliation_and_history_are_private_owners() {
     let runtime = parsed(include_str!("../../src/game_session/runtime.rs"));
     let owner = item_struct(&runtime, "TimelineRuntime").expect("timeline runtime");
-    for name in [
-        "network",
-        "history",
-        "mp_admission",
-        "replay",
-        "multiplayer_timing",
-    ] {
+    for name in ["lifecycle", "network", "history", "replay", "multiplayer"] {
         let field = owner
             .fields
             .iter()

@@ -24,7 +24,9 @@ fn begin_interactive_frame(
         assets,
     } = ingress;
     let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
-    runtime.begin_execution_trace(FrameContractStage::NetworkIngress);
+    runtime
+        .lifecycle_mut()
+        .begin_execution_trace(FrameContractStage::NetworkIngress);
 
     // ── Multiplayer: drain incoming wire events ───────────────
     // - Future inputs queue in `pending_inputs[target_frame]`.
@@ -282,7 +284,7 @@ pub(super) async fn collect_input_and_menus(
             &mut game.operation,
             campaign_transition,
         )?;
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             exit_code,
         ))));
@@ -346,11 +348,13 @@ pub(super) async fn collect_input_and_menus(
         &mut hud.sherwood_enable,
     )? {
         HandlerAction::Continue => {
-            runtime.trace(FrameContractStage::EarlyRestart);
+            runtime
+                .lifecycle_mut()
+                .trace(FrameContractStage::EarlyRestart);
             return Ok(ControlFlow::Break(FrameControl::RestartIteration));
         }
         HandlerAction::Exit(code) => {
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 code,
             ))));
@@ -417,11 +421,13 @@ pub(super) async fn collect_input_and_menus(
     } = match collected {
         EventHudOutcome::Ready(input) => input,
         EventHudOutcome::Control(HandlerAction::Continue) => {
-            runtime.trace(FrameContractStage::EarlyRestart);
+            runtime
+                .lifecycle_mut()
+                .trace(FrameContractStage::EarlyRestart);
             return Ok(ControlFlow::Break(FrameControl::RestartIteration));
         }
         EventHudOutcome::Control(HandlerAction::Exit(code)) => {
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 code,
             ))));
@@ -472,7 +478,7 @@ pub(super) async fn collect_input_and_menus(
     // Recorded commands are injected at the tick boundary instead
     // (replay), or suppressed entirely (rewind — live input
     // shouldn't perturb a state reconstructed from the past).
-    if runtime.playback().is_none() && !rewind_active {
+    if runtime.replay().playback().is_none() && !rewind_active {
         match drive_live_gameplay_input(
             LiveGameplayContext {
                 host,
@@ -502,11 +508,13 @@ pub(super) async fn collect_input_and_menus(
         .await
         {
             HandlerAction::Continue => {
-                runtime.trace(FrameContractStage::EarlyRestart);
+                runtime
+                    .lifecycle_mut()
+                    .trace(FrameContractStage::EarlyRestart);
                 return Ok(ControlFlow::Break(FrameControl::RestartIteration));
             }
             HandlerAction::Exit(code) => {
-                runtime.trace(FrameContractStage::Exit);
+                runtime.lifecycle_mut().trace(FrameContractStage::Exit);
                 return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                     code,
                 ))));
@@ -534,7 +542,9 @@ pub(super) async fn collect_input_and_menus(
         ui.active_ui_task = Some(task);
     }
 
-    runtime.trace(FrameContractStage::InputAndMenus);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::InputAndMenus);
 
     drop(commands);
     drop(external_actions);

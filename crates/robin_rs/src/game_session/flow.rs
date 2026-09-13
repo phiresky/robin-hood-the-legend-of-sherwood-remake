@@ -302,8 +302,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         }
 
         let phase_start = super::frame_perf::start(profiling);
-        runtime.begin_presentation();
-        runtime.trace(FrameContractStage::Presentation);
+        runtime.lifecycle_mut().begin_presentation();
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::Presentation);
         let warming_up_map_export = args.config.capture.map_output.is_some()
             && runtime.frame_number() <= args.config.capture.map_frame;
         let should_draw = !world.view().host.frontend.presentation.skip_render
@@ -500,7 +502,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
-            post_render_engine_cleanup(&mut frame, host.local_seat, runtime.playback().is_some());
+            post_render_engine_cleanup(
+                &mut frame,
+                host.local_seat,
+                runtime.replay().playback().is_some(),
+            );
         } else {
             native_refresh_interpolation.clear();
         }
@@ -545,8 +551,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // pair instead of inferring it from hourglass admission.
         let phase_start = super::frame_perf::start(profiling);
         finalize_interactive_recording(runtime, &mut frame);
-        let was_recording = runtime.is_recording();
-        if runtime.seal_terminal_recording(&frame) && was_recording {
+        let was_recording = runtime.replay().is_recording();
+        if runtime.replay_mut().seal_terminal_recording(&frame) && was_recording {
             if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
                 host.application_context()
                     .recording_index()
@@ -797,11 +803,13 @@ fn finish_interactive_audio(
             .as_mut()
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
-    runtime.trace(FrameContractStage::AppEffects);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::AppEffects);
     if let Some(boundary) = frontend.audio.tick(engine, audio, viewport, assets) {
-        runtime.queue_sound_boundary(boundary);
+        runtime.lifecycle_mut().queue_sound_boundary(boundary);
     }
-    runtime.trace(FrameContractStage::Audio);
+    runtime.lifecycle_mut().trace(FrameContractStage::Audio);
 }
 
 /// Cross the one-shot post-refresh script boundary and update the initial
@@ -816,8 +824,8 @@ fn run_interactive_post_initialize(
 ) {
     let application_context = host.application_context().clone();
     let requested = frame.begin_post_initialize();
-    let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
-    let post_initialized = runtime.cross_post_initialize(|| {
+    let replay_idle = runtime.replay().playback().is_some() && !frame.has_recorded_input();
+    let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
         if replay_idle {
             return false;
         }
@@ -920,7 +928,7 @@ fn plan_interactive_pacing(
     frame: &MissionFrame,
     args: &crate::main_entry::MissionRequest,
 ) -> (u32, u64) {
-    runtime.trace(FrameContractStage::Pacing);
+    runtime.lifecycle_mut().trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
     // `--fast-forward` CLI flag skips the pacing sleep entirely so
     // the loop runs at full host speed (tests / profiling).  The
@@ -948,11 +956,14 @@ fn plan_interactive_pacing(
         && host.transport.local_seat() != engine_player_command::PlayerId::HOST
         && !args.config.cli.fast_forward
     {
-        runtime.host_frame_deadline_ms()
+        runtime
+            .multiplayer()
+            .timing()
+            .deadline_ms(runtime.frame_number())
     } else {
         None
     };
-    let outcome = runtime.plan_frame_outcome(
+    let outcome = runtime.lifecycle().plan_frame_outcome(
         frame_end_ms,
         FramePacing {
             fast_forward_requested: args.config.cli.fast_forward,
@@ -971,9 +982,14 @@ fn plan_interactive_pacing(
     };
     if host_deadline_ms.is_some() {
         let correction_ms = i64::from(remaining_sleep_ms) - i64::from(normal_sleep_ms);
-        if correction_ms != 0 && runtime.sleep_correction_log_due(frame_end_ms) {
+        if correction_ms != 0
+            && runtime
+                .multiplayer_mut()
+                .timing_mut()
+                .sleep_correction_log_due(frame_end_ms)
+        {
             tracing::info!(
-                scheduled_frame = runtime.host_schedule_frame(),
+                scheduled_frame = runtime.multiplayer().timing().schedule_frame(),
                 local_frame = runtime.frame_number(),
                 normal_sleep_ms,
                 adjusted_sleep_ms = remaining_sleep_ms,
@@ -982,7 +998,10 @@ fn plan_interactive_pacing(
             );
         }
     }
-    runtime.publish_multiplayer_timing(&host.transport, remaining_sleep_ms);
+    let clock_frame = runtime.frame_number();
+    runtime
+        .multiplayer_mut()
+        .publish_timing(&host.transport, clock_frame, remaining_sleep_ms);
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this
     // budget; neither may turn it into a fresh relative sleep.

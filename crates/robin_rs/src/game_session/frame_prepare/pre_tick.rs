@@ -19,7 +19,9 @@ fn drain_pre_tick_network(
         return Ok(());
     }
 
-    runtime.trace(FrameContractStage::SecondNetworkDrain);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::SecondNetworkDrain);
     let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())?;
     if drain.rollback.is_some() {
         // Late input invalidates the capture opened before local input/UI.
@@ -63,31 +65,34 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
         .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL);
     if local_is_host {
         let current_frame = runtime.frame_number();
-        runtime.sample_host_state_hash(|| {
-            let mp_hash_start = web_time::Instant::now();
-            let live_hash_start = web_time::Instant::now();
-            let local_hash = robin_engine::replay::state_hash(&manager.engine);
-            let live_hash_us = live_hash_start.elapsed().as_micros();
-            tracing::debug!(
-                frame = current_frame,
-                total_us = mp_hash_start.elapsed().as_micros(),
-                live_hash_us,
-                "multiplayer hash frame timing"
-            );
-            local_hash
-        });
+        runtime
+            .multiplayer_mut()
+            .timing_mut()
+            .sample_hash(current_frame, || {
+                let mp_hash_start = web_time::Instant::now();
+                let live_hash_start = web_time::Instant::now();
+                let local_hash = robin_engine::replay::state_hash(&manager.engine);
+                let live_hash_us = live_hash_start.elapsed().as_micros();
+                tracing::debug!(
+                    frame = current_frame,
+                    total_us = mp_hash_start.elapsed().as_micros(),
+                    live_hash_us,
+                    "multiplayer hash frame timing"
+                );
+                local_hash
+            });
         return;
     }
-    if hash_boundary && !runtime.has_local_mp_hash(runtime.frame_number()) {
-        runtime.remember_local_mp_hash(
-            runtime.frame_number(),
-            robin_engine::replay::state_hash(&manager.engine),
-        );
+    if hash_boundary && !runtime.network().has_local_hash(runtime.frame_number()) {
+        let frame = runtime.frame_number();
+        let hash = robin_engine::replay::state_hash(&manager.engine);
+        runtime.network_mut().remember_local_hash(frame, hash);
     }
     // Network ingress (including rollback) precedes this boundary. Compare
     // delayed host hashes against their exact retained pre-tick frame, never
     // against the newer live engine merely because it is available.
-    for (frame, host_hash, local_hash) in runtime.take_due_mp_hash_comparisons() {
+    let current = runtime.current_frame();
+    for (frame, host_hash, local_hash) in runtime.network_mut().take_due_comparisons(current) {
         let Some(local_hash) = local_hash else {
             tracing::warn!(
                 frame,
@@ -97,29 +102,18 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
             continue;
         };
         if local_hash != host_hash {
-            let last_rollback_path = runtime.last_mp_rollback.as_ref().map_or("none", |r| r.path);
-            let last_rollback_earliest = runtime
-                .last_mp_rollback
-                .as_ref()
-                .map_or(0, |r| r.earliest_frame);
-            let last_rollback_target = runtime
-                .last_mp_rollback
-                .as_ref()
-                .map_or(0, |r| r.target_frame);
-            let last_rollback_replayed = runtime
-                .last_mp_rollback
-                .as_ref()
-                .map_or(0, |r| r.replayed_frames);
-            let last_rollback_total_us = runtime
-                .last_mp_rollback
-                .as_ref()
-                .map_or(0, |r| r.total.as_micros());
+            let last_rollback = runtime.multiplayer().last_rollback();
+            let last_rollback_path = last_rollback.map_or("none", |r| r.path);
+            let last_rollback_earliest = last_rollback.map_or(0, |r| r.earliest_frame);
+            let last_rollback_target = last_rollback.map_or(0, |r| r.target_frame);
+            let last_rollback_replayed = last_rollback.map_or(0, |r| r.replayed_frames);
+            let last_rollback_total_us = last_rollback.map_or(0, |r| r.total.as_micros());
             tracing::warn!(
                 frame,
                 local = format!("{local_hash:016x}"),
                 host = format!("{host_hash:016x}"),
-                host_schedule_frame = runtime.host_schedule_frame(),
-                pending_input_frames = runtime.pending_input_frame_count(),
+                host_schedule_frame = runtime.multiplayer().timing().schedule_frame(),
+                pending_input_frames = runtime.network().pending_frame_count(),
                 last_rollback_path,
                 last_rollback_earliest,
                 last_rollback_target,
@@ -179,43 +173,43 @@ fn prepare_pre_tick_timeline(
     mut paused: bool,
     replay_cursor_paused: bool,
 ) -> Result<PreTickTimelineOutput, MissionError> {
-    if runtime.playback().is_some() && !replay_cursor_paused {
+    if runtime.replay().playback().is_some() && !replay_cursor_paused {
         // Recorded save markers pin the boundary state and load-back
         // records swap a pinned state in, before this frame's commands.
         runtime.apply_playback_timeline_events(host, game, manager, assets)?;
     }
-    if let Some(player) = runtime.playback()
+    if let Some(player) = runtime.replay().playback()
         && !replay_cursor_paused
     {
         if player.is_finished() {
-            if !runtime.replay_finished_logged {
+            if !runtime.replay().finished_logged {
                 tracing::info!("Replay finished after {} frames", player.current_frame());
-                runtime.replay_finished_logged = true;
+                runtime.replay_mut().finished_logged = true;
             }
             *manual_pause = true;
             paused = true;
         } else {
-            runtime.replay_finished_logged = false;
+            runtime.replay_mut().finished_logged = false;
             runtime.inject_replay_input(frame);
             frame.assert_replay_timeline_before(runtime.current_frame());
         }
     }
 
-    if runtime.playback().is_some() && !frame.has_recorded_input() {
+    if runtime.replay().playback().is_some() && !frame.has_recorded_input() {
         frame.host_controls_only();
     }
 
     let mut consumed_buffered = false;
     let current_frame = runtime.frame_number();
-    if !rewind_active && !paused && current_frame < runtime.retained_history().next_record_frame() {
-        let Some(recorded) = runtime.retained_history().frame_for(current_frame).cloned() else {
+    if !rewind_active && !paused && current_frame < runtime.history().buffer().next_record_frame() {
+        let Some(recorded) = runtime.history().buffer().frame_for(current_frame).cloned() else {
             return Err(MissionError::frame(format!(
                 "cannot replay frame {}: rewind command history starts at frame {}",
                 current_frame,
-                runtime.retained_history().oldest_cmd_frame()
+                runtime.history().buffer().oldest_cmd_frame()
             )));
         };
-        if runtime.playback().is_some() && frame.external_actions().is_empty() {
+        if runtime.replay().playback().is_some() && frame.external_actions().is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Replay reused rewind-buffer frame {}", current_frame);
@@ -249,7 +243,7 @@ fn dispatch_pre_tick_pointer_commands(
     rewind_active: bool,
     paused: bool,
 ) {
-    if runtime.playback().is_some() || rewind_active || paused {
+    if runtime.replay().playback().is_some() || rewind_active || paused {
         return;
     }
     let Some(mouse_map) = host
@@ -366,7 +360,7 @@ pub(super) fn finalize_pre_tick(
         multiplayer_clock: mp_clock_pause,
         modal: modal_pause,
     };
-    let paused = pre_tick_is_paused(pause_sources, runtime.playback().is_some());
+    let paused = pre_tick_is_paused(pause_sources, runtime.replay().playback().is_some());
     let replay_cursor_paused = replay_cursor_is_paused(pause_sources);
     let PreTickTimelineOutput {
         paused,
@@ -384,7 +378,7 @@ pub(super) fn finalize_pre_tick(
         replay_cursor_paused,
     )?;
 
-    if runtime.take_state_restored()
+    if runtime.lifecycle_mut().take_state_restored()
         && let Some(leaderboard) = leaderboard.as_mut()
     {
         leaderboard.after_state_restore(manager.engine.campaign());
@@ -402,9 +396,13 @@ pub(super) fn finalize_pre_tick(
     );
 
     if paused || rewind_active {
-        runtime.trace(FrameContractStage::PausedOrRewind);
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::PausedOrRewind);
     }
-    runtime.trace(FrameContractStage::PreTickCommands);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::PreTickCommands);
     Ok(FramePreparation::Ready(PreparedFrame {
         frame,
         rewind_active,
@@ -578,11 +576,11 @@ mod tests {
                 .engine
                 .advance_frame(&assets, input.clone())
                 .unwrap();
-            timeline.append_history_fixture(input);
+            timeline.history_mut().append_fixture(input);
             timeline.advance_frame();
         }
         if !use_recent_history {
-            timeline.clear_recent_history_fixture();
+            timeline.history_mut().clear_recent_fixture();
         }
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
         let mut host = Host::scratch(640.0, 480.0);
@@ -636,7 +634,7 @@ mod tests {
         .expect("network drain succeeds");
         assert!(!paused);
         assert_eq!(
-            timeline.last_mp_rollback.as_ref().unwrap().path,
+            timeline.multiplayer().last_rollback().unwrap().path,
             if use_recent_history {
                 "recent-timeline-history"
             } else {
@@ -656,12 +654,12 @@ mod tests {
         let corrected_pre_tick_hash = state_hash(&manager.engine);
         assert_ne!(corrected_pre_tick_hash, original_hash);
 
-        timeline.begin_simulation();
+        timeline.lifecycle_mut().begin_simulation();
         manager
             .engine
             .advance_frame(&assets, frame.authoritative_input())
             .unwrap();
-        timeline.begin_bookkeeping();
+        timeline.lifecycle_mut().begin_bookkeeping();
         timeline.commit_simulation_history(
             &mut manager,
             &frame,
@@ -669,14 +667,15 @@ mod tests {
                 store_rewind_commands: true,
             },
         );
-        assert_eq!(timeline.retained_history().next_record_frame(), 3);
+        assert_eq!(timeline.history().buffer().next_record_frame(), 3);
         assert_eq!(frame.recorder_hash, Some(corrected_pre_tick_hash));
         assert_eq!(
-            timeline.retained_history().commands_for(2).unwrap().len(),
+            timeline.history().buffer().commands_for(2).unwrap().len(),
             2
         );
         let checkpoint = timeline
-            .retained_history()
+            .history()
+            .buffer()
             .restore_recent(2, robin_engine::sim_timeline::RestorePolicy::Exact)
             .unwrap();
         assert_eq!(state_hash(&checkpoint.engine), corrected_pre_tick_hash);

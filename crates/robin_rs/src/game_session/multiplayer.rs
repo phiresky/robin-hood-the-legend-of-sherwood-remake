@@ -992,10 +992,12 @@ pub(super) fn drain_mission_network(
     }
     let mut drain = timeline.drain_network_inputs(host, manager, assets)?;
     if let Some(rollback) = drain.rollback.clone() {
-        timeline.invalidate_local_mp_hashes_after(rollback.earliest_frame);
-        timeline.last_mp_rollback = Some(rollback);
+        timeline
+            .network_mut()
+            .invalidate_after(rollback.earliest_frame);
+        timeline.multiplayer_mut().record_rollback(rollback);
     } else if drain.rewrote_sim_state {
-        timeline.clear_local_mp_hashes();
+        timeline.network_mut().clear_local_hashes();
     }
     timeline.apply_multiplayer_admission_events(&drain.admission_events)?;
     if let Some(frame) = drain.adopted_frame {
@@ -1007,20 +1009,33 @@ pub(super) fn drain_mission_network(
     if local_is_peer
         && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
     {
-        timeline.accept_host_frame_schedule(clock_frame, ms_until_next_frame);
+        let local_frame = timeline.frame_number();
+        timeline.multiplayer_mut().accept_host_frame_schedule(
+            clock_frame,
+            ms_until_next_frame,
+            local_frame,
+        );
     }
 
-    let admission_pause = timeline.multiplayer_admission_paused(now_epoch_ms);
+    let admission_pause = timeline.multiplayer_mut().admission_paused(now_epoch_ms);
     let mut clock_pause = false;
     if local_is_peer && !admission_pause {
-        if let Some(deadline_ms) = timeline.host_frame_deadline_ms() {
+        if let Some(deadline_ms) = timeline
+            .multiplayer()
+            .timing()
+            .deadline_ms(timeline.frame_number())
+        {
             let now_ms = crate::window::process_uptime_ms();
             let until_frame_ms = deadline_ms - i64::from(now_ms);
             if until_frame_ms > 0 {
                 clock_pause = true;
-                if timeline.clock_ahead_log_due(now_ms) {
+                if timeline
+                    .multiplayer_mut()
+                    .timing_mut()
+                    .clock_ahead_log_due(now_ms)
+                {
                     tracing::info!(
-                        scheduled_frame = timeline.host_schedule_frame(),
+                        scheduled_frame = timeline.multiplayer().timing().schedule_frame(),
                         local_frame = timeline.frame_number(),
                         until_frame_ms,
                         "multiplayer: local frame is ahead of host schedule; holding sim"
@@ -1034,7 +1049,10 @@ pub(super) fn drain_mission_network(
     drain.pause_simulation = admission_pause || host.transport.reconnecting() || clock_pause;
 
     if host.transport.net().is_some() && (checkpoint_always || drain.rewrote_sim_state) {
-        timeline.checkpoint_history(&manager.engine);
+        let frame = timeline.frame_number();
+        timeline
+            .history_mut()
+            .checkpoint_recent(frame, &manager.engine);
     }
     Ok(drain)
 }

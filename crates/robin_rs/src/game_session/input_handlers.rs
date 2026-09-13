@@ -120,15 +120,16 @@ pub(super) fn handle_hold_to_rewind(
     // consecutive rewind steps reuse earlier replay work instead
     // of re-ticking from a snapshot each frame.
     if rewind_held {
-        timeline.begin_rewind_session();
+        timeline.history_mut().begin_rewind_session();
     } else {
-        timeline.end_rewind_session();
+        timeline.history_mut().end_rewind_session();
     }
     let mut rewind_active = false;
     if rewind_held
         && timeline.current_frame().previous().is_some()
         && timeline
-            .retained_history()
+            .history()
+            .buffer()
             .oldest_reachable_frame()
             .is_some_and(|f| f < timeline.frame_number())
     {

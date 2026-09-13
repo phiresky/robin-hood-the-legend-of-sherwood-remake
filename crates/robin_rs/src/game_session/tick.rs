@@ -252,7 +252,7 @@ pub(super) fn drain_steps(
             crate::http_server::StepKind::SetPaused { .. } => None,
         };
         if let Err(error) =
-            validate_multiplayer_step_request(host, timeline.multiplayer_admission(), &kind)
+            validate_multiplayer_step_request(host, timeline.multiplayer().admission(), &kind)
         {
             step.respond_err(RpcError::unavailable_capability(error));
             continue;
@@ -322,7 +322,8 @@ pub(super) fn drain_steps(
             )));
             continue;
         }
-        let strict_session_replay = session_modals.is_some() && timeline.playback().is_some();
+        let strict_session_replay =
+            session_modals.is_some() && timeline.replay().playback().is_some();
         let mut accepted_dismissals = if strict_session_replay {
             Vec::new()
         } else if let Some(policy) = modal_policy.as_mut() {
@@ -421,7 +422,7 @@ pub(super) fn drain_steps(
                 }
             }
             crate::http_server::StepKind::GoToFrame { target, .. } => {
-                if let Some(player) = timeline.playback() {
+                if let Some(player) = timeline.replay().playback() {
                     let from = player.current_frame();
                     let total = player.total_frames();
                     if target > total {
@@ -442,7 +443,11 @@ pub(super) fn drain_steps(
                         }
                         // TODO: Cache raw ordinal checkpoints for faster long seeks.
                         // The ordinary simulation-frame cache cannot cross load-backs.
-                        let current = timeline.playback().expect("active replay").current_frame();
+                        let current = timeline
+                            .replay()
+                            .playback()
+                            .expect("active replay")
+                            .current_frame();
                         if target > current {
                             let (_, dismissed) = run_forward_ticks_with_session_modals(
                                 manager,
@@ -457,7 +462,13 @@ pub(super) fn drain_steps(
                             )?;
                             accepted_dismissals.extend(dismissed);
                         }
-                        if timeline.playback().expect("active replay").current_frame() != target {
+                        if timeline
+                            .replay()
+                            .playback()
+                            .expect("active replay")
+                            .current_frame()
+                            != target
+                        {
                             return Err(RpcError::internal(
                                 "replay seek did not reach requested position",
                             ));
@@ -727,10 +738,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // Stepping into a save-marker / load-back frame must pin or swap
         // state exactly like the normal playback admission path.
         if timeline
+            .replay()
             .playback()
             .is_some_and(|player| !player.is_finished())
         {
-            let player = timeline.playback().expect("active replay");
+            let player = timeline.replay().playback().expect("active replay");
             let ordinal = player.current_frame();
             let loads_state = player.load_back_for_frame(ordinal).is_some();
             if let Some(scheduler) = session_modals.as_deref_mut() {
@@ -744,11 +756,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
             }
         }
         let frame = timeline.frame_number();
-        let buffered_frame = if frame < timeline.retained_history().next_record_frame() {
-            let Some(recorded) = timeline.retained_history().frame_for(frame).cloned() else {
+        let buffered_frame = if frame < timeline.history().buffer().next_record_frame() {
+            let Some(recorded) = timeline.history().buffer().frame_for(frame).cloned() else {
                 return Err(RpcError::unavailable_capability(format!(
                     "cannot step frame {frame}: rewind command history starts at frame {}",
-                    timeline.retained_history().oldest_cmd_frame()
+                    timeline.history().buffer().oldest_cmd_frame()
                 )));
             };
             Some(recorded)
@@ -757,8 +769,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
         };
 
         let mut recorded_modals = super::session_policy::ReplayModalDismissals::default();
+        let step_timeline = timeline.current_frame();
         let source = match timeline
-            .consume_replay_frame_for_step()
+            .replay_mut()
+            .consume_frame_for_step(step_timeline)
             .map_err(|error| RpcError::internal(error.to_string()))?
         {
             super::runtime::ReplayStepAdmission::NoActiveReplay => match buffered_frame {
@@ -838,7 +852,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // stays at its frontier until that retained future has been replayed.
         // TODO: recording a new branch while rewound requires an explicit
         // raw-checkpoint transition, not the save/load projection protocol.
-        timeline.begin_recording(&mut transaction, record_live_input);
+        timeline
+            .replay_mut()
+            .begin_recording(&mut transaction, record_live_input);
         transaction.admit_inline_transaction();
         let history_input = append_history.then(|| simulation_frame.clone());
         let tick_exit_code = game.run_engine_tick(
@@ -866,7 +882,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
 
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
-            timeline.commit_history_frame(
+            timeline.history_mut().commit(
                 history_input.expect("appending history retains the admitted input"),
                 engine,
             );
@@ -927,7 +943,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         timeline.finish_recording(&mut transaction);
         dismissed.extend(modal_result?);
         if let (Some(scheduler), Some(player)) =
-            (session_modals.as_deref_mut(), timeline.playback())
+            (session_modals.as_deref_mut(), timeline.replay().playback())
         {
             scheduler.checkpoint(player.current_frame(), &host.effects);
         }
@@ -949,7 +965,8 @@ fn rewind_with_session_modals(
     // Resolve without leaving the playback cursor changed, before mutating Engine or Host.
     let restore_ordinal = if let Some(scheduler) = session_modals.as_ref() {
         let ordinal = timeline
-            .resolve_replay_ordinal(super::runtime::TimelineFrame::from_wire(target))
+            .replay()
+            .resolve_ordinal(super::runtime::TimelineFrame::from_wire(target))
             .map_err(|error| RpcError::unavailable_capability(error.to_string()))?
             .map(|ordinal| ordinal.number());
         if let Some(ordinal) = ordinal {
@@ -964,7 +981,11 @@ fn rewind_with_session_modals(
     let from = rewind_to_frame(manager, host, assets, timeline, target)?;
     if let (Some(ordinal), Some(scheduler)) = (restore_ordinal, session_modals) {
         assert_eq!(
-            timeline.playback().expect("seek replay").current_frame(),
+            timeline
+                .replay()
+                .playback()
+                .expect("seek replay")
+                .current_frame(),
             ordinal
         );
         scheduler.restore(ordinal, &mut host.effects);
@@ -979,7 +1000,7 @@ fn rewind_to_frame(
     timeline: &mut super::runtime::TimelineRuntime,
     target: u32,
 ) -> Result<u32, RpcError> {
-    let Some(oldest) = timeline.retained_history().oldest_reachable_frame() else {
+    let Some(oldest) = timeline.history().buffer().oldest_reachable_frame() else {
         return Err(RpcError::unavailable_capability("rewind buffer empty"));
     };
     if target < oldest {
@@ -988,13 +1009,13 @@ fn rewind_to_frame(
         )));
     }
     let from = timeline.frame_number();
-    timeline.begin_rewind_session();
+    timeline.history_mut().begin_rewind_session();
     let restored = timeline.restore_retained_frame(
         manager,
         assets,
         super::runtime::TimelineFrame::from_wire(target),
     );
-    timeline.end_rewind_session();
+    timeline.history_mut().end_rewind_session();
     if !restored {
         return Err(RpcError::internal(
             "rewind_to failed (no matching snapshot)",
@@ -1310,7 +1331,7 @@ mod tests {
         let initial = manager.engine.clone();
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().into_owned();
-        timeline.install_test_recorder(
+        timeline.replay_mut().install_test_recorder(
             ReplayRecorder::new(
                 &path,
                 "step-test".into(),
@@ -1332,13 +1353,13 @@ mod tests {
         // history AND its live recorder token before servicing the HTTP step.
         let mut normal = MissionFrame::new(0);
         timeline.open_frame(&mut normal, &manager.engine);
-        timeline.begin_recording(&mut normal, true);
+        timeline.replay_mut().begin_recording(&mut normal, true);
         normal.stage_post_commands().push(PlayerInput::new(
             PlayerId::HOST,
             PlayerCommand::SetLockAlt(true),
         ));
         let application_context = host.application_context().clone();
-        timeline.run_simulation(|| {
+        timeline.lifecycle_mut().run_simulation(|| {
             game.run_engine_tick(
                 &mut host.frontend,
                 &mut host.audio,
@@ -1388,11 +1409,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(timeline.frame_number(), 5);
-        assert_eq!(timeline.retained_history().next_record_frame(), 5);
+        assert_eq!(timeline.history().buffer().next_record_frame(), 5);
         let expected = state_hash(&manager.engine);
         let retained_inputs: Vec<_> = (0..5)
             .map(|frame| {
-                serde_json::to_value(timeline.retained_history().frame_for(frame).unwrap()).unwrap()
+                serde_json::to_value(timeline.history().buffer().frame_for(frame).unwrap()).unwrap()
             })
             .collect();
         // Existing backwards controls remain available during recording.
@@ -1437,16 +1458,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state_hash(&manager.engine), expected);
-        assert_eq!(timeline.retained_history().next_record_frame(), 5);
+        assert_eq!(timeline.history().buffer().next_record_frame(), 5);
         for (frame, input) in retained_inputs.iter().enumerate() {
             assert_eq!(
-                &serde_json::to_value(timeline.retained_history().frame_for(frame as u32).unwrap())
+                &serde_json::to_value(timeline.history().buffer().frame_for(frame as u32).unwrap())
                     .unwrap(),
                 input,
                 "buffered stepping must retain the original history input"
             );
         }
-        timeline.seal_test_recorder();
+        timeline.replay_mut().seal();
         let replay = ReplayData::from_file(&path).unwrap();
         assert_eq!(replay.frame_count(), 6);
         assert!(!replay.frame(0).unwrap().input.post_commands.is_empty());
@@ -1470,7 +1491,7 @@ mod tests {
             );
             assert_eq!(
                 serde_json::to_value(&frame.input).unwrap(),
-                serde_json::to_value(timeline.retained_history().frame_for(tick).unwrap()).unwrap()
+                serde_json::to_value(timeline.history().buffer().frame_for(tick).unwrap()).unwrap()
             );
         }
 
@@ -1506,8 +1527,8 @@ mod tests {
             4,
         )
         .unwrap();
-        assert_eq!(playback.playback().unwrap().current_frame(), 5);
-        assert_eq!(playback.retained_history().next_record_frame(), 5);
+        assert_eq!(playback.replay().playback().unwrap().current_frame(), 5);
+        assert_eq!(playback.history().buffer().next_record_frame(), 5);
         let (advanced, _) = run_forward_ticks(
             &mut playback_manager,
             &mut playback_host,
@@ -1522,11 +1543,11 @@ mod tests {
         assert_eq!(advanced, 1);
         assert_eq!(state_hash(&playback_manager.engine), expected);
         assert_eq!(playback.frame_number(), 5);
-        assert_eq!(playback.playback().unwrap().current_frame(), 6);
-        assert_eq!(playback.retained_history().next_record_frame(), 5);
+        assert_eq!(playback.replay().playback().unwrap().current_frame(), 6);
+        assert_eq!(playback.history().buffer().next_record_frame(), 5);
         for (frame, input) in retained_inputs.iter().enumerate() {
             assert_eq!(
-                &serde_json::to_value(playback.retained_history().frame_for(frame as u32).unwrap())
+                &serde_json::to_value(playback.history().buffer().frame_for(frame as u32).unwrap())
                     .unwrap(),
                 input,
                 "replay stepping must retain the original history input"
@@ -1554,7 +1575,7 @@ mod tests {
             stepping_fixture(None);
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().into_owned();
-        timeline.install_test_recorder(
+        timeline.replay_mut().install_test_recorder(
             ReplayRecorder::new(
                 &path,
                 "step-test".into(),
@@ -1603,7 +1624,7 @@ mod tests {
             &mut policy,
         )
         .unwrap();
-        timeline.seal_test_recorder();
+        timeline.replay_mut().seal();
         let replay = ReplayData::from_file(&path).unwrap();
         assert_eq!(replay.frame_count(), 2);
         assert!(replay.frame(0).unwrap().host_controls.is_empty());
@@ -1690,7 +1711,7 @@ mod tests {
         .unwrap();
         assert_eq!(forward.0, 1);
         assert!(forward.1.is_empty());
-        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
+        assert_eq!(timeline.replay().playback().unwrap().current_frame(), 2);
         let mut missing = SessionModalScheduler::default();
         let tick_before_failed_seek = manager.engine.simulation_tick();
         assert!(
@@ -1708,7 +1729,7 @@ mod tests {
         );
         assert_eq!(timeline.frame_number(), 1);
         assert_eq!(manager.engine.simulation_tick(), tick_before_failed_seek);
-        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
+        assert_eq!(timeline.replay().playback().unwrap().current_frame(), 2);
 
         // A future captured same-ID popup must not replace the earlier batch,
         // and a newly queued future dialogue must not survive the seek.
@@ -1728,7 +1749,7 @@ mod tests {
             Some(&mut scheduler),
         )
         .unwrap();
-        assert_eq!(timeline.playback().unwrap().current_frame(), 0);
+        assert_eq!(timeline.replay().playback().unwrap().current_frame(), 0);
         assert!(scheduler.is_active());
         assert!(host.effects.pending_modal_kinds().is_empty());
         let repeated = run_forward_ticks_with_session_modals(
@@ -1788,11 +1809,12 @@ mod tests {
         .unwrap();
         assert_eq!(result.0, 1);
         assert_eq!(timeline.frame_number(), 1);
-        assert_eq!(timeline.retained_history().next_record_frame(), 1);
-        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
+        assert_eq!(timeline.history().buffer().next_record_frame(), 1);
+        assert_eq!(timeline.replay().playback().unwrap().current_frame(), 2);
         assert!(
             timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .frame_for(0)
                 .unwrap()
                 .run_hourglass
@@ -1821,7 +1843,8 @@ mod tests {
         assert!(dismissed.is_empty());
         assert_eq!(timeline.frame_number(), 1);
         let input = timeline
-            .retained_history()
+            .history()
+            .buffer()
             .frame_for(0)
             .expect("live step recorded in rewind history");
         assert!(input.run_post_initialize);
@@ -2094,7 +2117,8 @@ mod tests {
         assert_eq!(advanced, 1);
         assert!(
             !timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .frame_for(0)
                 .expect("recorded replay input")
                 .run_post_initialize,
@@ -2123,9 +2147,9 @@ mod tests {
             "cannot step replay at timeline frame 1: replay is finished at ordinal 1 of 1"
         );
         assert_eq!(timeline.frame_number(), 1);
-        assert_eq!(timeline.retained_history().next_record_frame(), 1);
-        assert!(timeline.retained_history().frame_for(1).is_none());
-        let player = timeline.playback().expect("active replay remains");
+        assert_eq!(timeline.history().buffer().next_record_frame(), 1);
+        assert!(timeline.history().buffer().frame_for(1).is_none());
+        let player = timeline.replay().playback().expect("active replay remains");
         assert!(player.is_finished());
         assert_eq!(player.current_frame(), 1);
     }
@@ -2190,6 +2214,6 @@ mod tests {
 
         assert_eq!(advanced, 1);
         assert_eq!(timeline.frame_number(), 251);
-        assert_eq!(timeline.retained_history().next_record_frame(), 426);
+        assert_eq!(timeline.history().buffer().next_record_frame(), 426);
     }
 }
