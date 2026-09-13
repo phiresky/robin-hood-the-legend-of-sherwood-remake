@@ -1,5 +1,6 @@
 use super::*;
 use robin_util::state_hash::compute;
+mod goldens;
 mod legacy;
 use legacy::LegacyWire;
 
