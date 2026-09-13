@@ -5,6 +5,7 @@ use crate::replay_archive::{MissionArchive, SaveReplayLink};
 use crate::save_file::{GameSaveFile, ReplaySaveIdentity};
 use anyhow::{Context, Result, ensure};
 use robin_engine::replay::{ReplayHeader, ReplayRecorder, ReplaySaveMarker};
+use robin_util::sync::lock;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -57,9 +58,7 @@ impl SharedReplayRecorder {
         &self,
         input: &crate::leaderboard_mission_end::MissionEndSubmissionInput,
     ) -> Result<()> {
-        self.0
-            .lock()
-            .expect("recording poisoned")
+        lock(&self.0)
             .archive
             .as_ref()
             .context("ranked archive requires mission storage")?
@@ -75,30 +74,16 @@ impl SharedReplayRecorder {
     }
 
     pub(crate) fn next_ordinal(&self) -> u32 {
-        self.0
-            .lock()
-            .expect("recording poisoned")
-            .recorder
-            .next_ordinal()
+        lock(&self.0).recorder.next_ordinal()
     }
     pub(crate) fn has_archive(&self) -> bool {
-        self.0.lock().expect("recording poisoned").archive.is_some()
+        lock(&self.0).archive.is_some()
     }
     pub(crate) fn captured_frame(&self, identity: ReplaySaveIdentity) -> Option<(u32, u32)> {
-        self.0
-            .lock()
-            .expect("recording poisoned")
-            .captured
-            .get(&identity)
-            .copied()
+        lock(&self.0).captured.get(&identity).copied()
     }
     pub(crate) fn into_recording_header(self) -> ReplayHeader {
-        self.0
-            .lock()
-            .expect("recording poisoned")
-            .recorder
-            .recording_header()
-            .clone()
+        lock(&self.0).recorder.recording_header().clone()
     }
 
     /// A save is an actual host event: record its boundary without advancing
@@ -107,7 +92,7 @@ impl SharedReplayRecorder {
         &self,
         save: &GameSaveFile,
     ) -> Result<Option<SaveReplayLink>> {
-        let mut recording = self.0.lock().expect("recording poisoned");
+        let mut recording = lock(&self.0);
         if recording.archive.is_none() {
             return Ok(None);
         }
@@ -168,7 +153,7 @@ impl SharedReplayRecorder {
         // Include signed participant events from abandoned gameplay before
         // adopting the original archive's authority.
         control.checkpoint_ranked_input();
-        let mut recording = self.0.lock().expect("recording poisoned");
+        let mut recording = lock(&self.0);
         recording.recorder.flush()?;
         let link = save.header.replay.as_ref();
         let current = recording
@@ -227,11 +212,7 @@ impl SharedReplayRecorder {
     }
 
     pub(crate) fn write_save_marker(&self, ordinal: u32, marker: ReplaySaveMarker) {
-        self.0
-            .lock()
-            .expect("recording poisoned")
-            .recorder
-            .write_save_marker(ordinal, marker);
+        lock(&self.0).recorder.write_save_marker(ordinal, marker);
     }
 
     /// Persist the restore even when the caller exits or remains paused before
@@ -242,7 +223,7 @@ impl SharedReplayRecorder {
         hash: u64,
         _recording_index: &crate::mission_replays::RecordingIndex,
     ) -> Result<u32> {
-        let mut recording = self.0.lock().expect("recording poisoned");
+        let mut recording = lock(&self.0);
         let ordinal = recording.recorder.next_ordinal();
         ensure!(
             recording.recorder.write_frame(
@@ -271,9 +252,7 @@ impl SharedReplayRecorder {
         Ok(recording.recorder.next_ordinal())
     }
     pub(crate) fn write_load_back(&self, ordinal: u32, target: u32, is_continue: bool) {
-        self.0
-            .lock()
-            .expect("recording poisoned")
+        lock(&self.0)
             .recorder
             .write_load_back(ordinal, target, is_continue);
     }
@@ -284,9 +263,7 @@ impl SharedReplayRecorder {
         timeline: u32,
         is_continue: bool,
     ) {
-        self.0
-            .lock()
-            .expect("recording poisoned")
+        lock(&self.0)
             .recorder
             .write_load_snapshot(ordinal, bytes, timeline, is_continue);
     }
@@ -295,11 +272,7 @@ impl SharedReplayRecorder {
         kind: robin_engine::replay_rankability::InputTaintKind,
         ordinal: u32,
     ) {
-        self.0
-            .lock()
-            .expect("recording poisoned")
-            .recorder
-            .record_input_taint(kind, ordinal);
+        lock(&self.0).recorder.record_input_taint(kind, ordinal);
     }
     pub(crate) fn write_frame(
         &self,
@@ -310,7 +283,7 @@ impl SharedReplayRecorder {
         controls: Vec<robin_engine::replay::ReplayHostControl>,
         hash: Option<u64>,
     ) -> bool {
-        let mut recording = self.0.lock().expect("recording poisoned");
+        let mut recording = lock(&self.0);
         let written = recording
             .recorder
             .write_frame(ordinal, before, after, input, controls, hash);

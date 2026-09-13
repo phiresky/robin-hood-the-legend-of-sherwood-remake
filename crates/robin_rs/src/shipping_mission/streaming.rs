@@ -6,10 +6,11 @@ use anyhow::{Context, Result, anyhow};
 use futures::StreamExt as _;
 use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mission_compressed};
 
+use super::browser::take_early_download;
 use super::planning::{SpriteDeferral, streaming_worker_budget};
 use super::{
     CompressedPayload, MISSION_FETCH_CONCURRENCY, MissionLoadPhase, MissionLoadProgress,
-    canonical_relative_file_key, take_early_download,
+    canonical_relative_file_key,
 };
 
 /// Deferred sprite-chunk work handed to [`spawn_deferred_sprite_tail`] after

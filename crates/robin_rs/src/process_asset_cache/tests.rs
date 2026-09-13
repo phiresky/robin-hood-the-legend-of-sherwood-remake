@@ -259,18 +259,7 @@ fn changed_generation_never_publishes_old_result() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(result.key.generation, 2);
-    assert_eq!(
-        owner
-            .state
-            .lock()
-            .unwrap()
-            .ready
-            .as_ref()
-            .unwrap()
-            .key
-            .generation,
-        2
-    );
+    assert_eq!(lock(&owner.state).ready.as_ref().unwrap().key.generation, 2);
 }
 
 #[test]
@@ -290,7 +279,7 @@ fn concurrent_callers_share_one_result_without_holding_owner_lock() {
                     || key(1),
                     |key, stable| {
                         // A builder can access owner state: it is not running under its lock.
-                        assert_eq!(owner.state.lock().unwrap().localized_epoch, 0);
+                        assert_eq!(lock(&owner.state).localized_epoch, 0);
                         calls.fetch_add(1, Ordering::SeqCst);
                         build_test(key, stable)
                     },
@@ -311,7 +300,7 @@ fn concurrent_callers_share_one_result_without_holding_owner_lock() {
 fn invalidation_releases_waiters_and_rejects_blocked_worker_completion() {
     let owner = Arc::new(ApplicationAssetCache::default());
     let job = LoadingJob::new(key(1));
-    owner.state.lock().unwrap().loading = Some(job.clone());
+    lock(&owner.state).loading = Some(job.clone());
     let (release, blocked) = std::sync::mpsc::channel();
     let (started, running) = std::sync::mpsc::channel();
     let worker_job = job.clone();
@@ -391,7 +380,7 @@ fn retired_job_does_not_start_new_work() {
 fn stale_warmup_key_does_not_block_current_generation() {
     let owner = ApplicationAssetCache::default();
     let stale = LoadingJob::new(key(0));
-    owner.state.lock().unwrap().loading = Some(stale.clone());
+    lock(&owner.state).loading = Some(stale.clone());
     let result = resolve(&owner, || key(1), build_test);
     assert_eq!(result.key.generation, 1);
     assert!(stale.is_cancelled());
@@ -403,7 +392,7 @@ fn completed_warmup_keeps_stable_banks_across_locale_invalidation() {
     let job = LoadingJob::new(key(1));
     let warmed = build_test(key(1), None);
     job.finish(JobResult::Complete(warmed.clone()));
-    owner.state.lock().unwrap().loading = Some(job);
+    lock(&owner.state).loading = Some(job);
     owner.invalidate_localized();
     let fresh = resolve(&owner, || key(1), build_test);
     assert_eq!(fresh.key.localized_epoch, 1);
@@ -414,7 +403,7 @@ fn completed_warmup_keeps_stable_banks_across_locale_invalidation() {
 fn dropping_owner_cancels_detached_job_without_joining() {
     let owner = ApplicationAssetCache::default();
     let job = LoadingJob::new(key(1));
-    owner.state.lock().unwrap().loading = Some(job.clone());
+    lock(&owner.state).loading = Some(job.clone());
     drop(owner);
     job.finish(JobResult::Complete(build_test(key(1), None)));
     assert!(job.is_cancelled());
@@ -425,7 +414,7 @@ fn dropping_owner_cancels_detached_job_without_joining() {
 fn abandoned_worker_releases_waiters_and_allows_retry() {
     let owner = ApplicationAssetCache::default();
     let job = LoadingJob::new(key(1));
-    owner.state.lock().unwrap().loading = Some(job.clone());
+    lock(&owner.state).loading = Some(job.clone());
     // Inject failure without relying on unwinding in abort profiles.
     job.finish(JobResult::Failed);
     assert!(job.wait().is_none());

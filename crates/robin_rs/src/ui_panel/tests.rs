@@ -216,11 +216,12 @@ use super::*;
 fn action_icon_banks_keep_every_state_and_action_in_its_own_slot() {
     let mut cache = PortraitCache::new();
     let kind = CharacterKind::VARIANTS[0];
-    cache.action_surfaces[kind.as_index()] = Some(std::array::from_fn(|state| {
-        std::array::from_fn(|action| {
-            Some(OwnedSurface::synthetic((state * 3 + action + 1) as u32).handle())
-        })
-    }));
+    cache.action_surfaces[kind.as_index()] =
+        Some(enum_map::EnumMap::from_fn(|state: ActionButtonVisual| {
+            std::array::from_fn(|action| {
+                Some(OwnedSurface::synthetic((state as usize * 3 + action + 1) as u32).handle())
+            })
+        }));
     for (index, state) in [
         ActionButtonVisual::Disabled,
         ActionButtonVisual::Normal,

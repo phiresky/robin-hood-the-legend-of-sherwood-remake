@@ -5,19 +5,22 @@
 //! identity. Display metadata is retained for audit UI but never participates
 //! in admission authority.
 
-use crate::blob_store::{BlobStore as _, BlobStoreError, open_platform_store};
+use crate::blob_store::{BlobStore as _, open_platform_store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
 #[cfg(not(target_arch = "wasm32"))]
-use std::path::{Path, PathBuf};
+mod native;
+#[cfg(not(target_arch = "wasm32"))]
+use native as platform;
+#[cfg(target_arch = "wasm32")]
+mod browser;
+#[cfg(target_arch = "wasm32")]
+use browser as platform;
 
 pub const SPELLFORGE_TRUST_SCHEMA_VERSION: u32 = 1;
 pub const SPELLFORGE_TRUST_GRANT_LIMIT_PER_PROFILE: usize = 1_024;
 const DISPLAY_FIELD_BYTE_LIMIT: usize = 4 * 1024;
-#[cfg(not(target_arch = "wasm32"))]
-const NATIVE_STORE_FILE: &str = "spellforge-trust.json";
-#[cfg(target_arch = "wasm32")]
-const BROWSER_STORE_KEY: &str = "robin-hood-spellforge-trust-v1";
 
 /// Exact executable/content authority. `package_sha256` is `None` only for a
 /// distributed vanilla custom mission. A Spellforge offer always supplies it.
@@ -313,54 +316,28 @@ impl SpellforgeTrustStore {
             .map_err(|error| format!("encode Spellforge trust store: {error}"))?;
         save_serialized(&self.save_directory, &serialized)
     }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn store_path(directory: &str) -> PathBuf {
-        Path::new(directory).join(NATIVE_STORE_FILE)
-    }
-
-    /// Browser trust grants are global to the page's localStorage.
-    #[cfg(target_arch = "wasm32")]
-    fn store_path(_directory: &str) -> &'static str {
-        BROWSER_STORE_KEY
-    }
 }
 
 fn load_serialized(directory: &str) -> Result<Option<String>, String> {
     let key = SpellforgeTrustStore::store_path(directory);
     open_platform_store()
         .and_then(|store| store.read_text(&key))
-        .map_err(|error| describe_store_error(error, "read", &key))
+        .map_err(|error| platform::describe_store_error(error, "read", &key))
 }
 
 /// Native publication goes through `desktop_persistence` (staged write, file
 /// sync, atomic rename, directory sync); the parent directory is created.
 fn save_serialized(directory: &str, serialized: &str) -> Result<(), String> {
-    // Create the directory up front so its failure keeps the user-facing
-    // "create Spellforge trust directory" message profile recovery reports.
-    #[cfg(not(target_arch = "wasm32"))]
-    std::fs::create_dir_all(directory)
-        .map_err(|error| format!("create Spellforge trust directory {directory}: {error}"))?;
+    platform::create_store_directory(directory)?;
     let key = SpellforgeTrustStore::store_path(directory);
     open_platform_store()
         .and_then(|store| store.write_text(&key, serialized))
-        .map_err(|error| describe_store_error(error, "persist", &key))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn describe_store_error(error: BlobStoreError, operation: &str, path: &Path) -> String {
-    format!("{operation} {}: {error}", path.display())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn describe_store_error(error: BlobStoreError, operation: &str, _key: &str) -> String {
-    error
-        .into_io(&format!("{operation} browser Spellforge trust store"))
-        .to_string()
+        .map_err(|error| platform::describe_store_error(error, "persist", &key))
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    use super::native::NATIVE_STORE_FILE;
     use super::*;
 
     fn key(value: u8) -> SpellforgeTrustKey {
