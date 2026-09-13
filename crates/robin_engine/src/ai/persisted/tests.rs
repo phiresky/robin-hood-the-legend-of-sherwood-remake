@@ -1,6 +1,4 @@
 use super::*;
-use crate::ai_enemy::{AmbushPointStatus, ProfileRank, SeekFlags};
-use crate::entity_id::PcId;
 use robin_util::state_hash::compute;
 mod field_guards;
 mod goldens;

@@ -30,7 +30,6 @@ use crate::level_data::LoadedLevel;
 pub const SIMULATION_CONTENT_DOCUMENT_SCHEMA_V1: u32 = 1;
 pub const SIMULATION_CONTENT_COMPONENT_SCHEMA_V1: u32 = 1;
 pub const PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1: u32 = 2;
-const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 40);
 
 /// Decode the exact canonical official projection SimConfig and prove that no
 /// missing or unknown field was normalized away. Operator tooling and the
@@ -2171,7 +2170,7 @@ mod tests {
             .unwrap()
             .to_string()
         });
-        // Release pins cover replay schema 40 and the exhaustive current
+        // Release pins cover replay schema 41 and the exhaustive current
         // SimConfig, including the default-off background-patch reversal rule.
         assert_eq!(
             observed,

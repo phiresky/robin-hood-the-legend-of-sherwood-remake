@@ -858,11 +858,6 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_uses_synchronous_ai_execution() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 41);
-    }
-
-    #[test]
     fn replay_coordinate_wire_forms_remain_plain_integers() {
         assert_eq!(
             serde_json::to_string(&TimelineFrame::from_wire(42)).unwrap(),

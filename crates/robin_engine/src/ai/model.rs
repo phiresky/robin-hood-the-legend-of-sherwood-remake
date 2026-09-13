@@ -1603,8 +1603,7 @@ pub enum CrossNpcAction {
     /// into the group.
     ConsiderReport {
         target: NpcHandle,
-        /// Merge-mask passed to [`ReconnaissanceReport::consider_report`]
-        /// (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
+        /// Report merge flags (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
         flags: u16,
     },
     /// Resume the outer AlertSoldiers call after the final accepted
