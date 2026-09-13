@@ -1357,10 +1357,12 @@ mod tests {
             assert_eq!(gate.poll(Some(&replacement)), Some(result));
             assert!(matches!(
                 outgoing.try_recv().unwrap(),
-                robin_engine::multiplayer::NetOutbound::ModalDecision {
-                    result: observed,
-                    ..
-                } if observed == result
+                robin_engine::multiplayer::NetOutbound::ModalDecision(
+                    robin_engine::multiplayer::ModalDecision {
+                        result: observed,
+                        ..
+                    }
+                ) if observed == result
             ));
             state.decisions.accept(&kind, result).unwrap();
         }

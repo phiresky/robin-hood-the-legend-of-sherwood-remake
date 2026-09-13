@@ -254,11 +254,11 @@ pub(super) fn drain_net_inputs(
                     robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
                 )));
             }
-            NetEvent::ContentChunk {
+            NetEvent::ContentChunk(robin_engine::multiplayer::ContentChunk {
                 full_mod_sha256,
                 offset,
                 ..
-            } => {
+            }) => {
                 return Err(MultiplayerSessionError::Protocol(format!(
                     "fatal multiplayer session error: host sent distributed-mod chunk {} at offset {offset} after gameplay admission",
                     robin_engine::spellforge::hex_hash(&full_mod_sha256)
@@ -428,12 +428,12 @@ pub(super) fn drain_net_inputs(
                     }
                 }
             }
-            NetEvent::PeerStateHash {
+            NetEvent::PeerStateHash(robin_engine::multiplayer::StateHashReport {
                 frame,
                 hash,
                 clock_frame,
                 ms_until_next_frame,
-            } => {
+            }) => {
                 if let Some(hash) = hash {
                     network.admit_remote_hash(frame, hash);
                 }

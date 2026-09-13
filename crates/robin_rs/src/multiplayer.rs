@@ -1392,20 +1392,22 @@ mod tests {
         ));
 
         client_out_tx
-            .send(NetOutbound::ContentRequest {
-                full_mod_sha256: expected_hash,
-                resume_offset: 0,
-            })
+            .send(NetOutbound::ContentRequest(
+                robin_engine::multiplayer::ContentRequest {
+                    full_mod_sha256: expected_hash,
+                    resume_offset: 0,
+                },
+            ))
             .expect("accept exact content");
         let mut downloaded = Vec::new();
         while downloaded.len() < encoded.len() {
             match client_in_rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(NetEvent::ContentChunk {
+                Ok(NetEvent::ContentChunk(robin_engine::multiplayer::ContentChunk {
                     full_mod_sha256,
                     offset,
                     total_bytes,
                     bytes,
-                }) => {
+                })) => {
                     assert_eq!(full_mod_sha256, expected_hash);
                     assert_eq!(offset as usize, downloaded.len());
                     assert_eq!(total_bytes as usize, encoded.len());
@@ -1456,10 +1458,12 @@ mod tests {
             Ok(NetEvent::ContentOffer(seen)) if seen == offer
         ));
         join_out_tx
-            .send(NetOutbound::ContentRequest {
-                full_mod_sha256: expected_hash,
-                resume_offset: encoded.len() as u64,
-            })
+            .send(NetOutbound::ContentRequest(
+                robin_engine::multiplayer::ContentRequest {
+                    full_mod_sha256: expected_hash,
+                    resume_offset: encoded.len() as u64,
+                },
+            ))
             .expect("resume from exact complete package");
         join_out_tx
             .send(NetOutbound::ContentReady {

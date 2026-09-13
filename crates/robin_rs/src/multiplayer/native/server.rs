@@ -1801,23 +1801,24 @@ pub(super) async fn admit_distributed_mod(
     )
     .await?
     {
-        Some(NetMsg::ContentRequest {
+        Some(NetMsg::ContentRequest(robin_engine::multiplayer::ContentRequest {
             full_mod_sha256,
             resume_offset,
-        }) if full_mod_sha256 == offer.full_mod_sha256 => resume_offset,
-        Some(NetMsg::ContentRequest {
-            full_mod_sha256, ..
-        }) => {
+        })) if full_mod_sha256 == offer.full_mod_sha256 => resume_offset,
+        Some(NetMsg::ContentRequest(robin_engine::multiplayer::ContentRequest {
+            full_mod_sha256,
+            ..
+        })) => {
             return Err(format!(
                 "client requested distributed mod {}, offered {}",
                 robin_engine::spellforge::hex_hash(&full_mod_sha256),
                 robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
             ));
         }
-        Some(NetMsg::ContentReject {
+        Some(NetMsg::ContentReject(robin_engine::multiplayer::ContentReject {
             full_mod_sha256,
             reason,
-        }) if full_mod_sha256 == offer.full_mod_sha256 => {
+        })) if full_mod_sha256 == offer.full_mod_sha256 => {
             return Err(format!("client declined exact host content: {reason}"));
         }
         Some(other) => return Err(format!("expected ContentRequest, got {other:?}")),
@@ -1834,12 +1835,12 @@ pub(super) async fn admit_distributed_mod(
     while offset < content.encoded.len() {
         let end = (offset + robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT)
             .min(content.encoded.len());
-        let message = NetMsg::ContentChunk {
+        let message = NetMsg::ContentChunk(robin_engine::multiplayer::ContentChunk {
             full_mod_sha256: offer.full_mod_sha256,
             offset: offset as u64,
             total_bytes: content.encoded.len() as u64,
             bytes: content.encoded[offset..end].to_vec(),
-        };
+        });
         tokio::select! {
             result = write_frame_with_timeout(
                 send,
@@ -1871,10 +1872,10 @@ pub(super) async fn admit_distributed_mod(
         {
             Ok(false)
         }
-        Some(NetMsg::ContentReject {
+        Some(NetMsg::ContentReject(robin_engine::multiplayer::ContentReject {
             full_mod_sha256,
             reason,
-        }) if full_mod_sha256 == offer.full_mod_sha256 => {
+        })) if full_mod_sha256 == offer.full_mod_sha256 => {
             Err(format!("client rejected downloaded host content: {reason}"))
         }
         Some(other) => Err(format!(
@@ -2045,13 +2046,8 @@ pub(super) fn apply_authenticated_peer_message(
         NetMsg::Note(s) => {
             tracing::info!(?seat, note = %s, "peer note");
         }
-        NetMsg::ModalProposal {
-            instance,
-            kind,
-            result,
-            requested_frame,
-        } => {
-            if instance.session_id != context.session_id {
+        NetMsg::ModalProposal(proposal) => {
+            if proposal.instance.session_id != context.session_id {
                 return Err(format!(
                     "peer {seat:?} submitted a modal proposal for another session"
                 ));
@@ -2060,10 +2056,7 @@ pub(super) fn apply_authenticated_peer_message(
                 .incoming_tx
                 .send(NetEvent::ModalProposal {
                     from: seat,
-                    instance,
-                    kind,
-                    result,
-                    requested_frame,
+                    proposal,
                 })
                 .map_err(|_| "host modal proposal channel is closed".to_string())?;
         }

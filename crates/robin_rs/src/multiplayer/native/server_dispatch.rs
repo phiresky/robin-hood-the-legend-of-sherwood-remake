@@ -104,26 +104,13 @@ pub(super) async fn run_server_outgoing_pump(
                 let inp = PlayerInput::new(PlayerId::HOST, command);
                 broadcast_input(&context, now, origin_frame, target, inp);
             }
-            NetOutbound::StateHash {
-                frame,
-                hash,
-                clock_frame,
-                ms_until_next_frame,
-            } => {
+            NetOutbound::StateHash(report) => {
                 // Authoritative-host state hash: broadcast as a wire
                 // `StateHash` to every peer.  No echo into our own
                 // incoming channel — the local game loop already has
                 // the value (it just computed the hash before pushing
                 // here).
-                broadcast_diagnostic(
-                    &context,
-                    NetMsg::StateHash {
-                        frame,
-                        hash,
-                        clock_frame,
-                        ms_until_next_frame,
-                    },
-                );
+                broadcast_diagnostic(&context, NetMsg::StateHash(report));
             }
             NetOutbound::InitialSnapshot {
                 frame,
@@ -154,28 +141,17 @@ pub(super) async fn run_server_outgoing_pump(
             NetOutbound::ModalProposal { .. } => {
                 tracing::error!("multiplayer host attempted to send a client-only modal proposal");
             }
-            NetOutbound::ModalDecision {
-                instance,
-                kind,
-                result,
-                decision_frame,
-            } => {
-                if instance.session_id != context.session_id {
+            NetOutbound::ModalDecision(decision) => {
+                if decision.instance.session_id != context.session_id {
                     tracing::error!(
-                        ?instance,
+                        instance = ?decision.instance,
                         "multiplayer host rejected a modal decision for another session"
                     );
                     continue;
                 }
-                if let Err(error) = broadcast_msg_required(
-                    &context,
-                    NetMsg::ModalDecision {
-                        instance,
-                        kind,
-                        result,
-                        decision_frame,
-                    },
-                ) {
+                if let Err(error) =
+                    broadcast_msg_required(&context, NetMsg::ModalDecision(decision))
+                {
                     tracing::error!(%error, "authoritative modal broadcast failed");
                     super::fail_server(&context, error);
                 }

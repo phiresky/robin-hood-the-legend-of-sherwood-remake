@@ -44,17 +44,7 @@ pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
             input,
         },
         NetMsg::Note(note) => NetEvent::Note(note),
-        NetMsg::StateHash {
-            frame,
-            hash,
-            clock_frame,
-            ms_until_next_frame,
-        } => NetEvent::PeerStateHash {
-            frame,
-            hash,
-            clock_frame,
-            ms_until_next_frame,
-        },
+        NetMsg::StateHash(report) => NetEvent::PeerStateHash(report),
         NetMsg::InitialSnapshot {
             frame,
             engine_bytes,
@@ -62,17 +52,7 @@ pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
             frame,
             engine_bytes,
         },
-        NetMsg::ModalDecision {
-            instance,
-            kind,
-            result,
-            decision_frame,
-        } => NetEvent::ModalDecision {
-            instance,
-            kind,
-            result,
-            decision_frame,
-        },
+        NetMsg::ModalDecision(decision) => NetEvent::ModalDecision(decision),
         NetMsg::PrepareSnapshotTransition { id, payload } => {
             NetEvent::PrepareSnapshotTransition { id, payload }
         }
@@ -165,18 +145,22 @@ mod tests {
             Ok(NetEvent::InitialSnapshot { frame: 41, engine_bytes }) if engine_bytes == [3, 7])
         );
         assert!(matches!(
-            decode(NetMsg::StateHash {
-                frame: 9,
-                hash: Some(23),
-                clock_frame: Some(8),
-                ms_until_next_frame: None
-            }),
-            Ok(NetEvent::PeerStateHash {
-                frame: 9,
-                hash: Some(23),
-                clock_frame: Some(8),
-                ms_until_next_frame: None
-            })
+            decode(NetMsg::StateHash(
+                robin_engine::multiplayer::StateHashReport {
+                    frame: 9,
+                    hash: Some(23),
+                    clock_frame: Some(8),
+                    ms_until_next_frame: None
+                }
+            )),
+            Ok(NetEvent::PeerStateHash(
+                robin_engine::multiplayer::StateHashReport {
+                    frame: 9,
+                    hash: Some(23),
+                    clock_frame: Some(8),
+                    ms_until_next_frame: None
+                }
+            ))
         ));
     }
 
