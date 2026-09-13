@@ -1085,39 +1085,38 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         strangle_initialized: false,
     };
 
-    let observed = std::rc::Rc::new(std::cell::Cell::new(false));
-    let observed_hook = observed.clone();
-    crate::engine::combat::set_receive_purse_reveal_observer(Some(Box::new(
-        move |engine, owner| {
-            let (_, _, order) = engine
-                .orders
-                .sequence_manager
-                .current_order_for_actor(owner)
-                .expect("ReceivePurse reveal retains its current order");
-            observed_hook.set(
-                order.order_id == waiting_id && order.order_type == OrderType::WaitingWithPurse,
-            );
-        },
-    )));
     let mut assets = LevelAssets::new();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .civilians
         .push(Default::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+    let mut reveals = Vec::new();
     for _ in 0..10 {
-        engine.tick_actor_owner_envelopes_with_test_owner_hook(
-            &crate::sim_rng::test_context(),
-            &assets,
-            &positions,
-            |_, _| {},
-        );
-        if observed.get() {
+        let (_, tick_reveals) = crate::engine::combat::capture_receive_purse_reveals(|| {
+            engine.tick_actor_owner_envelopes_with_test_owner_hook(
+                &crate::sim_rng::test_context(),
+                &assets,
+                &positions,
+                |_, _| {},
+            );
+        });
+        reveals.extend(tick_reveals);
+        if !reveals.is_empty() {
             break;
         }
     }
-    crate::engine::combat::set_receive_purse_reveal_observer(None);
-    assert!(observed.get());
+    let reveal = reveals
+        .last()
+        .expect("ReceivePurse termination reveals the beggar's scrolls");
+    assert_eq!(reveal.owner, beggar);
+    assert_eq!(
+        reveal
+            .current_order
+            .expect("ReceivePurse reveal retains its current order"),
+        (waiting_id, OrderType::WaitingWithPurse),
+        "the reveal observes the terminating WaitingWithPurse order"
+    );
     assert_eq!(
         engine
             .get_entity(beggar)

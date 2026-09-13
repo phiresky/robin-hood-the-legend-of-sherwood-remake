@@ -17,6 +17,16 @@ impl<E> Probe<E> {
         }
     }
 
+    /// Record an event whose construction is only worth paying for while a
+    /// capture is active (for example a snapshot of engine state). `event` is
+    /// not called outside a capture, and no probe borrow is held while it runs.
+    pub fn record_with(&self, event: impl FnOnce() -> E) {
+        if self.0.borrow().is_some() {
+            let event = event();
+            self.record(event);
+        }
+    }
+
     pub fn capture<T>(&self, operation: impl FnOnce() -> T) -> (T, Vec<E>) {
         struct Restore<'a, E> {
             probe: &'a Probe<E>,
@@ -56,4 +66,11 @@ fn probe_scopes_are_nested_and_restore_after_panics() {
     });
     assert_eq!(outer, [1, 4]);
     assert_eq!(probe.capture(|| probe.record(5)).1, [5]);
+}
+
+#[test]
+fn probe_record_with_is_lazy_outside_captures() {
+    let probe = Probe::new();
+    probe.record_with(|| panic!("inactive probe must not build events"));
+    assert_eq!(probe.capture(|| probe.record_with(|| 7)).1, [7]);
 }

@@ -93,8 +93,7 @@ fn spellforge_event_names_cover_global_and_per_entity_contracts() {
 
 #[cfg(test)]
 std::thread_local! {
-    static ACTIVE_DRIVER_SNAPSHOT_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static ACTIVE_DRIVER_SNAPSHOT_ERROR: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static ACTIVE_DRIVER_SNAPSHOT_ERRORS: super::test_support::Probe<String> = const { super::test_support::Probe::new() };
     static AI_STATE_CALLBACK_OBSERVATIONS: super::test_support::Probe<AiStateCallbackObservation> = const { super::test_support::Probe::new() };
     static MISSION_INITIALIZATION_PHASES: super::test_support::Probe<MissionInitializationPhase> = const { super::test_support::Probe::new() };
 }
@@ -149,15 +148,11 @@ pub(super) fn capture_ai_state_callback_observations<R>(
     AI_STATE_CALLBACK_OBSERVATIONS.with(|observations| observations.capture(f))
 }
 
+/// Captures, for every script effect drained inside `f`, the error a full
+/// `EngineInner` serialization reports while the driver is active.
 #[cfg(test)]
-pub(super) fn arm_active_driver_snapshot_probe() {
-    ACTIVE_DRIVER_SNAPSHOT_PROBE.with(|probe| probe.set(true));
-    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|error| *error.borrow_mut() = None);
-}
-
-#[cfg(test)]
-pub(super) fn take_active_driver_snapshot_error() -> Option<String> {
-    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|error| error.borrow_mut().take())
+pub(super) fn capture_active_driver_snapshot_errors<R>(f: impl FnOnce() -> R) -> (R, Vec<String>) {
+    ACTIVE_DRIVER_SNAPSHOT_ERRORS.with(|errors| errors.capture(f))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2018,13 +2013,12 @@ impl EngineInner {
                 None => return Ok(()),
             };
             #[cfg(test)]
-            ACTIVE_DRIVER_SNAPSHOT_PROBE.with(|probe| {
-                if probe.replace(false) {
-                    let error = serde_json::to_string(&*self)
+            ACTIVE_DRIVER_SNAPSHOT_ERRORS.with(|errors| {
+                errors.record_with(|| {
+                    serde_json::to_string(&*self)
                         .expect_err("active driver must reject full EngineInner serialization")
-                        .to_string();
-                    ACTIVE_DRIVER_SNAPSHOT_ERROR.with(|slot| *slot.borrow_mut() = Some(error));
-                }
+                        .to_string()
+                });
             });
             let (sound, engine_commands, deferred) = match effect {
                 crate::natives::ScriptEffect::ExternalSound(command) => {

@@ -366,31 +366,106 @@ pub(super) struct TerminalMovementOrderPop {
     pub live_following_before_pop: Vec<(crate::sequence::SequenceId, usize)>,
 }
 
+/// State seen when the post-Execute line-crossing boundary opens for `owner`.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PostExecuteCrossingObservation {
+    pub owner: EntityId,
+    /// Identity and action of the owner's current order at that point.
+    pub current_order: Option<(std::num::NonZeroU32, OrderType)>,
+}
+
+/// A fixed front-order replacement applied when `owner` reaches the
+/// post-Execute line-crossing boundary.
+///
+/// Stands in for a synchronous line-crossing callback that replaces the entry
+/// order after Execute returned. That state cannot be staged before the tick
+/// (Execute itself rewrites the same order object), and no fixture drives a
+/// real script line crossing yet.
+// TODO: replace with a script-line-crossing fixture whose callback issues the
+// replacement, then delete this injection.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct PostExecuteOrderReplacement {
+    pub owner: EntityId,
+    pub seq_id: crate::sequence::SequenceId,
+    pub elem_idx: usize,
+    pub expected_order_type: OrderType,
+    pub order_type: OrderType,
+    pub order_id: std::num::NonZeroU32,
+}
+
 #[cfg(test)]
 thread_local! {
-    static LAST_MOBILE_CROSSING_INCREMENT: std::cell::Cell<Option<MapVec>> = const { std::cell::Cell::new(None) };
-    static POST_EXECUTE_CROSSING_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> = const { std::cell::RefCell::new(None) };
+    static MOBILE_CROSSING_INCREMENTS: super::test_support::Probe<MapVec> =
+        const { super::test_support::Probe::new() };
+    static POST_EXECUTE_CROSSINGS: super::test_support::Probe<PostExecuteCrossingObservation> =
+        const { super::test_support::Probe::new() };
+    static POST_EXECUTE_ORDER_REPLACEMENT: std::cell::RefCell<Option<PostExecuteOrderReplacement>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
-pub(super) fn take_last_mobile_crossing_increment() -> Option<MapVec> {
-    LAST_MOBILE_CROSSING_INCREMENT.with(|increment| increment.take())
+pub(super) fn capture_mobile_crossing_increments<T>(f: impl FnOnce() -> T) -> (T, Vec<MapVec>) {
+    MOBILE_CROSSING_INCREMENTS.with(|increments| increments.capture(f))
 }
 
 #[cfg(test)]
-pub(super) fn set_post_execute_crossing_observer(
-    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
-) {
-    POST_EXECUTE_CROSSING_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+fn observe_mobile_crossing_increment(increment: MapVec) {
+    MOBILE_CROSSING_INCREMENTS.with(|increments| increments.record(increment));
+}
+
+#[cfg(test)]
+pub(super) fn capture_post_execute_crossings<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<PostExecuteCrossingObservation>) {
+    POST_EXECUTE_CROSSINGS.with(|crossings| crossings.capture(f))
+}
+
+#[cfg(test)]
+pub(super) fn install_post_execute_order_replacement(replacement: PostExecuteOrderReplacement) {
+    POST_EXECUTE_ORDER_REPLACEMENT.with(|slot| {
+        assert!(
+            slot.borrow_mut().replace(replacement).is_none(),
+            "post-Execute order replacement must not already be installed"
+        );
+    });
 }
 
 #[cfg(test)]
 fn observe_post_execute_crossing(engine: &mut EngineInner, entity_id: EntityId) {
-    POST_EXECUTE_CROSSING_OBSERVER.with(|slot| {
-        if let Some(observer) = slot.borrow_mut().as_mut() {
-            observer(engine, entity_id);
+    POST_EXECUTE_CROSSINGS.with(|crossings| {
+        crossings.record_with(|| PostExecuteCrossingObservation {
+            owner: entity_id,
+            current_order: engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(entity_id)
+                .map(|(_, _, order)| (order.order_id, order.order_type)),
+        });
+    });
+    let replacement = POST_EXECUTE_ORDER_REPLACEMENT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot
+            .as_ref()
+            .is_some_and(|replacement| replacement.owner == entity_id)
+        {
+            slot.take()
+        } else {
+            None
         }
     });
+    if let Some(replacement) = replacement {
+        let order = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(replacement.seq_id, replacement.elem_idx)
+            .and_then(|element| element.orders.front_mut())
+            .expect("post-Execute replacement retains the selected element");
+        assert_eq!(order.order_type, replacement.expected_order_type);
+        order.order_type = replacement.order_type;
+        order.order_id = replacement.order_id;
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

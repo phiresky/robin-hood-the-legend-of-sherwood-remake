@@ -78,17 +78,27 @@ fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: E
     .matches([Some(frame), Some(shooter.index()), Some(projectile.index())])
 }
 
+/// State seen right after a ReceivePurse termination revealed the beggar's
+/// scrolls.
 #[cfg(test)]
-thread_local! {
-    static RECEIVE_PURSE_REVEAL_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> =
-        std::cell::RefCell::new(None);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReceivePurseRevealObservation {
+    pub owner: EntityId,
+    /// Identity and action of the beggar's current order at that point.
+    pub current_order: Option<(std::num::NonZeroU32, crate::order::OrderType)>,
 }
 
 #[cfg(test)]
-pub(crate) fn set_receive_purse_reveal_observer(
-    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
-) {
-    RECEIVE_PURSE_REVEAL_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+thread_local! {
+    static RECEIVE_PURSE_REVEALS: super::test_support::Probe<ReceivePurseRevealObservation> =
+        const { super::test_support::Probe::new() };
+}
+
+#[cfg(test)]
+pub(crate) fn capture_receive_purse_reveals<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<ReceivePurseRevealObservation>) {
+    RECEIVE_PURSE_REVEALS.with(|reveals| reveals.capture(f))
 }
 
 /// Frames of apple-smell AI state after a soldier is hit by an apple.
@@ -4516,10 +4526,15 @@ impl EngineInner {
             ),
         }
         #[cfg(test)]
-        RECEIVE_PURSE_REVEAL_OBSERVER.with(|observer| {
-            if let Some(observer) = observer.borrow_mut().as_mut() {
-                observer(self, beggar_id);
-            }
+        RECEIVE_PURSE_REVEALS.with(|reveals| {
+            reveals.record_with(|| ReceivePurseRevealObservation {
+                owner: beggar_id,
+                current_order: self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(beggar_id)
+                    .map(|(_, _, order)| (order.order_id, order.order_type)),
+            });
         });
     }
 

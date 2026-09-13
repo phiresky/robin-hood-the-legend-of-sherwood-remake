@@ -363,13 +363,13 @@ fn reached_waypoint_uses_old_child_speed_then_new_speed_next_tick() {
             ..Default::default()
         };
 
-        let (_, trace) = crate::sim_rng::with_draw_trace(|| {
-            engine.tick_mobile_child_owner_boundary(sim, &assets, child);
-        });
-        assert_eq!(
-            crate::engine::movement::take_last_mobile_crossing_increment(),
-            Some(MapVec::new(1.0, 0.0))
-        );
+        let ((_, trace), increments) =
+            crate::engine::movement::capture_mobile_crossing_increments(|| {
+                crate::sim_rng::with_draw_trace(|| {
+                    engine.tick_mobile_child_owner_boundary(sim, &assets, child);
+                })
+            });
+        assert_eq!(increments.last().copied(), Some(MapVec::new(1.0, 0.0)));
         assert_eq!(
             engine.world.mobile_elements[0].increment,
             MapVec::new(-1.0, 0.0)
@@ -422,9 +422,9 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
         },
         ..Default::default()
     };
-    let _ = crate::engine::movement::take_last_mobile_crossing_increment();
-
-    engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+    let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
+        engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+    });
     assert_eq!(
         engine
             .get_entity(child)
@@ -434,15 +434,14 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
             .x,
         10.0
     );
-    assert_eq!(
-        crate::engine::movement::take_last_mobile_crossing_increment(),
-        None
-    );
+    assert_eq!(increments, []);
 
     engine.world.mobile_elements[0].stopped = false;
     engine.world.mobile_elements[0].active = false;
     engine.world.mobile_elements[0].old_position = MapPoint::new(-30.0, 0.0);
-    engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+    let (_, increments) = crate::engine::movement::capture_mobile_crossing_increments(|| {
+        engine.tick_mobile_child_owner_boundary(&sim_context, &assets, child);
+    });
     assert_eq!(
         engine
             .get_entity(child)
@@ -452,10 +451,7 @@ fn stopped_master_returns_before_crossing_and_never_replays_old_position_delta()
             .x,
         10.0
     );
-    assert_eq!(
-        crate::engine::movement::take_last_mobile_crossing_increment(),
-        None
-    );
+    assert_eq!(increments, []);
 }
 
 #[test]

@@ -3008,7 +3008,7 @@ fn unobstructed_rider_charge_with_anti_collision_keeps_raw_motion() {
 
 #[test]
 fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::capture_post_execute_crossings;
     use crate::order::{Order, OrderType};
 
     let mut engine = EngineInner::new();
@@ -3036,27 +3036,22 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
         .orders
         .push_back(Order::new(OrderType::RunningUpright, 300.0, 100.0, next_id));
 
-    let crossing_saw_charge = std::rc::Rc::new(std::cell::Cell::new(false));
-    let crossing_observed = crossing_saw_charge.clone();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner == rider {
-            assert_eq!(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(owner)
-                    .map(|(_, _, order)| order.order_type),
-                Some(OrderType::RiderCharging),
-                "line-crossing callbacks observe the terminating entry order"
-            );
-            crossing_observed.set(true);
-        }
-    })));
+    let (_, crossings) = capture_post_execute_crossings(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    });
 
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
-
-    assert!(crossing_saw_charge.get());
+    let rider_crossings = crossings
+        .iter()
+        .filter(|crossing| crossing.owner == rider)
+        .collect::<Vec<_>>();
+    assert!(!rider_crossings.is_empty());
+    for crossing in rider_crossings {
+        assert_eq!(
+            crossing.current_order.map(|(_, order_type)| order_type),
+            Some(OrderType::RiderCharging),
+            "line-crossing callbacks observe the terminating entry order"
+        );
+    }
     assert_eq!(
         engine
             .get_entity(rider)
@@ -3079,7 +3074,7 @@ fn rider_charge_arrival_snaps_and_advances_from_actor_hourglass() {
 
 #[test]
 fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::capture_post_execute_crossings;
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -3099,22 +3094,14 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
     charge.target_y = 100.0;
     charge.tolerance = 0.0;
 
-    let rewritten_id = std::rc::Rc::new(std::cell::Cell::new(None));
-    let observed_id = rewritten_id.clone();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner == rider {
-            observed_id.set(
-                engine
-                    .orders
-                    .sequence_manager
-                    .current_order_for_actor(owner)
-                    .map(|(_, _, order)| order.order_id),
-            );
-        }
-    })));
-
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
+    let (_, crossings) = capture_post_execute_crossings(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    });
+    let rewritten_id = crossings
+        .iter()
+        .rfind(|crossing| crossing.owner == rider)
+        .and_then(|crossing| crossing.current_order)
+        .map(|(order_id, _)| order_id);
 
     let element = engine
         .orders
@@ -3133,9 +3120,7 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
         "completion notification clears the completed selected movement goal"
     );
     assert_ne!(
-        rewritten_id
-            .get()
-            .expect("post-Execute crossing must observe the rewritten order"),
+        rewritten_id.expect("post-Execute crossing must observe the rewritten order"),
         old_id,
         "the completed order was legitimately assigned a fresh ID during Execute"
     );
@@ -3143,7 +3128,9 @@ fn rider_charge_last_frame_new_id_still_completes_same_order_object() {
 
 #[test]
 fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
-    use crate::engine::movement::set_post_execute_crossing_observer;
+    use crate::engine::movement::{
+        PostExecuteOrderReplacement, install_post_execute_order_replacement,
+    };
     use crate::order::OrderType;
 
     let mut engine = EngineInner::new();
@@ -3164,23 +3151,16 @@ fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
     charge.tolerance = 0.0;
 
     let replacement_id = engine.orders.allocate_order_id();
-    set_post_execute_crossing_observer(Some(Box::new(move |engine, owner| {
-        if owner != rider {
-            return;
-        }
-        let replacement = engine
-            .orders
-            .sequence_manager
-            .get_element_mut(sequence, 0)
-            .and_then(|element| element.orders.front_mut())
-            .expect("post-Execute replacement retains the selected element");
-        assert_eq!(replacement.order_type, OrderType::RunningUpright);
-        replacement.order_type = OrderType::WaitingUpright;
-        replacement.order_id = replacement_id;
-    })));
+    install_post_execute_order_replacement(PostExecuteOrderReplacement {
+        owner: rider,
+        seq_id: sequence,
+        elem_idx: 0,
+        expected_order_type: OrderType::RunningUpright,
+        order_type: OrderType::WaitingUpright,
+        order_id: replacement_id,
+    });
 
     tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    set_post_execute_crossing_observer(None);
 
     let current = engine
         .orders
