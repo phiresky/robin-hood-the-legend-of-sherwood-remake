@@ -10,6 +10,7 @@ test-support = []
 
 [[test]]
 name = "router_e2e"
+path = "tests/router_e2e/main.rs"
 required-features = ["test-support"]
 
 [lib]
