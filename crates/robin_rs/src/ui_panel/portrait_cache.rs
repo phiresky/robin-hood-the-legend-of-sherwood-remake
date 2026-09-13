@@ -3,7 +3,7 @@ use super::*;
 /// Pre-loaded portrait renderer surfaces and action button icons, keyed by [`CharacterKind`].
 ///
 /// Loaded once at mission start from `Data/Interface/DEFAULT.RES`, then
-/// passed to [`draw_panel`] each frame.  The per-character arrays are
+/// passed to [`HudDrawCtx::draw_panel`] each frame.  The per-character arrays are
 /// indexed via `CharacterKind::as_index()` (`CharacterKind::COUNT`
 /// slots).
 pub struct PortraitCache {

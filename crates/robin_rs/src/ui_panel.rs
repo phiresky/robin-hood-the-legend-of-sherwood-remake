@@ -822,134 +822,156 @@ fn render_auto_queue_ticks(
     }
 }
 
-fn render_allied_portrait(
-    frontend: &HostFrontend,
-    renderer: &mut Renderer,
-    portraits: &PortraitCache,
-    engine: &PresentationView<'_>,
-    profiles: &engine_profiles::ProfileManager,
-    seat: PlayerId,
-    item: &PortraitBarItem<'_>,
-    x: u16,
-    sh: u16,
-    hovered_action: Option<u8>,
-) {
-    let selected = engine.tactical_selection(seat) == item.members();
-    let top_scroll = if selected {
-        POSITION_TOP_SCROLL
-    } else {
-        CLOSE_POSITION_TOP_SCROLL
-    };
-    render_allied_portrait_layer(
-        renderer,
-        portraits
-            .allied_portrait_background
-            .as_ref()
-            .expect("allied portrait background must be loaded before drawing the HUD"),
-        x,
-        sh,
-        selected,
-    );
-    let visage_kind = allied_visage_kind(engine, profiles, item.members());
-    let visage = portraits.allied_visages[visage_kind.index()]
-        .as_ref()
-        .unwrap_or_else(|| panic!("allied visage {visage_kind:?} was not loaded"));
-    let visage_top = if selected {
-        sh - POSITION_VISAGE
-    } else {
-        sh - CLOSE_POSITION_VISAGE
-    };
-    renderer.render_gpu_image(
-        visage,
-        None,
-        Some(&bbox(
+impl HudDrawCtx<'_> {
+    fn render_allied_portrait(
+        &mut self,
+        item: &PortraitBarItem<'_>,
+        x: u16,
+        sh: u16,
+        hovered_action: Option<u8>,
+    ) {
+        let engine = self.engine;
+        let selected = engine.tactical_selection(self.local_seat) == item.members();
+        let top_scroll = if selected {
+            POSITION_TOP_SCROLL
+        } else {
+            CLOSE_POSITION_TOP_SCROLL
+        };
+        render_allied_portrait_layer(
+            self.renderer,
+            self.portraits
+                .allied_portrait_background
+                .as_ref()
+                .expect("allied portrait background must be loaded before drawing the HUD"),
             x,
-            visage_top,
-            x + ELEMENT_WIDTH,
-            visage_top + VISAGE_HEIGHT,
-        )),
-        BlendMode::Blend,
-    );
-
-    // Reuse the native merry-man crossed-swords overlay for controlled
-    // soldiers. A group counts as fighting while any surviving member is in
-    // a sword action or has an active melee opponent. Match hero portraits:
-    // the overlay stays visible on the open portrait and blinks while closed.
-    let is_sword_fighting = item.members().iter().any(|member| {
-        engine.get_entity(*member).is_some_and(|entity| {
-            entity
-                .actor_data()
-                .is_some_and(|actor| actor.action_state.is_sword())
-                || entity
-                    .human_data()
-                    .is_some_and(|human| !human.opponents.is_empty())
-        })
-    });
-    let fighting_visible = selected || (engine.frame_counter() / 10).is_multiple_of(2);
-    if is_sword_fighting
-        && fighting_visible
-        && let Some(surface) = portraits.get_fighting_surface(CharacterKind::MerryManA)
-    {
+            sh,
+            selected,
+        );
         let visage_top = if selected {
             sh - POSITION_VISAGE
         } else {
             sh - CLOSE_POSITION_VISAGE
         };
-        let (width, height) = portrait_surface_dimensions(renderer, surface);
-        blit_to_screen_widget(
-            renderer,
-            surface,
+        self.draw_allied_visage(item, x, visage_top);
+        self.draw_allied_fighting_overlay(item, x, visage_top, selected);
+        self.draw_allied_pin(item, x, sh - top_scroll - ALLIED_PIN_RISE);
+
+        // Automatic work is separate from Original's three macro slots. Give
+        // tactical group portraits an unambiguous pending-work strip: one gold tick
+        // per queued soldier action, capped to the portrait width with a final
+        // longer overflow tick.
+        render_auto_queue_ticks(
+            self.frontend,
+            self.renderer,
+            engine,
+            self.local_seat,
+            item.queue_strip_identity(),
+            item.members(),
+            x,
+            i32::from(sh - top_scroll + 4),
+        );
+
+        if selected {
+            self.draw_allied_action_row(item, x, sh, hovered_action);
+        }
+    }
+
+    fn draw_allied_visage(&mut self, item: &PortraitBarItem<'_>, x: u16, visage_top: u16) {
+        let visage_kind = allied_visage_kind(self.engine, self.profiles, item.members());
+        let visage = self.portraits.allied_visages[visage_kind.index()]
+            .as_ref()
+            .unwrap_or_else(|| panic!("allied visage {visage_kind:?} was not loaded"));
+        self.renderer.render_gpu_image(
+            visage,
             None,
-            Some(&bbox(x, visage_top, x + width, visage_top + height)),
-            BLIT_SOURCE_TRANSPARENT,
+            Some(&bbox(
+                x,
+                visage_top,
+                x + ELEMENT_WIDTH,
+                visage_top + VISAGE_HEIGHT,
+            )),
+            BlendMode::Blend,
         );
     }
 
-    // Pin/unpin button remains visible in both open and closed states.
-    let pin_x = x + ALLIED_PIN_LEFT;
-    let pin_y = sh - top_scroll - ALLIED_PIN_RISE;
-    let pin_index = if matches!(item.target(), PortraitTarget::AlliedGroup(_)) {
-        1
-    } else {
-        0
-    };
-    let pin = portraits.allied_pin_icons[pin_index]
-        .as_ref()
-        .expect("allied pin icon must be loaded before drawing the HUD");
-    renderer.render_gpu_image(
-        pin,
-        None,
-        Some(&bbox(
-            pin_x,
-            pin_y,
-            pin_x + ALLIED_PIN_ICON_SIZE,
-            pin_y + ALLIED_PIN_ICON_SIZE,
-        )),
-        BlendMode::Blend,
-    );
+    /// Reuse the native merry-man crossed-swords overlay for controlled
+    /// soldiers. A group counts as fighting while any surviving member is in
+    /// a sword action or has an active melee opponent. Match hero portraits:
+    /// the overlay stays visible on the open portrait and blinks while closed.
+    fn draw_allied_fighting_overlay(
+        &mut self,
+        item: &PortraitBarItem<'_>,
+        x: u16,
+        visage_top: u16,
+        selected: bool,
+    ) {
+        let engine = self.engine;
+        let is_sword_fighting = item.members().iter().any(|member| {
+            engine.get_entity(*member).is_some_and(|entity| {
+                entity
+                    .actor_data()
+                    .is_some_and(|actor| actor.action_state.is_sword())
+                    || entity
+                        .human_data()
+                        .is_some_and(|human| !human.opponents.is_empty())
+            })
+        });
+        let fighting_visible = selected || (engine.frame_counter() / 10).is_multiple_of(2);
+        if is_sword_fighting
+            && fighting_visible
+            && let Some(surface) = self
+                .portraits
+                .get_fighting_surface(CharacterKind::MerryManA)
+        {
+            let (width, height) = portrait_surface_dimensions(self.renderer, surface);
+            blit_to_screen_widget(
+                self.renderer,
+                surface,
+                None,
+                Some(&bbox(x, visage_top, x + width, visage_top + height)),
+                BLIT_SOURCE_TRANSPARENT,
+            );
+        }
+    }
 
-    // Automatic work is separate from Original's three macro slots. Give
-    // tactical group portraits an unambiguous pending-work strip: one gold tick
-    // per queued soldier action, capped to the portrait width with a final
-    // longer overflow tick.
-    render_auto_queue_ticks(
-        frontend,
-        renderer,
-        engine,
-        seat,
-        item.queue_strip_identity(),
-        item.members(),
-        x,
-        i32::from(sh - top_scroll + 4),
-    );
+    /// Pin/unpin button remains visible in both open and closed states.
+    fn draw_allied_pin(&mut self, item: &PortraitBarItem<'_>, x: u16, pin_y: u16) {
+        let pin_x = x + ALLIED_PIN_LEFT;
+        let pin_index = if matches!(item.target(), PortraitTarget::AlliedGroup(_)) {
+            1
+        } else {
+            0
+        };
+        let pin = self.portraits.allied_pin_icons[pin_index]
+            .as_ref()
+            .expect("allied pin icon must be loaded before drawing the HUD");
+        self.renderer.render_gpu_image(
+            pin,
+            None,
+            Some(&bbox(
+                pin_x,
+                pin_y,
+                pin_x + ALLIED_PIN_ICON_SIZE,
+                pin_y + ALLIED_PIN_ICON_SIZE,
+            )),
+            BlendMode::Blend,
+        );
+    }
 
-    if selected {
+    /// Stance / patrol / formation buttons of an open allied portrait.
+    fn draw_allied_action_row(
+        &mut self,
+        item: &PortraitBarItem<'_>,
+        x: u16,
+        sh: u16,
+        hovered_action: Option<u8>,
+    ) {
         let action_top = sh - POSITION_ACTION;
         let action_bottom = sh - POSITION_BOTTOM_SCROLL;
         let order = item
             .members()
             .first()
-            .and_then(|soldier| engine.tactical_order(*soldier));
+            .and_then(|soldier| self.engine.tactical_order(*soldier));
         let button_w = ELEMENT_WIDTH / 3;
         for index in 0..3 {
             let left = x + index as u16 * button_w;
@@ -961,7 +983,7 @@ fn render_allied_portrait(
             let active = index == 1
                 && order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. }));
             let icon_index = allied_state_icon_index(index as u8, order);
-            let image = portraits.allied_action_surfaces[icon_index]
+            let image = self.portraits.allied_action_surfaces[icon_index]
                 .as_ref()
                 .unwrap_or_else(|| panic!("allied state icon {icon_index} was not loaded"));
             let scale = f32::min(
@@ -972,7 +994,7 @@ fn render_allied_portrait(
             let height = ((ALLIED_ACTION_ICON_HEIGHT as f32 * scale).round() as u16).max(1);
             let icon_x = left + (right - left - width) / 2;
             let icon_y = action_top + (action_bottom - action_top - height) / 2;
-            renderer.render_gpu_image(
+            self.renderer.render_gpu_image(
                 image,
                 None,
                 Some(&bbox(icon_x, icon_y, icon_x + width, icon_y + height)),
@@ -985,7 +1007,7 @@ fn render_allied_portrait(
                 } else {
                     Renderer::create_color_16(224, 211, 157)
                 };
-                renderer.draw_line_screen(
+                self.renderer.draw_line_screen(
                     i32::from(left + 3),
                     i32::from(action_bottom - 2),
                     i32::from(right - 4),
@@ -1259,7 +1281,7 @@ pub(crate) use tests::verify_portrait_gpu_ownership;
 mod portrait_cache;
 pub use portrait_cache::PortraitCache;
 mod panel;
-pub use panel::draw_panel;
+pub use panel::HudDrawCtx;
 mod blazon_bar;
 pub use blazon_bar::{BlazonSlotKind, blazon_bar_slot_kinds, draw_blazon_bar, hit_test_blazon_bar};
 mod requirements_bar;
