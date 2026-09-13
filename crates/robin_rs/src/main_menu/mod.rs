@@ -819,12 +819,17 @@ async fn dispatch_click(
     menu_resources: &mut IngameMenuResources,
     save_manager: &mut SaveGameManager,
     cursor_renderer: &mut CursorRenderer,
+    #[cfg_attr(
+        not(feature = "multiplayer"),
+        expect(
+            unused_variables,
+            reason = "only the multiplayer menu consumes the live campaign"
+        )
+    )]
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
 ) -> Result<Option<MainMenuChoice>, String> {
-    #[cfg(not(feature = "multiplayer"))]
-    let _ = campaign;
     Ok(match action {
         ClickAction::Return(c) => Some(c),
         ClickAction::CampaignManager => {
