@@ -18,27 +18,29 @@ fn panic_retry_side(original_creation_order: u32) -> u8 {
     }
 }
 
+/// The shared [`ParityGate`](crate::engine::diagnostics::ParityGate) owns the
+/// master switch and exact frame filter; it has no range filter, so the
+/// inclusive owner bounds are parsed alongside it (only while enabled).
 #[derive(Debug)]
 struct BoredBoundaryDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
+    gate: crate::engine::diagnostics::ParityGate<1>,
     owner_from: Option<u32>,
     owner_through: Option<u32>,
 }
 
 fn bored_boundary_debug_config() -> &'static BoredBoundaryDebugConfig {
+    use crate::engine::diagnostics::ParityGate;
     static CONFIG: std::sync::OnceLock<BoredBoundaryDebugConfig> = std::sync::OnceLock::new();
     CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_BORED_BOUNDARY").is_some();
-        if !enabled {
-            return BoredBoundaryDebugConfig {
-                enabled: false,
-                frame: None,
-                owner_from: None,
-                owner_through: None,
-            };
-        }
+        let gate = ParityGate::from_env(
+            "PARITY_DEBUG_BORED_BOUNDARY",
+            ["PARITY_DEBUG_BORED_BOUNDARY_FRAME"],
+        );
+        let enabled = gate.enabled();
         let parse = |name: &str| {
+            if !enabled {
+                return None;
+            }
             std::env::var(name).ok().map(|value| {
                 value.parse::<u32>().unwrap_or_else(|error| {
                     panic!("invalid {name}={value:?} for BORED_BOUNDARY diagnostic: {error}")
@@ -46,12 +48,26 @@ fn bored_boundary_debug_config() -> &'static BoredBoundaryDebugConfig {
             })
         };
         BoredBoundaryDebugConfig {
-            enabled: true,
-            frame: parse("PARITY_DEBUG_BORED_BOUNDARY_FRAME"),
             owner_from: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_FROM"),
             owner_through: parse("PARITY_DEBUG_BORED_BOUNDARY_OWNER_THROUGH"),
+            gate,
         }
     })
+}
+
+impl BoredBoundaryDebugConfig {
+    fn matches(&self, frame: u32, owner: u32) -> bool {
+        self.gate.matches([Some(frame)])
+            && self.owner_from.is_none_or(|from| owner >= from)
+            && self.owner_through.is_none_or(|through| owner <= through)
+    }
+}
+
+fn point_to_debug_enabled() -> bool {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_POINT_TO"))
+        .enabled()
 }
 
 fn consider_report_debug_config() -> &'static crate::engine::diagnostics::ParityGate<2> {
@@ -608,11 +624,7 @@ impl Default for AiController {
 
 impl AiController {
     pub(crate) fn bored_boundary_debug_matches(frame: u32, owner: u32) -> bool {
-        let config = bored_boundary_debug_config();
-        config.enabled
-            && config.frame.is_none_or(|expected| expected == frame)
-            && config.owner_from.is_none_or(|from| owner >= from)
-            && config.owner_through.is_none_or(|through| owner <= through)
+        bored_boundary_debug_config().matches(frame, owner)
     }
 
     pub fn new(owner: NpcHandle) -> Self {
@@ -4088,7 +4100,7 @@ impl AiController {
             target.x - me.x,
             target.y - me.y,
         );
-        if std::env::var_os("PARITY_DEBUG_POINT_TO").is_some() {
+        if point_to_debug_enabled() {
             crate::ai::parity_trace::point_to(
                 &(ctx.frame),
                 &(owner),

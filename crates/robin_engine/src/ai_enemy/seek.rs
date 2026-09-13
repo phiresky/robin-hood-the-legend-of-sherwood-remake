@@ -10,10 +10,10 @@ use crate::sim_rng::SimulationContext;
 
 use super::ThinkEnv;
 
-fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
+fn seek_area_owner_position_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
     use crate::engine::diagnostics::ParityGate;
     static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
-    let gate = GATE.get_or_init(|| {
+    GATE.get_or_init(|| {
         ParityGate::from_env(
             "PARITY_DEBUG_SEEK_AREA_OWNER_POSITION",
             [
@@ -21,31 +21,35 @@ fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) ->
                 "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
             ],
         )
-    });
+    })
+}
+
+fn seek_area_selection_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
+    let gate = seek_area_owner_position_debug_gate();
     gate.enabled() && gate.matches_required([Some(frame), creation_order])
 }
 
+/// Phase-6 diagnostics share the owner-position filters but require both.
+fn seek_area_phase6_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::ai::parity_gate::required_parity_gate(
+            "PARITY_DEBUG_SEEK_AREA_PHASE6",
+            [
+                "PARITY_DEBUG_SEEK_AREA_FRAME",
+                "PARITY_DEBUG_SEEK_AREA_CREATION_ORDER",
+            ],
+        )
+    })
+}
+
 fn seek_area_phase6_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_SEEK_AREA_PHASE6").is_some()
+    seek_area_phase6_debug_gate().enabled()
 }
 
 fn seek_area_phase6_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
-    if !seek_area_phase6_debug_enabled() {
-        return false;
-    }
-    let parse_required = |name: &str| {
-        let value = std::env::var(name)
-            .unwrap_or_else(|_| panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires {name}"));
-        if value.is_empty() {
-            panic!("PARITY_DEBUG_SEEK_AREA_PHASE6 requires non-empty {name}");
-        }
-        value.parse::<u32>().unwrap_or_else(|error| {
-            panic!("invalid {name}={value:?} for SEEKAREA phase6 diagnostic: {error}")
-        })
-    };
-    let expected_frame = parse_required("PARITY_DEBUG_SEEK_AREA_FRAME");
-    let expected_owner = parse_required("PARITY_DEBUG_SEEK_AREA_CREATION_ORDER");
-    frame == expected_frame && creation_order == Some(expected_owner)
+    seek_area_phase6_debug_gate().matches_required([Some(frame), creation_order])
 }
 
 #[inline]
@@ -999,7 +1003,7 @@ impl EnemyAi {
             }
         };
 
-        let debug_next_point = std::env::var_os("PARITY_DEBUG_SEEK_AREA_OWNER_POSITION").is_some();
+        let debug_next_point = seek_area_owner_position_debug_gate().enabled();
 
         // The original game short-circuits on a locked candidate, which is
         // skipped without recalculating its shared interest or consuming the

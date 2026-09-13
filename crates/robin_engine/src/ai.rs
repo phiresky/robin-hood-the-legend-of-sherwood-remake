@@ -14,6 +14,7 @@ use crate::coordinates::MapPoint;
 use crate::element::EntityId;
 use crate::order::AiOrderIntent;
 
+pub(crate) mod parity_gate;
 pub(crate) mod parity_trace;
 mod types;
 pub(crate) use types::optional_ai_handle;

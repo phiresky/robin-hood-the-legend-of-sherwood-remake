@@ -59,7 +59,21 @@ impl<'a> ThinkEnv<'a> {
 /// Save020/Save055 substate-only parity cohort. Keep this check separate so
 /// disabled runs return before reading frame, owner, AI, or geometry state.
 pub(crate) fn decision_path_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_AI_DECISION_PATH").is_some()
+    decision_path_debug_gate().enabled()
+}
+
+fn decision_path_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::ai::parity_gate::required_parity_gate(
+            "PARITY_DEBUG_AI_DECISION_PATH",
+            [
+                "PARITY_DEBUG_AI_DECISION_PATH_FRAME",
+                "PARITY_DEBUG_AI_DECISION_PATH_OWNER",
+            ],
+        )
+    })
 }
 
 /// Master switch for the battle-planning / phalanx / shield-timer
@@ -68,8 +82,10 @@ pub(crate) fn decision_path_debug_enabled() -> bool {
 /// divergence in the shield-bearer and archer families reduces to. Cached in
 /// a `OnceLock` because the call sites sit on the per-stimulus AI path.
 pub(crate) fn battle_decision_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BATTLE_DECISION").is_some())
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_BATTLE_DECISION"))
+        .enabled()
 }
 
 /// Exact frame/owner gate for the AI decision/path diagnostic. Enabling the
@@ -80,21 +96,7 @@ pub(crate) fn decision_path_debug_matches(frame: u32, owner: HumanHandle) -> boo
 }
 
 pub(crate) fn decision_path_debug_matches_raw(frame: u32, owner: u32) -> bool {
-    static FILTER: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
-    let &(expected_frame, expected_owner) = FILTER.get_or_init(|| {
-        let parse_required = |name: &str| {
-            let value = std::env::var(name)
-                .unwrap_or_else(|_| panic!("{name} is required for AI_DECISION_PATH diagnostic"));
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for AI_DECISION_PATH diagnostic: {error}")
-            })
-        };
-        (
-            parse_required("PARITY_DEBUG_AI_DECISION_PATH_FRAME"),
-            parse_required("PARITY_DEBUG_AI_DECISION_PATH_OWNER"),
-        )
-    });
-    frame == expected_frame && owner == expected_owner
+    decision_path_debug_gate().matches_required([Some(frame), Some(owner)])
 }
 
 /// Opt-in, process-local tracing for the Save018 Them-list lifecycle cohort.
@@ -120,22 +122,28 @@ pub(super) fn them_lifecycle_debug_matches(ctx: &AiContext) -> bool {
 /// Keep this separate from [`primary_swap_debug_matches`] so every call site
 /// can return before reading AI/entity state when diagnostics are disabled.
 pub(crate) fn primary_swap_debug_enabled() -> bool {
-    std::env::var_os("PARITY_DEBUG_PRIMARY_SWAP").is_some()
+    primary_swap_debug_gate().enabled()
+}
+
+fn primary_swap_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<2>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        crate::ai::parity_gate::required_parity_gate(
+            "PARITY_DEBUG_PRIMARY_SWAP",
+            [
+                "PARITY_DEBUG_PRIMARY_SWAP_FRAME",
+                "PARITY_DEBUG_PRIMARY_SWAP_OWNER",
+            ],
+        )
+    })
 }
 
 /// Apply the required exact frame/owner gate for primary-target diagnostics.
 /// Invalid or incomplete enabled configurations fail loudly rather than
 /// accidentally producing a broad trace.
 pub(crate) fn primary_swap_debug_matches(frame: u32, owner: HumanHandle) -> bool {
-    let parse_required = |name: &str| {
-        let value = std::env::var(name)
-            .unwrap_or_else(|_| panic!("{name} is required for PRIMARY_SWAP diagnostic"));
-        value.parse::<u32>().unwrap_or_else(|error| {
-            panic!("invalid {name}={value:?} for PRIMARY_SWAP diagnostic: {error}")
-        })
-    };
-    frame == parse_required("PARITY_DEBUG_PRIMARY_SWAP_FRAME")
-        && owner == parse_required("PARITY_DEBUG_PRIMARY_SWAP_OWNER")
+    primary_swap_debug_gate().matches_required([Some(frame), Some(owner)])
 }
 use crate::position_interface::ASPECT_RATIO;
 use util::soldier_detects_position_180;

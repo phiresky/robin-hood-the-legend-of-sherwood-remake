@@ -587,8 +587,10 @@ pub fn forecast_destination_for_ia(
 /// read once and never enters engine state, snapshots, hashes, or the
 /// simulation RNG stream.
 fn forecast_ia_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_FORECAST_IA").is_some())
+    static GATE: std::sync::OnceLock<crate::engine::diagnostics::ParityGate<0>> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| crate::ai::parity_gate::switch_gate("PARITY_DEBUG_FORECAST_IA"))
+        .enabled()
 }
 
 /// Prepare every deterministic AI destination forecast without
