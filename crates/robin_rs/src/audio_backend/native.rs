@@ -1,5 +1,16 @@
-//! Native Kira implementation.
+//! Native Kira implementation (`all(feature = "audio", not(target_arch = "wasm32"))`).
 use super::*;
+
+use crate::sound::AudioBackend;
+use robin_engine::sbfile::SbFile;
+
+mod resolver;
+mod sample_cache;
+#[cfg(test)]
+mod tests;
+
+/// The backend type for this build configuration.
+pub type PlatformAudioBackend = KiraAudioBackend;
 
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::{
@@ -56,6 +67,19 @@ impl KiraAudioBackend {
             sound_dir,
             num_channels,
             Arc::new(SbFile::snapshot_legacy_file_system()),
+        )
+    }
+
+    /// Playback belongs to the application's explicit content authority.
+    pub fn new_for_application(
+        application: &crate::host::ApplicationContext,
+        sound_dir: impl Into<PathBuf>,
+        num_channels: u32,
+    ) -> Result<Self, String> {
+        Self::new_with_files(
+            sound_dir,
+            num_channels,
+            application.preparation_files()?.clone(),
         )
     }
 

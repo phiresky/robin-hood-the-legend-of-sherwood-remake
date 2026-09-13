@@ -191,7 +191,7 @@ impl MissionBootstrap {
 
     fn prepare_audio(
         mut self: Box<Self>,
-        backend: Option<&mut crate::audio_backend::KiraAudioBackend>,
+        backend: Option<&mut crate::audio_backend::PlatformAudioBackend>,
         profiles: &ProfileManager,
     ) -> Result<AudioPreparedBootstrap, (Box<Self>, String)> {
         if let Err(error) = setup_mission_audio(

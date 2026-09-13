@@ -12,7 +12,7 @@ use super::{
     required_menu_resources,
 };
 use crate::app_effect::{AppEffect, SoundMode};
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::campaign_map::{self, CampaignMapChoice};
 use crate::corner_hud::CornerButton;
 use crate::cursor::CursorRenderer;
@@ -1471,7 +1471,7 @@ pub(super) fn handle_pause_menu_events(
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
     menu_resources: &mut Option<IngameMenuResources>,
-    audio_backend: &mut Option<KiraAudioBackend>,
+    audio_backend: &mut Option<PlatformAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
     input_translator: &mut InputTranslator,

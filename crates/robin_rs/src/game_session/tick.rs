@@ -3,7 +3,7 @@
 //! for pending modals.
 
 use super::modal_state::ActiveModal;
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::game::Game;
 use crate::host::Host;
 use crate::host::{DeferredAudioRequest, HostSignal};
@@ -28,7 +28,7 @@ pub(super) fn tick_audio(
     engine: &engine_api::Engine,
     audio: &mut crate::host::HostAudio,
     viewport: &crate::host::ViewportState,
-    backend: &mut KiraAudioBackend,
+    backend: &mut PlatformAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
     assets: &engine_api::LevelAssets,

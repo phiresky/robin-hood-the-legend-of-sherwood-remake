@@ -1127,13 +1127,26 @@ impl BackendState {
     }
 }
 
-pub struct KiraAudioBackend {
+/// Browser Web Audio playback backend (`all(feature = "audio", target_arch = "wasm32")`).
+pub struct WebAudioBackend {
     session: BrowserAudioSession,
     state: Rc<RefCell<BackendState>>,
     start: web_time::Instant,
 }
 
-impl KiraAudioBackend {
+/// The backend type for this build configuration.
+pub type PlatformAudioBackend = WebAudioBackend;
+
+impl WebAudioBackend {
+    /// Playback belongs to the application's explicit content authority.
+    pub fn new_for_application(
+        application: &crate::host::ApplicationContext,
+        sound_dir: impl Into<PathBuf>,
+        num_channels: u32,
+    ) -> Result<Self, String> {
+        Self::new_with_session(sound_dir, num_channels, application.browser_audio()?)
+    }
+
     pub fn new_with_session(
         _sound_dir: impl Into<PathBuf>,
         num_channels: u32,
@@ -1230,7 +1243,7 @@ impl KiraAudioBackend {
     }
 }
 
-impl AudioBackend for KiraAudioBackend {
+impl AudioBackend for WebAudioBackend {
     fn try_play_request(
         &mut self,
         request: crate::sound::PlaybackRequest<'_>,
@@ -1467,7 +1480,7 @@ impl AudioBackend for KiraAudioBackend {
     }
 }
 
-impl Drop for KiraAudioBackend {
+impl Drop for WebAudioBackend {
     fn drop(&mut self) {
         self.state.borrow_mut().stop_all();
     }
@@ -1496,8 +1509,8 @@ mod browser_lifecycle_tests {
     fn mission_transition_rejects_paused_completion_without_affecting_other_session() {
         let other = session();
         let session = session();
-        let backend = KiraAudioBackend::new_with_session("", 2, session.clone()).unwrap();
-        let other_backend = KiraAudioBackend::new_with_session("", 2, other.clone()).unwrap();
+        let backend = WebAudioBackend::new_with_session("", 2, session.clone()).unwrap();
+        let other_backend = WebAudioBackend::new_with_session("", 2, other.clone()).unwrap();
         let (index, id, generation) = backend
             .state
             .borrow_mut()

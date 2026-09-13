@@ -16,7 +16,7 @@ use robin_engine::sprite::BBox;
 use crate::cursor::CursorRenderer;
 use robin_engine::campaign::Campaign;
 
-use crate::audio_backend::{self, KiraAudioBackend};
+use crate::audio_backend::{self, PlatformAudioBackend};
 use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::IngameMenuResources;
@@ -127,7 +127,7 @@ fn main_menu_to_screen(transform: MenuTransform, x: i32, y: i32) -> (i32, i32) {
 }
 
 struct MainMenuAudio {
-    backend: KiraAudioBackend,
+    backend: PlatformAudioBackend,
     sound: SoundManager,
     sample_loader: Box<SampleLoader>,
     noisy_tracker: widget_bridge::NoisyTracker,
@@ -170,7 +170,7 @@ impl MainMenuAudio {
             }
         };
         let sound_dir = std::path::PathBuf::from(&application_context.options().sound_directory);
-        let backend = KiraAudioBackend::new_for_application(
+        let backend = PlatformAudioBackend::new_for_application(
             application_context,
             &sound_dir,
             crate::sound::NUM_CHANNELS,

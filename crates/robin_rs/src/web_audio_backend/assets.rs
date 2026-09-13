@@ -445,7 +445,7 @@ mod browser_ownership_tests {
         let mut speculative = Box::pin(session.wait_for_warmup_bandwidth());
         assert!(speculative.as_mut().now_or_never().is_none());
         let mut backend =
-            crate::web_audio_backend::KiraAudioBackend::new_with_session("", 2, session.clone())
+            crate::web_audio_backend::WebAudioBackend::new_with_session("", 2, session.clone())
                 .unwrap();
         assert!(crate::sound::AudioBackend::play_music(
             &mut backend,

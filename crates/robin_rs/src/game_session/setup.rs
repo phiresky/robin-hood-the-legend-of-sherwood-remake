@@ -16,7 +16,7 @@ pub(super) use resources::{
     DecodingInterfaceResources, MissionEngineResources, MissionProcessResources,
 };
 
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::cursor::CursorRenderer;
 use crate::game::Game;
 use crate::host::Host;
@@ -114,7 +114,7 @@ pub(super) const LOADING_FINAL_PROGRESS: f32 = 1.0;
 /// profile/sound metadata off the engine but does not mutate it.
 pub(super) fn setup_mission_audio(
     host: &mut Host,
-    backend: Option<&mut KiraAudioBackend>,
+    backend: Option<&mut PlatformAudioBackend>,
     engine: &Engine,
     assets: &mut LevelAssets,
     profiles: &engine_profiles::ProfileManager,
@@ -1918,12 +1918,12 @@ pub(super) fn init_audio_backend(
     host: &mut Host,
     game: &Game,
     play_loading_menu_music: bool,
-) -> Option<KiraAudioBackend> {
+) -> Option<PlatformAudioBackend> {
     if !game.global_options.sound_enabled {
         tracing::info!("sound disabled via `-NOSOUND`; skipping audio backend init");
         return None;
     }
-    let mut audio_backend = match KiraAudioBackend::new_for_application(
+    let mut audio_backend = match PlatformAudioBackend::new_for_application(
         host.application_context(),
         &game.global_options.sound_directory,
         NUM_CHANNELS,

@@ -16,7 +16,7 @@ use super::sherwood_flow::SherwoodCampaignFlow;
 use super::terminal_debriefing::TerminalDebriefingState;
 use super::tick::tick_audio;
 use super::ui_task_state::ActiveUiTask;
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{CornerButtonSprites, CornerHudLayout, CornerTooltipTracker};
 use crate::game::Game;
@@ -88,14 +88,14 @@ impl MissionInput {
 
 /// Native audio device plus mission-lifetime sample source and RNG.
 pub(super) struct MissionAudio {
-    pub(super) backend: Option<KiraAudioBackend>,
+    pub(super) backend: Option<PlatformAudioBackend>,
     pub(super) sample_loader: Box<SampleLoader>,
     pub(super) sound_rng: fastrand::Rng,
 }
 
 impl MissionAudio {
     pub(super) fn new(
-        backend: Option<KiraAudioBackend>,
+        backend: Option<PlatformAudioBackend>,
         sample_loader: Box<SampleLoader>,
         sound_rng: fastrand::Rng,
     ) -> Self {
@@ -582,7 +582,7 @@ impl InteractiveRendererAssembly {
         mut text: ResourceManager,
         mut cursor: ResourceManager,
         menu_res: ResourceManager,
-        audio_backend: Option<crate::audio_backend::KiraAudioBackend>,
+        audio_backend: Option<crate::audio_backend::PlatformAudioBackend>,
         decoded: LoadedInteractiveResources,
         short_briefing_strings: HashMap<u32, String>,
         args: &crate::main_entry::MissionLaunch,

@@ -4,7 +4,7 @@ use super::{
     extract_ground_mark_sprite_data, extract_minimap_widget_setup, extract_titbit_row_frame_counts,
     init_audio_backend, localization,
 };
-use crate::{audio_backend::KiraAudioBackend, game::Game, host::Host};
+use crate::{audio_backend::PlatformAudioBackend, game::Game, host::Host};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::{
     resource_manager::{ResourceAttachmentError, ResourceManager},
@@ -47,7 +47,7 @@ pub(in crate::game_session) struct MissionProcessResources<Interface = ResourceM
     /// Only the ready stage permits engine metadata extraction. Dispatch and
     /// collection consume their stages, so neither operation can run twice.
     interface: Interface,
-    pub(in crate::game_session) audio_backend: Option<KiraAudioBackend>,
+    pub(in crate::game_session) audio_backend: Option<PlatformAudioBackend>,
 }
 
 /// The interface archive, possibly off on a worker getting its JXL pictures
@@ -243,7 +243,7 @@ impl MissionProcessResources<DecodingInterfaceResources> {
         ResourceManager,
         ResourceManager,
         ResourceManager,
-        Option<KiraAudioBackend>,
+        Option<PlatformAudioBackend>,
     ) {
         let (cursor, menu) = self.interface.collect().await;
         (self.text, cursor, menu, self.audio_backend)

@@ -6,7 +6,7 @@
 //! the game is in-session or at the main menu — the dialog always writes
 //! back to the active player profile.
 
-use crate::audio_backend::KiraAudioBackend;
+use crate::audio_backend::PlatformAudioBackend;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::widget_bridge::ModalCursor;
 use crate::ingame_menu::{IngameMenuResources, show_options};
@@ -21,7 +21,7 @@ use robin_engine::engine as engine_api;
 /// application-owned key-config store so the active and custom key-config slots
 /// persist across sessions.
 ///
-/// Spins up a short-lived [`KiraAudioBackend`] + [`SoundManager`] +
+/// Spins up a short-lived [`PlatformAudioBackend`] + [`SoundManager`] +
 /// sample loader for the duration of the dialog so the Sounds
 /// sub-screen's volume sliders fire their slider-tick noises the same
 /// way the in-game Options dialog does. The audio lives only while the
@@ -66,7 +66,7 @@ pub(crate) async fn show_main_menu_options(
         None
     };
     let mut audio_backend = if sample_loader.is_some() {
-        match KiraAudioBackend::new_for_application(
+        match PlatformAudioBackend::new_for_application(
             application_context,
             &sound_dir,
             crate::sound::NUM_CHANNELS,
@@ -87,7 +87,7 @@ pub(crate) async fn show_main_menu_options(
         audio_backend = None;
     }
 
-    // Reborrow helper: turn `Option<&mut KiraAudioBackend>` into the
+    // Reborrow helper: turn `Option<&mut PlatformAudioBackend>` into the
     // trait object form that `show_options` expects.  See the note in
     // `ingame_menu::sounds::show_sounds` — `Option<&mut dyn Trait>`
     // can't be shortened with `as_deref_mut` across the call boundary,
@@ -157,7 +157,7 @@ pub(crate) async fn show_main_menu_options(
             })
             .unwrap_or_else(|error| panic!("Main menu Options key update failed: {error}"));
     }
-    // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
+    // `audio_backend` drops here: PlatformAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.
     outcome.language_changed
 }
