@@ -525,8 +525,8 @@ impl EngineInner {
                 // while closing that native owner-local call stack.
                 #[cfg(test)]
                 observe_owner_boundary_reentrant_step("self_stimuli");
-                let launched_moves = self
-                    .drain_self_stimuli_for_npc_without_forecast_collect_moves(sim, owner, assets);
+                let launched_moves =
+                    self.drain_self_stimuli_for_npc_collect_moves(sim, owner, assets);
                 self.dispatch_synchronous_owner_move_sequences(
                     sim,
                     assets,
@@ -647,8 +647,8 @@ impl EngineInner {
             self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
             #[cfg(test)]
             observe_owner_boundary_reentrant_step("self_stimuli");
-            let launched_moves = self
-                .drain_self_stimuli_for_npc_without_forecast_collect_moves(sim, card_owner, assets);
+            let launched_moves =
+                self.drain_self_stimuli_for_npc_collect_moves(sim, card_owner, assets);
             self.dispatch_synchronous_owner_move_sequences(
                 sim,
                 assets,

@@ -1,27 +1,9 @@
 use super::*;
 
-/// Selects the observation's temporal contract; it does not change the
-/// scheduling point at which the caller builds it.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum AiObservationMode {
-    Current,
-    WithoutForecast,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum AiObservationKind {
     Current,
-    WithoutForecast,
     PreparedDetection,
-}
-
-impl From<AiObservationMode> for AiObservationKind {
-    fn from(mode: AiObservationMode) -> Self {
-        match mode {
-            AiObservationMode::Current => Self::Current,
-            AiObservationMode::WithoutForecast => Self::WithoutForecast,
-        }
-    }
 }
 
 /// Non-authoritative measurement. Enable with
@@ -416,7 +398,7 @@ impl EngineInner {
     }
 
     pub(crate) fn build_sim_scratch(&self, assets: &LevelAssets) -> SimScratch {
-        self.build_ai_observation(assets, AiObservationMode::Current)
+        self.build_ai_observation(assets)
     }
 
     pub(in crate::engine) fn build_cached_detection_scratch(
@@ -446,19 +428,9 @@ impl EngineInner {
         scratch
     }
 
-    pub(crate) fn build_owner_context_scratch_without_forecast(
-        &self,
-        assets: &LevelAssets,
-    ) -> SimScratch {
-        self.build_ai_observation(assets, AiObservationMode::WithoutForecast)
-    }
-
-    fn build_ai_observation(&self, assets: &LevelAssets, mode: AiObservationMode) -> SimScratch {
+    fn build_ai_observation(&self, assets: &LevelAssets) -> SimScratch {
         let started = observation_build_started();
-        let views = match mode {
-            AiObservationMode::Current => build_entity_views(self),
-            AiObservationMode::WithoutForecast => build_entity_views_without_forecast(self),
-        };
+        let views = build_entity_views(self);
         let rebuilt = views.len();
         let scratch = SimScratch {
             ai_entity_views: self.share_ai_entity_views(views),
@@ -467,7 +439,7 @@ impl EngineInner {
         observe_view_build(
             started,
             self.control.frame_counter,
-            mode.into(),
+            AiObservationKind::Current,
             self.world.entities.len(),
             rebuilt,
             &scratch,
@@ -1985,14 +1957,13 @@ mod observation_tests {
         let hash = crate::replay::state_hash(&engine);
         let sim = engine.control.simulation_context();
         let seed = sim.seed();
-        let plain = engine.build_owner_context_scratch_without_forecast(&assets);
+        let plain = engine.build_sim_scratch(&assets);
         let subscriber = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::DEBUG)
             .with_writer(std::io::sink)
             .finish();
-        let measured = tracing::subscriber::with_default(subscriber, || {
-            engine.build_owner_context_scratch_without_forecast(&assets)
-        });
+        let measured =
+            tracing::subscriber::with_default(subscriber, || engine.build_sim_scratch(&assets));
         assert_eq!(
             serde_json::to_value(&plain.ai_entity_views.entities).unwrap(),
             serde_json::to_value(&measured.ai_entity_views.entities).unwrap()

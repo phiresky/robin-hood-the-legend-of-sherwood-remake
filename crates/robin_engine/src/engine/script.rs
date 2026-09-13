@@ -6,45 +6,6 @@ use crate::campaign::{Campaign, CampaignValue};
 use crate::messenger::{Message, MessageType, SimpleMessage};
 use crate::profiles::{MissionLocation, MissionProfile};
 
-type RawOwnerBoundaryPosition = (
-    crate::coordinates::MapPoint,
-    Option<crate::position_interface::SectorHandle>,
-    Option<crate::position_interface::Layer>,
-);
-
-fn collect_raw_owner_boundary_positions<I>(
-    engine: &EngineInner,
-    handles: I,
-) -> std::collections::HashMap<u32, RawOwnerBoundaryPosition>
-where
-    I: IntoIterator<Item = u32>,
-{
-    handles
-        .into_iter()
-        .filter_map(|handle| {
-            let (_, entity) = engine.world.entities.get_legacy_slot(handle)?;
-            let element = entity.element_data();
-            Some((
-                handle,
-                (
-                    element.position_map(),
-                    element.sector(),
-                    element.optional_layer(),
-                ),
-            ))
-        })
-        .collect()
-}
-
-fn raw_owner_boundary_position_to_ai(raw: RawOwnerBoundaryPosition) -> Option<crate::ai::Position> {
-    let (point, sector, layer) = raw;
-    Some(crate::ai::Position {
-        x: point.x,
-        y: point.y,
-        sector,
-        level: layer?.into(),
-    })
-}
 fn think_stimulus_debug_filter() -> Option<super::diagnostics::ExactOwnerFrame> {
     super::diagnostics::config().think_stimulus
 }
@@ -956,7 +917,7 @@ impl EngineInner {
                 self.drain_script_synchronous_actions(sim, assets, active)?;
             }
         }
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         Ok(())
     }
 
@@ -1100,7 +1061,7 @@ impl EngineInner {
                     }
                 }
 
-                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
                 if matches!(
                     effect,
@@ -1108,7 +1069,7 @@ impl EngineInner {
                         | crate::interp::ScriptAiStateNativeEffect::Fleeing
                 ) {
                     self.end_script_ai_native_think(sim, assets, owner);
-                    self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     self.dispatch_script_ai_native_moves(sim, assets, owner, active)?;
                 }
                 Ok(0)
@@ -1272,7 +1233,7 @@ impl EngineInner {
                 // then materialize any resulting movement before resuming the VM.
                 // Normal-priority movement remains registered for
                 // the sequence-manager tick; it is not instructed inline.
-                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
@@ -1339,7 +1300,7 @@ impl EngineInner {
                 // the sequence-manager tick after the entity loop. Close the
                 // AI callback now, then materialize its pending Move sequence
                 // without instructing or executing it early.
-                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
@@ -1385,7 +1346,7 @@ impl EngineInner {
                 // stack and materialize its movement now. The resulting ordinary
                 // Move remains registered for the later sequence-manager
                 // update, exactly like AssignPath above.
-                self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
                 self.drain_pending_move_requests_for_owner(sim, owner);
                 Ok(0)
             }
@@ -1437,7 +1398,7 @@ impl EngineInner {
                 if in_default {
                     // The original game returns the actor to duty directly here,
                     // rather than routing through Think and FilterAIEvent.
-                    let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                    let scratch = self.build_sim_scratch(assets);
                     let tick_data = self.build_npc_tick_data(sim, owner, assets);
                     let frame = self.control.frame_counter;
                     let in_uninterruptible_command = self.is_very_very_busy(owner);
@@ -1480,7 +1441,7 @@ impl EngineInner {
 
                     // Close the direct owner-local AI boundary and
                     // materialize any movement before the script VM resumes.
-                    self.drain_direct_ai_owner_boundary_without_forecast(sim, owner, assets);
+                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     self.drain_pending_move_requests_for_owner(sim, owner);
                 }
                 Ok(0)
@@ -3641,38 +3602,17 @@ impl EngineInner {
         ctx: &crate::ai::AiContext,
         tick_data: &crate::ai::AiPerTickData,
     ) -> bool {
-        self.dispatch_filtered_stimulus_with_owner_mode(
+        self.dispatch_filtered_stimulus_inner(
             sim,
             assets,
             entity_id,
             stimulus,
             ctx,
             Some(tick_data),
-            crate::engine::ai::OwnerBoundaryPolicy::Current,
         )
     }
 
-    pub(super) fn dispatch_filtered_stimulus_without_forecast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        entity_id: crate::element::EntityId,
-        stimulus: &crate::ai::Stimulus,
-        ctx: &crate::ai::AiContext,
-        tick_data: &crate::ai::AiPerTickData,
-    ) -> bool {
-        self.dispatch_filtered_stimulus_with_owner_mode(
-            sim,
-            assets,
-            entity_id,
-            stimulus,
-            ctx,
-            Some(tick_data),
-            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-        )
-    }
-
-    pub(super) fn dispatch_filtered_friendly_stimulus_without_forecast(
+    pub(super) fn dispatch_filtered_friendly_stimulus(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3680,18 +3620,10 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
     ) -> bool {
-        self.dispatch_filtered_stimulus_with_owner_mode(
-            sim,
-            assets,
-            entity_id,
-            stimulus,
-            ctx,
-            None,
-            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-        )
+        self.dispatch_filtered_stimulus_inner(sim, assets, entity_id, stimulus, ctx, None)
     }
 
-    pub(super) fn dispatch_filtered_stimulus_with_owner_mode(
+    pub(super) fn dispatch_filtered_stimulus_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -3699,7 +3631,6 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
         enemy_tick_data: Option<&crate::ai::AiPerTickData>,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
     ) -> bool {
         // The original game filters AI events before the main AI update
         // during AI initialization. Keep this diagnostic at that
@@ -3835,10 +3766,6 @@ impl EngineInner {
         // animation and action-state are not valid substitutes because a
         // default Wait can retain AimingWithBow as its current order.
         self.refresh_selected_default_wait_identity(entity_id, &mut live_ctx);
-        // Hoist the canonical door slice before grabbing the mutable
-        // entity borrow — the friendly AI's `alert_soldier` needs it for the
-        // `ALERTFLAG_CHECK_DOOR_PATH` retry.
-        let doors = self.script_domains.interactables.doors.as_slice();
         let friendly_tick = self
             .world
             .entities
@@ -3871,47 +3798,16 @@ impl EngineInner {
                 stimulus,
                 &live_ctx,
                 live_enemy_tick.as_ref(),
-                policy,
             )
         } else {
-            let ai_global = &mut self.ai.global;
-            let Some(entity) = self.world.entities.get_mut(entity_id) else {
-                return false;
-            };
-            if let Some(enemy_ai) = entity.enemy_ai_mut() {
-                enemy_ai.think(
-                    crate::ai_enemy::ThinkEnv::new(
-                        sim,
-                        &live_ctx,
-                        live_enemy_tick.as_ref().unwrap_or_else(|| {
-                            panic!(
-                                "filtered Enemy AI stimulus for owner {} requires typed enemy tick data",
-                                entity_id.index()
-                            )
-                        }),
-                        Some(&self.world.fast_grid),
-                    ),
-                    stimulus,
-                    ai_global,
-                )
-            } else if let Some(friendly_ai) = entity.friendly_ai_mut() {
-                friendly_ai.think(
-                    sim,
-                    stimulus,
-                    ai_global,
-                    &live_ctx,
-                    &friendly_tick.unwrap_or_else(|| {
-                        panic!(
-                            "filtered Friendly AI stimulus for owner {} requires truthful friendly tick data",
-                            entity_id.index()
-                        )
-                    }),
-                    Some(&self.world.fast_grid),
-                    Some(doors),
-                )
-            } else {
-                return false;
-            }
+            self.execute_ai_think(
+                sim,
+                entity_id,
+                stimulus,
+                &live_ctx,
+                live_enemy_tick.as_ref(),
+                friendly_tick.as_ref(),
+            )
         };
         debug_snapshot(
             self,
@@ -3972,7 +3868,7 @@ impl EngineInner {
                 .and_then(Entity::ai_controller)
                 .is_some_and(|ai| ai.stimulus_queue.is_empty());
 
-            let fresh_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let fresh_scratch = self.build_sim_scratch(assets);
             let fresh_entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
                 panic!(
                     "AfterScript owner {} disappeared before outer tail",
@@ -4091,7 +3987,7 @@ impl EngineInner {
         // State changes call FilterAIEvent before any of the caller's deferred
         // effects. The entity borrow above is the first point at which the
         // engine can safely re-enter the actor VM.
-        self.drain_ai_owner_work_for_mode(sim, assets, entity_id, policy);
+        self.drain_ai_owner_work_for(sim, assets, entity_id);
         handled
     }
 
@@ -4118,36 +4014,19 @@ impl EngineInner {
         assets: &LevelAssets,
         owner: crate::element::EntityId,
     ) {
-        self.drain_ai_owner_work_for_mode(
+        self.drain_ai_owner_work_for_boundary(
             sim,
             assets,
             owner,
-            crate::engine::ai::OwnerBoundaryPolicy::Current,
-        );
-    }
-
-    pub(super) fn drain_ai_owner_work_for_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        assets: &LevelAssets,
-        owner: crate::element::EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
-    ) {
-        self.drain_ai_owner_work_for_boundary_mode(
-            sim,
-            assets,
-            owner,
-            policy,
             crate::engine::ai::CompletionBoundary::OwnerReturn,
         );
     }
 
-    pub(super) fn drain_ai_owner_work_for_boundary_mode(
+    pub(super) fn drain_ai_owner_work_for_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: crate::element::EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         const MAX_OWNER_WORK: usize = 128;
@@ -4230,7 +4109,7 @@ impl EngineInner {
             let notification = match work {
                 crate::ai::AiOwnerWork::StateChange(notification) => notification,
                 crate::ai::AiOwnerWork::ActorEffects(prefix) => {
-                    self.owner_work_actor_effects(sim, assets, owner, policy, prefix);
+                    self.owner_work_actor_effects(sim, assets, owner, prefix);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeBattleLookForHelpAfterAlertOfficer => {
@@ -4293,64 +4172,43 @@ impl EngineInner {
                 }
                 crate::ai::AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
                     assignment_callback,
-                    owner_position_before_callback,
-                    owner_boundary_positions,
+                    ..
                 } => {
                     self.owner_work_change_way_assignment_think_then_explicit_tail(
                         sim,
                         assets,
                         owner,
-                        policy,
                         assignment_callback,
-                        owner_position_before_callback,
-                        owner_boundary_positions,
                     );
                     continue;
                 }
-                crate::ai::AiOwnerWork::VirtualReturnToDuty {
-                    flags,
-                    owner_boundary_positions,
-                } => {
-                    self.virtual_return_to_duty_for_npc(
-                        sim,
-                        owner,
-                        assets,
-                        flags,
-                        None,
-                        &owner_boundary_positions,
-                    );
+                crate::ai::AiOwnerWork::VirtualReturnToDuty { flags, .. } => {
+                    self.virtual_return_to_duty_for_npc(sim, owner, assets, flags);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeReturnToDutyAfterPatrolInit {
                     flags,
                     defer_clear_patrol_close_post,
-                    owner_boundary_positions,
+                    ..
                 } => {
                     self.owner_work_resume_return_to_duty_after_patrol_init(
                         sim,
                         assets,
                         owner,
-                        policy,
                         completion_boundary,
                         flags,
                         defer_clear_patrol_close_post,
-                        owner_boundary_positions,
                     );
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
                     flags,
-                    owner_boundary_positions,
+                    ..
                 } => {
                     self.resume_return_to_duty_after_patrol_init_for_npc(
-                        sim,
-                        owner,
-                        assets,
-                        flags,
-                        true,
-                        &owner_boundary_positions,
+                        sim, owner, assets, flags, true,
                     );
-                    self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+                    self.drain_direct_ai_owner_boundary(sim, owner, assets);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeKillNearbySleepingEnemiesAfterReturnToDuty => {
@@ -4379,15 +4237,8 @@ impl EngineInner {
                     enemy.base.couldnt_reachpoint = false;
                     continue;
                 }
-                crate::ai::AiOwnerWork::ResumeMacroAfterPatrolInit {
-                    owner_boundary_positions,
-                } => {
-                    self.resume_macro_after_patrol_init_for_npc(
-                        sim,
-                        owner,
-                        assets,
-                        &owner_boundary_positions,
-                    );
+                crate::ai::AiOwnerWork::ResumeMacroAfterPatrolInit { .. } => {
+                    self.resume_macro_after_patrol_init_for_npc(sim, owner, assets);
                     continue;
                 }
                 crate::ai::AiOwnerWork::ResumeBattleObserveAfterGoNear {
@@ -4419,7 +4270,7 @@ impl EngineInner {
                     continue;
                 }
                 crate::ai::AiOwnerWork::Speech(attempt) => {
-                    self.owner_work_speech(sim, assets, owner, policy, attempt);
+                    self.owner_work_speech(sim, assets, owner, attempt);
                     continue;
                 }
                 crate::ai::AiOwnerWork::RestoreDetectableObjects {
@@ -4501,7 +4352,7 @@ impl EngineInner {
                 }
             };
 
-            self.settle_ai_owner_state_change(sim, assets, owner, policy, work_index, notification);
+            self.settle_ai_owner_state_change(sim, assets, owner, work_index, notification);
         }
 
         let still_pending = self
@@ -4522,7 +4373,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         prefix: crate::ai::AiActorOutbox,
     ) {
         // This prefix was authored before the next synchronous
@@ -4550,7 +4400,7 @@ impl EngineInner {
                 std::mem::take(&mut ai.outbox.reentrant.cross_npc_actions),
             )
         };
-        self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
         let ai = self
             .world
             .entities
@@ -4595,7 +4445,7 @@ impl EngineInner {
         // the continuation consumes route failure itself or emits
         // the successful remark in the original statement order.
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
@@ -4650,7 +4500,7 @@ impl EngineInner {
         // the officer alert's synchronous approach and consumes its
         // route result before decision-tick completion may surface an event.
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
@@ -4708,7 +4558,7 @@ impl EngineInner {
         // Original resumes the soldier report statement directly
         // after the officer alert's synchronous approach result.
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
@@ -4771,7 +4621,7 @@ impl EngineInner {
         // failure latch here rather than emitting an independent
         // EVENT_COULDNT_REACHPOINT.
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
             let entity = self
@@ -4835,7 +4685,7 @@ impl EngineInner {
         // afterward executes the brawler's remaining state tail.
         // The ordinary drain policy consumes all owner-work
         // before cross-NPC work, so stage these boundaries here.
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let ctx = {
             let entity = self
@@ -4873,7 +4723,7 @@ impl EngineInner {
         // settles only the officer call and anything it causes.
         self.process_synchronous_reentrant_actions_for(sim, owner, assets);
 
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let ctx = {
             let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -4993,42 +4843,12 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         assignment_callback: Option<crate::ai::StimulusType>,
-        owner_position_before_callback: crate::ai::Position,
-        mut owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
     ) {
         // Isolate exactly patrol-path assignment's synchronous
         // callback A. Pre-existing sibling stimuli and owner work
         // belong after CMD_CHANGE_WAY's explicit tail B; work A
         // creates remains visible and settles depth-first here.
-        let mut boundary_handles = owner_boundary_positions
-            .iter()
-            .map(|(handle, _)| *handle)
-            .collect::<Vec<_>>();
-        if !boundary_handles.contains(&owner.index()) {
-            // The original game's change-way command always reads the actor through
-            // world position independently of the surrounding
-            // actor-boundary snapshot. A focused continuation may
-            // therefore have no frozen entity views while its
-            // owner still needs exact live mutation tracking.
-            boundary_handles.push(owner.index());
-        }
-        let raw_positions_before_callback =
-            collect_raw_owner_boundary_positions(self, boundary_handles.iter().copied());
-        let effective_positions_before_callback = self
-            .build_owner_context_scratch_without_forecast(assets)
-            .ai_entity_views;
-        let raw_owner_position_before_callback = raw_positions_before_callback
-            .get(&owner.index())
-            .copied()
-            .and_then(raw_owner_boundary_position_to_ai)
-            .unwrap_or_else(|| {
-                panic!(
-                    "ChangeWay owner {} disappeared or lost its layer before assignment callback",
-                    owner.index()
-                )
-            });
         let (later_self_stimuli, later_owner_work) = {
             let ai = self
                 .world
@@ -5053,95 +4873,7 @@ impl EngineInner {
                 .reentrant
                 .self_stimuli
                 .push(callback.into());
-            if policy.without_forecast() {
-                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
-            } else {
-                self.drain_self_stimuli_for_npc(sim, owner, assets);
-            }
-        }
-
-        // A synchronous callback can move another actor before B
-        // reads it. Preserve the originating legacy-slot snapshot
-        // for unchanged actors, but overlay exact live positions
-        // for actors A actually changed on this call stack.
-        let raw_positions_after_callback =
-            collect_raw_owner_boundary_positions(self, boundary_handles.iter().copied());
-        let effective_positions_after_callback = self
-            .build_owner_context_scratch_without_forecast(assets)
-            .ai_entity_views;
-        let raw_owner_position_after_callback = raw_positions_after_callback
-            .get(&owner.index())
-            .copied()
-            .and_then(raw_owner_boundary_position_to_ai)
-            .unwrap_or_else(|| {
-                panic!(
-                    "ChangeWay owner {} disappeared or lost its layer during assignment callback",
-                    owner.index()
-                )
-            });
-        let effective_owner_position_before_callback = effective_positions_before_callback
-            .get(&owner.index())
-            .map(|view| view.position);
-        let effective_owner_position_after_callback = effective_positions_after_callback
-            .get(&owner.index())
-            .map(|view| view.position);
-        let owner_position_for_tail = if raw_owner_position_before_callback
-            != raw_owner_position_after_callback
-            || effective_owner_position_before_callback != effective_owner_position_after_callback
-        {
-            effective_owner_position_after_callback.unwrap_or(raw_owner_position_after_callback)
-        } else {
-            owner_position_before_callback
-        };
-        owner_boundary_positions.retain_mut(|(handle, position)| {
-            let before = raw_positions_before_callback.get(handle).copied();
-            let after = raw_positions_after_callback.get(handle).copied();
-            let effective_before = effective_positions_before_callback
-                .get(handle)
-                .map(|view| view.position);
-            let effective_after = effective_positions_after_callback
-                .get(handle)
-                .map(|view| view.position);
-            match (before, after) {
-                (Some(before), Some(after))
-                    if before != after || effective_before != effective_after =>
-                {
-                    // Mutation ownership is detected strictly from
-                    // raw element coordinates and the effective
-                    // selected-door position. Once owned by A, B
-                    // observes original-game actor-position semantics.
-                    if let Some(after) =
-                        effective_after.or_else(|| raw_owner_boundary_position_to_ai(after))
-                    {
-                        *position = after;
-                        true
-                    } else {
-                        // A callback may legitimately move a
-                        // projectile or detached object into the
-                        // legacy no-layer state. Such an entity is
-                        // absent from a freshly built AI context,
-                        // so its frozen boundary overlay must be
-                        // absent as well.
-                        false
-                    }
-                }
-                (Some(_), Some(_)) => true,
-                // A removed actor is absent from B's freshly built
-                // context. Drop its frozen entry rather than
-                // resurrecting it through the boundary overlay.
-                (Some(_), None) => false,
-                // Callback-created actors were never frozen and
-                // therefore remain live in the fresh B scratch.
-                (None, Some(_)) | (None, None) => true,
-            }
-        });
-        if let Some((_, position)) = owner_boundary_positions
-            .iter_mut()
-            .find(|(handle, _)| *handle == owner.index())
-        {
-            *position = owner_position_for_tail;
-        } else {
-            owner_boundary_positions.push((owner.index(), owner_position_for_tail));
+            self.drain_self_stimuli_for_npc(sim, owner, assets);
         }
 
         {
@@ -5161,15 +4893,8 @@ impl EngineInner {
             // already performed the same call in its prologue.
             ai.break_macro();
         }
-        self.virtual_return_to_duty_for_npc(
-            sim,
-            owner,
-            assets,
-            crate::ai::DutyFlags::empty(),
-            Some(owner_position_for_tail),
-            &owner_boundary_positions,
-        );
-        self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+        self.virtual_return_to_duty_for_npc(sim, owner, assets, crate::ai::DutyFlags::empty());
+        self.drain_direct_ai_owner_boundary(sim, owner, assets);
 
         let ai = self
             .world
@@ -5191,20 +4916,11 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         completion_boundary: crate::engine::ai::CompletionBoundary,
         flags: crate::ai::DutyFlags,
         defer_clear_patrol_close_post: bool,
-        owner_boundary_positions: Vec<(u32, crate::ai::Position)>,
     ) {
-        self.resume_return_to_duty_after_patrol_init_for_npc(
-            sim,
-            owner,
-            assets,
-            flags,
-            false,
-            &owner_boundary_positions,
-        );
+        self.resume_return_to_duty_after_patrol_init_for_npc(sim, owner, assets, flags, false);
         if defer_clear_patrol_close_post {
             // Patrol clearing's forced return leaves a close idle
             // member in DEFAULT_GOTOPOST at this native boundary:
@@ -5233,9 +4949,9 @@ impl EngineInner {
             // Ordinary return-to-duty handling resumes on the same call stack
             // and recursively closes its completion callbacks.
             if completion_boundary.surfaces_completion() {
-                self.drain_direct_ai_owner_boundary_mode(sim, owner, assets, policy);
+                self.drain_direct_ai_owner_boundary(sim, owner, assets);
             } else {
-                self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
+                self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
             }
         }
     }
@@ -5247,7 +4963,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
@@ -5338,7 +5054,7 @@ impl EngineInner {
             None
         };
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
             let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -5470,7 +5186,7 @@ impl EngineInner {
             );
         }
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
             let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -5529,7 +5245,7 @@ impl EngineInner {
         owner: EntityId,
     ) {
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick = self.build_npc_tick_data_without_forecasts(sim, owner, assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
@@ -5581,7 +5297,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         attempt: crate::ai::AiSpeechAttempt,
     ) {
         // A rejected Say invokes MYTALK synchronously before Say
@@ -5596,11 +5311,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("speech owner {} vanished before settlement", owner.index()));
         let settlement = self.settle_npc_speech_attempt(assets, owner, attempt);
         if settlement.invoke_finished_callback {
-            if policy.without_forecast() {
-                self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
-            } else {
-                self.drain_self_stimuli_for_npc(sim, owner, assets);
-            }
+            self.drain_self_stimuli_for_npc(sim, owner, assets);
         }
         if let Some(finalization) = settlement.category_rejection {
             self.finalize_category_speech_rejection(owner, finalization);
@@ -5713,7 +5424,7 @@ impl EngineInner {
         charly: crate::ai::NpcHandle,
     ) {
         let frame = self.control.frame_counter;
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let in_uninterruptible_command = self.is_very_very_busy(owner);
         let mut ctx = {
             let entity = self.world.entities.get(owner).unwrap_or_else(|| {
@@ -5763,7 +5474,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         work_index: usize,
         notification: crate::ai::AiStateChangeNotification,
     ) {
@@ -5880,7 +5590,7 @@ impl EngineInner {
             // ordinary element is instructed until the later global
             // sequence-manager update. Preserve that FIFO rather than
             // making this owner boundary execute either element early.
-            self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
+            self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
             let ai = self
                 .world
                 .entities
@@ -6047,7 +5757,7 @@ impl EngineInner {
         // and therefore observe the outgoing pair. Close callback-local
         // recursive stimuli before committing the incoming pair.
         if later_actor_effects.is_some() {
-            self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+            self.drain_self_stimuli_for_npc(sim, owner, assets);
         }
 
         let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {

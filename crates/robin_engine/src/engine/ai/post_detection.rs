@@ -276,7 +276,7 @@ impl EngineInner {
         // Every synchronous Think boundary receives a fresh RNG-free view of
         // the live world. Forecast alternatives are prepared below and only
         // the handler that consumes one resolves it.
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         // Build the rich tick data from the centralized builder
         // — covers primary target metadata, friend-swap
         // candidates, avenger-on-roof wait position, and seeded
@@ -323,14 +323,7 @@ impl EngineInner {
         };
 
         let timer_stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventTimer);
-        self.dispatch_think_with_drain_without_forecast(
-            sim,
-            npc_id,
-            &timer_stimulus,
-            &ctx,
-            &tick_data,
-            assets,
-        );
+        self.dispatch_think_with_drain(sim, npc_id, &timer_stimulus, &ctx, &tick_data, assets);
     }
 
     /// P6c — drain `pending_*` AI swordfight / order flags for every NPC.
@@ -477,7 +470,7 @@ impl EngineInner {
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
             // its predecessor rather than the tick-start entity-view map.
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             if let crate::ai::StimulusInfo::Human(handle) = stimulus.info
                 && !scratch.ai_entity_views.contains_key(&handle.get())
             {
@@ -637,15 +630,7 @@ impl EngineInner {
                     "delivering shadow event to AI"
                 );
             }
-            self.dispatch_think_with_drain_mode(
-                sim,
-                npc_id,
-                &stimulus,
-                &ctx,
-                &tick_data,
-                assets,
-                crate::engine::ai::OwnerBoundaryPolicy::Current,
-            );
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
             if trace_shadow_delivery {
                 let npc = self.world.entities.expect_ai_actor_data(
                     npc_id,
@@ -749,7 +734,7 @@ impl EngineInner {
             // Every retained Think is a fresh synchronous boundary. An
             // earlier replay may mutate positions, latches, or targets
             // consumed by the next retained stimulus.
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
                 let entity = self.expect_entity(npc_id, "retained-FIFO NPC before Think");
@@ -819,9 +804,7 @@ impl EngineInner {
                 // indexes by handle.
                 self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
             }
-            self.dispatch_think_with_drain_without_forecast(
-                sim, npc_id, &stimulus, &ctx, &tick_data, assets,
-            );
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
             processed += 1;
             if limit.is_some_and(|limit| processed >= limit) {
                 return;

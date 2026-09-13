@@ -5,6 +5,5 @@
 //! items at this level so those imports keep resolving unchanged.
 use super::*;
 
-mod owner_boundary_position_tests;
 mod script_context_tests;
 mod sound_completion_tests;

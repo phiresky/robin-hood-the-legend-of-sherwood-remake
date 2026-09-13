@@ -2044,7 +2044,7 @@ impl EngineInner {
                         [is_swordfighting, in_swordfight_substate],
                     );
                 }
-                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let scratch = self.build_sim_scratch(assets);
                 let victim = self
                     .world
                     .entities
@@ -2064,9 +2064,7 @@ impl EngineInner {
                     attacker_id.index(),
                 );
                 let rng_before = debug.and_then(|_| self.control.rng.original_replay_cursor());
-                self.dispatch_filtered_stimulus_without_forecast(
-                    sim, assets, victim_id, &stimulus, &ctx, &tick,
-                );
+                self.dispatch_filtered_stimulus(sim, assets, victim_id, &stimulus, &ctx, &tick);
                 if let Some(creation_order) = debug {
                     trace_reactive_sword(
                         frame,
@@ -2849,7 +2847,7 @@ impl EngineInner {
         // the complete live owner context across the narrow barrier.
         let mut step_back_ctx =
             if victim_fighting_ability >= MIN_CAPACITY_AVOID_PUSH_BACK && push_back_distance != 0 {
-                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let scratch = self.build_sim_scratch(assets);
                 let victim_sector = self
                     .expect_entity(victim_id, "ConsiderToBeginParade step-back victim")
                     .element_data()
@@ -2990,7 +2988,7 @@ impl EngineInner {
                 }
                 // This branch returns immediately after requesting movement; close the
                 // owner-local callback boundary before the caller resumes.
-                self.drain_direct_ai_owner_boundary_without_forecast(sim, victim_id, assets);
+                self.drain_direct_ai_owner_boundary(sim, victim_id, assets);
                 if let Some(debug) = step_back_debug {
                     self.trace_reactive_step_back_after_drain(debug, victim_id);
                 }

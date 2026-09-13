@@ -418,12 +418,7 @@ fn pre_set_state_face_and_attentive_leave_register_then_preempt_in_manager_fifo(
     // This is the movement-condolation mode that exposed the bug. Face and
     // attentive-mode changes both launch inline, but their ordinary
     // elements remain registered until the global sequence-manager update.
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let owned_before_manager: Vec<_> = engine
         .orders
@@ -547,12 +542,7 @@ fn consecutive_set_states_preserve_attentive_request_fifo() {
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let owned: Vec<_> = engine
         .orders
@@ -613,12 +603,7 @@ fn opposite_attentive_transitions_launch_before_following_turn() {
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let owned: Vec<_> = engine
         .orders
@@ -1652,15 +1637,6 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
     };
     ai.attentive = true;
     ai.will_be_attentive = true;
-    let owner_boundary_positions = vec![(
-        owner.index(),
-        crate::ai::Position {
-            x: 100.0,
-            y: 100.0,
-            sector: Some(source),
-            level: 0,
-        },
-    )];
 
     // Observe the exact live-outbox lifecycle rather than relying on a later
     // global movement drain to hide a publication-order error.
@@ -1670,7 +1646,6 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
         &assets,
         DutyFlags::empty(),
         false,
-        &owner_boundary_positions,
     );
     {
         let ai = engine
@@ -1686,12 +1661,7 @@ fn resumed_return_to_duty_publishes_goto_after_attentive_inline() {
         ));
     }
 
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
     let commands = engine
         .orders
         .sequence_manager
@@ -1874,12 +1844,7 @@ fn nested_reentrant_turn_remains_deferred_until_manager() {
             to_whole_patrol: false,
         });
 
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        source_id,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, source_id, &assets);
 
     let turns: Vec<_> = engine
         .orders

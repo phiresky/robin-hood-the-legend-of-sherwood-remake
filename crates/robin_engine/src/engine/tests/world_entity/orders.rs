@@ -419,7 +419,7 @@ fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
     terminate(&mut engine, owner);
     terminate(&mut engine, foreign_b);
 
-    // Exercise the nested global drain in `drain_pending_for_npc_mode`, not
+    // Exercise the nested global drain in `drain_pending_for_npc`, not
     // merely the idle direct-boundary endpoint. The owner's Halt and its
     // pre-existing root must close now, while foreign A/B stay queued.
     let live_owner_sequence = engine
@@ -439,7 +439,7 @@ fn direct_ai_owner_boundary_preserves_preexisting_foreign_condolation() {
         .halt = true;
 
     let ((), stimuli) = crate::engine::soldier_helpers::capture_condolation_stimuli(|| {
-        engine.drain_direct_ai_owner_boundary_without_forecast(&sim, owner, &assets);
+        engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
     });
 
     let backlog = engine.orders.sequence_manager.drain_pending_condolations();
@@ -695,7 +695,7 @@ fn battle_observe_route_settles_before_source_ordered_tail() {
 }
 
 #[test]
-fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
+fn resumed_return_to_duty_uses_live_position_and_translates_its_goto() {
     use crate::ai::{AiOwnerWork, AiState, DutyFlags, Substate};
     use crate::coordinates::MapPoint;
     use crate::element::Command;
@@ -737,7 +737,9 @@ fn resumed_return_to_duty_translates_its_goto_on_the_owner_work_boundary() {
             owner_boundary_positions: vec![(
                 owner.index(),
                 crate::ai::Position {
-                    x: 100.0,
+                    // A legacy capture says the owner already reached its post.
+                    // The live body is still at x=100 and must issue movement.
+                    x: 300.0,
                     y: 100.0,
                     sector,
                     level: 0,

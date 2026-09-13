@@ -1,20 +1,5 @@
 use super::*;
 
-/// Observation context for a recursive owner call. This is a transient call
-/// argument, not persisted engine state. SequenceManager retains ownership of
-/// instruction timing; this policy only selects whether forecasts are rebuilt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::engine) enum OwnerBoundaryPolicy {
-    Current,
-    WithoutForecast,
-}
-
-impl OwnerBoundaryPolicy {
-    pub(in crate::engine) fn without_forecast(self) -> bool {
-        matches!(self, Self::WithoutForecast)
-    }
-}
-
 /// A statement prefix cannot surface decision completion while its enclosing
 /// owner call still has a detached continuation to execute.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,16 +17,6 @@ impl CompletionBoundary {
 #[cfg(test)]
 mod policy_tests {
     use super::*;
-
-    #[test]
-    fn owner_observation_policy_selects_forecast_behavior() {
-        for (policy, without_forecast) in [
-            (OwnerBoundaryPolicy::Current, false),
-            (OwnerBoundaryPolicy::WithoutForecast, true),
-        ] {
-            assert_eq!(policy.without_forecast(), without_forecast);
-        }
-    }
 
     #[test]
     fn statement_prefix_and_owner_return_keep_distinct_completion_contracts() {
@@ -97,50 +72,14 @@ impl EngineInner {
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, OwnerBoundaryPolicy::Current);
+        self.drain_self_stimuli_for_npc_collect_moves(sim, npc_id, assets);
     }
 
-    /// Native `SetAIState` decision-tick recursion must remain
-    /// owner-local: forecasting unrelated actors here would advance their
-    /// authoritative BuildingExitGate RNG before the native returns.
-    pub(in crate::engine) fn drain_self_stimuli_for_npc_without_forecast(
+    pub(in crate::engine) fn drain_self_stimuli_for_npc_collect_moves(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-    ) {
-        let _ = self.drain_self_stimuli_for_npc_mode(
-            sim,
-            npc_id,
-            assets,
-            OwnerBoundaryPolicy::WithoutForecast,
-        );
-    }
-
-    /// Drain an owner-local recursive decision and retain the Move elements it
-    /// registered. Condolence dispatch runs inside the original-game sequence
-    /// completion stack, so those moves are instructed before the callback
-    /// returns instead of waiting in the manager FIFO.
-    pub(in crate::engine) fn drain_self_stimuli_for_npc_without_forecast_collect_moves(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-    ) -> Vec<crate::sequence::SequenceId> {
-        self.drain_self_stimuli_for_npc_mode(
-            sim,
-            npc_id,
-            assets,
-            OwnerBoundaryPolicy::WithoutForecast,
-        )
-    }
-
-    fn drain_self_stimuli_for_npc_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-        policy: OwnerBoundaryPolicy,
     ) -> Vec<crate::sequence::SequenceId> {
         const MAX_REENTRANT_STIMULI: usize = 111;
         let mut dispatched = 0usize;
@@ -184,11 +123,7 @@ impl EngineInner {
                 break;
             }
 
-            let scratch = if policy.without_forecast() {
-                self.build_owner_context_scratch_without_forecast(assets)
-            } else {
-                self.build_sim_scratch(assets)
-            };
+            let scratch = self.build_sim_scratch(assets);
             let frame = self.control.frame_counter;
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let ctx = {
@@ -200,33 +135,26 @@ impl EngineInner {
                 ctx
             };
             let stimulus = crate::ai::Stimulus::from_queued_self(queued_stimulus);
-            if policy.without_forecast() {
-                match self.world.entities.get(npc_id) {
-                    Some(entity) if entity.enemy_ai().is_some() => {
-                        let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-                        self.dispatch_filtered_stimulus_without_forecast(
-                            sim, assets, npc_id, &stimulus, &ctx, &tick_data,
-                        );
-                    }
-                    Some(entity) if entity.friendly_ai().is_some() => {
-                        self.dispatch_filtered_friendly_stimulus_without_forecast(
-                            sim, assets, npc_id, &stimulus, &ctx,
-                        );
-                    }
-                    Some(other) => panic!(
-                        "owner-local self-stimulus recipient {} has invalid kind {:?}",
-                        npc_id.index(),
-                        other.element_data().kind
-                    ),
-                    None => panic!(
-                        "owner-local self-stimulus recipient {} disappeared",
-                        npc_id.index()
-                    ),
-                };
-            } else {
-                let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
-                self.dispatch_filtered_stimulus(sim, assets, npc_id, &stimulus, &ctx, &tick_data);
-            }
+            match self.world.entities.get(npc_id) {
+                Some(entity) if entity.enemy_ai().is_some() => {
+                    let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
+                    self.dispatch_filtered_stimulus(
+                        sim, assets, npc_id, &stimulus, &ctx, &tick_data,
+                    );
+                }
+                Some(entity) if entity.friendly_ai().is_some() => {
+                    self.dispatch_filtered_friendly_stimulus(sim, assets, npc_id, &stimulus, &ctx);
+                }
+                Some(other) => panic!(
+                    "owner-local self-stimulus recipient {} has invalid kind {:?}",
+                    npc_id.index(),
+                    other.element_data().kind
+                ),
+                None => panic!(
+                    "owner-local self-stimulus recipient {} disappeared",
+                    npc_id.index()
+                ),
+            };
 
             // This path deliberately uses the raw filtered dispatch to avoid
             // recursively entering the outer fixed-point drain. Preserve the
@@ -244,7 +172,7 @@ impl EngineInner {
             // before returning.  Close that window after every recursive
             // stimulus so a newly launched sequence participates in
             // arbitration before the next sibling stimulus is delivered.
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
+            self.drain_pending_for_npc(sim, npc_id, assets);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             launched_moves.extend(self.drain_pending_move_requests_for_owner(sim, npc_id));
             self.surface_synchronous_completion_events_for_owner(npc_id);
@@ -454,39 +382,6 @@ impl EngineInner {
             });
     }
 
-    /// Finish engine-facing work queued by a direct AI method that is not
-    /// itself entered through `dispatch_think_with_drain` (ambush checks,
-    /// ladder recovery, every-16-frame updates, and macro continuation). This remains
-    /// owner-local and includes the shared state-change/speech FIFO before later
-    /// effects, orders, condolations, and recursive self-stimuli.
-    pub(in crate::engine) fn drain_direct_ai_owner_boundary(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.drain_direct_ai_owner_boundary_mode(
-            sim,
-            npc_id,
-            assets,
-            crate::engine::ai::OwnerBoundaryPolicy::Current,
-        );
-    }
-
-    pub(in crate::engine) fn drain_direct_ai_owner_boundary_without_forecast(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: EntityId,
-        assets: &LevelAssets,
-    ) {
-        self.drain_direct_ai_owner_boundary_mode(
-            sim,
-            npc_id,
-            assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-        );
-    }
-
     /// Execute Original's route-arrival call stack without detaching the handler.
     /// Actor borrows end before callbacks; post-callback path reads use the
     /// authoritative actor. Actual Turn execution remains owned by SequenceManager.
@@ -498,7 +393,6 @@ impl EngineInner {
         stimulus: &crate::ai::Stimulus,
         ctx: &crate::ai::AiContext,
         enemy_tick: Option<&crate::ai::AiPerTickData>,
-        policy: OwnerBoundaryPolicy,
     ) -> bool {
         let admitted = {
             let entity = self
@@ -547,7 +441,7 @@ impl EngineInner {
                 std::mem::take(&mut ai.open_end_think_frames),
             )
         };
-        self.drain_direct_ai_owner_prefix_boundary_mode(sim, owner, assets, policy);
+        self.drain_direct_ai_owner_prefix_boundary(sim, owner, assets);
         let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
         // State-change notifications ignore the callback's return value.
         self.call_ai_event_filter(
@@ -557,7 +451,7 @@ impl EngineInner {
             handle,
             crate::ai::AiState::Default.state_change_event_code(),
         );
-        self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
+        self.drain_self_stimuli_for_npc(sim, owner, assets);
         {
             let ai = self
                 .world
@@ -567,16 +461,7 @@ impl EngineInner {
             ai.current_substate = crate::ai::Substate::DefaultGotoRouteTurn;
         }
         self.initialize_patrol_for_npc(assets, owner);
-        // TODO(scheduling): remove broad observation rebuilding together with
-        // the owner-phase snapshot API. Keep its geometry contract in this slice.
-        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
-        for (&handle, before) in ctx.entity_views.iter() {
-            if let Some(view) =
-                std::sync::Arc::make_mut(&mut scratch.ai_entity_views).get_mut(&handle)
-            {
-                view.position = before.position;
-            }
-        }
+        let scratch = self.build_sim_scratch(assets);
         let entity = self.expect_entity(owner, "patrol after callback");
         let mut fresh_ctx = self.ai_context_from_entity(
             entity,
@@ -604,21 +489,15 @@ impl EngineInner {
             );
             self.launch_element(turn);
         } else {
-            self.dispatch_filtered_stimulus_with_owner_mode(
+            self.dispatch_filtered_stimulus_inner(
                 sim,
                 assets,
                 owner,
                 &crate::ai::Stimulus::new(crate::ai::StimulusType::EventDone),
                 &fresh_ctx,
                 enemy_tick,
-                OwnerBoundaryPolicy::WithoutForecast,
             );
-            self.drain_direct_ai_owner_boundary_mode(
-                sim,
-                owner,
-                assets,
-                OwnerBoundaryPolicy::WithoutForecast,
-            );
+            self.drain_direct_ai_owner_boundary(sim, owner, assets);
         }
         let entity = self
             .world
@@ -654,8 +533,6 @@ impl EngineInner {
         npc_id: EntityId,
         assets: &LevelAssets,
         flags: crate::ai::DutyFlags,
-        owner_position_override: Option<crate::ai::Position>,
-        owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
         // Work already behind this response belongs to the caller after
         // returning to duty completes. Detach it so work emitted by that operation
@@ -668,13 +545,7 @@ impl EngineInner {
             );
             std::mem::take(&mut ai.outbox.reentrant.owner_work)
         };
-        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
-        for &(handle, position) in owner_boundary_positions {
-            if let Some(view) = views.get_mut(&handle) {
-                view.position = position;
-            }
-        }
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -684,9 +555,6 @@ impl EngineInner {
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            if let Some(owner_position) = owner_position_override {
-                ctx.position = owner_position;
-            }
             ctx
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
@@ -748,20 +616,9 @@ impl EngineInner {
         assets: &LevelAssets,
         flags: crate::ai::DutyFlags,
         high_recursion_failsafe: bool,
-        owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
-        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
-        for &(handle, position) in owner_boundary_positions {
-            if let Some(view) = views.get_mut(&handle) {
-                view.position = position;
-            }
-        }
-
-        // This is an inline original-game call, not a future update request. It must
-        // settle before common return-to-duty processing checks `patrol_chief` and may
-        // issue the reciprocal visibility query.
         self.initialize_patrol_for_npc(assets, npc_id);
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -771,12 +628,6 @@ impl EngineInner {
             let mut ctx =
                 self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             ctx.in_uninterruptible_command = in_uninterruptible_command;
-            if let Some((_, owner_position)) = owner_boundary_positions
-                .iter()
-                .find(|(handle, _)| *handle == npc_id.index())
-            {
-                ctx.position = *owner_position;
-            }
             ctx
         };
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
@@ -799,17 +650,9 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        owner_boundary_positions: &[(u32, crate::ai::Position)],
     ) {
-        let mut scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let views = std::sync::Arc::make_mut(&mut scratch.ai_entity_views);
-        for &(handle, position) in owner_boundary_positions {
-            if let Some(view) = views.get_mut(&handle) {
-                view.position = position;
-            }
-        }
-
         self.initialize_patrol_for_npc(assets, npc_id);
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -963,48 +806,43 @@ impl EngineInner {
         )
     }
 
-    pub(in crate::engine) fn drain_direct_ai_owner_boundary_mode(
+    pub(in crate::engine) fn drain_direct_ai_owner_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        policy: OwnerBoundaryPolicy,
     ) {
-        self.drain_direct_ai_owner_boundary_mode_inner(
+        self.drain_direct_ai_owner_boundary_inner(
             sim,
             npc_id,
             assets,
-            policy,
             CompletionBoundary::OwnerReturn,
         );
     }
 
     /// The state change's pre-callback actor prefix is only a statement boundary
     /// inside the enclosing decision. Its caller tail is temporarily detached
-    /// by `drain_ai_owner_work_for_mode`, so there is no complete decision-tick completion
+    /// by `drain_ai_owner_work_for`, so there is no complete decision-tick completion
     /// boundary to surface until that tail has been restored and executed.
-    pub(in crate::engine) fn drain_direct_ai_owner_prefix_boundary_mode(
+    pub(in crate::engine) fn drain_direct_ai_owner_prefix_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        policy: OwnerBoundaryPolicy,
     ) {
-        self.drain_direct_ai_owner_boundary_mode_inner(
+        self.drain_direct_ai_owner_boundary_inner(
             sim,
             npc_id,
             assets,
-            policy,
             CompletionBoundary::StatementPrefix,
         );
     }
 
-    fn drain_direct_ai_owner_boundary_mode_inner(
+    fn drain_direct_ai_owner_boundary_inner(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        policy: OwnerBoundaryPolicy,
         completion_boundary: CompletionBoundary,
     ) {
         // This entry point models one direct, synchronous member-call stack.
@@ -1023,13 +861,7 @@ impl EngineInner {
 
         const MAX_ITERS: u32 = 8;
         for iter in 0..MAX_ITERS {
-            self.drain_pending_for_npc_boundary_mode(
-                sim,
-                npc_id,
-                assets,
-                policy,
-                completion_boundary,
-            );
+            self.drain_pending_for_npc_boundary(sim, npc_id, assets, completion_boundary);
             self.launch_pending_orders_for_npc(sim, assets, npc_id);
             let _ = self.drain_pending_move_requests_for_owner(sim, npc_id);
             if completion_boundary.surfaces_completion() {
@@ -1048,7 +880,7 @@ impl EngineInner {
                 !ai.outbox.reentrant.self_stimuli.is_empty()
             };
             if has_self_stimuli {
-                self.drain_self_stimuli_for_npc_mode(sim, npc_id, assets, policy);
+                self.drain_self_stimuli_for_npc_collect_moves(sim, npc_id, assets);
             }
 
             let still_pending = {
@@ -1165,7 +997,7 @@ impl EngineInner {
         // during actor action execution and promote its successor before the NPC
         // the actor update reaches periodic tasks; in that window `Sprite::last_action`
         // still names the transition.
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         // The periodic update's only combat-context consumer is
         // arrow-protection refresh. Original gathers its live fighter data
         // without AI destination forecasts, so resolving door exits here
@@ -1240,7 +1072,7 @@ impl EngineInner {
             }
             _ => unreachable!("post-detection owner must remain an AI actor"),
         }
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     /// Close arrow-protection refresh's synchronous prefix and resume the
@@ -1258,12 +1090,7 @@ impl EngineInner {
         // following live command/pending-sequence-launch reads,
         // but retain the enclosing direct-call completion boundary until the
         // suffix has run.
-        self.drain_direct_ai_owner_prefix_boundary_mode(
-            sim,
-            npc_id,
-            assets,
-            crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-        );
+        self.drain_direct_ai_owner_prefix_boundary(sim, npc_id, assets);
         let actor_command = self.actor_command(npc_id);
         let post_refresh_stuck_command_active = matches!(
             actor_command,
@@ -1326,7 +1153,7 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let building_sector = self.entity_building_sector(entity.element_data().sector());
         let ctx =
             self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
@@ -1352,7 +1179,7 @@ impl EngineInner {
         // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
         // that same owner-local boundary here even when the lock gate will
         // short-circuit the remainder of the actor update.
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_drain(current_frame, creation_order, npc_id);
         }
@@ -1517,7 +1344,7 @@ impl EngineInner {
             "soldier {} has no enemy AI for ambush refresh",
             npc_id.index()
         );
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
 
         let frame = self.control.frame_counter;
         // Phase 1: read-only — gather context + eyes point + LOS scope.
@@ -1553,7 +1380,7 @@ impl EngineInner {
             .entities
             .expect_enemy_ai_mut(npc_id, format_args!("ambush-refresh NPC before apply"))
             .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     // ── Macro timer hourglass ────────────────────────────────────
@@ -1593,7 +1420,7 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
 
         // Build the AI context before we take the mut AI borrow.
         let building_sector = self
@@ -1620,7 +1447,7 @@ impl EngineInner {
         if execute {
             base.execute_next_macro_command(sim, &ctx);
         }
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 
     // ── Locked-frame timer bumps ─────────────────────────────────
@@ -1760,7 +1587,7 @@ impl EngineInner {
         // `force_return_to_duty == return_to_duty`.  Dispatch via
         // the specialized AI to complete the response. Build the
         // ctx + tick data the way `tick_periodic_ai` does.
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
         let frame = self.control.frame_counter;
         let in_uninterruptible_command = self.is_very_very_busy(npc_id);
@@ -1788,6 +1615,6 @@ impl EngineInner {
                 npc_id.index()
             );
         }
-        self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+        self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
     }
 }

@@ -692,7 +692,7 @@ mod tests {
         element.set_layer(2);
         element.set_sector(crate::position_interface::SectorHandle::new(88));
 
-        let position = super::super::build_entity_views_without_forecast(&engine)
+        let position = super::super::build_entity_views(&engine)
             .get(&target.index())
             .expect("target requires live AI view")
             .position;

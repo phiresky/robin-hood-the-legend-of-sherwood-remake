@@ -502,7 +502,7 @@ fn change_way_binds_assignment_callback_before_explicit_virtual_tail() {
             assignment_callback: Some(StimulusType::EventReturnToDuty),
             owner_position_before_callback,
             owner_boundary_positions,
-        }] if *owner_position_before_callback == ctx.position && owner_boundary_positions.is_empty()
+        }] if *owner_position_before_callback == Position::default() && owner_boundary_positions.is_empty()
     ));
     assert!(!ai.macro_in_progress);
 }

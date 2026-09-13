@@ -41,7 +41,7 @@ impl EngineInner {
                     )
                 });
 
-                let scratch = self.build_owner_context_scratch_without_forecast(assets);
+                let scratch = self.build_sim_scratch(assets);
                 let detected = {
                     let building_sector = self
                         .world
@@ -94,15 +94,7 @@ impl EngineInner {
                     )
                 };
                 let tick_data = self.build_npc_tick_data(sim, member_id, assets);
-                self.dispatch_think_with_drain_mode(
-                    sim,
-                    member_id,
-                    &stimulus,
-                    &ctx,
-                    &tick_data,
-                    assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-                );
+                self.dispatch_think_with_drain(sim, member_id, &stimulus, &ctx, &tick_data, assets);
             }
         }
     }
@@ -148,7 +140,7 @@ impl EngineInner {
                 panic!("patrol chief {chief} is not an enemy soldier");
             }
 
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let chief_building_sector = self
                 .world
                 .entities
@@ -190,19 +182,14 @@ impl EngineInner {
             // A successful chief routine can recursively Think and queue the
             // member walk. Close those effects before the direct call returns.
             if dispatched {
-                self.drain_direct_ai_owner_boundary_mode(
-                    sim,
-                    chief_id,
-                    assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-                );
+                self.drain_direct_ai_owner_boundary(sim, chief_id, assets);
                 continue;
             }
 
             // The caller's outer handler resumes after the chief returned
             // false. Re-enter with the patrol flag set solely as a recursion
             // guard; no other handler observes that flag.
-            let caller_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let caller_scratch = self.build_sim_scratch(assets);
             let caller_building_sector = self
                 .world
                 .entities
@@ -221,14 +208,13 @@ impl EngineInner {
             };
             let caller_tick = self.build_npc_tick_data(sim, source_id, assets);
             stimulus.to_whole_patrol = true;
-            self.dispatch_think_with_drain_mode(
+            self.dispatch_think_with_drain(
                 sim,
                 source_id,
                 &stimulus,
                 &caller_ctx,
                 &caller_tick,
                 assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
         }
     }
@@ -284,7 +270,7 @@ impl EngineInner {
                     "synchronous {stimulus_type:?} from enemy NPC {caller} requires enemy-soldier target {target}"
                 );
             }
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let target_building_sector = self
                 .world
                 .entities
@@ -308,7 +294,7 @@ impl EngineInner {
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
             let mut stimulus = crate::ai::Stimulus::new(stimulus_type);
             stimulus.info = info;
-            let accepted = self.dispatch_think_with_drain_without_forecast(
+            let accepted = self.dispatch_think_with_drain(
                 sim,
                 target_id,
                 &stimulus,
@@ -317,7 +303,7 @@ impl EngineInner {
                 assets,
             );
 
-            let source_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let source_scratch = self.build_sim_scratch(assets);
             let source_building_sector = self
                 .world
                 .entities
@@ -364,19 +350,9 @@ impl EngineInner {
                 continuation,
                 crate::ai::ThinkResultContinuation::OfficerCalledSoldier
             ) {
-                self.drain_direct_ai_owner_boundary_mode(
-                    sim,
-                    source_id,
-                    assets,
-                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-                );
+                self.drain_direct_ai_owner_boundary(sim, source_id, assets);
             } else {
-                self.drain_ai_owner_work_for_mode(
-                    sim,
-                    assets,
-                    source_id,
-                    crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-                );
+                self.drain_ai_owner_work_for(sim, assets, source_id);
             }
         }
     }
@@ -417,7 +393,7 @@ impl EngineInner {
                 matches!(self.world.entities.get(target_id), Some(Entity::Soldier(_))),
                 "synchronous CALL_ALERT target {target} is not a soldier"
             );
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let target_building_sector = self
                 .world
                 .entities
@@ -435,7 +411,7 @@ impl EngineInner {
                 )
             };
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
-            let accepted = self.dispatch_think_with_drain_without_forecast(
+            let accepted = self.dispatch_think_with_drain(
                 sim,
                 target_id,
                 &crate::ai::Stimulus::with_human(crate::ai::StimulusType::CallAlert, caller),
@@ -444,7 +420,7 @@ impl EngineInner {
                 assets,
             );
 
-            let source_scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let source_scratch = self.build_sim_scratch(assets);
             let source_building_sector = self
                 .world
                 .entities
@@ -512,7 +488,7 @@ impl EngineInner {
                 "officer report source must be the reporting Charly"
             );
 
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let officer_id =
                 self.expect_human_id_for_ai_handle(officer, "reporting Charly's officer");
             let officer_building_sector = self
@@ -536,7 +512,7 @@ impl EngineInner {
                 crate::ai::StimulusType::CallMrOfficerIAmBack,
                 charly,
             );
-            let accepted = self.dispatch_think_with_drain_without_forecast(
+            let accepted = self.dispatch_think_with_drain(
                 sim,
                 officer_id,
                 &officer_stimulus,

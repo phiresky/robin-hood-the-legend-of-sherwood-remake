@@ -11,9 +11,10 @@
 mod cross_npc_actions;
 mod detection;
 mod event_dispatch;
+mod execution;
 mod initialization;
 mod owner_scheduling;
-pub(in crate::engine) use owner_scheduling::{CompletionBoundary, OwnerBoundaryPolicy};
+pub(in crate::engine) use owner_scheduling::CompletionBoundary;
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
@@ -1901,12 +1902,7 @@ mod parity_tests {
             ai.engine_deferred_end_think_frames = 1;
         }
 
-        engine.drain_direct_ai_owner_prefix_boundary_mode(
-            &sim,
-            owner,
-            &assets,
-            crate::engine::ai::OwnerBoundaryPolicy::Current,
-        );
+        engine.drain_direct_ai_owner_prefix_boundary(&sim, owner, &assets);
         {
             let ai = engine
                 .world
@@ -3836,10 +3832,6 @@ pub(super) fn build_entity_views(engine: &EngineInner) -> AiEntityViewMap {
     build_entity_views_and_stamps(engine).0
 }
 
-fn build_entity_views_without_forecast(engine: &EngineInner) -> AiEntityViewMap {
-    build_entity_views_and_stamps(engine).0
-}
-
 impl EngineInner {
     /// Read AI Position directly, including selected door endpoints
     /// and carried-PC substitution, without constructing an entity-view world.
@@ -5067,7 +5059,7 @@ impl EngineInner {
         assets: &LevelAssets,
         source: EntityId,
     ) {
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let Some(source_entity) = self.world.entities.get(source) else {
             tracing::trace!(target: "parity_nearby_panic", "brawl source missing");
             return;
@@ -5116,7 +5108,7 @@ impl EngineInner {
                 crate::ai::StimulusType::EventPanic,
                 panic_center,
             );
-            self.dispatch_think_with_drain_without_forecast(
+            self.dispatch_think_with_drain(
                 sim,
                 npc_id,
                 &stimulus,
@@ -5133,7 +5125,7 @@ impl EngineInner {
         assets: &LevelAssets,
         source: EntityId,
     ) {
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let view_radius = if self.ai.standard_view_polygon_radius > 0 {
             self.ai.standard_view_polygon_radius as f32
         } else {
@@ -5281,9 +5273,7 @@ impl EngineInner {
             // caller resumes. A raw dispatch plus manual PanicRequest drain
             // left the movement stranded in the civilian outbox until its next
             // owner slot.
-            self.dispatch_think_with_drain_without_forecast(
-                sim, npc_id, &stimulus, &ctx, &tick_data, assets,
-            );
+            self.dispatch_think_with_drain(sim, npc_id, &stimulus, &ctx, &tick_data, assets);
         }
     }
 
@@ -5966,7 +5956,7 @@ impl EngineInner {
             // freshly installed `FLEEING_PANIC` substate.  Close the generated
             // Think (and its two direction/distance RNG draws) before Panic
             // returns to its caller.
-            self.drain_self_stimuli_for_npc_without_forecast(sim, npc_id, assets);
+            self.drain_self_stimuli_for_npc(sim, npc_id, assets);
             self.world
                 .entities
                 .expect_ai_controller_mut(
@@ -6090,7 +6080,7 @@ impl EngineInner {
         if normal_depth_complete {
             return;
         }
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let entity = self.expect_entity(npc_id, "SetAIState decision-completion owner");
         let mut ctx = self.ai_context_from_entity(
             entity,

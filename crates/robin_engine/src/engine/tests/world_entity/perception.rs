@@ -1013,12 +1013,7 @@ fn dead_body_alert_tail_consumes_route_failure_before_generic_event_surface() {
     // Tick completion observes the typed latch before the owner continuation runs.
     engine.surface_synchronous_completion_events_for_owner(owner);
     engine.drain_ai_owner_work_for(&sim, &assets, owner);
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let ai = engine
         .get_entity(owner)
@@ -1223,12 +1218,7 @@ fn alert_soldier_owner_boundary_second_failure_runs_typed_tail_without_event4() 
     // call stack. Exercise the complete direct-owner boundary so the staged
     // `begin_panic` request performs its engine-owned door lookup and sole
     // final state change before asserting the outcome.
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     let ai = engine
         .get_entity(owner)

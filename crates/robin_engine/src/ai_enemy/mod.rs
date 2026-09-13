@@ -2249,10 +2249,28 @@ impl EnemyAi {
         if !self.begin_think(env, stimulus, global) {
             return true;
         }
-        let ThinkEnv { ctx, .. } = env;
+        let result = self.think_body(env, stimulus, global);
+        if !(stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
+            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
+        {
+            self.end_think(env);
+        }
+        self.base
+            .debug_macro_lifecycle(env.ctx, "think_return", stimulus.stimulus_type);
+        result
+    }
+
+    /// Run an admitted handler. The engine owns admission and completion
+    /// around this operation and releases the actor borrow between stages.
+    pub(crate) fn think_body(
+        &mut self,
+        env: ThinkEnv<'_>,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+    ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
-        let return_value = match stimulus_type {
+        match stimulus_type {
             // Expected events — drive state progression
             StimulusType::EventReachPoint
             | StimulusType::EventDone
@@ -2339,16 +2357,7 @@ impl EnemyAi {
                 );
                 false
             }
-        };
-
-        if !(stimulus_type == StimulusType::EventAfterScriptGoOn
-            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
-        {
-            self.end_think(env);
         }
-        self.base
-            .debug_macro_lifecycle(ctx, "think_return", stimulus_type);
-        return_value
     }
 
     // -----------------------------------------------------------------------
@@ -2807,11 +2816,7 @@ impl EnemyAi {
         // hoisted: the early returns above never reach the common tail and
         // must leave the report standing.
         self.base.my_reconnaissance_report.reset();
-        let owner_boundary_positions = ctx
-            .entity_views
-            .iter()
-            .map(|(&handle, view)| (handle, view.position))
-            .collect();
+        let owner_boundary_positions = Vec::new();
         let continuation = if (100..111).contains(&self.base.think_recursion_depth) {
             AiOwnerWork::ResumeHighRecursionReturnToDutyAfterPatrolInit {
                 flags,

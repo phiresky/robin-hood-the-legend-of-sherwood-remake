@@ -141,7 +141,7 @@ impl EngineInner {
             // callback/effect boundary before the next NPC initializes so a
             // state callback cannot leak to the first update tick or
             // observe later owners' initialized state.
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+            self.drain_direct_ai_owner_boundary(sim, npc_id, assets);
         }
 
         // Lift each ambush point's 2D position into 3D (eye height

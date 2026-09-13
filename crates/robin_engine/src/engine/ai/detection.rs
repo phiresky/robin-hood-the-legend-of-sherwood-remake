@@ -1112,7 +1112,7 @@ impl EngineInner {
         if targets.is_empty() {
             return;
         }
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
+        let scratch = self.build_sim_scratch(assets);
         let nearby_targets = enemies_near_from_them_list(origin, &targets, |target_handle| {
             let target_view = scratch.ai_entity_views.get(&target_handle);
             if target_view.is_none() {
@@ -3104,7 +3104,7 @@ impl EngineInner {
             .find(|entry| entry.id == target)
             .unwrap_or_else(|| panic!("test optical target {target:?} is missing"));
         (
-            build_entity_views_without_forecast(self)
+            build_entity_views(self)
                 .get(&target.index())
                 .expect("test target requires live AI view")
                 .position,

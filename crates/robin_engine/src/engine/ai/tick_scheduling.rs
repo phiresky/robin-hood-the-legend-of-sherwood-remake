@@ -226,48 +226,29 @@ impl EngineInner {
     /// [`Self::dispatch_think_with_drain`] — matching `think()`
     /// semantics where handler side effects (`launch_sequence`,
     /// `set_attentive_mode`, `face`, …) are immediate.
-    #[cfg(test)]
-    #[tracing::instrument(level = "trace", skip_all, fields(npc = npc_id.index()))]
     pub(in crate::engine) fn drain_pending_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
     ) {
-        self.drain_pending_for_npc_mode(
+        self.drain_pending_for_npc_boundary(
             sim,
             npc_id,
             assets,
-            crate::engine::ai::OwnerBoundaryPolicy::Current,
-        );
-    }
-
-    pub(in crate::engine) fn drain_pending_for_npc_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        npc_id: crate::element::EntityId,
-        assets: &LevelAssets,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
-    ) {
-        self.drain_pending_for_npc_boundary_mode(
-            sim,
-            npc_id,
-            assets,
-            policy,
             crate::engine::ai::CompletionBoundary::OwnerReturn,
         );
     }
 
-    pub(in crate::engine) fn drain_pending_for_npc_boundary_mode(
+    pub(in crate::engine) fn drain_pending_for_npc_boundary(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         completion_boundary: crate::engine::ai::CompletionBoundary,
     ) {
         let Some(mut drain) =
-            self.drain_pending_owner_prelude(sim, npc_id, assets, policy, completion_boundary)
+            self.drain_pending_owner_prelude(sim, npc_id, assets, completion_boundary)
         else {
             return;
         };
@@ -278,7 +259,7 @@ impl EngineInner {
         self.drain_pending_launches(sim, npc_id, assets, &mut drain);
         self.drain_pending_detectable_mutations(npc_id, &drain);
         self.drain_pending_coins_posture_and_alerts(sim, npc_id, assets, &drain);
-        self.drain_pending_panic_and_overview(sim, npc_id, assets, policy, &drain);
+        self.drain_pending_panic_and_overview(sim, npc_id, assets, &drain);
     }
 
     /// Owner work, direction goal, halt barrier, and the first post-Think
@@ -289,18 +270,11 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         completion_boundary: crate::engine::ai::CompletionBoundary,
     ) -> Option<PendingDrainBarrier> {
         // Direct engine-owned AI calls also enter this drain. Close the
         // state-change callback boundary before consuming halt/effect/order work.
-        self.drain_ai_owner_work_for_boundary_mode(
-            sim,
-            assets,
-            npc_id,
-            policy,
-            completion_boundary,
-        );
+        self.drain_ai_owner_work_for_boundary(sim, assets, npc_id, completion_boundary);
         self.drain_patrol_direction_broadcast_for(sim, npc_id, assets);
 
         // Direct direction assignments made before stopping must update the goal
@@ -1161,7 +1135,7 @@ impl EngineInner {
                     // recipient context above was built at this exact Think
                     // boundary and is also the one used for dispatch.
                     let tick_data = self.build_npc_tick_data(sim, other_id, assets);
-                    self.dispatch_think_with_drain_without_forecast(
+                    self.dispatch_think_with_drain(
                         sim, other_id, &stimulus, &other_ctx, &tick_data, assets,
                     );
                 }
@@ -1661,7 +1635,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: crate::element::EntityId,
         assets: &LevelAssets,
-        policy: crate::engine::ai::OwnerBoundaryPolicy,
         drain: &PendingDrainBarrier,
     ) {
         let finish_lost_enemy_overview = drain.finish_lost_enemy_overview;
@@ -1685,7 +1658,7 @@ impl EngineInner {
             .and_then(Entity::ai_controller)
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
@@ -1700,7 +1673,7 @@ impl EngineInner {
         }
 
         if observe_after_panic {
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let entity = self.expect_entity(npc_id, "panic continuation owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
@@ -1728,7 +1701,7 @@ impl EngineInner {
             // The resumed tail contains state changes, focusing, and movement.
             // Close their owner-local callbacks and actor effects before the
             // enclosing synchronous Panic continuation returns.
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
+            self.drain_pending_for_npc(sim, npc_id, assets);
         }
 
         let has_panic_seek_fallback = self
@@ -1740,7 +1713,7 @@ impl EngineInner {
         if has_panic_seek_fallback {
             // Panic startup above can mutate the owner and world; do not reuse
             // its context snapshot at this later synchronous boundary.
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
@@ -1773,7 +1746,7 @@ impl EngineInner {
             // The panic boundaries above may have synchronously changed the
             // world. Script-driven area search gets a fresh owner snapshot and tick
             // data at its own original-game evaluation boundary.
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
@@ -1793,7 +1766,7 @@ impl EngineInner {
             // interrupted the old command and delivered its nested
             // condolence. Resume the outer EVENT_OUTOFVIEW handler at the
             // following battle-overview evaluation with a fresh live view.
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let entity = self.expect_entity(npc_id, "lost-enemy overview owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
@@ -1812,13 +1785,13 @@ impl EngineInner {
                     format_args!("lost-enemy overview owner {npc_id:?} has no enemy AI"),
                 )
                 .get_battle_overview(0, crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick, None));
-            self.drain_pending_for_npc_mode(sim, npc_id, assets, policy);
+            self.drain_pending_for_npc(sim, npc_id, assets);
         }
     }
 }
 
 /// Locals taken at the first post-Think barrier of
-/// [`EngineInner::drain_pending_for_npc_boundary_mode`] that its later phases
+/// [`EngineInner::drain_pending_for_npc_boundary`] that its later phases
 /// consume. Transient per-drain state (no serde: the effect channels it holds
 /// are runtime-only and never persisted).
 struct PendingDrainBarrier {

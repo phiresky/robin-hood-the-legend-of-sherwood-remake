@@ -167,12 +167,7 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     let owner = engine.add_test_entity(soldier_entity);
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
-    engine.drain_direct_ai_owner_boundary_mode(
-        &sim,
-        owner,
-        &assets,
-        crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-    );
+    engine.drain_direct_ai_owner_boundary(&sim, owner, &assets);
 
     assert!(
         engine.orders.pending_move_requests.is_empty(),

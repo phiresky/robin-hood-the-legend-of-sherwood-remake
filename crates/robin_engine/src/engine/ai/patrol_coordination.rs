@@ -48,7 +48,7 @@ impl EngineInner {
             self.instruct_patrol_direction(member, direction);
             // Register turns now; owner instruction belongs to the later
             // sequence-manager pass, as with coordinate Think below.
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
+            self.drain_direct_ai_owner_boundary(sim, member, assets);
         }
     }
 
@@ -144,20 +144,12 @@ impl EngineInner {
                 continue;
             }
             let entity = self.expect_entity(member, "patrol coordinate member");
-            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let scratch = self.build_sim_scratch(assets);
             let ctx = self.ai_context_from_entity(entity, frame, None, &scratch, assets);
             let tick = self.build_npc_tick_data(sim, member, assets);
             let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, target);
             self.debug_patrol_turn_lifecycle("before_coordinate_think", member);
-            self.dispatch_think_with_drain_mode(
-                sim,
-                member,
-                &stimulus,
-                &ctx,
-                &tick,
-                assets,
-                crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
-            );
+            self.dispatch_think_with_drain(sim, member, &stimulus, &ctx, &tick, assets);
             // Construct Move before applying direction, but leave its deferred
             // InstructOwner for the normal sequence-manager phase.
             self.drain_pending_move_requests_for_owner(sim, member);
@@ -171,7 +163,7 @@ impl EngineInner {
                 .expect("patrol shrank during coordinate callback");
             self.instruct_patrol_direction(member, direction);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", member);
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
+            self.drain_direct_ai_owner_boundary(sim, member, assets);
             self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", member);
         }
         self.reacquire_patrol_members(assets, owner);

@@ -352,9 +352,29 @@ impl FriendlyAi {
         if !self.begin_think(sim, stimulus, global, ctx) {
             return true;
         }
+        let result = self.think_body(sim, stimulus, global, ctx, tick, grid, doors);
+        if !(stimulus.stimulus_type == StimulusType::EventAfterScriptGoOn
+            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
+        {
+            self.end_think(sim, ctx);
+        }
+        result
+    }
+
+    /// Run only the admitted handler; the engine owns the surrounding call.
+    pub(crate) fn think_body(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+        ctx: &AiContext,
+        tick: &FriendlyPerTickData,
+        grid: Option<&crate::fast_find_grid::FastFindGrid>,
+        doors: Option<&[crate::gate::Door]>,
+    ) -> bool {
         let stimulus_type = stimulus.stimulus_type;
 
-        let return_value = match stimulus_type {
+        match stimulus_type {
             // Expected events
             StimulusType::EventReachPoint
             | StimulusType::EventDone
@@ -427,14 +447,7 @@ impl FriendlyAi {
                 );
                 false
             }
-        };
-
-        if !(stimulus_type == StimulusType::EventAfterScriptGoOn
-            && self.base.outbox.reentrant.engine_drains_after_script_go_on)
-        {
-            self.end_think(sim, ctx);
         }
-        return_value
     }
 
     pub(crate) fn resolve_alert_request(

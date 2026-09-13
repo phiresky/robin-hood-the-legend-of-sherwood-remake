@@ -243,6 +243,7 @@ pub enum AiOwnerWork {
     /// patrol initialization.
     VirtualReturnToDuty {
         flags: DutyFlags,
+        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Finish `CMD_CHANGE_WAY` around the exact self callback emitted by
@@ -250,7 +251,9 @@ pub enum AiOwnerWork {
     /// macro cancellation, then actor-specific return-to-duty phase B.
     ChangeWayAssignmentThinkThenExplicitTail {
         assignment_callback: Option<StimulusType>,
+        /// Legacy wire field; emitted as default and ignored.
         owner_position_before_callback: Position,
+        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Continue enemy return-to-duty behavior after its synchronous
@@ -260,13 +263,12 @@ pub enum AiOwnerWork {
         /// Patrol clearing's direct forced-return boundary does not
         /// recursively surface the close-post reach-point callback.
         defer_clear_patrol_close_post: bool,
-        /// Original evaluates patrol geometry at this owner's legacy slot;
-        /// later Rust entity slots may already have moved when the owner FIFO
-        /// reaches the engine boundary.
+        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Continue `CMD_PATROL_START` after its inline patrol initialization.
     ResumeMacroAfterPatrolInit {
+        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Continue enemy approach reconsideration after its synchronous movement
@@ -350,6 +352,7 @@ pub enum AiOwnerWork {
     /// continuation while retaining the original game's in-decision movement boundary.
     ResumeHighRecursionReturnToDutyAfterPatrolInit {
         flags: DutyFlags,
+        /// Legacy wire field; emitted empty and ignored. Geometry is read live.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Finish the ignored-result officer-alert call made by

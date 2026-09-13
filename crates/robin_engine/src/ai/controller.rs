@@ -4881,11 +4881,7 @@ impl AiController {
                         .owner_work
                         .push(AiOwnerWork::VirtualReturnToDuty {
                             flags: DutyFlags::empty(),
-                            owner_boundary_positions: ctx
-                                .entity_views
-                                .iter()
-                                .map(|(&handle, view)| (handle, view.position))
-                                .collect(),
+                            owner_boundary_positions: Vec::new(),
                         });
                 }
             }
@@ -5383,11 +5379,7 @@ impl AiController {
                                     self.outbox.reentrant.owner_work.push(
                                         AiOwnerWork::VirtualReturnToDuty {
                                             flags: DutyFlags::empty(),
-                                            owner_boundary_positions: ctx
-                                                .entity_views
-                                                .iter()
-                                                .map(|(&handle, view)| (handle, view.position))
-                                                .collect(),
+                                            owner_boundary_positions: Vec::new(),
                                         },
                                     );
                                 } else {
@@ -5839,11 +5831,7 @@ impl AiController {
                 // has already performed the same state mutation, but
                 // its nested Think must finish before this second
                 // actor-specific callback launches its observable movement.
-                let owner_boundary_positions = ctx
-                    .entity_views
-                    .iter()
-                    .map(|(&handle, view)| (handle, view.position))
-                    .collect();
+                let owner_boundary_positions = Vec::new();
                 let assignment_callback =
                     if self.outbox.reentrant.self_stimuli.len() > self_stimuli_before {
                         let callback = self
@@ -5860,7 +5848,7 @@ impl AiController {
                 self.outbox.reentrant.owner_work.push(
                     AiOwnerWork::ChangeWayAssignmentThinkThenExplicitTail {
                         assignment_callback,
-                        owner_position_before_callback: ctx.position,
+                        owner_position_before_callback: Position::default(),
                         owner_boundary_positions,
                     },
                 );
@@ -5990,11 +5978,7 @@ impl AiController {
                     .reentrant
                     .owner_work
                     .push(AiOwnerWork::ResumeMacroAfterPatrolInit {
-                        owner_boundary_positions: ctx
-                            .entity_views
-                            .iter()
-                            .map(|(&handle, view)| (handle, view.position))
-                            .collect(),
+                        owner_boundary_positions: Vec::new(),
                     });
                 self.debug_macro_lifecycle(
                     ctx,
