@@ -19,8 +19,6 @@ pub(super) async fn establish(
     #[cfg(not(target_arch = "wasm32"))]
     use crate::multiplayer::NetEvent;
     #[cfg(not(target_arch = "wasm32"))]
-    use crate::multiplayer::{HostedModContent, start_server_in_campaign};
-    #[cfg(not(target_arch = "wasm32"))]
     use std::time::{Duration, Instant};
 
     validate_multiplayer_launch_args(args)?;
@@ -40,145 +38,15 @@ pub(super) async fn establish(
         ));
 
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            if !args.multiplayer.continue_session {
-                campaign.discard_host_continuation()?;
-            }
-            let publish_browser_links = resolve_browser_join_publication(args)?;
-            let speech_timing_locale = host
-                .application_context()
-                .canonical_speech_timing_locale()
-                .map_err(|detail| SessionSetupFailure::Local {
-                    context: "cannot select authoritative speech timing",
-                    detail,
-                })?;
-            let (mut channels, server_channels) = NetChannels::new_server();
-            let content = args
-                .content
-                .pending_distributed_mod
-                .as_ref()
-                .map(|encoded| {
-                    HostedModContent::from_encoded(encoded.to_vec()).map_err(|source| {
-                        SessionSetupFailure::Transport {
-                            context: "invalid hosted full-mod package",
-                            source,
-                        }
-                    })
-                })
-                .transpose()?;
-            let started = start_server_in_campaign(
-                campaign,
-                crate::multiplayer::ServerConfig {
-                    host_nickname: nickname.clone(),
-                    mission_id: authoritative_mission_id.to_string(),
-                    mission_seed: authoritative_rng_seed,
-                    sim_config: authoritative_sim_config,
-                    speech_timing_locale: speech_timing_locale.clone(),
-                    expected_players: args.multiplayer.expected_players.unwrap_or(1),
-                    browser_join_enabled: publish_browser_links,
-                },
-                server_channels,
-                content,
-            );
-            match started {
-                Ok(handle) => {
-                    channels
-                        .install_session_id(handle.session_id())
-                        .map_err(SessionSetupFailure::SessionIdentity)?;
-                    if publish_browser_links {
-                        let content_edition = if crate::main_entry::detect_demo_mode_with_context(
-                            &args.config.global_options,
-                        )
-                        .is_some()
-                        {
-                            crate::multiplayer::join_ticket::BrowserContentEdition::Demo
-                        } else {
-                            crate::multiplayer::join_ticket::BrowserContentEdition::Full
-                        };
-                        let preparation_files = args
-                            .config
-                            .global_options
-                            .preparation_files()
-                            .map_err(SessionSetupFailure::Preparation)?;
-                        let content_identity_sha256 =
-                            crate::multiplayer::content_identity::active_content_identity(
-                                preparation_files,
-                            )
-                            .map_err(|source| {
-                                SessionSetupFailure::Transport {
-                                    context: "cannot publish an exact browser content invitation",
-                                    source,
-                                }
-                            })?;
-                        let ticket = handle
-                            .browser_join_ticket(
-                                content_edition,
-                                content_identity_sha256.clone(),
-                                args.multiplayer.mission_profile_id,
-                                args.multiplayer.expected_players.unwrap_or(1),
-                            )
-                            .map_err(|source| SessionSetupFailure::Transport {
-                                context: "browser invitation unavailable",
-                                source,
-                            })?;
-                        let browser_base =
-                            std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
-                                crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
-                            });
-                        let share_url = ticket.share_url(&browser_base).map_err(|source| {
-                            SessionSetupFailure::Transport {
-                                context: "browser share URL unavailable",
-                                source,
-                            }
-                        })?;
-                        tracing::info!(
-                            browser_join_code = %ticket.encode(),
-                            %share_url,
-                            relay = %ticket.payload().relay_url,
-                            ?content_edition,
-                            %content_identity_sha256,
-                            "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
-                        );
-                        host.frontend
-                            .diagnostics_mut()
-                            .queue_console_output(format!(
-                                "Browser join code (expires after 30 minutes if unused): {}",
-                                ticket.encode()
-                            ));
-                        host.frontend
-                            .diagnostics_mut()
-                            .queue_console_output(format!("Browser join link: {share_url}"));
-                        host.frontend.diagnostics_mut().queue_console_output(format!(
-                            "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
-                            ticket.payload().relay_url
-                        ));
-                    }
-                    tracing::info!(
-                        endpoint_id = %handle.endpoint_id(),
-                        nickname = %nickname,
-                        seed = authoritative_rng_seed,
-                        "multiplayer: hosting on iroh endpoint {}",
-                        handle.endpoint_id()
-                    );
-                    let seat = handle.local_seat;
-                    channels.attach_runtime(handle);
-                    host.transport.install_session(
-                        channels,
-                        seat,
-                        authoritative_mission_id.to_string(),
-                        authoritative_rng_seed,
-                        authoritative_sim_config,
-                        speech_timing_locale,
-                    );
-                }
-                Err(e) => {
-                    return Err(SessionSetupFailure::Io {
-                        context: "failed to start server".into(),
-                        source: e,
-                    });
-                }
-            }
-        }
+        host_session(
+            host,
+            args,
+            authoritative_mission_id,
+            authoritative_rng_seed,
+            authoritative_sim_config,
+            campaign,
+            &nickname,
+        )?;
     } else if let Some(addr) = args.multiplayer.connect.as_deref() {
         let (mut channels, in_tx, out_rx, _client_frame_cursor, _client_snapshot) =
             NetChannels::new();
@@ -356,6 +224,158 @@ pub(super) async fn establish(
                     source: e,
                 });
             }
+        }
+    }
+    Ok(())
+}
+
+/// Host branch of [`establish`]: start the authoritative server, publish the
+/// browser invitation when enabled, and install the session on `host`.
+#[cfg(not(target_arch = "wasm32"))]
+fn host_session(
+    host: &mut Host,
+    args: &crate::main_entry::MissionRequest,
+    authoritative_mission_id: &str,
+    authoritative_rng_seed: u64,
+    authoritative_sim_config: robin_engine::engine::SimConfig,
+    campaign: &crate::multiplayer::MultiplayerCampaignSession,
+    nickname: &str,
+) -> Result<(), SessionSetupFailure> {
+    use crate::multiplayer::NetChannels;
+    use crate::multiplayer::{HostedModContent, start_server_in_campaign};
+
+    if !args.multiplayer.continue_session {
+        campaign.discard_host_continuation()?;
+    }
+    let publish_browser_links = resolve_browser_join_publication(args)?;
+    let speech_timing_locale = host
+        .application_context()
+        .canonical_speech_timing_locale()
+        .map_err(|detail| SessionSetupFailure::Local {
+            context: "cannot select authoritative speech timing",
+            detail,
+        })?;
+    let (mut channels, server_channels) = NetChannels::new_server();
+    let content = args
+        .content
+        .pending_distributed_mod
+        .as_ref()
+        .map(|encoded| {
+            HostedModContent::from_encoded(encoded.to_vec()).map_err(|source| {
+                SessionSetupFailure::Transport {
+                    context: "invalid hosted full-mod package",
+                    source,
+                }
+            })
+        })
+        .transpose()?;
+    let started = start_server_in_campaign(
+        campaign,
+        crate::multiplayer::ServerConfig {
+            host_nickname: nickname.to_owned(),
+            mission_id: authoritative_mission_id.to_string(),
+            mission_seed: authoritative_rng_seed,
+            sim_config: authoritative_sim_config,
+            speech_timing_locale: speech_timing_locale.clone(),
+            expected_players: args.multiplayer.expected_players.unwrap_or(1),
+            browser_join_enabled: publish_browser_links,
+        },
+        server_channels,
+        content,
+    );
+    match started {
+        Ok(handle) => {
+            channels
+                .install_session_id(handle.session_id())
+                .map_err(SessionSetupFailure::SessionIdentity)?;
+            if publish_browser_links {
+                let content_edition = if crate::main_entry::detect_demo_mode_with_context(
+                    &args.config.global_options,
+                )
+                .is_some()
+                {
+                    crate::multiplayer::join_ticket::BrowserContentEdition::Demo
+                } else {
+                    crate::multiplayer::join_ticket::BrowserContentEdition::Full
+                };
+                let preparation_files = args
+                    .config
+                    .global_options
+                    .preparation_files()
+                    .map_err(SessionSetupFailure::Preparation)?;
+                let content_identity_sha256 =
+                    crate::multiplayer::content_identity::active_content_identity(
+                        preparation_files,
+                    )
+                    .map_err(|source| SessionSetupFailure::Transport {
+                        context: "cannot publish an exact browser content invitation",
+                        source,
+                    })?;
+                let ticket = handle
+                    .browser_join_ticket(
+                        content_edition,
+                        content_identity_sha256.clone(),
+                        args.multiplayer.mission_profile_id,
+                        args.multiplayer.expected_players.unwrap_or(1),
+                    )
+                    .map_err(|source| SessionSetupFailure::Transport {
+                        context: "browser invitation unavailable",
+                        source,
+                    })?;
+                let browser_base = std::env::var("ROBINHOOD_BROWSER_URL").unwrap_or_else(|_| {
+                    crate::multiplayer::join_ticket::DEFAULT_BROWSER_URL.to_string()
+                });
+                let share_url = ticket.share_url(&browser_base).map_err(|source| {
+                    SessionSetupFailure::Transport {
+                        context: "browser share URL unavailable",
+                        source,
+                    }
+                })?;
+                tracing::info!(
+                    browser_join_code = %ticket.encode(),
+                    %share_url,
+                    relay = %ticket.payload().relay_url,
+                    ?content_edition,
+                    %content_identity_sha256,
+                    "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
+                );
+                host.frontend
+                    .diagnostics_mut()
+                    .queue_console_output(format!(
+                        "Browser join code (expires after 30 minutes if unused): {}",
+                        ticket.encode()
+                    ));
+                host.frontend
+                    .diagnostics_mut()
+                    .queue_console_output(format!("Browser join link: {share_url}"));
+                host.frontend.diagnostics_mut().queue_console_output(format!(
+                    "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
+                    ticket.payload().relay_url
+                ));
+            }
+            tracing::info!(
+                endpoint_id = %handle.endpoint_id(),
+                nickname = %nickname,
+                seed = authoritative_rng_seed,
+                "multiplayer: hosting on iroh endpoint {}",
+                handle.endpoint_id()
+            );
+            let seat = handle.local_seat;
+            channels.attach_runtime(handle);
+            host.transport.install_session(
+                channels,
+                seat,
+                authoritative_mission_id.to_string(),
+                authoritative_rng_seed,
+                authoritative_sim_config,
+                speech_timing_locale,
+            );
+        }
+        Err(e) => {
+            return Err(SessionSetupFailure::Io {
+                context: "failed to start server".into(),
+                source: e,
+            });
         }
     }
     Ok(())

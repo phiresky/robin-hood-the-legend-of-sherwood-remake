@@ -250,6 +250,73 @@ fn touch_point_is_world(
     !reserved.iter().any(|rect| rect.contains_point(point))
 }
 
+/// The empty input batch of a frame whose mission UI owns input.
+fn no_collected_frame_input() -> CollectedFrameInput {
+    CollectedFrameInput {
+        events: Vec::new(),
+        keyboard_actions: Vec::new(),
+        mouse_actions: Vec::new(),
+        modifiers: InputModifiers {
+            ctrl: false,
+            shift: false,
+            alt: false,
+            plan: false,
+        },
+        minimap_toggle_pressed: false,
+        pause_closed_this_frame: false,
+        rewind_active: false,
+        step_forward_pressed: false,
+        step_back_pressed: false,
+    }
+}
+
+/// Multiplayer prologue of [`collect_input_and_menus`] after a committed
+/// transition was ruled out: start a deferred campaign exit, and show the
+/// host every visible peer modal proposal.
+fn begin_deferred_campaign_exit_and_present_proposals(
+    host: &mut crate::host::Host,
+    engine: &robin_engine::engine::Engine,
+    frame_number: u32,
+    callbacks: &mut RustCallbacks,
+    game: &mut crate::game::Game,
+) {
+    if let Some((request, id)) = transport::begin_deferred_campaign_exit(
+        &mut host.transport,
+        engine,
+        frame_number,
+        callbacks.pending_request().is_none(),
+    ) {
+        callbacks.queue_operation(request);
+        tracing::info!(
+            ?id,
+            frame = frame_number,
+            "multiplayer: waiting for peers to validate the campaign-exit snapshot"
+        );
+    }
+    if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
+    {
+        let proposals = net
+            .take_all_visible_modal_requests()
+            .unwrap_or_else(|error| {
+                panic!("failed to present multiplayer modal proposals: {error}")
+            });
+        if !proposals.is_empty() {
+            let summary = proposals
+                .iter()
+                .map(|request| {
+                    format!(
+                        "Player {} proposes {:?} for {:?}",
+                        request.from.0, request.result, request.kind
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            game.display_message(format!("{summary}; host confirmation is required."), 100);
+        }
+    }
+}
+
 /// Input owns privileged menu/restore work before downgrading to the world's
 /// read-only-engine input phase for gameplay command production.
 pub(super) async fn collect_input_and_menus(
@@ -304,41 +371,13 @@ pub(super) async fn collect_input_and_menus(
             exit_code,
         ))));
     }
-    if let Some((request, id)) = transport::begin_deferred_campaign_exit(
-        &mut host.transport,
+    begin_deferred_campaign_exit_and_present_proposals(
+        host,
         &manager.engine,
         runtime.frame_number(),
-        callbacks.pending_request().is_none(),
-    ) {
-        callbacks.queue_operation(request);
-        tracing::info!(
-            ?id,
-            frame = runtime.frame_number(),
-            "multiplayer: waiting for peers to validate the campaign-exit snapshot"
-        );
-    }
-    if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
-        && let Some(net) = host.transport.net()
-    {
-        let proposals = net
-            .take_all_visible_modal_requests()
-            .unwrap_or_else(|error| {
-                panic!("failed to present multiplayer modal proposals: {error}")
-            });
-        if !proposals.is_empty() {
-            let summary = proposals
-                .iter()
-                .map(|request| {
-                    format!(
-                        "Player {} proposes {:?} for {:?}",
-                        request.from.0, request.result, request.kind
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            game.display_message(format!("{summary}; host confirmation is required."), 100);
-        }
-    }
+        callbacks,
+        game,
+    );
 
     let client_waiting_for_campaign_host = host.transport.net().is_some()
         && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
@@ -390,22 +429,7 @@ pub(super) async fn collect_input_and_menus(
             .lost_sherwood_gate
             .blocks_mission(game.is_sherwood, &manager.engine);
     let collected = if mission_ui_owns_input {
-        EventHudOutcome::Ready(CollectedFrameInput {
-            events: Vec::new(),
-            keyboard_actions: Vec::new(),
-            mouse_actions: Vec::new(),
-            modifiers: InputModifiers {
-                ctrl: false,
-                shift: false,
-                alt: false,
-                plan: false,
-            },
-            minimap_toggle_pressed: false,
-            pause_closed_this_frame: false,
-            rewind_active: false,
-            step_forward_pressed: false,
-            step_back_pressed: false,
-        })
+        EventHudOutcome::Ready(no_collected_frame_input())
     } else {
         collect_event_and_hud_input(EventHudContext {
             host,

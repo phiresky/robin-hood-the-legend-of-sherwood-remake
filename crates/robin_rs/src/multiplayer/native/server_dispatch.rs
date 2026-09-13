@@ -183,84 +183,13 @@ pub(super) async fn run_server_outgoing_pump(
                 }
             }
             NetOutbound::ReconnectForSnapshot { player_id, reason } => {
-                assert_ne!(
-                    player_id,
-                    PlayerId::HOST,
-                    "authoritative host cannot reconnect itself for a stale input"
-                );
-                let sender = context.peers.lock().sessions.detach_writer(&player_id.0);
-                if let Some(sender) = sender {
-                    tracing::warn!(
-                        ?player_id,
-                        %reason,
-                        "multiplayer: dropping peer for full-snapshot resynchronization"
-                    );
-                    // Tell the peer why this otherwise-graceful stream close
-                    // requires reconnecting. The queue drains this message
-                    // before observing that its last sender was dropped.
-                    let _ = sender.send(NetMsg::ReconnectRequired {
-                        reason: reason.clone(),
-                    });
-                    drop(sender);
-                } else {
-                    tracing::warn!(
-                        ?player_id,
-                        %reason,
-                        "multiplayer: stale-input peer was already disconnected"
-                    );
-                }
+                drop_peer_for_snapshot(&context, player_id, reason);
             }
             NetOutbound::ReconnectAllForSnapshot { reason } => {
-                let senders = {
-                    let mut peers = context.peers.lock();
-                    peers.readiness.reset();
-                    peers.sessions.clear_ready();
-                    peers.sessions.detach_all_writers()
-                };
-                tracing::warn!(
-                    peers = senders.len(),
-                    %reason,
-                    "multiplayer: dropping every peer for full-snapshot resynchronization"
-                );
-                for sender in &senders {
-                    let _ = sender.send(NetMsg::ReconnectRequired {
-                        reason: reason.clone(),
-                    });
-                }
-                drop(senders);
+                drop_all_peers_for_snapshot(&context, reason);
             }
             NetOutbound::BeginSnapshotTransition { id, payload } => {
-                assert_eq!(
-                    id.session_id, context.session_id,
-                    "host snapshot transition belongs to another multiplayer session"
-                );
-                let committed = {
-                    let mut peers = context.peers.lock();
-                    assert!(
-                        peers.transitions.pending().is_none(),
-                        "another multiplayer snapshot transition is already pending"
-                    );
-                    let awaiting = peers
-                        .sessions
-                        .senders()
-                        .map(|(seat, _)| seat)
-                        .copied()
-                        .collect::<HashSet<_>>();
-                    peers.transitions.begin(PendingSnapshotTransition {
-                        id,
-                        payload: payload.clone(),
-                        awaiting,
-                    });
-                    let prepare = NetMsg::PrepareSnapshotTransition { id, payload };
-                    // Keep the peer-state lock until every current writer has
-                    // queued Prepare. Otherwise its reader could disconnect,
-                    // empty the readiness set, and queue Commit first.
-                    for sender in peers.sessions.senders().map(|(_, sender)| sender) {
-                        queue_peer_message(sender, prepare.clone(), Delivery::Required)?;
-                    }
-                    take_committed_snapshot_transition(&mut peers)
-                };
-                commit_snapshot_transition(&context, committed);
+                begin_host_snapshot_transition(&context, id, payload)?;
             }
             NetOutbound::SnapshotTransitionReady { .. } => {
                 tracing::error!(
@@ -275,46 +204,10 @@ pub(super) async fn run_server_outgoing_pump(
                 );
             }
             NetOutbound::RankedOfficialSessionSetup(setup) => {
-                if let Err(error) =
-                    crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
-                        OfficialRankedSessionWireSetupV1,
-                    >(setup.as_bytes())
-                {
-                    let error = MultiplayerError::ranked_document(
-                        "host rejected invalid official ranked wire setup",
-                        error,
-                    );
-                    tracing::error!(%error);
-                    super::fail_server(&context, error);
-                    continue;
-                }
-                if let Err(error) =
-                    broadcast_msg_required(&context, NetMsg::RankedOfficialSessionSetup(setup))
-                {
-                    tracing::error!(%error, "official ranked setup broadcast failed");
-                    super::fail_server(&context, error);
-                }
+                broadcast_official_ranked_setup(&context, setup);
             }
             NetOutbound::RankedContinuationReceiptSelectionRequest(request) => {
-                if let Err(error) = decode_ranked_wire_document::<
-                    CampaignContinuationReceiptSelectionRequestV1,
-                >(request.as_bytes())
-                {
-                    let error = MultiplayerError::ranked_document(
-                        "host rejected invalid continuation receipt selection request",
-                        error,
-                    );
-                    tracing::error!(%error);
-                    super::fail_server(&context, error);
-                    continue;
-                }
-                if let Err(error) = broadcast_msg_required(
-                    &context,
-                    NetMsg::RankedContinuationReceiptSelectionRequest(request),
-                ) {
-                    tracing::error!(%error, "continuation receipt selection broadcast failed");
-                    super::fail_server(&context, error);
-                }
+                broadcast_receipt_selection_request(&context, request);
             }
             NetOutbound::RankedContinuationReceiptSelection(_) => {
                 let error = MultiplayerError::LocalState(
@@ -325,60 +218,7 @@ pub(super) async fn run_server_outgoing_pump(
                 super::fail_server(&context, error);
             }
             NetOutbound::RankedContinuationPreflightClaim { to, claim } => {
-                let decoded = decode_ranked_wire_document::<
-                    CampaignContinuationPreflightRequestClaimV1,
-                >(claim.as_bytes());
-                let claim_document = match decoded {
-                    Ok(document) => document,
-                    Err(error) => {
-                        let error = MultiplayerError::ranked_document(
-                            format!(
-                                "host rejected invalid continuation preflight claim for {to:?}"
-                            ),
-                            error,
-                        );
-                        tracing::error!(%error);
-                        super::fail_server(&context, error);
-                        continue;
-                    }
-                };
-                let sender = {
-                    let peers = context.peers.lock();
-                    let expected_controller = peers
-                        .sessions
-                        .ranked_identity(&to.0)
-                        .and_then(|identity| identity.durable_public_key)
-                        .map(PublicKey32::from_bytes);
-                    if to == PlayerId::HOST
-                        || expected_controller
-                            != Some(claim_document.campaign_controller_public_key)
-                    {
-                        None
-                    } else {
-                        peers.sessions.sender(&to.0).cloned()
-                    }
-                };
-                match sender {
-                    Some(sender) => {
-                        if sender
-                            .send(NetMsg::RankedContinuationPreflightClaim(claim))
-                            .is_err()
-                        {
-                            let error = MultiplayerError::ChannelClosed(format!(
-                                "continuation preflight controller {to:?} disconnected before claim delivery"
-                            ).into());
-                            tracing::error!(%error);
-                            super::fail_server(&context, error);
-                        }
-                    }
-                    None => {
-                        let error = MultiplayerError::Ranked(format!(
-                            "continuation preflight target {to:?} is not the authenticated controller"
-                        ).into());
-                        tracing::error!(%error);
-                        super::fail_server(&context, error);
-                    }
-                }
+                send_continuation_preflight_claim(&context, to, claim);
             }
             NetOutbound::RankedContinuationPreflightSignature(_) => {
                 let error = MultiplayerError::LocalState(
@@ -392,83 +232,10 @@ pub(super) async fn run_server_outgoing_pump(
                 to,
                 context: document,
             } => {
-                if ranked_lifecycle_lock(&context.ranked_lifecycle)
-                    .ranked_session()
-                    .is_none()
-                {
-                    tracing::warn!(
-                        ?to,
-                        "ignored ranked co-sign context after eligibility ended"
-                    );
-                    continue;
-                }
-                if let Err(error) = decode_ranked_wire_document::<
-                    crate::leaderboard_ranked_session::RankedCoSignContextV1,
-                >(document.as_bytes())
-                {
-                    tracing::error!(%error, ?to, "rejected invalid ranked co-sign context");
-                    continue;
-                }
-                let sender = {
-                    let peers = context.peers.lock();
-                    peers
-                        .sessions
-                        .is_sim_connected(&to.0)
-                        .then(|| peers.sessions.sender(&to.0).cloned())
-                        .flatten()
-                };
-                match sender {
-                    Some(sender) => {
-                        if sender.send(NetMsg::RankedCoSignContext(document)).is_err() {
-                            tracing::warn!(?to, "ranked co-sign context target disconnected");
-                        }
-                    }
-                    None => tracing::warn!(?to, "ranked co-sign context target is not admitted"),
-                }
+                send_ranked_cosign_context(&context, to, document);
             }
             NetOutbound::RankedSubmissionAccepted { to, accepted } => {
-                if ranked_lifecycle_lock(&context.ranked_lifecycle)
-                    .ranked_session()
-                    .is_none()
-                {
-                    tracing::warn!(
-                        ?to,
-                        "ignored ranked submission acknowledgement after eligibility ended"
-                    );
-                    continue;
-                }
-                if let Err(error) = decode_ranked_wire_document::<
-                    robin_run_protocol::SubmissionAcceptedV1,
-                >(accepted.as_bytes())
-                {
-                    tracing::error!(%error, ?to, "rejected invalid ranked submission acknowledgement");
-                    continue;
-                }
-                let sender = {
-                    let peers = context.peers.lock();
-                    peers
-                        .sessions
-                        .is_sim_connected(&to.0)
-                        .then(|| peers.sessions.sender(&to.0).cloned())
-                        .flatten()
-                };
-                match sender {
-                    Some(sender) => {
-                        if sender
-                            .send(NetMsg::RankedSubmissionAccepted(accepted))
-                            .is_err()
-                        {
-                            tracing::warn!(
-                                ?to,
-                                "ranked submission acknowledgement target disconnected"
-                            );
-                        }
-                    }
-                    None => tracing::warn!(
-                        ?to,
-                        "ranked submission acknowledgement target is not admitted"
-                    ),
-                }
+                send_ranked_submission_accepted(&context, to, accepted);
             }
             NetOutbound::RankedJoinChallenge { .. }
             | NetOutbound::RankedJoinAccepted { .. }
@@ -480,38 +247,7 @@ pub(super) async fn run_server_outgoing_pump(
                 );
             }
             NetOutbound::LeaderboardCoSignRequest { to, request } => {
-                if ranked_lifecycle_lock(&context.ranked_lifecycle)
-                    .ranked_session()
-                    .is_none()
-                {
-                    tracing::warn!(
-                        ?to,
-                        "ignored leaderboard co-sign request after ranked eligibility ended"
-                    );
-                    continue;
-                }
-                let sender = {
-                    let mut peers = context.peers.lock();
-                    peers.begin_leaderboard_cosign(to, request)
-                };
-                match sender {
-                    Ok(sender) => {
-                        if sender
-                            .send(NetMsg::LeaderboardCoSignRequest(request))
-                            .is_err()
-                        {
-                            let error = MultiplayerError::ChannelClosed(format!(
-                                "authenticated leaderboard co-sign target {to:?} closed before request delivery"
-                            ).into());
-                            tracing::error!(%error);
-                            super::fail_server(&context, error);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(%error, "leaderboard co-sign request rejected");
-                        super::fail_server(&context, error);
-                    }
-                }
+                send_leaderboard_cosign_request(&context, to, request);
             }
             NetOutbound::ArmLeaderboardCoSignRequest { .. } => {
                 let error = MultiplayerError::LocalState(
@@ -539,6 +275,346 @@ pub(super) async fn run_server_outgoing_pump(
     }
     tracing::info!("server outgoing pump stopped");
     Ok(())
+}
+
+/// `NetOutbound::ReconnectForSnapshot`: drop one stale-input peer so it
+/// reconnects for a full snapshot.
+fn drop_peer_for_snapshot(context: &Arc<ServerContext>, player_id: PlayerId, reason: String) {
+    assert_ne!(
+        player_id,
+        PlayerId::HOST,
+        "authoritative host cannot reconnect itself for a stale input"
+    );
+    let sender = context.peers.lock().sessions.detach_writer(&player_id.0);
+    if let Some(sender) = sender {
+        tracing::warn!(
+            ?player_id,
+            %reason,
+            "multiplayer: dropping peer for full-snapshot resynchronization"
+        );
+        // Tell the peer why this otherwise-graceful stream close
+        // requires reconnecting. The queue drains this message
+        // before observing that its last sender was dropped.
+        let _ = sender.send(NetMsg::ReconnectRequired {
+            reason: reason.clone(),
+        });
+        drop(sender);
+    } else {
+        tracing::warn!(
+            ?player_id,
+            %reason,
+            "multiplayer: stale-input peer was already disconnected"
+        );
+    }
+}
+
+/// `NetOutbound::ReconnectAllForSnapshot`: reset readiness and drop every
+/// peer for full-snapshot resynchronization.
+fn drop_all_peers_for_snapshot(context: &Arc<ServerContext>, reason: String) {
+    let senders = {
+        let mut peers = context.peers.lock();
+        peers.readiness.reset();
+        peers.sessions.clear_ready();
+        peers.sessions.detach_all_writers()
+    };
+    tracing::warn!(
+        peers = senders.len(),
+        %reason,
+        "multiplayer: dropping every peer for full-snapshot resynchronization"
+    );
+    for sender in &senders {
+        let _ = sender.send(NetMsg::ReconnectRequired {
+            reason: reason.clone(),
+        });
+    }
+    drop(senders);
+}
+
+/// `NetOutbound::BeginSnapshotTransition`: queue Prepare to every current
+/// writer under the peer-state lock, then commit if nobody is awaited.
+fn begin_host_snapshot_transition(
+    context: &Arc<ServerContext>,
+    id: robin_engine::multiplayer::SnapshotTransitionId,
+    payload: robin_engine::multiplayer::SnapshotTransitionPayload,
+) -> Result<(), MultiplayerError> {
+    assert_eq!(
+        id.session_id, context.session_id,
+        "host snapshot transition belongs to another multiplayer session"
+    );
+    let committed = {
+        let mut peers = context.peers.lock();
+        assert!(
+            peers.transitions.pending().is_none(),
+            "another multiplayer snapshot transition is already pending"
+        );
+        let awaiting = peers
+            .sessions
+            .senders()
+            .map(|(seat, _)| seat)
+            .copied()
+            .collect::<HashSet<_>>();
+        peers.transitions.begin(PendingSnapshotTransition {
+            id,
+            payload: payload.clone(),
+            awaiting,
+        });
+        let prepare = NetMsg::PrepareSnapshotTransition { id, payload };
+        // Keep the peer-state lock until every current writer has
+        // queued Prepare. Otherwise its reader could disconnect,
+        // empty the readiness set, and queue Commit first.
+        for sender in peers.sessions.senders().map(|(_, sender)| sender) {
+            queue_peer_message(sender, prepare.clone(), Delivery::Required)?;
+        }
+        take_committed_snapshot_transition(&mut peers)
+    };
+    commit_snapshot_transition(context, committed);
+    Ok(())
+}
+
+/// `NetOutbound::RankedOfficialSessionSetup`: validate, then broadcast.
+fn broadcast_official_ranked_setup(
+    context: &Arc<ServerContext>,
+    setup: robin_engine::multiplayer::RankedOfficialSessionSetupDocument,
+) {
+    if let Err(error) = crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
+        OfficialRankedSessionWireSetupV1,
+    >(setup.as_bytes())
+    {
+        let error = MultiplayerError::ranked_document(
+            "host rejected invalid official ranked wire setup",
+            error,
+        );
+        tracing::error!(%error);
+        super::fail_server(context, error);
+        return;
+    }
+    if let Err(error) = broadcast_msg_required(context, NetMsg::RankedOfficialSessionSetup(setup)) {
+        tracing::error!(%error, "official ranked setup broadcast failed");
+        super::fail_server(context, error);
+    }
+}
+
+/// `NetOutbound::RankedContinuationReceiptSelectionRequest`: validate, then
+/// broadcast.
+fn broadcast_receipt_selection_request(
+    context: &Arc<ServerContext>,
+    request: robin_engine::multiplayer::RankedContinuationReceiptSelectionRequestDocument,
+) {
+    if let Err(error) = decode_ranked_wire_document::<CampaignContinuationReceiptSelectionRequestV1>(
+        request.as_bytes(),
+    ) {
+        let error = MultiplayerError::ranked_document(
+            "host rejected invalid continuation receipt selection request",
+            error,
+        );
+        tracing::error!(%error);
+        super::fail_server(context, error);
+        return;
+    }
+    if let Err(error) = broadcast_msg_required(
+        context,
+        NetMsg::RankedContinuationReceiptSelectionRequest(request),
+    ) {
+        tracing::error!(%error, "continuation receipt selection broadcast failed");
+        super::fail_server(context, error);
+    }
+}
+
+/// `NetOutbound::RankedContinuationPreflightClaim`: deliver the claim only to
+/// the authenticated campaign controller.
+fn send_continuation_preflight_claim(
+    context: &Arc<ServerContext>,
+    to: PlayerId,
+    claim: robin_engine::multiplayer::RankedContinuationPreflightClaimDocument,
+) {
+    let decoded = decode_ranked_wire_document::<CampaignContinuationPreflightRequestClaimV1>(
+        claim.as_bytes(),
+    );
+    let claim_document = match decoded {
+        Ok(document) => document,
+        Err(error) => {
+            let error = MultiplayerError::ranked_document(
+                format!("host rejected invalid continuation preflight claim for {to:?}"),
+                error,
+            );
+            tracing::error!(%error);
+            super::fail_server(context, error);
+            return;
+        }
+    };
+    let sender = {
+        let peers = context.peers.lock();
+        let expected_controller = peers
+            .sessions
+            .ranked_identity(&to.0)
+            .and_then(|identity| identity.durable_public_key)
+            .map(PublicKey32::from_bytes);
+        if to == PlayerId::HOST
+            || expected_controller != Some(claim_document.campaign_controller_public_key)
+        {
+            None
+        } else {
+            peers.sessions.sender(&to.0).cloned()
+        }
+    };
+    match sender {
+        Some(sender) => {
+            if sender
+                .send(NetMsg::RankedContinuationPreflightClaim(claim))
+                .is_err()
+            {
+                let error = MultiplayerError::ChannelClosed(
+                    format!(
+                        "continuation preflight controller {to:?} disconnected before claim delivery"
+                    )
+                    .into(),
+                );
+                tracing::error!(%error);
+                super::fail_server(context, error);
+            }
+        }
+        None => {
+            let error = MultiplayerError::Ranked(
+                format!("continuation preflight target {to:?} is not the authenticated controller")
+                    .into(),
+            );
+            tracing::error!(%error);
+            super::fail_server(context, error);
+        }
+    }
+}
+
+/// `NetOutbound::RankedCoSignContext`: deliver to an admitted peer while the
+/// session is still ranked.
+fn send_ranked_cosign_context(
+    context: &Arc<ServerContext>,
+    to: PlayerId,
+    document: robin_engine::multiplayer::RankedCoSignContextDocument,
+) {
+    if ranked_lifecycle_lock(&context.ranked_lifecycle)
+        .ranked_session()
+        .is_none()
+    {
+        tracing::warn!(
+            ?to,
+            "ignored ranked co-sign context after eligibility ended"
+        );
+        return;
+    }
+    if let Err(error) = decode_ranked_wire_document::<
+        crate::leaderboard_ranked_session::RankedCoSignContextV1,
+    >(document.as_bytes())
+    {
+        tracing::error!(%error, ?to, "rejected invalid ranked co-sign context");
+        return;
+    }
+    let sender = {
+        let peers = context.peers.lock();
+        peers
+            .sessions
+            .is_sim_connected(&to.0)
+            .then(|| peers.sessions.sender(&to.0).cloned())
+            .flatten()
+    };
+    match sender {
+        Some(sender) => {
+            if sender.send(NetMsg::RankedCoSignContext(document)).is_err() {
+                tracing::warn!(?to, "ranked co-sign context target disconnected");
+            }
+        }
+        None => tracing::warn!(?to, "ranked co-sign context target is not admitted"),
+    }
+}
+
+/// `NetOutbound::RankedSubmissionAccepted`: deliver to an admitted peer while
+/// the session is still ranked.
+fn send_ranked_submission_accepted(
+    context: &Arc<ServerContext>,
+    to: PlayerId,
+    accepted: robin_engine::multiplayer::RankedSubmissionAcceptedDocument,
+) {
+    if ranked_lifecycle_lock(&context.ranked_lifecycle)
+        .ranked_session()
+        .is_none()
+    {
+        tracing::warn!(
+            ?to,
+            "ignored ranked submission acknowledgement after eligibility ended"
+        );
+        return;
+    }
+    if let Err(error) =
+        decode_ranked_wire_document::<robin_run_protocol::SubmissionAcceptedV1>(accepted.as_bytes())
+    {
+        tracing::error!(%error, ?to, "rejected invalid ranked submission acknowledgement");
+        return;
+    }
+    let sender = {
+        let peers = context.peers.lock();
+        peers
+            .sessions
+            .is_sim_connected(&to.0)
+            .then(|| peers.sessions.sender(&to.0).cloned())
+            .flatten()
+    };
+    match sender {
+        Some(sender) => {
+            if sender
+                .send(NetMsg::RankedSubmissionAccepted(accepted))
+                .is_err()
+            {
+                tracing::warn!(?to, "ranked submission acknowledgement target disconnected");
+            }
+        }
+        None => tracing::warn!(
+            ?to,
+            "ranked submission acknowledgement target is not admitted"
+        ),
+    }
+}
+
+/// `NetOutbound::LeaderboardCoSignRequest`: register and deliver one co-sign
+/// request while the session is still ranked.
+fn send_leaderboard_cosign_request(
+    context: &Arc<ServerContext>,
+    to: PlayerId,
+    request: LeaderboardCoSignRequestV1,
+) {
+    if ranked_lifecycle_lock(&context.ranked_lifecycle)
+        .ranked_session()
+        .is_none()
+    {
+        tracing::warn!(
+            ?to,
+            "ignored leaderboard co-sign request after ranked eligibility ended"
+        );
+        return;
+    }
+    let sender = {
+        let mut peers = context.peers.lock();
+        peers.begin_leaderboard_cosign(to, request)
+    };
+    match sender {
+        Ok(sender) => {
+            if sender
+                .send(NetMsg::LeaderboardCoSignRequest(request))
+                .is_err()
+            {
+                let error = MultiplayerError::ChannelClosed(
+                    format!(
+                        "authenticated leaderboard co-sign target {to:?} closed before request delivery"
+                    )
+                    .into(),
+                );
+                tracing::error!(%error);
+                super::fail_server(context, error);
+            }
+        }
+        Err(error) => {
+            tracing::error!(%error, "leaderboard co-sign request rejected");
+            super::fail_server(context, error);
+        }
+    }
 }
 
 pub(super) fn validate_server_gameplay_outbound(

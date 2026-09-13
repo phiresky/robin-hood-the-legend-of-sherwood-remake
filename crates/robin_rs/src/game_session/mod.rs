@@ -384,6 +384,95 @@ pub(crate) async fn run_session(
     .await
 }
 
+/// Queue the Load of the save selected before this session started. `Err` is
+/// the menu-visible failure text.
+fn queue_selected_initial_load(
+    callbacks: &mut RustCallbacks,
+    name: &crate::savegame::SlotName,
+    mission_id: u32,
+) -> Result<(), String> {
+    let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
+        return Err(format!("selected save {} no longer exists", name.as_str()));
+    };
+    let slot = match callbacks.save_manager.slot_handle(slot) {
+        Ok(slot) => slot,
+        Err(error) => {
+            return Err(format!("selected save is unavailable: {error:#}"));
+        }
+    };
+    callbacks.queue_operation(SaveLoadRequest::Load {
+        slot: Some(slot),
+        mission_id,
+    });
+    Ok(())
+}
+
+/// Preflight the session's initial Load and resolve the save's exact mission
+/// assets. `Err` is the menu-visible failure text.
+async fn preflight_initial_load(
+    save_manager: &crate::savegame::SaveGameManager,
+    application_context: &ApplicationContext,
+    profiles: &mut engine_profiles::ProfileManager,
+    slot: Option<crate::savegame::SlotHandle>,
+    mission_id: u32,
+) -> Result<
+    (
+        crate::main_entry::PreparedLoad,
+        usize,
+        std::sync::Arc<crate::mission_asset_restore::ResolvedMissionAssets>,
+    ),
+    String,
+> {
+    let load = match crate::main_entry::PreparedLoad::preflight(save_manager, slot) {
+        Ok(Some(result)) => result,
+        Ok(None) => {
+            return Err("requested save slot has no loadable payload".to_string());
+        }
+        Err(error) => {
+            return Err(format!("save preflight failed: {error:#}"));
+        }
+    };
+    let save = load.save();
+    if mission_id != save.header.mission_id {
+        return Err(format!(
+            "save preflight failed: selected mission id {mission_id} differs from decoded header {}",
+            save.header.mission_id
+        ));
+    }
+    let (target_idx, _location, resolved) =
+        match prepare_cold_save_mission(application_context, profiles, save).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return Err(format!("save preflight failed: {error}"));
+            }
+        };
+    Ok((load, target_idx, resolved))
+}
+
+/// ARES 9 means the campaign was just completed: play the outro cinematic
+/// once and bump ARES to 10.
+async fn play_campaign_outro_once(
+    application_context: &ApplicationContext,
+    window: &mut GameWindow,
+    campaign: &mut Campaign,
+) {
+    if campaign.get_ares() == 9 {
+        // Campaign just completed — play the outro cinematic
+        // and bump ARES to 10.
+        tracing::info!("Campaign complete — playing outro cinematic");
+        if let Err(e) = crate::video_player::play_video(
+            application_context,
+            window,
+            "Data/Cinematics/Outro.ogg",
+        )
+        .await
+        {
+            tracing::warn!("Outro video error: {e}");
+        }
+        campaign.set_ares(10);
+    }
+}
+
 /// `session_args` is this session's launch. Every outer-mission transition
 /// below derives the next launch from it by value (content replaced as a unit,
 /// restart evidence, host session continuation); what carries over between
@@ -397,26 +486,13 @@ async fn run_session_body(
     mut session_args: crate::main_entry::MissionRequest,
     initial_load: Option<(crate::savegame::SlotName, u32)>,
 ) -> SessionOutcome {
-    if let Some((name, mission_id)) = initial_load {
-        let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
-            return SessionOutcome {
-                campaign,
-                result: Err(format!("selected save {} no longer exists", name.as_str())),
-            };
+    if let Some((name, mission_id)) = initial_load
+        && let Err(result) = queue_selected_initial_load(callbacks, &name, mission_id)
+    {
+        return SessionOutcome {
+            campaign,
+            result: Err(result),
         };
-        let slot = match callbacks.save_manager.slot_handle(slot) {
-            Ok(slot) => slot,
-            Err(error) => {
-                return SessionOutcome {
-                    campaign,
-                    result: Err(format!("selected save is unavailable: {error:#}")),
-                };
-            }
-        };
-        callbacks.queue_operation(SaveLoadRequest::Load {
-            slot: Some(slot),
-            mission_id,
-        });
     }
     if session_args.replay_data.is_some() || session_args.replay.is_some() {
         return SessionOutcome {
@@ -428,41 +504,24 @@ async fn run_session_body(
     let mut authoritative_sim_config = setup::initial_sim_config(&session_args.config);
     let mut preselected_mission = None;
     if let Some(SaveLoadRequest::Load { slot, mission_id }) = callbacks.take_initial_request() {
-        let load = match crate::main_entry::PreparedLoad::preflight(&callbacks.save_manager, slot) {
-            Ok(Some(result)) => result,
-            Ok(None) => {
+        let (load, target_idx, resolved) = match preflight_initial_load(
+            &callbacks.save_manager,
+            application_context,
+            profiles,
+            slot,
+            mission_id,
+        )
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(result) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err("requested save slot has no loadable payload".to_string()),
-                };
-            }
-            Err(error) => {
-                return SessionOutcome {
-                    campaign,
-                    result: Err(format!("save preflight failed: {error:#}")),
+                    result: Err(result),
                 };
             }
         };
         let save = load.save();
-        if mission_id != save.header.mission_id {
-            return SessionOutcome {
-                campaign,
-                result: Err(format!(
-                    "save preflight failed: selected mission id {mission_id} differs from decoded header {}",
-                    save.header.mission_id
-                )),
-            };
-        }
-        let (target_idx, _location, resolved) =
-            match prepare_cold_save_mission(application_context, profiles, save).await {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    return SessionOutcome {
-                        campaign,
-                        result: Err(format!("save preflight failed: {error}")),
-                    };
-                }
-            };
         // The save's exact assets replace the launch's content for the session.
         session_args =
             session_args.with_content(crate::main_entry::MissionContent::exact_assets(resolved));
@@ -599,21 +658,7 @@ async fn run_session_body(
                 };
             }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted if campaign.get_ares() >= 9 => {
-                if campaign.get_ares() == 9 {
-                    // Campaign just completed — play the outro cinematic
-                    // and bump ARES to 10.
-                    tracing::info!("Campaign complete — playing outro cinematic");
-                    if let Err(e) = crate::video_player::play_video(
-                        application_context,
-                        window,
-                        "Data/Cinematics/Outro.ogg",
-                    )
-                    .await
-                    {
-                        tracing::warn!("Outro video error: {e}");
-                    }
-                    campaign.set_ares(10);
-                }
+                play_campaign_outro_once(application_context, window, &mut campaign).await;
                 tracing::info!("Returning to main menu (ARES={})", campaign.get_ares());
                 return SessionOutcome {
                     campaign,

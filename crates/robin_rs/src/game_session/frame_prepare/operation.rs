@@ -102,6 +102,20 @@ fn suppress_load_requests_during_playback(
     }
 }
 
+/// Browser startup-save policy: an initial autosave thumbnail may be deferred
+/// unless the page URL requests `startup-save=blocking`.
+#[cfg(target_arch = "wasm32")]
+fn startup_save_query_allows_deferral() -> bool {
+    let search = web_sys::window()
+        .expect("browser window")
+        .location()
+        .search()
+        .expect("startup save query");
+    let query =
+        web_sys::UrlSearchParams::new_with_str(&search).expect("startup save query parameters");
+    query.get("startup-save").as_deref() != Some("blocking")
+}
+
 /// The four process services save/load needs, borrowed individually out of
 /// `MissionServices` so the phase never receives the whole service bag.
 pub(super) struct OperationServices<'a> {
@@ -194,16 +208,7 @@ pub(super) async fn process_operation_and_save(
         callbacks.pending_request().is_some(),
         lifecycle_autosave,
         exit_code.is_some(),
-    ) && {
-        let search = web_sys::window()
-            .expect("browser window")
-            .location()
-            .search()
-            .expect("startup save query");
-        let query =
-            web_sys::UrlSearchParams::new_with_str(&search).expect("startup save query parameters");
-        query.get("startup-save").as_deref() != Some("blocking")
-    };
+    ) && startup_save_query_allows_deferral();
     #[cfg(target_arch = "wasm32")]
     let mut deferred_thumbnail = None;
     let pending_thumbnail = if (callbacks

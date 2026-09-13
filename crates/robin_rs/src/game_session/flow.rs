@@ -256,113 +256,56 @@ impl InteractiveMission {
     }
 }
 
-/// Short-lived owner of the post-modal graphical tail. It keeps application
-/// services outside mission state while giving recorder, audio, presentation,
-/// PostInitialize, and pacing one explicit orchestration boundary.
-struct InteractiveFrameFinish<'mission, 'services, 'app> {
-    mission: &'mission mut InteractiveMission,
-    services: &'services mut MissionServices<'app>,
-    state: FramePresentationHandoff,
+/// Borrows of the fixed-tick render dispatch in
+/// [`InteractiveFrameFinish::run`]: HUD preparation, pending captures,
+/// native-refresh camera sampling, the live draw and its present.
+///
+/// Not serde: a frame-scoped bundle of borrowed process resources.
+struct FixedTickRender<'a, 'h> {
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    startup_audio_pause: &'a mut Option<crate::web_audio_backend::StartupWarmupPause>,
+    callbacks: &'a mut RustCallbacks,
+    args: &'a crate::main_entry::MissionRequest,
+    http: &'a mut crate::http_server::SessionIngress,
+    runtime: &'a super::runtime::TimelineRuntime,
+    host: &'a mut crate::host::HostPresentation<'h>,
+    game: &'a mut crate::game::Game,
+    engine: &'a robin_engine::engine::Engine,
+    assets: &'a std::sync::Arc<robin_engine::engine::LevelAssets>,
+    dev: &'a robin_engine::engine::DevState,
+    frontend: &'a mut super::interactive::InteractiveFrontend,
+    frame: &'a mut MissionFrame,
+    shift_held: bool,
+    rewind_active: bool,
 }
 
-impl InteractiveFrameFinish<'_, '_, '_> {
-    async fn run(self) {
+impl FixedTickRender<'_, '_> {
+    /// Draw and present this fixed tick when `should_draw`; returns whether
+    /// the live frame was presented.
+    async fn run(self, should_draw: bool) -> bool {
         let Self {
-            mission,
-            services,
-            state,
-        } = self;
-        let callbacks = &mut *services.callbacks;
-        let args = services.args;
-        let FramePresentationHandoff {
-            mut frame,
-            rewind_active,
-            consumed_buffered,
-            shift_held,
-            modal_rendered: modal_rendered_this_frame,
-            history_commit_pending,
-        } = state;
-        let InteractiveMission {
-            runtime, frontend, ..
-        } = mission;
-        let MissionRuntime {
-            world,
-            timeline: runtime,
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause,
+            callbacks,
+            args,
             http,
-            ..
-        } = runtime;
-        let mut startup_timer = (runtime.frame_number() <= 1)
-            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
-        let profiling = super::frame_perf::enabled();
-        let phase_start = super::frame_perf::start(profiling);
-        finish_interactive_audio(runtime, world, frontend, callbacks);
-        super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
-        if let Some(timer) = startup_timer.as_mut() {
-            timer.step("audio");
-        }
-
-        let phase_start = super::frame_perf::start(profiling);
-        runtime.lifecycle_mut().begin_presentation();
-        runtime
-            .lifecycle_mut()
-            .trace(FrameContractStage::Presentation);
-        let warming_up_map_export = args.config.capture.map_output.is_some()
-            && runtime.frame_number() <= args.config.capture.map_frame;
-        let should_draw = !world.view().host.frontend.presentation.skip_render
-            && !modal_rendered_this_frame
-            && !warming_up_map_export;
-        if should_draw {
-            // Cursor command production and deferred decal effects belong to
-            // the fixed-tick input/host boundary, not the rendering capability.
-            let MissionInputPhase {
-                host,
-                engine,
-                assets,
-                dev,
-                mut external_actions,
-                ..
-            } = world.post_tick_input_phase(&mut frame);
-            pre_render_engine_setup(host);
-            update_mouse_and_cursor(
-                engine,
-                host,
-                assets,
-                dev,
-                &mut external_actions,
-                super::render::CursorFrontend {
-                    renderer: &frontend.presentation.renderer,
-                    cursor_res: &mut frontend.resources.cursor,
-                    cursor_renderer: &mut frontend.presentation.sprites.cursor_renderer,
-                    threaded_input: &frontend.input.threaded,
-                    portrait_cache: &frontend.presentation.sprites.portrait_cache,
-                    last_cursor_id: &mut frontend.hud.last_cursor_id,
-                },
-                shift_held,
-            );
-        }
-        let MissionPresentationPhase {
-            host: mut presentation_host,
+            runtime,
+            host,
             game,
             engine,
             assets,
             dev,
-        } = world.presentation_phase();
-        let host = &mut presentation_host;
+            frontend,
+            frame,
+            shift_held,
+            rewind_active,
+        } = self;
         let input = &mut frontend.input;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
         let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
-        // ── Render dispatch ──
-        // The display-state machine (display_op transitions, scrolling
-        // deceleration, zoom interpolation, minimap transition) now runs
-        // inside `perform_hourglass` so rollback replay re-runs the
-        // same mutations. `last_skip_render` carries the
-        // fast-forward "skip this frame" decision back to the host.
-        // File-backed map exports need normal simulation/PostInitialize frames,
-        // not intermediate window presentation. Their requested full-map
-        // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
             super::render::prepare_fixed_tick_hud(
@@ -475,7 +418,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
             let presented = render_ctx.present();
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-            if services.startup_audio_pause.take().is_some() {
+            if startup_audio_pause.take().is_some() {
                 // Actual playback bypasses this reservation. A failed surface
                 // acquisition must not indefinitely park speculative warmup.
                 if !presented {
@@ -507,13 +450,143 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
             post_render_engine_cleanup(
-                &mut frame,
+                frame,
                 host.local_seat,
                 runtime.replay().playback().is_some(),
             );
         } else {
             native_refresh_interpolation.clear();
         }
+        fixed_tick_presented
+    }
+}
+
+/// Short-lived owner of the post-modal graphical tail. It keeps application
+/// services outside mission state while giving recorder, audio, presentation,
+/// PostInitialize, and pacing one explicit orchestration boundary.
+struct InteractiveFrameFinish<'mission, 'services, 'app> {
+    mission: &'mission mut InteractiveMission,
+    services: &'services mut MissionServices<'app>,
+    state: FramePresentationHandoff,
+}
+
+impl InteractiveFrameFinish<'_, '_, '_> {
+    async fn run(self) {
+        let Self {
+            mission,
+            services,
+            state,
+        } = self;
+        let callbacks = &mut *services.callbacks;
+        let args = services.args;
+        let FramePresentationHandoff {
+            mut frame,
+            rewind_active,
+            consumed_buffered,
+            shift_held,
+            modal_rendered: modal_rendered_this_frame,
+            history_commit_pending,
+        } = state;
+        let InteractiveMission {
+            runtime, frontend, ..
+        } = mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            http,
+            ..
+        } = runtime;
+        let mut startup_timer = (runtime.frame_number() <= 1)
+            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
+        let profiling = super::frame_perf::enabled();
+        let phase_start = super::frame_perf::start(profiling);
+        finish_interactive_audio(runtime, world, frontend, callbacks);
+        super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("audio");
+        }
+
+        let phase_start = super::frame_perf::start(profiling);
+        runtime.lifecycle_mut().begin_presentation();
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::Presentation);
+        let warming_up_map_export = args.config.capture.map_output.is_some()
+            && runtime.frame_number() <= args.config.capture.map_frame;
+        let should_draw = !world.view().host.frontend.presentation.skip_render
+            && !modal_rendered_this_frame
+            && !warming_up_map_export;
+        if should_draw {
+            // Cursor command production and deferred decal effects belong to
+            // the fixed-tick input/host boundary, not the rendering capability.
+            let MissionInputPhase {
+                host,
+                engine,
+                assets,
+                dev,
+                mut external_actions,
+                ..
+            } = world.post_tick_input_phase(&mut frame);
+            pre_render_engine_setup(host);
+            update_mouse_and_cursor(
+                engine,
+                host,
+                assets,
+                dev,
+                &mut external_actions,
+                super::render::CursorFrontend {
+                    renderer: &frontend.presentation.renderer,
+                    cursor_res: &mut frontend.resources.cursor,
+                    cursor_renderer: &mut frontend.presentation.sprites.cursor_renderer,
+                    threaded_input: &frontend.input.threaded,
+                    portrait_cache: &frontend.presentation.sprites.portrait_cache,
+                    last_cursor_id: &mut frontend.hud.last_cursor_id,
+                },
+                shift_held,
+            );
+        }
+        let MissionPresentationPhase {
+            host: mut presentation_host,
+            game,
+            engine,
+            assets,
+            dev,
+        } = world.presentation_phase();
+        let host = &mut presentation_host;
+        // ── Render dispatch ──
+        // The display-state machine (display_op transitions, scrolling
+        // deceleration, zoom interpolation, minimap transition) now runs
+        // inside `perform_hourglass` so rollback replay re-runs the
+        // same mutations. `last_skip_render` carries the
+        // fast-forward "skip this frame" decision back to the host.
+        // File-backed map exports need normal simulation/PostInitialize frames,
+        // not intermediate window presentation. Their requested full-map
+        // screenshot is rendered once immediately after the target frame.
+        let fixed_tick_presented = FixedTickRender {
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause: &mut *services.startup_audio_pause,
+            callbacks: &mut *callbacks,
+            args,
+            http: &mut *http,
+            runtime: &*runtime,
+            host: &mut *host,
+            game: &mut *game,
+            engine,
+            assets,
+            dev,
+            frontend: &mut *frontend,
+            frame: &mut frame,
+            shift_held,
+            rewind_active,
+        }
+        .run(should_draw)
+        .await;
+        let input = &mut frontend.input;
+        let resources = &mut frontend.resources;
+        let ui = &mut frontend.ui;
+        let hud = &mut frontend.hud;
+        let presentation = &mut frontend.presentation;
+        let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
         // end if draw_result == 0 (skip render in fast-forward)
         super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
         if let Some(timer) = startup_timer.as_mut() {

@@ -41,109 +41,20 @@ pub(super) async fn execute(
     let mut event = None;
     match request {
         SaveLoadRequest::Save { slot, mission_id } => {
-            let slot = match slot
-                .as_ref()
-                .map(|handle| save_manager.resolve_handle(handle))
-                .transpose()
-            {
-                Ok(slot) => slot,
-                Err(error) => {
-                    tracing::error!("Save rejected stale slot handle: {error:#}");
-                    outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    return outcome;
-                }
-            };
-            if host.transport.net().is_some() {
-                let target = slot
-                    .map(persistence::DiagnosticTarget::Existing)
-                    .unwrap_or(persistence::DiagnosticTarget::New("Multiplayer diagnostic"));
-                match persistence::diagnostic(
-                    target,
-                    save_manager,
+            return execute_save(
+                slot,
+                mission_id,
+                save_manager,
+                notices,
+                OperationWorld {
                     host,
                     game,
                     engine,
-                    mission_id,
+                    assets,
                     profiles,
                     thumb_ref,
-                ) {
-                    Ok(idx) => {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                        tracing::info!(
-                            slot = idx,
-                            mission_id,
-                            "multiplayer diagnostic save written locally"
-                        );
-                    }
-                    Err(persistence::DiagnosticFailure::Allocation(error)) => {
-                        tracing::error!("Multiplayer diagnostic draft failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                    Err(persistence::DiagnosticFailure::Publication(error)) => {
-                        tracing::error!("Multiplayer diagnostic save failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                }
-                return outcome;
-            }
-            // `slot = None` ⇒ auto Continue-save.
-            // `slot = Some(idx)` ⇒ player-chosen slot.
-            let (result, explicit_slot) = match slot {
-                Some(idx) => (
-                    save_manager.write_save_and_continue(
-                        host,
-                        game,
-                        idx,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    ),
-                    true,
-                ),
-                None => (
-                    save_manager
-                        .write_continue_save(
-                            host,
-                            game,
-                            engine,
-                            mission_id,
-                            Some(profiles),
-                            thumb_ref,
-                        )
-                        .map(|()| None),
-                    false,
-                ),
-            };
-            if let Err(err) = &result {
-                tracing::error!("Save failed: {err:#}");
-                outcome.banner = Some(SaveBannerKind::SaveFailed);
-            } else {
-                tracing::info!("Save completed (mission={mission_id})");
-                event = replay_save_written_event(engine, host, game);
-                if let Ok(Some(error)) = result {
-                    tracing::warn!("Continue mirror failed: {error}");
-                    notices.enqueue_save_failed(format!("Continue mirror: {error}"));
-                }
-                // Persistence already mirrored the capture where required.
-                // Continue/Restart skip mirroring; Sherwood also suppresses
-                // the ordinary saved banner, but retains its Continue mirror.
-                if explicit_slot {
-                    let is_special = slot
-                        .and_then(|idx| save_manager.get(idx))
-                        .and_then(|s| s.special);
-                    let is_continue_or_restart = matches!(
-                        is_special,
-                        Some(SpecialSlot::Continue) | Some(SpecialSlot::Restart)
-                    );
-                    // Show "Game saved." banner unless the slot is one
-                    // of the filtered types (Restart / Sherwood).
-                    let is_sherwood = matches!(is_special, Some(SpecialSlot::Sherwood));
-                    if !is_continue_or_restart && !is_sherwood {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                    }
-                }
-            }
+                },
+            );
         }
         request @ (SaveLoadRequest::Load { .. } | SaveLoadRequest::ApplyLoad(_)) => {
             // If the save targets a different mission than the one currently
@@ -243,58 +154,19 @@ pub(super) async fn execute(
             }
         }
         SaveLoadRequest::QuickSave { mission_id } => {
-            if host.transport.net().is_some() {
-                match persistence::diagnostic(
-                    persistence::DiagnosticTarget::New("Multiplayer quick diagnostic"),
-                    save_manager,
+            return execute_quick_save(
+                mission_id,
+                save_manager,
+                notices,
+                OperationWorld {
                     host,
                     game,
                     engine,
-                    mission_id,
+                    assets,
                     profiles,
                     thumb_ref,
-                ) {
-                    Ok(idx) => {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                        tracing::info!(
-                            slot = idx,
-                            mission_id,
-                            "multiplayer quick-save captured as a local diagnostic"
-                        );
-                    }
-                    Err(persistence::DiagnosticFailure::Allocation(error)) => {
-                        tracing::error!("Multiplayer quick diagnostic draft failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                    Err(persistence::DiagnosticFailure::Publication(error)) => {
-                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                }
-                return outcome;
-            }
-            match save_manager.write_quick_save_and_continue(
-                host,
-                game,
-                engine,
-                mission_id,
-                Some(profiles),
-                thumb_ref,
-            ) {
-                Err(err) => {
-                    tracing::error!("Quick save failed: {err:#}");
-                    outcome.banner = Some(SaveBannerKind::SaveFailed);
-                }
-                Ok(mirror_error) => {
-                    tracing::info!("Quick save written (mission={mission_id})");
-                    event = replay_save_written_event(engine, host, game);
-                    if let Some(error) = mirror_error {
-                        tracing::warn!("Continue mirror after quick save failed: {error}");
-                        notices.enqueue_save_failed(format!("Continue mirror: {error}"));
-                    }
-                    outcome.banner = Some(SaveBannerKind::Saved);
-                }
-            }
+                },
+            );
         }
         SaveLoadRequest::QuickLoad { use_backup } => {
             // Shift+F12 loads `ExQuickSave` (the backup).
@@ -358,6 +230,197 @@ pub(super) async fn execute(
                     event = replay_save_written_event(engine, host, game);
                 }
             }
+        }
+    }
+    OperationOutcome { event, ..outcome }
+}
+
+/// `SaveLoadRequest::Save`: a local diagnostic capture in multiplayer, else a
+/// player-chosen slot or the automatic Continue save.
+fn execute_save(
+    slot: Option<crate::savegame::SlotHandle>,
+    mission_id: u32,
+    save_manager: &mut SaveGameManager,
+    notices: &mut AutosaveNotices,
+    world: OperationWorld<'_>,
+) -> OperationOutcome {
+    let OperationWorld {
+        host,
+        game,
+        engine,
+        profiles,
+        thumb_ref,
+        ..
+    } = world;
+    let mut outcome = OperationOutcome::NO_EVENT;
+    let mut event = None;
+    let slot = match slot
+        .as_ref()
+        .map(|handle| save_manager.resolve_handle(handle))
+        .transpose()
+    {
+        Ok(slot) => slot,
+        Err(error) => {
+            tracing::error!("Save rejected stale slot handle: {error:#}");
+            outcome.banner = Some(SaveBannerKind::SaveFailed);
+            return outcome;
+        }
+    };
+    if host.transport.net().is_some() {
+        let target = slot
+            .map(persistence::DiagnosticTarget::Existing)
+            .unwrap_or(persistence::DiagnosticTarget::New("Multiplayer diagnostic"));
+        match persistence::diagnostic(
+            target,
+            save_manager,
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumb_ref,
+        ) {
+            Ok(idx) => {
+                outcome.banner = Some(SaveBannerKind::Saved);
+                tracing::info!(
+                    slot = idx,
+                    mission_id,
+                    "multiplayer diagnostic save written locally"
+                );
+            }
+            Err(persistence::DiagnosticFailure::Allocation(error)) => {
+                tracing::error!("Multiplayer diagnostic draft failed: {error:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
+            }
+            Err(persistence::DiagnosticFailure::Publication(error)) => {
+                tracing::error!("Multiplayer diagnostic save failed: {error:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
+            }
+        }
+        return outcome;
+    }
+    // `slot = None` ⇒ auto Continue-save.
+    // `slot = Some(idx)` ⇒ player-chosen slot.
+    let (result, explicit_slot) = match slot {
+        Some(idx) => (
+            save_manager.write_save_and_continue(
+                host,
+                game,
+                idx,
+                engine,
+                mission_id,
+                Some(profiles),
+                thumb_ref,
+            ),
+            true,
+        ),
+        None => (
+            save_manager
+                .write_continue_save(host, game, engine, mission_id, Some(profiles), thumb_ref)
+                .map(|()| None),
+            false,
+        ),
+    };
+    if let Err(err) = &result {
+        tracing::error!("Save failed: {err:#}");
+        outcome.banner = Some(SaveBannerKind::SaveFailed);
+    } else {
+        tracing::info!("Save completed (mission={mission_id})");
+        event = replay_save_written_event(engine, host, game);
+        if let Ok(Some(error)) = result {
+            tracing::warn!("Continue mirror failed: {error}");
+            notices.enqueue_save_failed(format!("Continue mirror: {error}"));
+        }
+        // Persistence already mirrored the capture where required.
+        // Continue/Restart skip mirroring; Sherwood also suppresses
+        // the ordinary saved banner, but retains its Continue mirror.
+        if explicit_slot {
+            let is_special = slot
+                .and_then(|idx| save_manager.get(idx))
+                .and_then(|s| s.special);
+            let is_continue_or_restart = matches!(
+                is_special,
+                Some(SpecialSlot::Continue) | Some(SpecialSlot::Restart)
+            );
+            // Show "Game saved." banner unless the slot is one
+            // of the filtered types (Restart / Sherwood).
+            let is_sherwood = matches!(is_special, Some(SpecialSlot::Sherwood));
+            if !is_continue_or_restart && !is_sherwood {
+                outcome.banner = Some(SaveBannerKind::Saved);
+            }
+        }
+    }
+    OperationOutcome { event, ..outcome }
+}
+
+/// `SaveLoadRequest::QuickSave`: a local diagnostic capture in multiplayer,
+/// else the QuickSave slot with its Continue mirror.
+fn execute_quick_save(
+    mission_id: u32,
+    save_manager: &mut SaveGameManager,
+    notices: &mut AutosaveNotices,
+    world: OperationWorld<'_>,
+) -> OperationOutcome {
+    let OperationWorld {
+        host,
+        game,
+        engine,
+        profiles,
+        thumb_ref,
+        ..
+    } = world;
+    let mut outcome = OperationOutcome::NO_EVENT;
+    let mut event = None;
+    if host.transport.net().is_some() {
+        match persistence::diagnostic(
+            persistence::DiagnosticTarget::New("Multiplayer quick diagnostic"),
+            save_manager,
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumb_ref,
+        ) {
+            Ok(idx) => {
+                outcome.banner = Some(SaveBannerKind::Saved);
+                tracing::info!(
+                    slot = idx,
+                    mission_id,
+                    "multiplayer quick-save captured as a local diagnostic"
+                );
+            }
+            Err(persistence::DiagnosticFailure::Allocation(error)) => {
+                tracing::error!("Multiplayer quick diagnostic draft failed: {error:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
+            }
+            Err(persistence::DiagnosticFailure::Publication(error)) => {
+                tracing::error!("Multiplayer quick diagnostic failed: {error:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
+            }
+        }
+        return outcome;
+    }
+    match save_manager.write_quick_save_and_continue(
+        host,
+        game,
+        engine,
+        mission_id,
+        Some(profiles),
+        thumb_ref,
+    ) {
+        Err(err) => {
+            tracing::error!("Quick save failed: {err:#}");
+            outcome.banner = Some(SaveBannerKind::SaveFailed);
+        }
+        Ok(mirror_error) => {
+            tracing::info!("Quick save written (mission={mission_id})");
+            event = replay_save_written_event(engine, host, game);
+            if let Some(error) = mirror_error {
+                tracing::warn!("Continue mirror after quick save failed: {error}");
+                notices.enqueue_save_failed(format!("Continue mirror: {error}"));
+            }
+            outcome.banner = Some(SaveBannerKind::Saved);
         }
     }
     OperationOutcome { event, ..outcome }

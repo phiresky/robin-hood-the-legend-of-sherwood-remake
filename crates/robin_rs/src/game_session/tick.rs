@@ -298,52 +298,7 @@ pub(super) fn drain_steps(
         if let (Some(policy), Some(terminal)) =
             (modal_policy.as_mut(), terminal_debriefing.as_deref_mut())
         {
-            let Some(modal_kind) = terminal.current_kind() else {
-                step.respond_err(RpcError::unavailable_capability(
-                    "blocked by mission-end leaderboard; dismiss it in the game before stepping"
-                        .to_owned(),
-                ));
-                continue;
-            };
-            let explicit = policy
-                .dismissals
-                .iter()
-                .position(|dismissal| dismissal.kind == modal_kind)
-                .map(|index| policy.dismissals.remove(index).result);
-            let result = match explicit.or_else(|| {
-                policy
-                    .auto_dismiss
-                    .then(|| default_http_modal_result(&modal_kind))
-            }) {
-                Some(result) => result,
-                None => {
-                    step.respond_err(RpcError::unavailable_capability(format!(
-                        "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
-                        serde_json::to_string(&modal_kind).expect("ModalKind serializes")
-                    )));
-                    continue;
-                }
-            };
-            let terminal_dismissal = crate::http_server::HttpModalDismissal {
-                kind: modal_kind.clone(),
-                result,
-            };
-            if let Err(error) = validate_http_modal_result(&modal_kind, result)
-                .map_err(RpcError::invalid_request)
-                .and_then(|()| authorize_http_modal_dismissals(host, &[terminal_dismissal]))
-                .and_then(|()| {
-                    terminal
-                        .queue_http_result(modal_kind.clone(), result, terminal_save_manager)
-                        .map_err(RpcError::unavailable_capability)
-                })
-            {
-                step.respond_err(error);
-                continue;
-            }
-            step.respond_err(RpcError::unavailable_capability(format!(
-                "dismissed terminal modal {}; retry the step after the outer frame applies it",
-                serde_json::to_string(&modal_kind).expect("ModalKind serializes")
-            )));
+            dismiss_terminal_modal_for_step(step, policy, terminal, host, terminal_save_manager);
             continue;
         }
         let strict_session_replay =
@@ -448,72 +403,22 @@ pub(super) fn drain_steps(
                 }
             }
             crate::http_server::StepKind::GoToFrame { target, .. } => {
-                if let Some(player) = timeline.replay().playback() {
-                    let from = player.current_frame();
-                    let total = player.total_frames();
-                    if target > total {
-                        step.respond_err(RpcError::invalid_request(format!(
-                            "replay position {target} exceeds {total} records"
-                        )));
-                        continue;
-                    }
-                    let result = (|| -> Result<(), RpcError> {
-                        if target < from {
-                            timeline
-                                .rewind_replay_to_start(manager, host, game, assets)
-                                .map_err(|error| RpcError::internal(error.to_string()))?;
-                            if let Some(scheduler) = session_modals.as_deref_mut() {
-                                *scheduler = Default::default();
-                                scheduler.checkpoint(0, &host.effects);
-                            }
-                        }
-                        // TODO: Cache raw ordinal checkpoints for faster long seeks.
-                        // The ordinary simulation-frame cache cannot cross load-backs.
-                        let current = timeline
-                            .replay()
-                            .playback()
-                            .expect("active replay")
-                            .current_frame();
-                        if target > current {
-                            let (_, dismissed) = run_forward_ticks_with_session_modals(
-                                StepWorld {
-                                    manager: &mut *manager,
-                                    host: &mut *host,
-                                    assets,
-                                    dev: &mut *dev,
-                                    game: &mut *game,
-                                },
-                                timeline,
-                                target - current,
-                                modal_policy.as_mut().expect("seek modal policy"),
-                                session_modals.as_deref_mut(),
-                            )?;
-                            accepted_dismissals.extend(dismissed);
-                        }
-                        if timeline
-                            .replay()
-                            .playback()
-                            .expect("active replay")
-                            .current_frame()
-                            != target
-                        {
-                            return Err(RpcError::internal(
-                                "replay seek did not reach requested position",
-                            ));
-                        }
-                        Ok(())
-                    })();
-                    match result {
-                        Ok(()) => step.respond_ok(serde_json::json!({
-                            "direction": "go-to-frame",
-                            "from_frame": from,
-                            "frame": target,
-                            "timeline_frame": timeline.frame_number(),
-                            "modals_dismissed": accepted_dismissals.len(),
-                            "modal_dismissals": accepted_dismissals,
-                        })),
-                        Err(error) => step.respond_err(error),
-                    }
+                if timeline.replay().playback().is_some() {
+                    seek_replay_step(
+                        step,
+                        target,
+                        StepWorld {
+                            manager: &mut *manager,
+                            host: &mut *host,
+                            assets,
+                            dev: &mut *dev,
+                            game: &mut *game,
+                        },
+                        timeline,
+                        &mut modal_policy,
+                        session_modals.as_deref_mut(),
+                        accepted_dismissals,
+                    );
                     continue;
                 }
                 let from = timeline.frame_number();
@@ -604,6 +509,151 @@ pub(super) fn drain_steps(
             }
         }
     }
+}
+
+/// A go-to-frame step during replay playback: seek the replay ordinal
+/// (restarting the replay first when moving back) and reply.
+fn seek_replay_step(
+    step: crate::http_server::PendingStep,
+    target: u32,
+    world: StepWorld<'_>,
+    timeline: &mut super::runtime::TimelineRuntime,
+    modal_policy: &mut Option<crate::http_server::StepModalPolicy>,
+    mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
+    mut accepted_dismissals: Vec<crate::http_server::HttpModalDismissal>,
+) {
+    let StepWorld {
+        manager,
+        host,
+        assets,
+        dev,
+        game,
+    } = world;
+    let player = timeline
+        .replay()
+        .playback()
+        .expect("replay seek requires active replay playback");
+    let from = player.current_frame();
+    let total = player.total_frames();
+    if target > total {
+        step.respond_err(RpcError::invalid_request(format!(
+            "replay position {target} exceeds {total} records"
+        )));
+        return;
+    }
+    let result = (|| -> Result<(), RpcError> {
+        if target < from {
+            timeline
+                .rewind_replay_to_start(manager, host, game, assets)
+                .map_err(|error| RpcError::internal(error.to_string()))?;
+            if let Some(scheduler) = session_modals.as_deref_mut() {
+                *scheduler = Default::default();
+                scheduler.checkpoint(0, &host.effects);
+            }
+        }
+        // TODO: Cache raw ordinal checkpoints for faster long seeks.
+        // The ordinary simulation-frame cache cannot cross load-backs.
+        let current = timeline
+            .replay()
+            .playback()
+            .expect("active replay")
+            .current_frame();
+        if target > current {
+            let (_, dismissed) = run_forward_ticks_with_session_modals(
+                StepWorld {
+                    manager: &mut *manager,
+                    host: &mut *host,
+                    assets,
+                    dev: &mut *dev,
+                    game: &mut *game,
+                },
+                timeline,
+                target - current,
+                modal_policy.as_mut().expect("seek modal policy"),
+                session_modals.as_deref_mut(),
+            )?;
+            accepted_dismissals.extend(dismissed);
+        }
+        if timeline
+            .replay()
+            .playback()
+            .expect("active replay")
+            .current_frame()
+            != target
+        {
+            return Err(RpcError::internal(
+                "replay seek did not reach requested position",
+            ));
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => step.respond_ok(serde_json::json!({
+            "direction": "go-to-frame",
+            "from_frame": from,
+            "frame": target,
+            "timeline_frame": timeline.frame_number(),
+            "modals_dismissed": accepted_dismissals.len(),
+            "modal_dismissals": accepted_dismissals,
+        })),
+        Err(error) => step.respond_err(error),
+    }
+}
+
+/// A step request arrived while the terminal debriefing owns the mission:
+/// queue its typed dismissal (explicit or auto) and reply, never stepping.
+fn dismiss_terminal_modal_for_step(
+    step: crate::http_server::PendingStep,
+    policy: &mut crate::http_server::StepModalPolicy,
+    terminal: &mut super::terminal_debriefing::TerminalDebriefingState,
+    host: &mut Host,
+    terminal_save_manager: Option<&crate::savegame::SaveGameManager>,
+) {
+    let Some(modal_kind) = terminal.current_kind() else {
+        step.respond_err(RpcError::unavailable_capability(
+            "blocked by mission-end leaderboard; dismiss it in the game before stepping".to_owned(),
+        ));
+        return;
+    };
+    let explicit = policy
+        .dismissals
+        .iter()
+        .position(|dismissal| dismissal.kind == modal_kind)
+        .map(|index| policy.dismissals.remove(index).result);
+    let result = match explicit.or_else(|| {
+        policy
+            .auto_dismiss
+            .then(|| default_http_modal_result(&modal_kind))
+    }) {
+        Some(result) => result,
+        None => {
+            step.respond_err(RpcError::unavailable_capability(format!(
+                "blocked by modal {}; retry with auto_dismiss=true or a matching typed dismissal",
+                serde_json::to_string(&modal_kind).expect("ModalKind serializes")
+            )));
+            return;
+        }
+    };
+    let terminal_dismissal = crate::http_server::HttpModalDismissal {
+        kind: modal_kind.clone(),
+        result,
+    };
+    if let Err(error) = validate_http_modal_result(&modal_kind, result)
+        .map_err(RpcError::invalid_request)
+        .and_then(|()| authorize_http_modal_dismissals(host, &[terminal_dismissal]))
+        .and_then(|()| {
+            terminal
+                .queue_http_result(modal_kind.clone(), result, terminal_save_manager)
+                .map_err(RpcError::unavailable_capability)
+        })
+    {
+        step.respond_err(error);
+        return;
+    }
+    step.respond_err(RpcError::unavailable_capability(format!(
+        "dismissed terminal modal {}; retry the step after the outer frame applies it",
+        serde_json::to_string(&modal_kind).expect("ModalKind serializes")
+    )));
 }
 
 fn validate_multiplayer_step_request(
