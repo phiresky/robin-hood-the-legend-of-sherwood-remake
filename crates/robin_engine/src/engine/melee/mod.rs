@@ -278,36 +278,26 @@ impl EngineInner {
 
 #[cfg(test)]
 thread_local! {
-    static CAPTURED_STRIKE_WARNINGS: std::cell::RefCell<Option<Vec<(EntityId, EntityId)>>> =
-        const { std::cell::RefCell::new(None) };
+    static STRIKE_WARNING_PROBE: crate::engine::test_support::Probe<(EntityId, EntityId)> =
+        const { crate::engine::test_support::Probe::new() };
 }
 
+/// Run `f` and return every `(attacker, victim)` strike warning it issued.
 #[cfg(test)]
 pub(in crate::engine) fn capture_strike_warnings<R>(
     f: impl FnOnce() -> R,
 ) -> (R, Vec<(EntityId, EntityId)>) {
-    CAPTURED_STRIKE_WARNINGS.with(|captured| {
-        assert!(captured.borrow().is_none(), "nested strike-warning capture");
-        *captured.borrow_mut() = Some(Vec::new());
-    });
-    let result = f();
-    let warnings = CAPTURED_STRIKE_WARNINGS.with(|captured| {
-        captured
-            .borrow_mut()
-            .take()
-            .expect("strike-warning capture disappeared")
-    });
-    (result, warnings)
+    STRIKE_WARNING_PROBE.with(|probe| probe.capture(f))
 }
 
 #[cfg(test)]
 fn record_strike_warning(attacker: EntityId, victim: EntityId) {
-    CAPTURED_STRIKE_WARNINGS.with(|captured| {
-        if let Some(warnings) = captured.borrow_mut().as_mut() {
-            warnings.push((attacker, victim));
-        }
-    });
+    STRIKE_WARNING_PROBE.with(|probe| probe.record((attacker, victim)));
 }
+
+#[cfg(not(test))]
+#[inline(always)]
+fn record_strike_warning(_attacker: EntityId, _victim: EntityId) {}
 
 // ─── Constants ──────────────────────────────────────────────────────
 

@@ -308,8 +308,8 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
 }
 
 #[test]
-fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_callback_append() {
-    use crate::element::{Command, ElementData, ElementKind, TargetFilter};
+fn production_listen_creation_order_runs_heard_before_later_reveal() {
+    use crate::element::{Command, TargetFilter};
     use crate::movement::{AbilityKind, ActiveAbility};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
@@ -353,56 +353,27 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
     };
     engine.set_actors_frozen(true);
 
-    let observed_clear = std::rc::Rc::new(std::cell::Cell::new(false));
-    let observed_later_reveal_still_blipped = std::rc::Rc::new(std::cell::Cell::new(false));
-    let appended = std::rc::Rc::new(std::cell::Cell::new(None));
-    let observed_clear_hook = observed_clear.clone();
-    let observed_later_reveal_hook = observed_later_reveal_still_blipped.clone();
-    let appended_hook = appended.clone();
-    crate::engine::ai::set_heard_callback_observer(Some(Box::new(move |engine, heard_target| {
-        let Entity::Target(target) = engine.get_entity(heard_target).unwrap() else {
-            unreachable!()
-        };
-        observed_clear_hook.set(!target.target.action_filter.contains(TargetFilter::LISTEN));
-        observed_later_reveal_hook.set(
-            engine
-                .get_entity(reveal)
-                .expect("later reveal entity exists during Heard callback")
-                .element_data()
-                .blipped,
-        );
-        let appended_id = engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::Target;
-                initial_element
-            },
-            fx: Default::default(),
-            target: crate::element::TargetData {
-                action_filter: TargetFilter::LISTEN,
-                script_class: "TestTarget".into(),
-                ..Default::default()
-            },
-        }));
-        appended_hook.set(Some(appended_id));
-    })));
-
     let mut assets = LevelAssets::new();
     complete_test_runtime_fixture(&mut engine, &mut assets);
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    for _ in 0..25 {
-        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
-    }
-    crate::engine::ai::set_heard_callback_observer(None);
+    let ((), heard) = crate::engine::ai::capture_heard_callbacks(|| {
+        for _ in 0..25 {
+            engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        }
+    });
 
     assert!(!engine.get_entity(reveal).unwrap().element_data().blipped);
+    let [heard] = heard.as_slice() else {
+        panic!("expected exactly one Heard callback, got {heard:?}");
+    };
+    assert_eq!(heard.target, target);
     assert!(
-        observed_later_reveal_still_blipped.get(),
+        heard.blipped.contains(&reveal),
         "earlier Target Heard callback must run before the later-created reveal entity"
     );
     assert!(
-        observed_clear.get(),
+        heard.listen_cleared,
         "LISTEN must clear before the VM callback returns"
     );
     assert_eq!(
@@ -412,14 +383,11 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
         ),
         crate::engine::target_script_tests::SENTINEL_HEARD
     );
-    let appended = appended.get().expect("callback appended target");
-    let Entity::Target(appended) = engine.get_entity(appended).unwrap() else {
-        unreachable!()
-    };
-    assert!(
-        appended.target.action_filter.contains(TargetFilter::LISTEN),
-        "captured-length scan must exclude callback-appended entities"
-    );
+    // TODO: the captured-length guarantee (a target appended during the Heard
+    // callback is not scanned) lost its coverage when the mid-tick mutating
+    // observer was removed. No production path or test-script native can
+    // append an entity inside ActivatedByListenable; restore the check once a
+    // script-reachable entity-creating native exists in the test SCB.
 }
 
 #[test]

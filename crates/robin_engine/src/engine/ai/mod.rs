@@ -17,9 +17,9 @@ pub(in crate::engine) use owner_scheduling::{CompletionBoundary, OwnerBoundaryPo
 mod patrol_assembly;
 mod patrol_coordination;
 mod patrol_dispatch;
-pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 #[cfg(test)]
-pub(crate) use detection::set_heard_callback_observer;
+pub(crate) use detection::capture_heard_callbacks;
+pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 mod post_detection;
 mod snapshots;
 mod tick_data;
@@ -581,11 +581,34 @@ impl EngineInner {
     }
 }
 
+/// Record-only trace of synchronous `EVENT_GALOPP_LOOP_END` dispatches.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::engine) enum GalloppProbeEvent {
+    /// Recorded after the dispatch's Think/script/order drain has closed.
+    Dispatched {
+        owner: EntityId,
+        owned_elements: Vec<GalloppOwnedElement>,
+    },
+    /// Test-authored ordering marker (for example from an owner-slot hook),
+    /// interleaved with dispatches in the same capture.
+    Marker(EntityId),
+}
+
+/// Snapshot of one sequence element owned by the dispatched rider.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::engine) struct GalloppOwnedElement {
+    pub sequence: crate::sequence::SequenceId,
+    pub element: usize,
+    pub state: crate::sequence::SequenceState,
+    pub current_order: Option<std::num::NonZeroU32>,
+}
+
 #[cfg(test)]
 thread_local! {
-    static GALOPP_DISPATCH_OBSERVER: std::cell::RefCell<
-        Option<Box<dyn FnMut(&EngineInner, EntityId)>>
-    > = std::cell::RefCell::new(None);
+    static GALOPP_DISPATCH_PROBE: crate::engine::test_support::Probe<GalloppProbeEvent> =
+        const { crate::engine::test_support::Probe::new() };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

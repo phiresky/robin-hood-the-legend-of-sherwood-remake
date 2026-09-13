@@ -1754,19 +1754,25 @@ fn frozen_all_repeats_running_rider_galopp_callback_on_the_frozen_frame() {
     let mut assets = LevelAssets::new();
     let (rider, _, _) = install_galopp_fixture(&mut engine, &mut assets, vec![20, 20]);
     engine.set_actors_frozen(true);
-    let calls = std::rc::Rc::new(std::cell::Cell::new(0));
-    let observed = calls.clone();
-    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |_, owner| {
-        assert_eq!(owner, rider);
-        observed.set(observed.get() + 1);
-    })));
 
-    for _ in 0..3 {
-        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    }
-    EngineInner::set_galopp_dispatch_observer(None);
+    let ((), dispatches) = EngineInner::capture_galopp_dispatches(|| {
+        for _ in 0..3 {
+            tick_production_owner_coordinator(
+                &mut engine,
+                &crate::sim_rng::test_context(),
+                &assets,
+            );
+        }
+    });
 
-    assert_eq!(calls.get(), 3);
+    let owners: Vec<_> = dispatches
+        .iter()
+        .map(|event| match event {
+            crate::engine::ai::GalloppProbeEvent::Dispatched { owner, .. } => *owner,
+            other => panic!("unexpected gallop probe event {other:?}"),
+        })
+        .collect();
+    assert_eq!(owners, vec![rider; 3]);
     assert_eq!(engine.get_entity(rider).unwrap().sprite().current_frame, 0);
 }
 
@@ -1776,15 +1782,16 @@ fn one_frame_running_rider_fires_original_last_frame_galopp_disjunct() {
     let mut assets = LevelAssets::new();
     let (rider, _, _) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
     engine.set_actors_frozen(true);
-    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
-    let observed = fired.clone();
-    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |_, owner| {
-        assert_eq!(owner, rider);
-        observed.set(true);
-    })));
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
-    EngineInner::set_galopp_dispatch_observer(None);
-    assert!(fired.get());
+    let ((), dispatches) = EngineInner::capture_galopp_dispatches(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets)
+    });
+    assert!(
+        matches!(
+            dispatches.as_slice(),
+            [crate::engine::ai::GalloppProbeEvent::Dispatched { owner, .. }] if *owner == rider
+        ),
+        "{dispatches:?}"
+    );
 }
 
 #[test]
@@ -1809,41 +1816,43 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let (rider, sequence, order_id) = install_galopp_fixture(&mut engine, &mut assets, vec![20]);
     let later = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.set_actors_frozen(true);
-    let callback_closed = std::rc::Rc::new(std::cell::Cell::new(false));
-    let callback_observed = callback_closed.clone();
-    EngineInner::set_galopp_dispatch_observer(Some(Box::new(move |engine, owner| {
-        assert_eq!(owner, rider);
-        let element = engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .expect("frozen gallop retains its selected movement element");
-        assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
-        assert_eq!(element.current_order().unwrap().order_id, order_id);
-        callback_observed.set(true);
-    })));
 
     let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    let next_owner_observed = std::rc::Rc::new(std::cell::Cell::new(false));
-    let next_observed = next_owner_observed.clone();
-    let callback_for_next = callback_closed.clone();
-    engine.tick_actor_owner_envelopes_with_test_owner_hook(
-        &crate::sim_rng::test_context(),
-        &assets,
-        &positions,
-        move |_, owner| {
-            if owner == later {
-                assert!(
-                    callback_for_next.get(),
-                    "gallop Think/script/order drain must close before the next owner slot"
-                );
-                next_observed.set(true);
-            }
+    let ((), events) = EngineInner::capture_galopp_dispatches(|| {
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
+            &crate::sim_rng::test_context(),
+            &assets,
+            &positions,
+            move |_, owner| {
+                if owner == later {
+                    EngineInner::record_galopp_probe_marker(owner);
+                }
+            },
+        )
+    });
+
+    use crate::engine::ai::{GalloppOwnedElement, GalloppProbeEvent};
+    let [
+        GalloppProbeEvent::Dispatched {
+            owner,
+            owned_elements,
         },
+        GalloppProbeEvent::Marker(next_owner),
+    ] = events.as_slice()
+    else {
+        panic!("gallop Think/script/order drain must close before the next owner slot: {events:?}");
+    };
+    assert_eq!(*owner, rider);
+    assert_eq!(*next_owner, later);
+    assert!(
+        owned_elements.contains(&GalloppOwnedElement {
+            sequence,
+            element: 0,
+            state: crate::sequence::SequenceState::InProgress,
+            current_order: Some(order_id),
+        }),
+        "frozen gallop retains its selected movement element: {owned_elements:?}"
     );
-    EngineInner::set_galopp_dispatch_observer(None);
-    assert!(callback_closed.get());
-    assert!(next_owner_observed.get());
 }
 
 #[test]

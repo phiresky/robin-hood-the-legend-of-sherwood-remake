@@ -5,18 +5,64 @@
 
 use super::snapshots::{AiWorldView, HumanTarget, ObjectTarget};
 
+/// Record-only snapshot taken right after a Listen `ActivatedByListenable`
+/// callback returned.
 #[cfg(test)]
-thread_local! {
-    static HEARD_CALLBACK_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>> =
-        std::cell::RefCell::new(None);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HeardCallbackObservation {
+    pub target: EntityId,
+    /// Whether the target's LISTEN filter was already cleared.
+    pub listen_cleared: bool,
+    /// Every entity still blipped at that moment, in legacy slot order.
+    pub blipped: Vec<EntityId>,
 }
 
 #[cfg(test)]
-pub(crate) fn set_heard_callback_observer(
-    observer: Option<Box<dyn FnMut(&mut EngineInner, EntityId)>>,
-) {
-    HEARD_CALLBACK_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+thread_local! {
+    static HEARD_CALLBACK_PROBE: crate::engine::test_support::Probe<HeardCallbackObservation> =
+        const { crate::engine::test_support::Probe::new() };
 }
+
+/// Run `f` and return every Listen Heard callback it performed.
+#[cfg(test)]
+pub(crate) fn capture_heard_callbacks<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<HeardCallbackObservation>) {
+    HEARD_CALLBACK_PROBE.with(|probe| probe.capture(f))
+}
+
+#[cfg(test)]
+fn observe_heard_callback(engine: &EngineInner, target_id: EntityId) {
+    let Some(Entity::Target(target)) = engine.world.entities.get(target_id) else {
+        panic!("Heard callback target {target_id:?} is no longer a target");
+    };
+    let listen_cleared = !target
+        .target
+        .action_filter
+        .contains(crate::element::TargetFilter::LISTEN);
+    let blipped = (0..engine.world.entities.len())
+        .filter_map(|slot| engine.world.entities.id_at_legacy_slot(slot as u32))
+        .filter(|&id| {
+            engine
+                .world
+                .entities
+                .get(id)
+                .is_some_and(|entity| entity.element_data().blipped)
+        })
+        .collect();
+    HEARD_CALLBACK_PROBE.with(|probe| {
+        probe.record(HeardCallbackObservation {
+            target: target_id,
+            listen_cleared,
+            blipped,
+        })
+    });
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn observe_heard_callback(_engine: &EngineInner, _target_id: EntityId) {}
+
 use super::*;
 use crate::ai::AiPerTickData;
 use crate::ai_vision;
@@ -1354,12 +1400,7 @@ impl EngineInner {
                     .unwrap_or_else(|error| {
                         panic!("ActivatedByListenable target {target_handle} failed: {error}")
                     });
-                    #[cfg(test)]
-                    HEARD_CALLBACK_OBSERVER.with(|observer| {
-                        if let Some(observer) = observer.borrow_mut().as_mut() {
-                            observer(self, entity_id);
-                        }
-                    });
+                    observe_heard_callback(self, entity_id);
                 }
             }
             self.do_next_order(listener.seq_id, listener.elem_idx);

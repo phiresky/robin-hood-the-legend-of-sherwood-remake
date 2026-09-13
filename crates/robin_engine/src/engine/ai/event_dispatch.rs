@@ -109,12 +109,51 @@ impl EngineInner {
     /// frame and fire `EventDone`.  We replicate that here: set the
     // ─── EventGaloppLoopEnd dispatch ────────────────────────────
 
+    /// Run `f` and return the gallop dispatches (and test markers) it recorded.
     #[cfg(test)]
-    pub(in crate::engine) fn set_galopp_dispatch_observer(
-        observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
-    ) {
-        GALOPP_DISPATCH_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+    pub(in crate::engine) fn capture_galopp_dispatches<T>(
+        f: impl FnOnce() -> T,
+    ) -> (T, Vec<GalloppProbeEvent>) {
+        GALOPP_DISPATCH_PROBE.with(|probe| probe.capture(f))
     }
+
+    /// Record a test-authored ordering marker into an active gallop capture.
+    #[cfg(test)]
+    pub(in crate::engine) fn record_galopp_probe_marker(owner: EntityId) {
+        GALOPP_DISPATCH_PROBE.with(|probe| probe.record(GalloppProbeEvent::Marker(owner)));
+    }
+
+    #[cfg(test)]
+    fn observe_galopp_dispatch(&self, owner: EntityId) {
+        let owned_elements = self
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| {
+                sequence
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, element)| element.owner == Some(owner))
+                    .map(|(index, element)| GalloppOwnedElement {
+                        sequence: sequence.id,
+                        element: index,
+                        state: element.state,
+                        current_order: element.current_order().map(|order| order.order_id),
+                    })
+            })
+            .collect();
+        GALOPP_DISPATCH_PROBE.with(|probe| {
+            probe.record(GalloppProbeEvent::Dispatched {
+                owner,
+                owned_elements,
+            })
+        });
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn observe_galopp_dispatch(&self, _owner: EntityId) {}
 
     /// Dispatch the gallop-loop-end event to riders performing a charge
     /// flag that reached an intermediate waypoint during movement.
@@ -151,12 +190,7 @@ impl EngineInner {
         // the mutable legacy walk can advance to the next owner.
         let tick_data = self.build_npc_tick_data(sim, entity_id, assets);
         self.dispatch_think_with_drain(sim, entity_id, &stimulus, &ctx, &tick_data, assets);
-        #[cfg(test)]
-        GALOPP_DISPATCH_OBSERVER.with(|observer| {
-            if let Some(observer) = observer.borrow_mut().as_mut() {
-                observer(self, entity_id);
-            }
-        });
+        self.observe_galopp_dispatch(entity_id);
     }
 
     /// Map a PC's currently-executing animation (`OrderType`) to the
