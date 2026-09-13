@@ -488,350 +488,348 @@ impl MenuText {
 }
 
 fn default_fallbacks() -> &'static HashMap<usize, &'static str> {
-    static FALLBACKS: std::sync::LazyLock<HashMap<usize, &'static str>> =
-        std::sync::LazyLock::new(build_default_fallbacks);
-    &FALLBACKS
+    static FALLBACK_MAP: std::sync::LazyLock<HashMap<usize, &'static str>> =
+        std::sync::LazyLock::new(|| DEFAULT_FALLBACKS.iter().copied().collect());
+    &FALLBACK_MAP
 }
 
-fn build_default_fallbacks() -> HashMap<usize, &'static str> {
-    // Hardcoded English strings match `1033/Data/Interface/Start.sxt` from
-    // the international release.  Used when no `.sxt` file is available
-    // so the Rust port is still usable on developer machines without the
-    // localised text bundle.
-    const ENGLISH: &[(usize, &str)] = &[
-        (MT_BTN_START_GAME, "Start Game"),
-        (MT_BTN_SELECT_PLAYER, "Select Player"),
-        (MT_BTN_SHOW_MOVIES, "Show Movies"),
-        (MT_BTN_SHOW_CREDITS, "Show Credits"),
-        (MT_BTN_SELECT, "Select"),
-        (MT_BTN_NEW, "New"),
-        (MT_BTN_RENAME, "Rename"),
-        (MT_BTN_DELETE, "Delete"),
-        (MT_BTN_CONTINUE, "Continue"),
-        (MT_BTN_LOAD, "Load"),
-        (MT_BTN_SAVE, "Save"),
-        (MT_BTN_OPTIONS, "Options"),
-        (MT_BTN_RESTART, "Restart"),
-        (MT_BTN_QUIT_GAME, "Quit Game"),
-        (MT_BTN_OK, "OK"),
-        (MT_BTN_CANCEL, "Cancel"),
-        (MT_BTN_BACK, "Back"),
-        (MT_BTN_GRAPHICS, "Graphics"),
-        (MT_BTN_SOUNDS, "Sounds"),
-        (MT_BTN_SHORTCUTS, "Shortcuts"),
-        (MT_BTN_DEFAULT_1, "Default 1"),
-        (MT_BTN_DEFAULT_2, "Default 2"),
-        (MT_BTN_USER_DEFINED, "User Defined"),
-        (MT_TTL_MISSION_WON, "Mission Won"),
-        (MT_TTL_MISSION_LOST, "Mission Lost"),
-        (MT_TTL_MISSION_ABORTED, "Mission Aborted"),
-        (MT_TTL_OPTIONS, "Options"),
-        (MT_TTL_GRAPHICS, "Graphics"),
-        (MT_TTL_SOUNDS, "Sounds"),
-        (MT_MSG_REALLY_QUIT, "Do you really want to quit the game?"),
-        (
-            MT_MSG_STRATEGICAL_MISSION_WON,
-            "You have won the strategical mission.",
-        ),
-        (
-            MT_MSG_STRATEGICAL_MISSION_LOST,
-            "You have lost the strategical mission.",
-        ),
-        (
-            MT_MSG_REALLY_DELETE_SAVEGAME,
-            "Do you really want to delete this saved game?",
-        ),
-        (
-            MT_MSG_REALLY_OVERWRITE_SAVEGAME,
-            "Do you really want to overwrite this saved game?",
-        ),
-        (
-            MT_MSG_REALLY_DELETE_PLAYER,
-            "Do you really want to delete this player?",
-        ),
-        (
-            MT_MSG_REALLY_ABORT_MISSION,
-            "Do you really want to abort the mission?",
-        ),
-        (
-            MT_MSG_REALLY_CONVERT_PEASANTS,
-            "Do you really want to convert your peasants into blazons?",
-        ),
-        (
-            MT_MSG_REALLY_START_MISSION,
-            "Do you really want to start the mission?",
-        ),
-        (
-            MT_MSG_REALLY_RETURN_TO_MAP,
-            "Do you really want to return to the campaign map?",
-        ),
-        (
-            MT_MSG_REALLY_LOAD_QUICKSAVE,
-            "Do you really want to load this quicksave?",
-        ),
-        (MT_MSG_RETURN_TO_WINDOWS, "Return to Windows?"),
-        (MT_MSG_GAME_SAVED, "Game saved."),
-        (MT_MSG_GAME_LOADED, "Game loaded."),
-        // Main-menu profile info block fallbacks.
-        (MT_STR_DIFFICULTY_EASY, "Easy"),
-        (MT_STR_DIFFICULTY_MEDIUM, "Medium"),
-        (MT_STR_DIFFICULTY_HARD, "Hard"),
-        // `MT_STR_MONEY` in the stock table is a format string
-        // ("Money: £%i") — the profile-info widget plugs the ransom into it
-        // via `printf`-style substitution.  Keep the `%i` placeholder so
-        // the call site substitutes the same way regardless of whether the
-        // localized table loaded.
-        (MT_STR_MONEY, "Money: £%i"),
-        (MT_STR_CARNAGE_FACTOR, "Spared lives"),
-        (MT_STR_PROGRESSION, "Progress"),
-        (MT_STR_DIFFICULTY_LEVEL, "Difficulty level"),
-        (MT_STR_PROCESSOR, "Processor"),
-        (MT_STR_MEMORY, "Memory"),
-        (MT_STR_MEGA_BYTES, "MB"),
-        (MT_STR_MEGA_HERZS, "MHz"),
-        (MT_STR_RES, "Resolution"),
-        (MT_STR_RES_LOW, "640 x 480"),
-        (MT_STR_RES_MEDIUM, "800 x 600"),
-        (MT_STR_RES_HIGH, "1024 x 768"),
-        (MT_STR_SPECIAL_FX, "Special Effects"),
-        (MT_STR_ALPHA_VISION_FIELD, "Alpha Vision Field"),
-        (MT_STR_TRANSPARENT_SHADOWS, "Transparent Shadows"),
-        (MT_STR_EFFECT_ANIMATIONS, "Effect Animations"),
-        (MT_STR_BCKGND_ANIMATIONS, "Background Animations"),
-        (MT_STR_SOUND_STEREO, "Stereo"),
-        (MT_STR_SOUND_EAX, "EAX 3D"),
-        (MT_STR_SOUND_3D, "3D"),
-        (MT_STR_SOUND_RES_HIGH, "High Resolution"),
-        (MT_STR_SOUND_RES_LOW, "Low Resolution"),
-        (MT_STR_SOUND_VOL_FX, "Sound Effects Volume"),
-        (MT_STR_SOUND_VOL_DIALOGUE, "Dialogue Volume"),
-        (MT_STR_SOUND_VOL_MUSIC, "Music Volume"),
-        (MT_STR_SOUND_VOL_COMMENT, "Comment Volume"),
-        (MT_STR_SOUND_COMMENT_FREQUENCY, "Comment Frequency"),
-        (MT_STR_SHORT_BRIEFING_TITLE_PRIMARY, "Primary objectives:"),
-        (
-            MT_STR_SHORT_BRIEFING_TITLE_SECONDARY,
-            "Secondary objectives:",
-        ),
-        (MT_STR_SHORT_BRIEFING_TITLE_SHERWOOD, "Sherwood objectives:"),
-        // Sherwood debriefing + campaign-map status bar fallbacks.
-        (MT_STR_SCORE, "Score"),
-        // Mission debriefing stat-panel format strings.  The real game text
-        // table carries printf-style wide-char templates here (`%lu`/`%ls`);
-        // fall back to `%u`/`%s` English when the resource table is missing
-        // so the call sites can substitute the same way either way.
-        (MT_STR_DB_S01, "%u trained in hand-to-hand combat"),
-        (MT_STR_DB_S02, "%u trained in archery"),
-        (MT_STR_DB_S03, "%u healed"),
-        (MT_STR_DB_S04, "(max reached)"),
-        (MT_STR_DB_S05, "Sherwood report:"),
-        (MT_STR_DB_S12, "Score: %u"),
-        (MT_STR_DB_S14, "Preserved lives: %u"),
-        (MT_STR_DB_S16, "Play time: %s"),
-        (MT_STR_DB_C01, "with"),
-        (MT_STR_DB_C02, "led by %s"),
-        (
-            MT_STR_PRODUCTION_FORECAST_SELECTED,
-            "Next production — %s (%s cycle):",
-        ),
-        (
-            MT_STR_PRODUCTION_FORECAST_RATE,
-            "Production rate (%s; select a mission for exact cycle totals):",
-        ),
-        (
-            MT_STR_PRODUCTION_FORECAST_LINE,
-            "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
-        ),
-        (MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist"),
-        (
-            MT_STR_TRADING_HINT,
-            "Trading available: press T or use Sherwood trading in the pause menu.",
-        ),
-        (MT_TTL_SHERWOOD_TRADING, "Sherwood trading"),
-        (MT_BTN_SELL_ONE, "Sell 1"),
-        (MT_BTN_SELL_FIVE, "Sell 5"),
-        (MT_STR_TRADE_RANSOM, "Ransom: %d"),
-        (MT_STR_TRADE_ROW, "%s — stock %u — £%u each"),
-        (
-            MT_STR_TRADE_CONFIRM,
-            "Confirm: sell %u %s for £%u? Press the same Sell button again.",
-        ),
-        (
-            MT_STR_TRADE_WAITING,
-            "Waiting for the host to confirm the sale…",
-        ),
-        (
-            MT_STR_TRADE_SOLD,
-            "Sold %u %s for £%u. Remaining stock: %u.",
-        ),
-        (MT_STR_TRADE_REJECTED, "Sale rejected: %s."),
-        (
-            MT_STR_TRADE_DISABLED,
-            "Trading is disabled in Gameplay settings.",
-        ),
-        (MT_STR_TRADE_REASON_HOST, "only the host may trade"),
-        (
-            MT_STR_TRADE_REASON_LOCATION,
-            "trading is only available in Sherwood",
-        ),
-        (
-            MT_STR_TRADE_REASON_ITEM,
-            "that production sector is not a sellable item",
-        ),
-        (MT_STR_TRADE_REASON_STOCK, "only %u items remain"),
-        (
-            MT_STR_TRADE_REASON_OVERFLOW,
-            "the ransom total cannot hold the proceeds",
-        ),
-        (MT_STR_DB_S06, "You collected %u gold pieces."),
-        (MT_STR_DB_S07, "%u of %u enemy soldiers still alive."),
-        (MT_STR_DB_S08, "%u new gang members."),
-        (MT_STR_DB_S09, "joined the gang."),
-        (MT_STR_DB_S10, "%u peasants were killed."),
-        (MT_STR_DB_S11, "Score: %u"),
-        (MT_STR_DB_S13, "Mission length: %s"),
-        (MT_STR_DB_S17, "%u allied soldiers were killed."),
-        (
-            MT_STR_DB_S18,
-            "Found %u gold pieces (bonuses: %u, soldiers: %u).",
-        ),
-        (MT_STR_DB_BONUS_ARROW, "arrows"),
-        (MT_STR_DB_BONUS_APPLE, "apples"),
-        (MT_STR_DB_BONUS_WASP_NEST, "wasp nests"),
-        (MT_STR_DB_BONUS_LAMB_LEGG, "lamb legs"),
-        (MT_STR_DB_BONUS_PLANTS, "plants"),
-        (MT_STR_DB_BONUS_STONE, "stones"),
-        (MT_STR_DB_BONUS_ALE, "ales"),
-        (MT_STR_DB_BONUS_NET, "nets"),
-        (MT_STR_DB_BONUS_PURSE, "purses"),
-        (MT_STR_DB_MERRYMAN, "merryman"),
-        (MT_STR_DB_MERRYMEN, "merrymen"),
-        (MT_STR_PRESERVED_LIFES, "Preserved lives"),
-        // `MT_STR_RANSOM` in the stock table is a format string
-        // ("Ransom: %d") — the campaign-map status bar plugs the current
-        // ransom amount into it via `printf`-style substitution.  Keep the
-        // literal `%d` placeholder so call sites can substitute regardless
-        // of whether the localized table loaded.
-        (MT_STR_RANSOM, "Ransom: %d"),
-        (MT_STR_AMULETS, "Amulets: %d"),
-        // The blazon-purchase modal message is assembled as:
-        //   STR_RANSOM + "\n" + STR_BLAZON_PRICE + "\n" + MSG_BUY_BLAZON
-        // Keep the `%d` placeholder on the price format string so call
-        // sites substitute with `replacen`.
-        (MT_MSG_BUY_BLAZON, "Do you want to buy a blazon?"),
-        (MT_STR_BLAZON_PRICE, "Blazon price: %d"),
-        (MT_STR_PLAYING_TIME, "Play time"),
-        (MT_WORD_NOTHING, "nothing"),
-        (MT_INFOBULLE_BUTTON_YES, "Yes"),
-        (MT_INFOBULLE_BUTTON_NO, "No"),
-        (MT_INFOBULLE_BUTTON_OK, "OK"),
-        (MT_INFOBULLE_BUTTON_CANCEL, "Cancel"),
-        (MT_INFOBULLE_BUTTON_RECOMMENCER, "Restart mission"),
-        (MT_INFOBULLE_BUTTON_DIALOG_CONTINUE, "Continue"),
-        (MT_INFOBULLE_BUTTON_DIALOG_ABANDON, "Cancel"),
-        (MT_INFOBULLE_BUTTON_PLAY_MISSION, "Play mission"),
-        (
-            MT_INFOBULLE_BUTTON_FARMERS_TO_BLAZON,
-            "Trade merry men for blazons",
-        ),
-        (
-            MT_INFOBULLE_BUTTON_MONEY_TO_BLAZON,
-            "Buy blazons with money",
-        ),
-        (
-            MT_INFOBULLE_BUTTON_MISSION_TO_BLAZON,
-            "Play another mission for blazons",
-        ),
-        (MT_INFOBULLE_QG_NEEDED_PC, "Required character"),
-        (MT_INFOBULLE_QG_NEEDED_ACTION, "Required action"),
-        (MT_INFOBULLE_QG_OTHER_PC, "Optional character"),
-        (MT_INFOBULLE_SAVEQA, "Record quick action"),
-        (MT_INFOBULLE_LAUNCHQA_ALL, "Launch all quick actions"),
-        (MT_INFOBULLE_VIEWCONE, "Show view cone"),
-        (MT_INFOBULLE_CROUCH, "Crouch down"),
-        (MT_INFOBULLE_STANDUP, "Stand up"),
-        (MT_INFOBULLE_ACTION_BOW, "Bow"),
-        (MT_INFOBULLE_ACTION_PURSE, "Purse"),
-        (MT_INFOBULLE_ACTION_NET, "Net"),
-        (MT_INFOBULLE_ACTION_APPLE, "Apple"),
-        (MT_INFOBULLE_ACTION_STONE, "Stone"),
-        (MT_INFOBULLE_ACTION_FIST, "Fist"),
-        (MT_INFOBULLE_ACTION_STRANGLER, "Strangle"),
-        (MT_INFOBULLE_ACTION_HERBS, "Herbs"),
-        (MT_INFOBULLE_ACTION_GIGOT, "Leg of lamb"),
-        (MT_INFOBULLE_ACTION_BEER, "Ale"),
-        (MT_INFOBULLE_ACTION_SHIELD, "Shield"),
-        (MT_INFOBULLE_ACTION_WASP, "Wasp nest"),
-        (MT_INFOBULLE_ACTION_SPY, "Listen"),
-        (MT_INFOBULLE_ACTION_COURTE_ECHELLE, "Help to climb"),
-        (MT_INFOBULLE_ACTION_SIMULER_MENDIANT, "Play the beggar"),
-        (MT_INFOBULLE_ACTION_SIFFLER, "Whistle"),
-        (MT_INFOBULLE_MISSION_ABANDON, "Abandon mission"),
-        (MT_INFOBULLE_MISSION_FINISH, "Finish mission"),
-        (MT_INFOBULLE_QG_BEGIN_MISSION, "Begin mission"),
-        (MT_INFOBULLE_QG_BACKTOMAP, "Return to the campaign map"),
-        // Scancode → key-name fallbacks for the shortcut rebind list.  These
-        // mirror the names in `1033/Data/Interface/Start.sxt` so the rebind
-        // screen stays readable when the localised `.sxt` is missing.
-        (MT_STR_KEY_UP, "Up"),
-        (MT_STR_KEY_DOWN, "Down"),
-        (MT_STR_KEY_LEFT, "Left"),
-        (MT_STR_KEY_RIGHT, "Right"),
-        (MT_STR_KEY_SHIFT_LEFT, "Left Shift"),
-        (MT_STR_KEY_SHIFT_RIGHT, "Right Shift"),
-        (MT_STR_KEY_CAPS_LOCK, "Caps Lock"),
-        (MT_STR_KEY_CTRL_LEFT, "Left Ctrl"),
-        (MT_STR_KEY_CTRL_RIGHT, "Right Ctrl"),
-        (MT_STR_KEY_SPACE, "Space"),
-        (MT_STR_KEY_BACKSPACE, "Backspace"),
-        (MT_STR_KEY_ESC, "Escape"),
-        (MT_STR_KEY_F1, "F1"),
-        (MT_STR_KEY_F2, "F2"),
-        (MT_STR_KEY_F3, "F3"),
-        (MT_STR_KEY_F4, "F4"),
-        (MT_STR_KEY_F5, "F5"),
-        (MT_STR_KEY_F6, "F6"),
-        (MT_STR_KEY_F7, "F7"),
-        (MT_STR_KEY_F8, "F8"),
-        (MT_STR_KEY_F9, "F9"),
-        (MT_STR_KEY_F10, "F10"),
-        (MT_STR_KEY_F11, "F11"),
-        (MT_STR_KEY_F12, "F12"),
-        (MT_STR_KEY_RETURN, "Return"),
-        (MT_STR_KEY_NUM_LOCK, "Num Lock"),
-        (MT_STR_KEY_NUM_SLASH, "Keypad /"),
-        (MT_STR_KEY_NUM_STAR, "Keypad *"),
-        (MT_STR_KEY_NUM_DASH, "Keypad -"),
-        (MT_STR_KEY_NUM_CROSS, "Keypad +"),
-        (MT_STR_KEY_NUM_RETURN, "Keypad Enter"),
-        (MT_STR_KEY_NUM_7, "Keypad 7"),
-        (MT_STR_KEY_NUM_8, "Keypad 8"),
-        (MT_STR_KEY_NUM_9, "Keypad 9"),
-        (MT_STR_KEY_NUM_4, "Keypad 4"),
-        (MT_STR_KEY_NUM_5, "Keypad 5"),
-        (MT_STR_KEY_NUM_6, "Keypad 6"),
-        (MT_STR_KEY_NUM_1, "Keypad 1"),
-        (MT_STR_KEY_NUM_2, "Keypad 2"),
-        (MT_STR_KEY_NUM_3, "Keypad 3"),
-        (MT_STR_KEY_NUM_0, "Keypad 0"),
-        (MT_STR_KEY_NUM_SUP, "Keypad ."),
-        (MT_STR_KEY_INS, "Insert"),
-        (MT_STR_KEY_SUP, "Delete"),
-        (MT_STR_KEY_ALT, "Left Alt"),
-        (MT_STR_KEY_ALT_GR, "Right Alt"),
-        (MT_STR_KEY_TAB, "Tab"),
-        (MT_STR_KEY_PAGE_UP, "Page Up"),
-        (MT_STR_KEY_PAGE_DOWN, "Page Down"),
-        (MT_STR_KEY_HOME, "Home"),
-        (MT_STR_KEY_END, "End"),
-        (MT_STR_KEY_PRINT, "Print Screen"),
-        (MT_STR_KEY_SCROLL_LOCK, "Scroll Lock"),
-        (MT_STR_KEY_PAUSE, "Pause"),
-        (MT_STR_KEY_NONE, "<None>"),
-        (MT_STR_KEY_RESERVED, "<Reserved>"),
-    ];
-    ENGLISH.iter().copied().collect()
-}
+/// Hardcoded English strings matching `1033/Data/Interface/Start.sxt` from
+/// the international release.  Used when no `.sxt` file is available so the
+/// Rust port is still usable on developer machines without the localised
+/// text bundle.  Keys are unique (`default_fallback_table_has_unique_keys`),
+/// so the lookup map holds exactly these pairs.
+static DEFAULT_FALLBACKS: &[(usize, &str)] = &[
+    (MT_BTN_START_GAME, "Start Game"),
+    (MT_BTN_SELECT_PLAYER, "Select Player"),
+    (MT_BTN_SHOW_MOVIES, "Show Movies"),
+    (MT_BTN_SHOW_CREDITS, "Show Credits"),
+    (MT_BTN_SELECT, "Select"),
+    (MT_BTN_NEW, "New"),
+    (MT_BTN_RENAME, "Rename"),
+    (MT_BTN_DELETE, "Delete"),
+    (MT_BTN_CONTINUE, "Continue"),
+    (MT_BTN_LOAD, "Load"),
+    (MT_BTN_SAVE, "Save"),
+    (MT_BTN_OPTIONS, "Options"),
+    (MT_BTN_RESTART, "Restart"),
+    (MT_BTN_QUIT_GAME, "Quit Game"),
+    (MT_BTN_OK, "OK"),
+    (MT_BTN_CANCEL, "Cancel"),
+    (MT_BTN_BACK, "Back"),
+    (MT_BTN_GRAPHICS, "Graphics"),
+    (MT_BTN_SOUNDS, "Sounds"),
+    (MT_BTN_SHORTCUTS, "Shortcuts"),
+    (MT_BTN_DEFAULT_1, "Default 1"),
+    (MT_BTN_DEFAULT_2, "Default 2"),
+    (MT_BTN_USER_DEFINED, "User Defined"),
+    (MT_TTL_MISSION_WON, "Mission Won"),
+    (MT_TTL_MISSION_LOST, "Mission Lost"),
+    (MT_TTL_MISSION_ABORTED, "Mission Aborted"),
+    (MT_TTL_OPTIONS, "Options"),
+    (MT_TTL_GRAPHICS, "Graphics"),
+    (MT_TTL_SOUNDS, "Sounds"),
+    (MT_MSG_REALLY_QUIT, "Do you really want to quit the game?"),
+    (
+        MT_MSG_STRATEGICAL_MISSION_WON,
+        "You have won the strategical mission.",
+    ),
+    (
+        MT_MSG_STRATEGICAL_MISSION_LOST,
+        "You have lost the strategical mission.",
+    ),
+    (
+        MT_MSG_REALLY_DELETE_SAVEGAME,
+        "Do you really want to delete this saved game?",
+    ),
+    (
+        MT_MSG_REALLY_OVERWRITE_SAVEGAME,
+        "Do you really want to overwrite this saved game?",
+    ),
+    (
+        MT_MSG_REALLY_DELETE_PLAYER,
+        "Do you really want to delete this player?",
+    ),
+    (
+        MT_MSG_REALLY_ABORT_MISSION,
+        "Do you really want to abort the mission?",
+    ),
+    (
+        MT_MSG_REALLY_CONVERT_PEASANTS,
+        "Do you really want to convert your peasants into blazons?",
+    ),
+    (
+        MT_MSG_REALLY_START_MISSION,
+        "Do you really want to start the mission?",
+    ),
+    (
+        MT_MSG_REALLY_RETURN_TO_MAP,
+        "Do you really want to return to the campaign map?",
+    ),
+    (
+        MT_MSG_REALLY_LOAD_QUICKSAVE,
+        "Do you really want to load this quicksave?",
+    ),
+    (MT_MSG_RETURN_TO_WINDOWS, "Return to Windows?"),
+    (MT_MSG_GAME_SAVED, "Game saved."),
+    (MT_MSG_GAME_LOADED, "Game loaded."),
+    // Main-menu profile info block fallbacks.
+    (MT_STR_DIFFICULTY_EASY, "Easy"),
+    (MT_STR_DIFFICULTY_MEDIUM, "Medium"),
+    (MT_STR_DIFFICULTY_HARD, "Hard"),
+    // `MT_STR_MONEY` in the stock table is a format string
+    // ("Money: £%i") — the profile-info widget plugs the ransom into it
+    // via `printf`-style substitution.  Keep the `%i` placeholder so
+    // the call site substitutes the same way regardless of whether the
+    // localized table loaded.
+    (MT_STR_MONEY, "Money: £%i"),
+    (MT_STR_CARNAGE_FACTOR, "Spared lives"),
+    (MT_STR_PROGRESSION, "Progress"),
+    (MT_STR_DIFFICULTY_LEVEL, "Difficulty level"),
+    (MT_STR_PROCESSOR, "Processor"),
+    (MT_STR_MEMORY, "Memory"),
+    (MT_STR_MEGA_BYTES, "MB"),
+    (MT_STR_MEGA_HERZS, "MHz"),
+    (MT_STR_RES, "Resolution"),
+    (MT_STR_RES_LOW, "640 x 480"),
+    (MT_STR_RES_MEDIUM, "800 x 600"),
+    (MT_STR_RES_HIGH, "1024 x 768"),
+    (MT_STR_SPECIAL_FX, "Special Effects"),
+    (MT_STR_ALPHA_VISION_FIELD, "Alpha Vision Field"),
+    (MT_STR_TRANSPARENT_SHADOWS, "Transparent Shadows"),
+    (MT_STR_EFFECT_ANIMATIONS, "Effect Animations"),
+    (MT_STR_BCKGND_ANIMATIONS, "Background Animations"),
+    (MT_STR_SOUND_STEREO, "Stereo"),
+    (MT_STR_SOUND_EAX, "EAX 3D"),
+    (MT_STR_SOUND_3D, "3D"),
+    (MT_STR_SOUND_RES_HIGH, "High Resolution"),
+    (MT_STR_SOUND_RES_LOW, "Low Resolution"),
+    (MT_STR_SOUND_VOL_FX, "Sound Effects Volume"),
+    (MT_STR_SOUND_VOL_DIALOGUE, "Dialogue Volume"),
+    (MT_STR_SOUND_VOL_MUSIC, "Music Volume"),
+    (MT_STR_SOUND_VOL_COMMENT, "Comment Volume"),
+    (MT_STR_SOUND_COMMENT_FREQUENCY, "Comment Frequency"),
+    (MT_STR_SHORT_BRIEFING_TITLE_PRIMARY, "Primary objectives:"),
+    (
+        MT_STR_SHORT_BRIEFING_TITLE_SECONDARY,
+        "Secondary objectives:",
+    ),
+    (MT_STR_SHORT_BRIEFING_TITLE_SHERWOOD, "Sherwood objectives:"),
+    // Sherwood debriefing + campaign-map status bar fallbacks.
+    (MT_STR_SCORE, "Score"),
+    // Mission debriefing stat-panel format strings.  The real game text
+    // table carries printf-style wide-char templates here (`%lu`/`%ls`);
+    // fall back to `%u`/`%s` English when the resource table is missing
+    // so the call sites can substitute the same way either way.
+    (MT_STR_DB_S01, "%u trained in hand-to-hand combat"),
+    (MT_STR_DB_S02, "%u trained in archery"),
+    (MT_STR_DB_S03, "%u healed"),
+    (MT_STR_DB_S04, "(max reached)"),
+    (MT_STR_DB_S05, "Sherwood report:"),
+    (MT_STR_DB_S12, "Score: %u"),
+    (MT_STR_DB_S14, "Preserved lives: %u"),
+    (MT_STR_DB_S16, "Play time: %s"),
+    (MT_STR_DB_C01, "with"),
+    (MT_STR_DB_C02, "led by %s"),
+    (
+        MT_STR_PRODUCTION_FORECAST_SELECTED,
+        "Next production — %s (%s cycle):",
+    ),
+    (
+        MT_STR_PRODUCTION_FORECAST_RATE,
+        "Production rate (%s; select a mission for exact cycle totals):",
+    ),
+    (
+        MT_STR_PRODUCTION_FORECAST_LINE,
+        "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
+    ),
+    (MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist"),
+    (
+        MT_STR_TRADING_HINT,
+        "Trading available: press T or use Sherwood trading in the pause menu.",
+    ),
+    (MT_TTL_SHERWOOD_TRADING, "Sherwood trading"),
+    (MT_BTN_SELL_ONE, "Sell 1"),
+    (MT_BTN_SELL_FIVE, "Sell 5"),
+    (MT_STR_TRADE_RANSOM, "Ransom: %d"),
+    (MT_STR_TRADE_ROW, "%s — stock %u — £%u each"),
+    (
+        MT_STR_TRADE_CONFIRM,
+        "Confirm: sell %u %s for £%u? Press the same Sell button again.",
+    ),
+    (
+        MT_STR_TRADE_WAITING,
+        "Waiting for the host to confirm the sale…",
+    ),
+    (
+        MT_STR_TRADE_SOLD,
+        "Sold %u %s for £%u. Remaining stock: %u.",
+    ),
+    (MT_STR_TRADE_REJECTED, "Sale rejected: %s."),
+    (
+        MT_STR_TRADE_DISABLED,
+        "Trading is disabled in Gameplay settings.",
+    ),
+    (MT_STR_TRADE_REASON_HOST, "only the host may trade"),
+    (
+        MT_STR_TRADE_REASON_LOCATION,
+        "trading is only available in Sherwood",
+    ),
+    (
+        MT_STR_TRADE_REASON_ITEM,
+        "that production sector is not a sellable item",
+    ),
+    (MT_STR_TRADE_REASON_STOCK, "only %u items remain"),
+    (
+        MT_STR_TRADE_REASON_OVERFLOW,
+        "the ransom total cannot hold the proceeds",
+    ),
+    (MT_STR_DB_S06, "You collected %u gold pieces."),
+    (MT_STR_DB_S07, "%u of %u enemy soldiers still alive."),
+    (MT_STR_DB_S08, "%u new gang members."),
+    (MT_STR_DB_S09, "joined the gang."),
+    (MT_STR_DB_S10, "%u peasants were killed."),
+    (MT_STR_DB_S11, "Score: %u"),
+    (MT_STR_DB_S13, "Mission length: %s"),
+    (MT_STR_DB_S17, "%u allied soldiers were killed."),
+    (
+        MT_STR_DB_S18,
+        "Found %u gold pieces (bonuses: %u, soldiers: %u).",
+    ),
+    (MT_STR_DB_BONUS_ARROW, "arrows"),
+    (MT_STR_DB_BONUS_APPLE, "apples"),
+    (MT_STR_DB_BONUS_WASP_NEST, "wasp nests"),
+    (MT_STR_DB_BONUS_LAMB_LEGG, "lamb legs"),
+    (MT_STR_DB_BONUS_PLANTS, "plants"),
+    (MT_STR_DB_BONUS_STONE, "stones"),
+    (MT_STR_DB_BONUS_ALE, "ales"),
+    (MT_STR_DB_BONUS_NET, "nets"),
+    (MT_STR_DB_BONUS_PURSE, "purses"),
+    (MT_STR_DB_MERRYMAN, "merryman"),
+    (MT_STR_DB_MERRYMEN, "merrymen"),
+    (MT_STR_PRESERVED_LIFES, "Preserved lives"),
+    // `MT_STR_RANSOM` in the stock table is a format string
+    // ("Ransom: %d") — the campaign-map status bar plugs the current
+    // ransom amount into it via `printf`-style substitution.  Keep the
+    // literal `%d` placeholder so call sites can substitute regardless
+    // of whether the localized table loaded.
+    (MT_STR_RANSOM, "Ransom: %d"),
+    (MT_STR_AMULETS, "Amulets: %d"),
+    // The blazon-purchase modal message is assembled as:
+    //   STR_RANSOM + "\n" + STR_BLAZON_PRICE + "\n" + MSG_BUY_BLAZON
+    // Keep the `%d` placeholder on the price format string so call
+    // sites substitute with `replacen`.
+    (MT_MSG_BUY_BLAZON, "Do you want to buy a blazon?"),
+    (MT_STR_BLAZON_PRICE, "Blazon price: %d"),
+    (MT_STR_PLAYING_TIME, "Play time"),
+    (MT_WORD_NOTHING, "nothing"),
+    (MT_INFOBULLE_BUTTON_YES, "Yes"),
+    (MT_INFOBULLE_BUTTON_NO, "No"),
+    (MT_INFOBULLE_BUTTON_OK, "OK"),
+    (MT_INFOBULLE_BUTTON_CANCEL, "Cancel"),
+    (MT_INFOBULLE_BUTTON_RECOMMENCER, "Restart mission"),
+    (MT_INFOBULLE_BUTTON_DIALOG_CONTINUE, "Continue"),
+    (MT_INFOBULLE_BUTTON_DIALOG_ABANDON, "Cancel"),
+    (MT_INFOBULLE_BUTTON_PLAY_MISSION, "Play mission"),
+    (
+        MT_INFOBULLE_BUTTON_FARMERS_TO_BLAZON,
+        "Trade merry men for blazons",
+    ),
+    (
+        MT_INFOBULLE_BUTTON_MONEY_TO_BLAZON,
+        "Buy blazons with money",
+    ),
+    (
+        MT_INFOBULLE_BUTTON_MISSION_TO_BLAZON,
+        "Play another mission for blazons",
+    ),
+    (MT_INFOBULLE_QG_NEEDED_PC, "Required character"),
+    (MT_INFOBULLE_QG_NEEDED_ACTION, "Required action"),
+    (MT_INFOBULLE_QG_OTHER_PC, "Optional character"),
+    (MT_INFOBULLE_SAVEQA, "Record quick action"),
+    (MT_INFOBULLE_LAUNCHQA_ALL, "Launch all quick actions"),
+    (MT_INFOBULLE_VIEWCONE, "Show view cone"),
+    (MT_INFOBULLE_CROUCH, "Crouch down"),
+    (MT_INFOBULLE_STANDUP, "Stand up"),
+    (MT_INFOBULLE_ACTION_BOW, "Bow"),
+    (MT_INFOBULLE_ACTION_PURSE, "Purse"),
+    (MT_INFOBULLE_ACTION_NET, "Net"),
+    (MT_INFOBULLE_ACTION_APPLE, "Apple"),
+    (MT_INFOBULLE_ACTION_STONE, "Stone"),
+    (MT_INFOBULLE_ACTION_FIST, "Fist"),
+    (MT_INFOBULLE_ACTION_STRANGLER, "Strangle"),
+    (MT_INFOBULLE_ACTION_HERBS, "Herbs"),
+    (MT_INFOBULLE_ACTION_GIGOT, "Leg of lamb"),
+    (MT_INFOBULLE_ACTION_BEER, "Ale"),
+    (MT_INFOBULLE_ACTION_SHIELD, "Shield"),
+    (MT_INFOBULLE_ACTION_WASP, "Wasp nest"),
+    (MT_INFOBULLE_ACTION_SPY, "Listen"),
+    (MT_INFOBULLE_ACTION_COURTE_ECHELLE, "Help to climb"),
+    (MT_INFOBULLE_ACTION_SIMULER_MENDIANT, "Play the beggar"),
+    (MT_INFOBULLE_ACTION_SIFFLER, "Whistle"),
+    (MT_INFOBULLE_MISSION_ABANDON, "Abandon mission"),
+    (MT_INFOBULLE_MISSION_FINISH, "Finish mission"),
+    (MT_INFOBULLE_QG_BEGIN_MISSION, "Begin mission"),
+    (MT_INFOBULLE_QG_BACKTOMAP, "Return to the campaign map"),
+    // Scancode → key-name fallbacks for the shortcut rebind list.  These
+    // mirror the names in `1033/Data/Interface/Start.sxt` so the rebind
+    // screen stays readable when the localised `.sxt` is missing.
+    (MT_STR_KEY_UP, "Up"),
+    (MT_STR_KEY_DOWN, "Down"),
+    (MT_STR_KEY_LEFT, "Left"),
+    (MT_STR_KEY_RIGHT, "Right"),
+    (MT_STR_KEY_SHIFT_LEFT, "Left Shift"),
+    (MT_STR_KEY_SHIFT_RIGHT, "Right Shift"),
+    (MT_STR_KEY_CAPS_LOCK, "Caps Lock"),
+    (MT_STR_KEY_CTRL_LEFT, "Left Ctrl"),
+    (MT_STR_KEY_CTRL_RIGHT, "Right Ctrl"),
+    (MT_STR_KEY_SPACE, "Space"),
+    (MT_STR_KEY_BACKSPACE, "Backspace"),
+    (MT_STR_KEY_ESC, "Escape"),
+    (MT_STR_KEY_F1, "F1"),
+    (MT_STR_KEY_F2, "F2"),
+    (MT_STR_KEY_F3, "F3"),
+    (MT_STR_KEY_F4, "F4"),
+    (MT_STR_KEY_F5, "F5"),
+    (MT_STR_KEY_F6, "F6"),
+    (MT_STR_KEY_F7, "F7"),
+    (MT_STR_KEY_F8, "F8"),
+    (MT_STR_KEY_F9, "F9"),
+    (MT_STR_KEY_F10, "F10"),
+    (MT_STR_KEY_F11, "F11"),
+    (MT_STR_KEY_F12, "F12"),
+    (MT_STR_KEY_RETURN, "Return"),
+    (MT_STR_KEY_NUM_LOCK, "Num Lock"),
+    (MT_STR_KEY_NUM_SLASH, "Keypad /"),
+    (MT_STR_KEY_NUM_STAR, "Keypad *"),
+    (MT_STR_KEY_NUM_DASH, "Keypad -"),
+    (MT_STR_KEY_NUM_CROSS, "Keypad +"),
+    (MT_STR_KEY_NUM_RETURN, "Keypad Enter"),
+    (MT_STR_KEY_NUM_7, "Keypad 7"),
+    (MT_STR_KEY_NUM_8, "Keypad 8"),
+    (MT_STR_KEY_NUM_9, "Keypad 9"),
+    (MT_STR_KEY_NUM_4, "Keypad 4"),
+    (MT_STR_KEY_NUM_5, "Keypad 5"),
+    (MT_STR_KEY_NUM_6, "Keypad 6"),
+    (MT_STR_KEY_NUM_1, "Keypad 1"),
+    (MT_STR_KEY_NUM_2, "Keypad 2"),
+    (MT_STR_KEY_NUM_3, "Keypad 3"),
+    (MT_STR_KEY_NUM_0, "Keypad 0"),
+    (MT_STR_KEY_NUM_SUP, "Keypad ."),
+    (MT_STR_KEY_INS, "Insert"),
+    (MT_STR_KEY_SUP, "Delete"),
+    (MT_STR_KEY_ALT, "Left Alt"),
+    (MT_STR_KEY_ALT_GR, "Right Alt"),
+    (MT_STR_KEY_TAB, "Tab"),
+    (MT_STR_KEY_PAGE_UP, "Page Up"),
+    (MT_STR_KEY_PAGE_DOWN, "Page Down"),
+    (MT_STR_KEY_HOME, "Home"),
+    (MT_STR_KEY_END, "End"),
+    (MT_STR_KEY_PRINT, "Print Screen"),
+    (MT_STR_KEY_SCROLL_LOCK, "Scroll Lock"),
+    (MT_STR_KEY_PAUSE, "Pause"),
+    (MT_STR_KEY_NONE, "<None>"),
+    (MT_STR_KEY_RESERVED, "<Reserved>"),
+];
 
 fn port_fallback(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -2241,6 +2239,24 @@ mod tests {
         assert_eq!(text.get(MT_BTN_OK), "OK");
         assert_eq!(text.get(MT_BTN_CONTINUE), "Continue");
         assert_eq!(text.get(MT_TTL_MISSION_WON), "Mission Won");
+    }
+
+    #[test]
+    fn default_fallback_table_has_unique_keys() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, _) in DEFAULT_FALLBACKS {
+            assert!(seen.insert(*key), "duplicate fallback key {key}");
+        }
+        let map = default_fallbacks();
+        assert_eq!(map.len(), DEFAULT_FALLBACKS.len());
+        for (key, text) in DEFAULT_FALLBACKS {
+            assert_eq!(map.get(key), Some(text));
+        }
+        assert_eq!(DEFAULT_FALLBACKS.len(), 203);
+        assert_eq!(map.get(&MT_BTN_START_GAME), Some(&"Start Game"));
+        assert_eq!(map.get(&MT_BTN_SHOW_CREDITS), Some(&"Show Credits"));
+        assert_eq!(map.get(&MT_STR_KEY_PAUSE), Some(&"Pause"));
+        assert_eq!(map.get(&MT_STR_KEY_RESERVED), Some(&"<Reserved>"));
     }
 
     #[test]
