@@ -883,7 +883,7 @@ fn convert_npc(
     // The raw pointer echo inside LegacyNpcView is ABI residue;
     // LegacyNpcPayload::mobile_target is the authoritative pointer fixup.
     let follow_target = entities.resolve_element(saved.mobile_target)?;
-    let eye_status = validate_npc_view(&saved.view, creation_order)?;
+    let view_state = convert_npc_view(&saved.view, follow_target, creation_order, &runtime.ai)?;
     let initial_position_sector = sector(
         saved.initial_position.sector.0,
         topology,
@@ -917,7 +917,6 @@ fn convert_npc(
         initial_view_direction.x * crate::position_interface::ASPECT_RATIO,
         initial_view_direction.y,
     ) as u16;
-    let view = &saved.view;
     Ok(NpcData {
         life_points: saved.life,
         ai: AiActorData {
@@ -943,52 +942,23 @@ fn convert_npc(
             initial_position_sector,
             initial_position_level: saved.initial_position.level,
             initial_view_direction,
-            eye_status,
-            view_transition: view.transitioning,
-            view_alpha_start: view.alpha,
-            view_half_angle_range: view.half_angle,
-            view_angle_iterator: view.angle_iterator,
-            view_angle_iterator_step: view.angle_iterator_step,
-            view_angle_step: view.angle_step,
-            view_angle: view.angle,
-            half_aperture: view.half_aperture,
-            real_half_aperture: view.real_half_aperture,
-            view_half_aperture_cosine: view.half_aperture_cosine,
-            view_future_half_aperture: view.future_half_aperture,
-            view_half_aperture_step: view.half_aperture_step,
-            view_half_aperture_changes: view.half_aperture_changes,
-            view_crazy_angle_iterator: view.crazy_iterator,
-            view_crazy_angle_iterator_step: view.crazy_iterator_step,
-            view_crazy_color_iterator: view.color,
-            view_crazy_half_angle_range: view.crazy_half_aperture,
-            view_direction: [view.direction.x, view.direction.y],
-            view_left_side: [view.left.x, view.left.y],
-            view_right_side: [view.right.x, view.right.y],
-            stare_point: GroundPoint::new(view.stare.x, view.stare.y),
-            follow_target,
-            view_radius_goal: view.radius_goal,
-            view_radius_base: view.radius,
-            view_radius_reduction_permil: view.radius_reduction,
-            view_radius_step: view.radius_step,
-            view_longrange_radius_factor: view.long_range,
-            view_radius: view.real_radius,
-            drunken_cone_iterators: view.drunkenness,
-            view_sniper: view.sniper,
-            view_lean_out: view.leaning,
             ai_brain,
-            // Preserve mission-initialized NPC state outside this save
+            // View members come from `convert_npc_view`; everything else is
+            // the runtime's mission-initialized NPC state outside this save
             // section's ownership (e.g. display/ladder/alerted bookkeeping).
-            ..runtime.ai.clone()
+            ..view_state
         },
     })
 }
 
-/// Validate the serialized view cone and convert its eye status; the other view
-/// members are copied verbatim by [`convert_npc`].
-fn validate_npc_view(
+/// Validate the serialized view cone and return `runtime` with every view
+/// member replaced by its saved value.
+fn convert_npc_view(
     saved: &LegacyNpcView,
+    follow_target: Option<EntityId>,
     creation_order: u32,
-) -> Result<EyeStatus, LegacyAdoptError> {
+    runtime: &AiActorData,
+) -> Result<AiActorData, LegacyAdoptError> {
     let site = element_site(creation_order);
     site.finite("view.half_angle", saved.half_angle)?;
     site.finite("view.angle_iterator", saved.angle_iterator)?;
@@ -1012,7 +982,41 @@ fn validate_npc_view(
         site.finite("view.drunkenness", value)?;
     }
 
-    eye_status(saved.status, creation_order)
+    Ok(AiActorData {
+        eye_status: eye_status(saved.status, creation_order)?,
+        view_transition: saved.transitioning,
+        view_alpha_start: saved.alpha,
+        view_half_angle_range: saved.half_angle,
+        view_angle_iterator: saved.angle_iterator,
+        view_angle_iterator_step: saved.angle_iterator_step,
+        view_angle_step: saved.angle_step,
+        view_angle: saved.angle,
+        half_aperture: saved.half_aperture,
+        real_half_aperture: saved.real_half_aperture,
+        view_half_aperture_cosine: saved.half_aperture_cosine,
+        view_future_half_aperture: saved.future_half_aperture,
+        view_half_aperture_step: saved.half_aperture_step,
+        view_half_aperture_changes: saved.half_aperture_changes,
+        view_crazy_angle_iterator: saved.crazy_iterator,
+        view_crazy_angle_iterator_step: saved.crazy_iterator_step,
+        view_crazy_color_iterator: saved.color,
+        view_crazy_half_angle_range: saved.crazy_half_aperture,
+        view_direction: [saved.direction.x, saved.direction.y],
+        view_left_side: [saved.left.x, saved.left.y],
+        view_right_side: [saved.right.x, saved.right.y],
+        stare_point: GroundPoint::new(saved.stare.x, saved.stare.y),
+        follow_target,
+        view_radius_goal: saved.radius_goal,
+        view_radius_base: saved.radius,
+        view_radius_reduction_permil: saved.radius_reduction,
+        view_radius_step: saved.radius_step,
+        view_longrange_radius_factor: saved.long_range,
+        view_radius: saved.real_radius,
+        drunken_cone_iterators: saved.drunkenness,
+        view_sniper: saved.sniper,
+        view_lean_out: saved.leaning,
+        ..runtime.clone()
+    })
 }
 
 fn convert_local_ai(
@@ -3218,25 +3222,26 @@ mod tests {
 
     #[test]
     fn npc_view_adoption_preserves_complete_serialized_continuation() {
-        let converted = convert_npc_view(&sample_npc_view(), None, 31).unwrap();
+        let converted =
+            convert_npc_view(&sample_npc_view(), None, 31, &AiActorData::default()).unwrap();
         assert!(
-            converted.leaning,
+            converted.view_lean_out,
             "legacy adoption must preserve serialized bLeanOut independently of posture"
         );
-        assert_eq!(converted.angle_iterator, 0.12);
-        assert_eq!(converted.angle_iterator_step, 0.13);
-        assert_eq!(converted.half_aperture_cosine, 0.23);
-        assert_eq!(converted.future_half_aperture, 0.24);
-        assert_eq!(converted.half_aperture_step, 0.25);
-        assert!(converted.half_aperture_changes);
-        assert_eq!(converted.crazy_angle_iterator, 0.31);
-        assert_eq!(converted.crazy_angle_iterator_step, 0.32);
-        assert_eq!(converted.crazy_color_iterator, 17);
-        assert_eq!(converted.crazy_half_angle_range, 0.33);
-        assert_eq!(converted.left_side, [0.43, 0.44]);
-        assert_eq!(converted.right_side, [0.45, 0.46]);
-        assert_eq!(converted.radius_reduction_permil, 503);
-        assert!(converted.sniper);
+        assert_eq!(converted.view_angle_iterator, 0.12);
+        assert_eq!(converted.view_angle_iterator_step, 0.13);
+        assert_eq!(converted.view_half_aperture_cosine, 0.23);
+        assert_eq!(converted.view_future_half_aperture, 0.24);
+        assert_eq!(converted.view_half_aperture_step, 0.25);
+        assert!(converted.view_half_aperture_changes);
+        assert_eq!(converted.view_crazy_angle_iterator, 0.31);
+        assert_eq!(converted.view_crazy_angle_iterator_step, 0.32);
+        assert_eq!(converted.view_crazy_color_iterator, 17);
+        assert_eq!(converted.view_crazy_half_angle_range, 0.33);
+        assert_eq!(converted.view_left_side, [0.43, 0.44]);
+        assert_eq!(converted.view_right_side, [0.45, 0.46]);
+        assert_eq!(converted.view_radius_reduction_permil, 503);
+        assert!(converted.view_sniper);
     }
 
     #[test]
@@ -3244,7 +3249,7 @@ mod tests {
         let mut view = sample_npc_view();
         view.crazy_iterator_step = f32::NAN;
         assert!(matches!(
-            convert_npc_view(&view, None, 31),
+            convert_npc_view(&view, None, 31, &AiActorData::default()),
             Err(LegacyAdoptError {
                 field: Some(field),
                 kind: AdoptErrorKind::NonFinite { .. },
