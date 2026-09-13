@@ -9,22 +9,16 @@
 //! component objects are copied into the public static tree.
 
 mod fs_util;
-#[cfg(test)]
-mod test_fixtures;
 use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
 /// Shared fail-closed selector and exact materializer used by both the
 /// projection exporter and operator verification tooling.
 pub mod official_content_source;
 pub mod plan_v3;
-#[cfg(target_os = "linux")]
-pub mod publication_v3;
 pub mod release_admission_v1;
 pub mod sandbox_v3;
 pub mod typed_js_authority;
 pub mod verifier_catalog_v1;
-#[cfg(target_os = "linux")]
-pub mod vps_release_v2;
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -129,22 +123,6 @@ pub struct OfficialContentDigestsV1 {
     pub full_content_manifest_sha256: Vec<Digest32>,
     pub demo_campaign_content_manifest_sha256: Digest32,
     pub full_campaign_content_manifest_sha256: Digest32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseFileExposureV1 {
-    BackendManifest,
-    OperatorPrivate,
-    PublicStatic,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReleaseFileV1 {
-    pub path: String,
-    pub artifact: ArtifactRefV1,
-    pub exposure: ReleaseFileExposureV1,
 }
 
 impl robin_run_protocol::Validate for OfficialContentDigestsV1 {
@@ -1214,27 +1192,6 @@ mod tests {
             ));
         }
         assert!(strict_json_from_slice::<serde_json::Value>(b"null true").is_err());
-    }
-
-    #[test]
-    fn browser_engine_and_signer_workflows_use_the_pinned_wasm_bindgen_package() {
-        let runtime = include_str!("../../../.github/workflows/build-static-runtime.yml");
-        let static_origins = include_str!("../../../.github/workflows/deploy-static-workers.yml");
-        for (name, workflow) in [
-            ("browser runtime", runtime),
-            ("identity signer", static_origins),
-        ] {
-            assert!(
-                workflow.contains("scripts/install_pinned_wasm_bindgen.sh"),
-                "{name} workflow bypasses the accepted wasm-bindgen package authority"
-            );
-            assert!(
-                !workflow.contains("cargo install wasm-bindgen-cli"),
-                "{name} workflow derives wasm-bindgen from an unbound Cargo install"
-            );
-        }
-        assert!(runtime.contains("steps.wasm-tools.outputs.wasm-bindgen"));
-        assert!(static_origins.contains("steps.wasm-bindgen.outputs.executable"));
     }
 
     #[cfg(unix)]

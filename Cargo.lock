@@ -6081,10 +6081,7 @@ dependencies = [
  "anyhow",
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "clap",
- "fastrand",
  "goblin",
- "memchr",
- "nix 0.29.0",
  "robin_assets",
  "robin_engine",
  "robin_run_protocol",
@@ -6094,7 +6091,6 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "thiserror 2.0.20",
  "toml",
  "wait-timeout",
 ]
