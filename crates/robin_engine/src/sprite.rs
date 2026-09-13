@@ -333,7 +333,11 @@ impl BBox {
 ///
 /// Composes a [`PositionInterface`] field: every sprite — and therefore
 /// every element — carries its own position/direction/layer/sector/etc.
-#[derive(Debug, Clone)]
+///
+/// Serde (saves) is derived with the resource attachments skipped; they are
+/// rebound from the SpriteScriptor cache after load. Bitcode goes through
+/// [`SpriteSnapshot`] and `StateHash` stays hand-written (see its impl).
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sprite {
     /// Position, direction, layer, sector, material, anti-collision.
     /// Single source of truth for all positional state.
@@ -404,13 +408,17 @@ pub struct Sprite {
     /// old `is_ready()` runtime gate — animation methods either
     /// operate on a real script set or short-circuit naturally on
     /// out-of-bounds conversion lookups.
+    #[serde(skip)]
     pub scripts: std::sync::Arc<Vec<SpriteScript>>,
     /// Alternate animation scripts (only present for blipped characters).
+    #[serde(skip)]
     pub alternate_scripts: Option<std::sync::Arc<Vec<SpriteScript>>>,
     /// Primary action → row conversion table.  See `scripts` for the
     /// non-`Option` rationale.
+    #[serde(skip)]
     pub conversion: std::sync::Arc<Vec<u16>>,
     /// Alternate conversion table (only present for blipped characters).
+    #[serde(skip)]
     pub alternate_conversion: Option<std::sync::Arc<Vec<u16>>>,
 
     /// Name of the loaded frame profile.
@@ -436,6 +444,7 @@ pub struct Sprite {
     /// reset to `None` after the propagation pass.  Excluded from
     /// snapshots and state-hash because it is purely a derived
     /// per-tick quantity.
+    #[serde(skip)]
     pub last_motion_state: Option<MotionState>,
 }
 
@@ -448,33 +457,8 @@ pub(crate) enum ActionDoneTiming {
     Impossible,
 }
 
-#[derive(Serialize)]
-struct SpriteSnapshotRef<'a> {
-    position_iface: &'a PositionInterface,
-    current_row: u16,
-    current_frame: u16,
-    frame_count: u16,
-    flight_frame_countdown: u16,
-    current_width: u16,
-    current_height: u16,
-    last_action: OrderType,
-    last_processed_order_id: u32,
-    masked: bool,
-    use_alternate_profile: bool,
-    action_done_frame: u16,
-    action_done_counter: u16,
-    last_sound_id: u16,
-    splitch_count: u8,
-    behind_display_order_ref: bool,
-    display_order_ref: Option<EntityId>,
-    anims_to_be_replaced: &'a [OrderType],
-    replacing_anims: &'a [OrderType],
-    frame_profile_name: &'a str,
-    profile_cache_key: &'a str,
-    alternate_profile_cache_key: &'a str,
-    center: SpriteAnchor,
-}
-
+/// Native bitcode wire of [`Sprite`]: the serialized fields in declaration
+/// order, without the resource attachments (bitcode's derive cannot skip).
 #[derive(Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct SpriteSnapshot {
     position_iface: PositionInterface,
@@ -504,38 +488,9 @@ pub struct SpriteSnapshot {
 
 impl SpriteSnapshot {
     pub(crate) fn capture(value: &Sprite) -> Self {
-        let Sprite {
-            position_iface: _,
-            current_row: _,
-            current_frame: _,
-            frame_count: _,
-            flight_frame_countdown: _,
-            current_width: _,
-            current_height: _,
-            last_action: _,
-            last_processed_order_id: _,
-            masked: _,
-            use_alternate_profile: _,
-            action_done_frame: _,
-            action_done_counter: _,
-            last_sound_id: _,
-            splitch_count: _,
-            behind_display_order_ref: _,
-            display_order_ref: _,
-            anims_to_be_replaced: _,
-            replacing_anims: _,
-            scripts: _,
-            alternate_scripts: _,
-            conversion: _,
-            alternate_conversion: _,
-            frame_profile_name: _,
-            profile_cache_key: _,
-            alternate_profile_cache_key: _,
-            center: _,
-            last_motion_state: _,
-        } = value;
-        // Existing typed wire adapter, not its binary encoder. Both disk and
+        // Typed wire adapter, not its binary encoder. Both disk and
         // save-marker reconstruction share the same resource-free owner.
+        // `from_snapshot`'s struct literal is the exhaustive field guard.
         <Sprite as crate::bitcode_adapters::NativeBitcode>::to_wire(value)
     }
 
@@ -670,54 +625,11 @@ impl Sprite {
             self.frame_count,
         );
     }
-
-    fn snapshot_ref(&self) -> SpriteSnapshotRef<'_> {
-        SpriteSnapshotRef {
-            position_iface: &self.position_iface,
-            current_row: self.current_row,
-            current_frame: self.current_frame,
-            frame_count: self.frame_count,
-            flight_frame_countdown: self.flight_frame_countdown,
-            current_width: self.current_width,
-            current_height: self.current_height,
-            last_action: self.last_action,
-            last_processed_order_id: self.last_processed_order_id,
-            masked: self.masked,
-            use_alternate_profile: self.use_alternate_profile,
-            action_done_frame: self.action_done_frame,
-            action_done_counter: self.action_done_counter,
-            last_sound_id: self.last_sound_id,
-            splitch_count: self.splitch_count,
-            behind_display_order_ref: self.behind_display_order_ref,
-            display_order_ref: self.display_order_ref,
-            anims_to_be_replaced: &self.anims_to_be_replaced,
-            replacing_anims: &self.replacing_anims,
-            frame_profile_name: &self.frame_profile_name,
-            profile_cache_key: &self.profile_cache_key,
-            alternate_profile_cache_key: &self.alternate_profile_cache_key,
-            center: self.center,
-        }
-    }
 }
 
-impl Serialize for Sprite {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.snapshot_ref().serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for Sprite {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Ok(SpriteSnapshot::deserialize(deserializer)?.into_runtime())
-    }
-}
-
+/// Hand-written rather than derived: `#[derive(StateHash)]` writes a
+/// skipped-field marker for every `#[serde(skip)]` field, while the persisted
+/// hash schema contributes no bytes for the resource attachments.
 impl robin_util::state_hash::StateHash for Sprite {
     fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.position_iface.state_hash(state);
@@ -3229,5 +3141,103 @@ mod tests {
         );
 
         assert_eq!(state, MotionState::Aborted);
+    }
+
+    /// SHA-256 digests of the bitcode bytes, the JSON string and the
+    /// `StateHash` byte stream (native-endian writes, recorded on a
+    /// little-endian host).
+    fn golden_digests(sprite: &Sprite) -> [String; 3] {
+        use robin_util::state_hash::StateHash;
+        use sha2::Digest;
+
+        struct ByteRecorder(Vec<u8>);
+        impl std::hash::Hasher for ByteRecorder {
+            fn finish(&self) -> u64 {
+                unreachable!("state-hash byte recorder is never finished")
+            }
+            fn write(&mut self, bytes: &[u8]) {
+                self.0.extend_from_slice(bytes);
+            }
+        }
+
+        let sha = |bytes: &[u8]| hex::encode(sha2::Sha256::digest(bytes));
+        let mut recorder = ByteRecorder(Vec::new());
+        sprite.state_hash(&mut recorder);
+        [
+            sha(&bitcode::encode(sprite)),
+            sha(serde_json::to_string(sprite).unwrap().as_bytes()),
+            sha(&recorder.0),
+        ]
+    }
+
+    fn golden_sprite_fixture() -> Sprite {
+        let mut position_iface = PositionInterface::new();
+        position_iface.set_map_position(crate::coordinates::MapPoint::new(12.5, -7.25));
+        position_iface.set_map_goal(crate::coordinates::MapPoint::new(40.0, 3.5));
+        position_iface.set_direction_instantly(crate::position_interface::Direction::from_raw(5));
+        position_iface.set_layer(crate::position_interface::Layer::ZERO);
+        position_iface.set_tolerance(2.5, true);
+        Sprite {
+            position_iface,
+            current_row: 7,
+            current_frame: 3,
+            frame_count: 11,
+            flight_frame_countdown: 4,
+            current_width: 64,
+            current_height: 96,
+            last_action: OrderType::WaitingUprightBoredRandom,
+            last_processed_order_id: 1234,
+            masked: true,
+            use_alternate_profile: true,
+            action_done_frame: 5,
+            action_done_counter: 2,
+            last_sound_id: 17,
+            splitch_count: 1,
+            behind_display_order_ref: true,
+            display_order_ref: Some(EntityId::Soldier(crate::entity_id::SoldierId(9))),
+            anims_to_be_replaced: vec![OrderType::WaitingUpright, OrderType::WaitingUprightBored],
+            replacing_anims: vec![
+                OrderType::TransitionWaitingUprightBoredWaitingUpright,
+                OrderType::TransitionWaitingUprightWaitingUprightBored,
+            ],
+            scripts: std::sync::Arc::new(vec![SpriteScript::default()]),
+            alternate_scripts: Some(std::sync::Arc::new(vec![SpriteScript::default()])),
+            conversion: std::sync::Arc::new(vec![1, 2, 3]),
+            alternate_conversion: Some(std::sync::Arc::new(vec![4])),
+            frame_profile_name: "profile".to_owned(),
+            profile_cache_key: "profile#primary".to_owned(),
+            alternate_profile_cache_key: "profile#alternate".to_owned(),
+            center: crate::coordinates::SpriteAnchor::new(3.0, 45.5),
+            last_motion_state: Some(MotionState::Start),
+        }
+    }
+
+    /// Save (JSON), native snapshot (bitcode) and state-hash encodings of a
+    /// sprite are frozen; the digests were recorded from the hand-written
+    /// `SpriteSnapshotRef` serializer before it was replaced by derives.
+    #[test]
+    fn sprite_encodings_match_golden_digests() {
+        const GOLDEN: [&str; 3] = [
+            "d178929fccad7b1e41e10d2965af4887d844284a5ef56402f7f8b0fdee16998b",
+            "1b16f63c2ffbbb86b16399432b2e9c9f96551a416c440cd2af8770bfd3405543",
+            "a9d3291a54fc42e9707bd9ce613d1e1f144d6dfcfbdfc482db439b1a8e6cb682",
+        ];
+
+        let sprite = golden_sprite_fixture();
+        assert_eq!(golden_digests(&sprite), GOLDEN);
+
+        let json = serde_json::to_string(&sprite).unwrap();
+        let bytes = bitcode::encode(&sprite);
+        let from_json: Sprite = serde_json::from_str(&json).unwrap();
+        let from_bitcode: Sprite = bitcode::decode(&bytes).unwrap();
+        for decoded in [from_json, from_bitcode] {
+            // Runtime-only attachments come back empty and are rebound later.
+            assert!(decoded.scripts.is_empty());
+            assert!(decoded.alternate_scripts.is_none());
+            assert!(decoded.conversion.is_empty());
+            assert!(decoded.alternate_conversion.is_none());
+            assert_eq!(decoded.last_motion_state, None);
+            assert_eq!(golden_digests(&decoded), GOLDEN);
+        }
     }
 }
