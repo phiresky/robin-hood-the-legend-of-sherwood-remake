@@ -18,7 +18,7 @@ use super::browser_ranked::BrowserRankedAdmission;
 use super::client_protocol::ClientConfig;
 use super::client_session::{
     self, ClientHandle, ClientSlots, ClientTimer, ClientTimings, ClientTransport, InitialHandshake,
-    SessionEnd, StartupFailure, WriterCommand, ranked_setup_channel,
+    StartupFailure, WriterCommand, ranked_setup_channel,
 };
 use super::join_ticket::BrowserJoinTicket;
 use super::{
@@ -282,8 +282,12 @@ impl ClientTransport for BrowserClientTransport {
             if let Ok(response) = responses.try_recv() {
                 return WriterCommand::RankedResponse(response);
             }
+            let resolved = match ranked.admission_resolved() {
+                Ok(resolved) => resolved,
+                Err(error) => return WriterCommand::Fatal(error),
+            };
             if let Some(frame) = *pending_ready {
-                if ranked.admission_resolved() {
+                if resolved {
                     *pending_ready = None;
                     return WriterCommand::Outbound(NetOutbound::ReadyToSim { frame });
                 }
@@ -291,7 +295,7 @@ impl ClientTransport for BrowserClientTransport {
                 continue;
             }
             match outbound.try_recv() {
-                Ok(NetOutbound::ReadyToSim { frame }) if !ranked.admission_resolved() => {
+                Ok(NetOutbound::ReadyToSim { frame }) if !resolved => {
                     *pending_ready = Some(frame);
                 }
                 Ok(outgoing) => return WriterCommand::Outbound(outgoing),
@@ -299,25 +303,6 @@ impl ClientTransport for BrowserClientTransport {
                 Err(TryRecvError::Disconnected) => return WriterCommand::Closed,
             }
         }
-    }
-
-    fn stream_closed() -> SessionEnd {
-        SessionEnd::Drop(MultiplayerError::ChannelClosed(
-            "host closed the multiplayer stream".into(),
-        ))
-    }
-
-    fn fatal_outbound(outgoing: &NetOutbound) -> bool {
-        matches!(
-            outgoing,
-            NetOutbound::ArmRankedJoin { .. }
-                | NetOutbound::RankedJoinResponse(_)
-                | NetOutbound::RankedContinuationReceiptSelection(_)
-                | NetOutbound::RankedContinuationPreflightSignature(_)
-                | NetOutbound::LeaderboardCoSignRequest { .. }
-                | NetOutbound::ArmLeaderboardCoSignRequest { .. }
-                | NetOutbound::LeaderboardCoSignResponse(_)
-        )
     }
 
     fn initial_handshake_exhausted(last_error: MultiplayerError) -> MultiplayerError {
