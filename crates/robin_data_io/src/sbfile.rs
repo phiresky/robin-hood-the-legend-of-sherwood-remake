@@ -157,6 +157,201 @@ impl MountState {
             self.locale_paths.fallback.clone(),
         )
     }
+
+    /// The single mount walk shared by `open`, `try_exists`,
+    /// `resolve_data_path` and `resolve_data_dir_layers`: confinement policy
+    /// for `requested` (already slash-normalised), then every layer in lookup
+    /// priority order. Callers only decide how to probe each layer.
+    fn lookup(&self, requested: &str, api: LookupApi) -> Result<Vec<Layer<'_>>, LookupRejection> {
+        let shape = RequestedPath::of(Path::new(requested));
+        if let Some(root) = &self.ranked_verifier_primary_path {
+            if shape != RequestedPath::Plain {
+                return Err(LookupRejection::RankedConfinement);
+            }
+            return Ok(self
+                .ranked_confined_candidates(root, requested)
+                .into_iter()
+                .map(|candidate| Layer::Ranked { root, candidate })
+                .collect());
+        }
+        let strict = self.official_projection_strict;
+        match api {
+            LookupApi::DataDirectory => {
+                if strict && shape != RequestedPath::Plain {
+                    return Err(LookupRejection::SealedProjection);
+                }
+            }
+            LookupApi::DataPath | LookupApi::Open | LookupApi::Exists => {
+                if strict && shape == RequestedPath::Absolute {
+                    return Err(LookupRejection::SealedProjection);
+                }
+                if shape == RequestedPath::Escaping {
+                    return Err(LookupRejection::Escaping);
+                }
+            }
+        }
+        // Byte and existence lookups address an absolute host path directly
+        // and never consult the mount stack for it.
+        // TODO: resolve_data_path/resolve_data_dir_layers still walk every
+        // mount for absolute paths (joins then collapse to the absolute path);
+        // kept for behaviour parity, but the direct probe is all that matters.
+        if shape == RequestedPath::Absolute && matches!(api, LookupApi::Open | LookupApi::Exists) {
+            return Ok(vec![Layer::Direct]);
+        }
+
+        // Overlays form a stack: the most recently mounted mission/package
+        // must win over the core overlay and over any shared library mounted
+        // underneath it, and all of them win over the primary datadir.
+        let mut layers: Vec<Layer<'_>> = self
+            .overlay_paths
+            .iter()
+            .rev()
+            .map(Layer::Overlay)
+            .collect();
+        let primary = self.primary_path.as_deref();
+        for locale_root in self.locale_path_snapshot_for(requested) {
+            if !Path::new(&locale_root).is_absolute()
+                && let Some(root) = primary
+            {
+                layers.push(Layer::Primary {
+                    root,
+                    prefix: Some(LayerPrefix::Locale(locale_root.clone())),
+                });
+            }
+            if !strict {
+                layers.push(Layer::Host(LayerPrefix::Locale(locale_root)));
+            }
+        }
+        if self.locale_paths.selected.is_some() && is_required_locale_path(requested) {
+            layers.push(Layer::RequiredLocaleMissing);
+            return Ok(layers);
+        }
+        if let Some(root) = primary {
+            layers.push(Layer::Primary { root, prefix: None });
+        }
+        layers.push(Layer::Direct);
+        for alternate in &self.alternate_paths {
+            if let Some(root) = primary {
+                layers.push(Layer::Primary {
+                    root,
+                    prefix: Some(LayerPrefix::Alternate(alternate)),
+                });
+            }
+            if !strict {
+                layers.push(Layer::Host(LayerPrefix::Alternate(alternate)));
+            }
+        }
+        Ok(layers)
+    }
+}
+
+/// Shape of a requested logical path, as far as mount confinement cares.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RequestedPath {
+    /// Only `Normal` components.
+    Plain,
+    /// Relative without `..` but with other non-normal components (`./`).
+    Relative,
+    /// Relative and containing `..`.
+    Escaping,
+    Absolute,
+}
+
+impl RequestedPath {
+    fn of(path: &Path) -> Self {
+        if path.is_absolute() {
+            return Self::Absolute;
+        }
+        let mut plain = true;
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(_) => {}
+                std::path::Component::ParentDir => return Self::Escaping,
+                _ => plain = false,
+            }
+        }
+        if plain { Self::Plain } else { Self::Relative }
+    }
+}
+
+/// Which public lookup is asking; they differ only in confinement policy.
+#[derive(Clone, Copy)]
+enum LookupApi {
+    DataDirectory,
+    DataPath,
+    Open,
+    Exists,
+}
+
+/// Why a request was refused before any layer was probed.
+#[derive(Clone, Copy)]
+enum LookupRejection {
+    /// A ranked verifier only accepts plain relative paths.
+    RankedConfinement,
+    /// A sealed official projection refused an absolute (or, for directory
+    /// lookups, any non-plain) path.
+    SealedProjection,
+    /// A relative path containing `..`.
+    Escaping,
+}
+
+/// One step of the mount lookup, highest priority first.
+enum Layer<'a> {
+    /// Candidate inside the irreversible ranked-verifier root (exclusive).
+    Ranked { root: &'a Path, candidate: PathBuf },
+    /// Mounted overlay, newest first.
+    Overlay(&'a OverlayRoot),
+    /// `root[/prefix]/requested`, confined to the primary datadir.
+    Primary {
+        root: &'a Path,
+        prefix: Option<LayerPrefix<'a>>,
+    },
+    /// Host-relative `prefix/requested`; never produced for sealed official
+    /// projections.
+    Host(LayerPrefix<'a>),
+    /// The requested path itself. Callers must not probe the host filesystem
+    /// here for sealed official projections.
+    Direct,
+    /// A required localized asset is absent from the selected pack; lower
+    /// layers must not substitute for it.
+    RequiredLocaleMissing,
+}
+
+enum LayerPrefix<'a> {
+    Locale(String),
+    Alternate(&'a str),
+}
+
+impl LayerPrefix<'_> {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Locale(root) => root,
+            Self::Alternate(root) => root,
+        }
+    }
+
+    /// `prefix/requested` as a joined host path.
+    fn host_join(&self, requested: &str) -> PathBuf {
+        Path::new(self.as_str()).join(requested)
+    }
+
+    /// Spelling used by the file/byte lookups: locale roots are path-joined,
+    /// alternate paths keep their historical `alt/requested` concatenation.
+    // TODO: unify with host_join; the two differ only for alternate paths
+    // that are empty or end in '/'.
+    fn legacy_host_path(&self, requested: &str) -> String {
+        match self {
+            Self::Locale(_) => self.host_join(requested).to_string_lossy().into_owned(),
+            Self::Alternate(alternate) => format!("{alternate}/{requested}"),
+        }
+    }
+}
+
+fn primary_candidate(root: &Path, prefix: Option<&LayerPrefix<'_>>, requested: &str) -> PathBuf {
+    match prefix {
+        Some(prefix) => root.join(prefix.as_str()).join(requested),
+        None => root.join(requested),
+    }
 }
 
 /// Presentation language identity travels with its lookup roots, including in
@@ -741,188 +936,86 @@ impl SbFileSystem {
     pub fn resolve_data_dir_layers(&self, rel_dir: &str) -> Vec<PathBuf> {
         let mounts = self.mount_state();
         let normalised = rel_dir.replace('\\', "/");
-        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
-            let requested = Path::new(&normalised);
-            if requested.is_absolute()
-                || requested
-                    .components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
+        let layers = match mounts.lookup(&normalised, LookupApi::DataDirectory) {
+            Ok(layers) => layers,
+            Err(LookupRejection::SealedProjection) => {
+                tracing::warn!("official projection rejected data-directory path {normalised:?}");
                 return Vec::new();
             }
-            return mounts
-                .ranked_confined_candidates(&root, &normalised)
-                .into_iter()
-                .filter_map(|candidate| resolve_contained_directory(&root, &candidate))
-                .collect();
-        }
+            Err(LookupRejection::RankedConfinement | LookupRejection::Escaping) => {
+                return Vec::new();
+            }
+        };
         let official_strict = mounts.official_projection_strict;
-        let requested = Path::new(&normalised);
-        if official_strict
-            && (requested.is_absolute()
-                || requested
-                    .components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_))))
-        {
-            tracing::warn!("official projection rejected data-directory path {normalised:?}");
-            return Vec::new();
-        }
-        let mut candidates: Vec<PathBuf> = Vec::new();
-        {
-            let overlays = &mounts.overlay_paths;
-            for overlay in overlays.iter().rev() {
-                #[allow(irrefutable_let_patterns)] // wasm has no Zip variant
-                if let OverlayRoot::Directory(dir) = overlay {
-                    candidates.push(dir.join(&normalised));
+        let host_directory = |dir: PathBuf| {
+            let dir = self.physical_path(&dir);
+            if dir.is_dir() {
+                return Some(dir);
+            }
+            resolve_case_insensitive(&dir).filter(|p| p.is_dir())
+        };
+        let mut directories = Vec::new();
+        for layer in layers {
+            let resolved = match layer {
+                Layer::Ranked { root, candidate } => resolve_contained_directory(root, &candidate),
+                Layer::Overlay(OverlayRoot::Directory(dir)) => {
+                    host_directory(dir.join(&normalised))
                 }
-            }
-        }
-        let primary = mounts.primary_path.clone();
-        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
-            if !Path::new(&locale_root).is_absolute()
-                && let Some(primary) = &primary
-            {
-                candidates.push(primary.join(&locale_root).join(&normalised));
-            }
-            if !official_strict {
-                candidates.push(Path::new(&locale_root).join(&normalised));
-            }
-        }
-        let strict_locale =
-            mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised);
-        if !strict_locale {
-            if let Some(primary) = &primary {
-                candidates.push(primary.join(&normalised));
-            }
-            if !official_strict {
-                candidates.push(PathBuf::from(&normalised));
-            }
-            for alt in mounts.alternate_paths.iter() {
-                if let Some(primary) = &primary {
-                    candidates.push(primary.join(alt).join(&normalised));
+                Layer::Overlay(OverlayRoot::Zip(_)) => None,
+                Layer::Primary { root, prefix } => {
+                    host_directory(primary_candidate(root, prefix.as_ref(), &normalised))
                 }
-                if !official_strict {
-                    candidates.push(Path::new(alt).join(&normalised));
-                }
-            }
+                Layer::Host(prefix) => host_directory(prefix.host_join(&normalised)),
+                Layer::Direct if official_strict => None,
+                Layer::Direct => host_directory(PathBuf::from(&normalised)),
+                Layer::RequiredLocaleMissing => break,
+            };
+            directories.extend(resolved);
         }
-        candidates
-            .into_iter()
-            .map(|dir| self.physical_path(&dir))
-            .filter_map(|dir| {
-                if dir.is_dir() {
-                    return Some(dir);
-                }
-                resolve_case_insensitive(&dir).filter(|p| p.is_dir())
-            })
-            .collect()
+        directories
     }
 
     pub fn resolve_data_path(&self, path: &str) -> Option<PathBuf> {
         let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
-        let p = Path::new(&normalised);
-        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
-            if p.is_absolute()
-                || p.components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
+        let layers = match mounts.lookup(&normalised, LookupApi::DataPath) {
+            Ok(layers) => layers,
+            Err(LookupRejection::RankedConfinement) => return None,
+            Err(LookupRejection::SealedProjection) => {
+                tracing::warn!("official projection rejected absolute data path {normalised:?}");
                 return None;
             }
-            return mounts
-                .ranked_confined_candidates(&root, &normalised)
-                .into_iter()
-                .find_map(|candidate| resolve_contained_file(&root, &candidate));
-        }
+            Err(LookupRejection::Escaping) => {
+                tracing::warn!("resolve_data_path: rejected escaping path {normalised}");
+                return None;
+            }
+        };
         let official_strict = mounts.official_projection_strict;
-        if official_strict && p.is_absolute() {
-            tracing::warn!("official projection rejected absolute data path {normalised:?}");
-            return None;
-        }
-        if !p.is_absolute()
-            && p.components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            tracing::warn!("resolve_data_path: rejected escaping path {normalised}");
-            return None;
-        }
-
-        // Overlay paths intentionally take precedence over the primary datadir.
-        let overlay_paths = &mounts.overlay_paths;
-        // Overlays form a stack: the most recently mounted mission/package
-        // must win over the core overlay and over any shared library mounted
-        // underneath it.  Walking in insertion order made a local/core file
-        // with the same virtual path silently replace authenticated
-        // distributed-mod bytes.
-        for overlay in overlay_paths.iter().rev() {
-            let OverlayRoot::Directory(dir) = overlay else {
-                continue;
+        let host_file = |path: &Path| {
+            resolve_case_insensitive(&self.physical_path(path))
+                .filter(|resolved| resolved.is_file())
+        };
+        for layer in layers {
+            let resolved = match layer {
+                Layer::Ranked { root, candidate } => resolve_contained_file(root, &candidate),
+                Layer::Overlay(OverlayRoot::Directory(dir)) => {
+                    resolve_contained_file(dir, &dir.join(&normalised))
+                }
+                // Zip overlays back the byte-buffer API only.
+                Layer::Overlay(OverlayRoot::Zip(_)) => None,
+                Layer::Primary { root, prefix } => resolve_contained_file(
+                    root,
+                    &primary_candidate(root, prefix.as_ref(), &normalised),
+                ),
+                Layer::Host(prefix) => host_file(Path::new(&prefix.legacy_host_path(&normalised))),
+                Layer::Direct if official_strict => None,
+                Layer::Direct => host_file(Path::new(&normalised)),
+                Layer::RequiredLocaleMissing => return None,
             };
-            let full = dir.join(&normalised);
-            if let Some(resolved) = resolve_contained_file(dir, &full) {
-                return Some(resolved);
+            if resolved.is_some() {
+                return resolved;
             }
         }
-
-        let primary = mounts.primary_path.clone();
-        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
-            if !Path::new(&locale_root).is_absolute()
-                && let Some(primary) = &primary
-            {
-                let full = primary.join(&locale_root).join(&normalised);
-                if let Some(resolved) = resolve_contained_file(primary, &full) {
-                    return Some(resolved);
-                }
-            }
-            if !official_strict {
-                let full = Path::new(&locale_root).join(&normalised);
-                if let Some(resolved) = resolve_case_insensitive(&self.physical_path(&full))
-                    && resolved.is_file()
-                {
-                    return Some(resolved);
-                }
-            }
-        }
-
-        if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
-            return None;
-        }
-
-        if let Some(primary) = &primary {
-            let full = primary.join(&normalised);
-            if let Some(resolved) = resolve_contained_file(primary, &full) {
-                return Some(resolved);
-            }
-        }
-
-        // Direct path
-        if !official_strict
-            && let Some(resolved) = resolve_case_insensitive(&self.physical_path(p))
-            && resolved.is_file()
-        {
-            return Some(resolved);
-        }
-
-        // Alternate paths
-        let alt_paths = &mounts.alternate_paths;
-        for alt in alt_paths.iter() {
-            if let Some(primary) = &primary {
-                let full = primary.join(alt).join(&normalised);
-                if let Some(resolved) = resolve_contained_file(primary, &full) {
-                    return Some(resolved);
-                }
-            }
-            if !official_strict {
-                let full = format!("{}/{}", alt, normalised);
-                if let Some(resolved) =
-                    resolve_case_insensitive(&self.physical_path(Path::new(&full)))
-                    && resolved.is_file()
-                {
-                    return Some(resolved);
-                }
-            }
-        }
-
         None
     }
 }
@@ -988,128 +1081,76 @@ impl SbFileSystem {
     pub fn open(&self, path: &str) -> Result<SbFile, SbFileError> {
         let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
-        let requested = Path::new(&normalised);
-        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
-            if requested.is_absolute()
-                || requested
-                    .components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
-                return Err(SbFileError::Read(None));
-            }
-            let mut resolved = None;
-            for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
-                if let Some(path) = try_resolve_contained_file(&root, &candidate)? {
-                    resolved = Some(path);
-                    break;
-                }
-            }
-            let resolved = resolved.ok_or(SbFileError::NotFound)?;
-            let bytes = fs::read(&resolved).map_err(|error| {
-                tracing::warn!(
-                    "ranked verifier asset {} cannot be read: {error}",
-                    resolved.display()
-                );
-                SbFileError::read_io(error)
-            })?;
-            return Ok(SbFile::from_bytes(bytes, normalised));
-        }
-        let official_strict = mounts.official_projection_strict;
-        if requested.is_absolute() {
-            if official_strict {
+        let layers = match mounts.lookup(&normalised, LookupApi::Open) {
+            Ok(layers) => layers,
+            Err(LookupRejection::RankedConfinement) => return Err(SbFileError::Read(None)),
+            Err(LookupRejection::SealedProjection) => {
                 tracing::warn!("official projection rejected absolute open path {normalised:?}");
                 return Err(SbFileError::Read(None));
             }
-            return try_read(self, &normalised)?
-                .map(|bytes| SbFile::from_bytes(bytes, normalised.clone()))
-                .ok_or(SbFileError::NotFound);
-        }
-        if requested
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            tracing::warn!("SbFile::open: rejected escaping path {normalised}");
-            return Err(SbFileError::Read(None));
-        }
-        let overlay_paths = &mounts.overlay_paths;
-        for overlay in overlay_paths.iter().rev() {
-            if let Some(bytes) = read_from_overlay(self, overlay, &normalised)? {
-                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
+            Err(LookupRejection::Escaping) => {
+                tracing::warn!("SbFile::open: rejected escaping path {normalised}");
+                return Err(SbFileError::Read(None));
             }
-        }
-
-        let primary = mounts.primary_path.clone();
-        for locale_root in mounts.locale_path_snapshot_for(&normalised) {
-            if !Path::new(&locale_root).is_absolute()
-                && let Some(primary) = &primary
-                && let Some(bytes) = try_read(
-                    self,
-                    &primary
-                        .join(&locale_root)
-                        .join(&normalised)
-                        .to_string_lossy(),
-                )?
-            {
-                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-            }
-            if !official_strict
-                && let Some(bytes) = try_read(
-                    self,
-                    &Path::new(&locale_root).join(&normalised).to_string_lossy(),
-                )?
-            {
-                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-            }
-        }
-
-        if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
-            tracing::warn!(
-                "SbFile::open: required localized asset {normalised} is absent from the selected pack"
-            );
-            return Err(SbFileError::NotFound);
-        }
-
-        if let Some(primary) = &primary
-            && let Some(bytes) = try_read(self, &primary.join(&normalised).to_string_lossy())?
-        {
-            return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-        }
-        if official_strict {
-            // Shipping archives install authenticated decoded bundles into
-            // the VFS after the initially empty authority snapshot.
-            match self.assets.read_shared(&normalised) {
-                Ok(bytes) => return Ok(SbFile::from_bytes(bytes, normalised.clone())),
-                Err(robin_util::asset_fs::AssetError::NotFound(_)) => {}
-                Err(error) => {
-                    tracing::warn!("official asset read failed for {normalised}: {error}");
-                    return Err(SbFileError::Read(None));
+        };
+        let official_strict = mounts.official_projection_strict;
+        for layer in layers {
+            let bytes = match layer {
+                Layer::Ranked { root, candidate } => {
+                    let Some(resolved) = try_resolve_contained_file(root, &candidate)? else {
+                        continue;
+                    };
+                    let bytes = fs::read(&resolved).map_err(|error| {
+                        tracing::warn!(
+                            "ranked verifier asset {} cannot be read: {error}",
+                            resolved.display()
+                        );
+                        SbFileError::read_io(error)
+                    })?;
+                    return Ok(SbFile::from_bytes(bytes, normalised));
                 }
+                Layer::Overlay(overlay) => read_from_overlay(self, overlay, &normalised)?,
+                Layer::Primary { root, prefix } => try_read(
+                    self,
+                    &primary_candidate(root, prefix.as_ref(), &normalised).to_string_lossy(),
+                )?,
+                Layer::Host(prefix) => try_read(self, &prefix.legacy_host_path(&normalised))?,
+                Layer::Direct if official_strict => {
+                    // Shipping archives install authenticated decoded bundles
+                    // into the VFS after the initially empty authority snapshot.
+                    match self.assets.read_shared(&normalised) {
+                        Ok(bytes) => return Ok(SbFile::from_bytes(bytes, normalised)),
+                        Err(robin_util::asset_fs::AssetError::NotFound(_)) => {}
+                        Err(error) => {
+                            tracing::warn!("official asset read failed for {normalised}: {error}");
+                            return Err(SbFileError::Read(None));
+                        }
+                    }
+                    tracing::warn!(
+                        "SbFile::open: {normalised} not found inside the sealed official mounts"
+                    );
+                    return Err(SbFileError::NotFound);
+                }
+                Layer::Direct => try_read(self, &normalised)?,
+                Layer::RequiredLocaleMissing => {
+                    tracing::warn!(
+                        "SbFile::open: required localized asset {normalised} is absent from the selected pack"
+                    );
+                    return Err(SbFileError::NotFound);
+                }
+            };
+            if let Some(bytes) = bytes {
+                return Ok(SbFile::from_bytes(bytes, normalised));
             }
+        }
+        // Ranked and absolute lookups report absence without the mount summary.
+        if mounts.ranked_verifier_primary_path.is_none() && !Path::new(&normalised).is_absolute() {
             tracing::warn!(
-                "SbFile::open: {normalised} not found inside the sealed official mounts"
+                "SbFile::open: {normalised} not found (tried {} locale + direct + {} alternate paths)",
+                mounts.locale_path_snapshot_for(&normalised).len(),
+                mounts.alternate_paths.len(),
             );
-            return Err(SbFileError::NotFound);
         }
-        if let Some(bytes) = try_read(self, &normalised)? {
-            return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-        }
-        let alt_paths = &mounts.alternate_paths;
-        for alt in alt_paths.iter() {
-            if let Some(primary) = &primary
-                && let Some(bytes) =
-                    try_read(self, &primary.join(alt).join(&normalised).to_string_lossy())?
-            {
-                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-            }
-            if let Some(bytes) = try_read(self, &format!("{alt}/{normalised}"))? {
-                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-            }
-        }
-        tracing::warn!(
-            "SbFile::open: {normalised} not found (tried {} locale + direct + {} alternate paths)",
-            mounts.locale_path_snapshot_for(&normalised).len(),
-            alt_paths.len(),
-        );
         Err(SbFileError::NotFound)
     }
 
@@ -1463,108 +1504,48 @@ impl SbFileSystem {
     pub fn try_exists(&self, path: &str) -> Result<bool, SbFileError> {
         let mounts = self.mount_state();
         let normalised = path.replace('\\', "/");
-        let requested = Path::new(&normalised);
-        if let Some(root) = mounts.ranked_verifier_primary_path.clone() {
-            if requested.is_absolute()
-                || requested
-                    .components()
-                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
-            {
+        let layers = match mounts.lookup(&normalised, LookupApi::Exists) {
+            Ok(layers) => layers,
+            Err(LookupRejection::SealedProjection) => {
+                tracing::warn!(
+                    "official projection rejected absolute existence path {normalised:?}"
+                );
                 return Err(SbFileError::Read(None));
             }
-            for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
-                if path_exists_contained(&root, &candidate)? {
-                    return Ok(true);
-                }
+            Err(LookupRejection::RankedConfinement | LookupRejection::Escaping) => {
+                return Err(SbFileError::Read(None));
             }
-            return Ok(false);
-        }
+        };
         let official_strict = mounts.official_projection_strict;
-        if official_strict && requested.is_absolute() {
-            tracing::warn!("official projection rejected absolute existence path {normalised:?}");
-            return Err(SbFileError::Read(None));
-        }
-        if !requested.is_absolute()
-            && requested
-                .components()
-                .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(SbFileError::Read(None));
-        }
-
-        if !requested.is_absolute() {
-            let overlays = &mounts.overlay_paths;
-            for overlay in overlays.iter().rev() {
-                match overlay {
-                    OverlayRoot::Directory(root) => {
-                        if path_exists_contained(root, &root.join(&normalised))? {
-                            return Ok(true);
-                        }
+        let requested = Path::new(&normalised);
+        for layer in layers {
+            let exists = match layer {
+                Layer::Ranked { root, candidate } => path_exists_contained(root, &candidate)?,
+                Layer::Overlay(OverlayRoot::Directory(root)) => {
+                    path_exists_contained(root, &root.join(&normalised))?
+                }
+                Layer::Overlay(OverlayRoot::Zip(zip)) => zip.exists(&normalised),
+                Layer::Primary { root, prefix } => path_exists_contained(
+                    root,
+                    &primary_candidate(root, prefix.as_ref(), &normalised),
+                )?,
+                Layer::Host(prefix) => self
+                    .resolve_instance_path(&prefix.host_join(&normalised))?
+                    .is_some(),
+                Layer::Direct => match self.assets.try_exists(requested) {
+                    Ok(true) => true,
+                    Ok(false) | Err(robin_util::asset_fs::AssetError::InvalidPath(_)) => {
+                        !official_strict && self.resolve_instance_path(requested)?.is_some()
                     }
-                    OverlayRoot::Zip(zip) if zip.exists(&normalised) => return Ok(true),
-                    OverlayRoot::Zip(_) => {}
-                }
-            }
-        }
-
-        let primary = mounts.primary_path.clone();
-        if !requested.is_absolute() {
-            for locale_root in mounts.locale_path_snapshot_for(&normalised) {
-                if !Path::new(&locale_root).is_absolute()
-                    && let Some(primary) = &primary
-                    && path_exists_contained(
-                        primary,
-                        &primary.join(&locale_root).join(&normalised),
-                    )?
-                {
-                    return Ok(true);
-                }
-                if !official_strict
-                    && self
-                        .resolve_instance_path(&Path::new(&locale_root).join(&normalised))?
-                        .is_some()
-                {
-                    return Ok(true);
-                }
-            }
-
-            if mounts.locale_paths().0.is_some() && is_required_locale_path(&normalised) {
-                return Ok(false);
-            }
-
-            if let Some(primary) = &primary
-                && path_exists_contained(primary, &primary.join(&normalised))?
-            {
+                    Err(error) => {
+                        tracing::warn!("SbFileSystem::try_exists({normalised}): {error}");
+                        return Err(SbFileError::Read(None));
+                    }
+                },
+                Layer::RequiredLocaleMissing => return Ok(false),
+            };
+            if exists {
                 return Ok(true);
-            }
-        }
-        match self.assets.try_exists(requested) {
-            Ok(true) => return Ok(true),
-            Ok(false) | Err(robin_util::asset_fs::AssetError::InvalidPath(_)) => {}
-            Err(error) => {
-                tracing::warn!("SbFileSystem::try_exists({normalised}): {error}");
-                return Err(SbFileError::Read(None));
-            }
-        }
-        if !official_strict && self.resolve_instance_path(requested)?.is_some() {
-            return Ok(true);
-        }
-
-        if !requested.is_absolute() {
-            let alternate_paths = &mounts.alternate_paths;
-            for alternate in alternate_paths.iter() {
-                if let Some(primary) = &primary
-                    && path_exists_contained(primary, &primary.join(alternate).join(&normalised))?
-                {
-                    return Ok(true);
-                }
-                if !official_strict
-                    && self
-                        .resolve_instance_path(&Path::new(alternate).join(&normalised))?
-                        .is_some()
-                {
-                    return Ok(true);
-                }
             }
         }
         Ok(false)
