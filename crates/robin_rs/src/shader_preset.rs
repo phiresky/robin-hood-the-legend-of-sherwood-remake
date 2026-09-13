@@ -208,6 +208,14 @@ impl ShaderPresetRenderer {
 
     fn load_chain(&self, key: &str) -> Result<FilterChain, String> {
         let path = preset_path(key);
+        if !Path::new(key).is_absolute() && !SLANG_SHADER_ROOT.is_dir() {
+            let message = format!(
+                "cannot load shader preset {key}: {}",
+                missing_slang_shaders_message(&SLANG_SHADER_ROOT)
+            );
+            tracing::error!("{message}");
+            return Err(message);
+        }
         let preset = match ShaderPreset::try_parse(&path, ShaderFeatures::NONE) {
             Ok(preset) => preset,
             Err(e) => {
@@ -388,6 +396,17 @@ mod tests {
     }
 }
 
+/// Explicit diagnostic for the untracked libretro collection: it is fetched by
+/// `scripts/fetch-slang-shaders.sh`, never bundled in Git.
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
+fn missing_slang_shaders_message(root: &Path) -> String {
+    format!(
+        "RetroArch slang-shaders collection not found at {}; run scripts/fetch-slang-shaders.sh \
+         from the repository root (or install the collection beside the executable)",
+        root.display()
+    )
+}
+
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 fn preset_path(key: &str) -> PathBuf {
     let path = PathBuf::from(key);
@@ -406,6 +425,13 @@ fn discover_retroarch_presets_uncached() -> Vec<RetroArchPresetInfo> {
 #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 fn discover_retroarch_presets_in(root: &Path) -> Vec<RetroArchPresetInfo> {
     let mut presets = Vec::new();
+    if !root.is_dir() {
+        tracing::warn!(
+            "{}; no RetroArch presets can be listed",
+            missing_slang_shaders_message(root)
+        );
+        return presets;
+    }
     // Follow linked preset collections as before, but detect directory cycles
     // and bound the number of open directory handles through walkdir.
     for entry in walkdir::WalkDir::new(root).min_depth(1).follow_links(true) {

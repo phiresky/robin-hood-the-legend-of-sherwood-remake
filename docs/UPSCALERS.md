@@ -42,10 +42,13 @@ validated immediately and its absolute path is persisted; referenced shader
 files remain beside the preset, so moving or deleting that directory causes
 an explicit load error.
 
-The tracked `vendor/slang-shaders/` collection supports this optional path
-without a network download. It is runtime data, not dead source merely because
-the feature is non-default. Keep its license files and preset-relative shader
-dependencies together when packaging or relocating it.
+The preset collection is not tracked in Git. Run
+`scripts/fetch-slang-shaders.sh` to clone upstream libretro/slang-shaders at the
+pinned commit (verified by tree hash) into the ignored `vendor/slang-shaders/`.
+Without it, preset discovery reports an error naming that script and the
+bundled `assets/shader_presets/*.slangp` references cannot resolve. It is
+runtime data; keep its license files and preset-relative shader dependencies
+together when packaging or relocating it.
 
 Individual Libretro presets retain their own licenses. In particular,
 CRT-Royale is GPL-licensed and is available only as an external runtime preset;

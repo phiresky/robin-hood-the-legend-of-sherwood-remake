@@ -17,6 +17,10 @@
 *.orig
 /compile_commands.json
 
+# libretro preset collection for the optional `retroarch-shaders` feature;
+# populate with scripts/fetch-slang-shaders.sh (pinned upstream commit)
+/vendor/slang-shaders/
+
 # copied from the game install
 /datadirs
 /original-game
