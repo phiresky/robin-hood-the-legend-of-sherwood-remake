@@ -1197,8 +1197,9 @@ fn write_pending_store(encoded: &[u8]) -> Result<(), ReceiptWatcherError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::test_fixtures::{ChainReceiptSpec, chain_receipt};
     use robin_run_protocol::{
-        ArtifactRefV1, CampaignChainStateV1, CanonicalDocument as _, ChallengeNonce32, Digest32,
+        ArtifactRefV1, CanonicalDocument as _, ChallengeNonce32, Digest32,
         RANKED_CAMPAIGN_MEDIA_TYPE_V1, Signature64, SignatureAlgorithmV1, SubmissionFailureCodeV1,
         VerificationRejectionCodeV1,
     };
@@ -1341,11 +1342,9 @@ mod tests {
     }
 
     fn receipt(key: &SubmissionReceiptWatchKey, run_id: &OpaqueId) -> CampaignChainReceiptV1 {
-        CampaignChainReceiptV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            chain_id: OpaqueId::new("chain-1").unwrap(),
+        chain_receipt(ChainReceiptSpec {
+            chain_id: "chain-1",
             predecessor_run_id: run_id.clone(),
-            predecessor_verification_sha256: Digest32::from_bytes([6; 32]),
             expected_starting_campaign: ArtifactRefV1 {
                 sha256: Digest32::from_bytes([2; 32]),
                 byte_length: 10,
@@ -1353,13 +1352,9 @@ mod tests {
             },
             rules_config_sha256: Digest32::from_bytes([3; 32]),
             ruleset_manifest_sha256: Digest32::from_bytes([4; 32]),
-            competition_manifest_sha256: None,
             campaign_content_manifest_sha256: Digest32::from_bytes([5; 32]),
-            expected_max_concurrent_players: 1,
-            participant_public_keys: vec![key.controller_public_key],
-            campaign_controller_public_key: key.controller_public_key,
-            state: CampaignChainStateV1::Active,
-        }
+            controller: key.controller_public_key,
+        })
     }
 
     fn response(

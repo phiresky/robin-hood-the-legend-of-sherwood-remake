@@ -64,6 +64,17 @@ impl HttpTask {
         }
     }
 
+    /// A task that already holds `result`, so polling consumers can be unit
+    /// tested without a transport worker.
+    #[cfg(test)]
+    pub(crate) fn ready(result: Result<HttpResponse, HttpTransportError>) -> Self {
+        let (sender, receiver) = async_channel::bounded(1);
+        sender
+            .try_send(result)
+            .expect("fresh capacity-one channel accepts one result");
+        Self { receiver }
+    }
+
     /// Await completion during pre-frame mission admission. This consumes the
     /// one-shot task, retains the same bounded transport, and never blocks a
     /// native executor thread or the browser event loop.

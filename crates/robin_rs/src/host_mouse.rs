@@ -1964,32 +1964,10 @@ fn cursor_for_listen(
 mod tests {
     use super::*;
     use robin_engine::campaign::Campaign;
-    use robin_engine::element::Posture;
     use robin_engine::player_command::PlayerCommand;
     use robin_engine::resource_ids::*;
 
-    use crate::host::test_support::{add_pc_with_status, fixture};
-
-    fn add_selected_pc(
-        engine: &mut Engine,
-        assets: &LevelAssets,
-    ) -> robin_engine::element::EntityId {
-        let pc = add_pc_with_status(engine, 10.0, 10.0, Posture::Upright, true, 100);
-        engine
-            .advance_frame(
-                assets,
-                robin_engine::engine::SimulationFrameInput::new(vec![
-                    PlayerCommand::SelectPc {
-                        pc_id: pc,
-                        append: false,
-                    }
-                    .into(),
-                ])
-                .with_hourglass(false),
-            )
-            .expect("selection command admission");
-        pc
-    }
+    use crate::host::test_support::{add_selected_pc, fixture};
 
     #[test]
     fn stone_ground_cursor_publishes_only_eligible_landing_preview() {

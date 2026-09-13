@@ -546,11 +546,11 @@ fn invalid_document(error: impl std::fmt::Display) -> RankedSessionError {
     RankedSessionError::InvalidDocument(error.to_string())
 }
 
-fn public_key(key: &SigningKey) -> PublicKey32 {
+pub(crate) fn public_key(key: &SigningKey) -> PublicKey32 {
     PublicKey32::from_bytes(key.verifying_key().to_bytes())
 }
 
-fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
+pub(crate) fn signature(key: &SigningKey, bytes: &[u8]) -> Signature64 {
     Signature64::from_bytes(key.sign(bytes).to_bytes())
 }
 
@@ -2197,6 +2197,9 @@ impl RankedCoSignContextV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::test_fixtures::{
+        RankedConfigSpec, digest, official_setup, ranked_session_config, signing_key,
+    };
     use robin_engine::campaign::Campaign;
     use robin_engine::engine::{SimConfig, SimulationFrameInput};
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
@@ -2204,103 +2207,22 @@ mod tests {
     use robin_engine::replay_rankability::ReplayRankability;
     use robin_run_protocol::{
         ArtifactRefV1, CanonicalCampaignStateKindV1, CanonicalCampaignStateRequirementV1,
-        ChallengeNonce32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,
-        FreshRunPreflightRequestClaimV1, FreshRunPreflightRequestV1, FreshRunScopeV1,
+        FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1, FreshRunScopeV1,
         OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId,
         RANKED_CAMPAIGN_MEDIA_TYPE_V1, RANKED_REPLAY_MEDIA_TYPE_V1, ReplayArtifactV1,
-        ResourceLocaleRootV1, SimulationSeed64, SpeechTimingAuthorityV1,
+        SpeechTimingAuthorityV1,
     };
     use std::collections::BTreeMap;
 
-    fn digest(byte: u8) -> Digest32 {
-        Digest32::from_bytes([byte; 32])
-    }
-
-    fn signing_key(byte: u8) -> SigningKey {
-        SigningKey::from_bytes(&[byte; 32])
-    }
-
     fn ranked() -> RankedSessionConfigV1 {
-        RankedSessionConfigV1 {
-            custom_rules_config: None,
-            custom_canonical_campaign: None,
-            schema_version: SCHEMA_VERSION_V1,
-            mission_id: "Dem_Lei_MP".to_string(),
-            content_edition: OfficialContentEditionV1::Demo,
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: "Dem_Lei_MP".to_string(),
-            },
-            simulation_seed: SimulationSeed64::new(7),
+        ranked_session_config(RankedConfigSpec {
+            simulation_seed: 7,
             starting_campaign_sha256: digest(1),
             starting_campaign_byte_length: 1,
             prepared_inputs_projection_sha256: digest(2),
             prepared_mission_inputs_seal_sha256: digest(3),
-            build_manifest_sha256: digest(4),
-            content_manifest_sha256: digest(5),
-            campaign_content_manifest_sha256: None,
-            rules_config_sha256: digest(6),
-            ruleset_manifest_sha256: digest(7),
-            competition_manifest_sha256: None,
-            spellforge_content_sha256: None,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SpeechTimingAuthorityV1::BaseInstallation,
-        }
-    }
-
-    fn official_setup(
-        host_key: &SigningKey,
-        ranked_session: RankedSessionConfigV1,
-        custom_package_present: bool,
-    ) -> OfficialRankedSessionSetupV1 {
-        let authority_key = signing_key(0x7a);
-        let request_claim = FreshRunPreflightRequestClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            request_nonce: ChallengeNonce32::from_bytes([0x31; 32]),
-            host_public_key: public_key(host_key),
-            replay_session_id: digest(0x32),
-            host_participant_instance_id: digest(0x33),
-            host_nonce: ChallengeNonce32::from_bytes([0x34; 32]),
-            scope: FreshRunScopeV1::IndividualLevel,
-            starting_campaign: ArtifactRefV1 {
-                sha256: ranked_session.starting_campaign_sha256,
-                byte_length: ranked_session.starting_campaign_byte_length,
-                media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_string(),
-            },
-            ranked_session: ranked_session.clone(),
-        };
-        let request = FreshRunPreflightRequestV1 {
-            host_signature: signature(host_key, &request_claim.signing_bytes().unwrap()),
-            claim: request_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        let grant_claim = FreshRunPreflightGrantClaimV1 {
-            schema_version: SCHEMA_VERSION_V1,
-            grant_id: OpaqueId::new("fresh-grant-test").unwrap(),
-            grant_nonce: ChallengeNonce32::from_bytes([0x35; 32]),
-            grant_authority_public_key: public_key(&authority_key),
-            host_public_key: public_key(host_key),
-            grant_request_sha256: request.canonical_digest().unwrap(),
-            ranked_session_sha256: ranked_session.canonical_digest().unwrap(),
-            replay_session_id: request.claim.replay_session_id,
-            host_participant_instance_id: request.claim.host_participant_instance_id,
-            host_nonce: request.claim.host_nonce,
-            scope: request.claim.scope,
-            starting_campaign: request.claim.starting_campaign.clone(),
-            admitted_at_unix_ms: 1_000,
-            expires_at_unix_ms: 2_000,
-        };
-        let grant = FreshRunPreflightGrantV1 {
-            authority_signature: signature(&authority_key, &grant_claim.signing_bytes().unwrap()),
-            claim: grant_claim,
-            algorithm: SignatureAlgorithmV1::Ed25519,
-        };
-        OfficialRankedSessionSetupV1 {
-            ranked_session,
-            custom_package_present,
-            run_preflight: RankedRunPreflightAdmissionV1::Fresh { request, grant },
-            run_preflight_grant_public_key: public_key(&authority_key),
-            trusted_now_unix_ms: 1_500,
-        }
+        })
     }
 
     fn replay_with_lifecycle(commands: Vec<PlayerCommand>) -> ReplayData {

@@ -1669,17 +1669,18 @@ async fn authorize_local_browser(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::leaderboard::test_fixtures::{
+        MISSION_ID, RankedConfigSpec, campaign_artifact, host_participant_claim,
+        ranked_session_config, single_frame_replay, unsigned_fresh_run_preflight_grant,
+        unsigned_session_genesis,
+    };
     use ed25519_dalek::Signer as _;
     use robin_run_protocol::{
         BoardCategoryV1, CanonicalCampaignStateKindV1, CanonicalCampaignStateRequirementV1,
-        ChallengeNonce32, LeaderboardQuerySubjectV1, OfficialContentEditionV1,
-        OfficialContentSubjectV1, OpaqueId, ParticipantClaimV1, ParticipantPublicDisclosureV1,
-        ParticipantSignatureV1, RankedSessionConfigV1, ReplaySeatLifecycleEventV1,
-        ReplaySeatLifecycleKindV1, ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1,
-        ResourceLocaleRootV1, ScopeRequestV1, Signature64, SimulationSeed64,
-        SpeechTimingAuthorityV1, SubmissionLifecycleV1,
+        ChallengeNonce32, LeaderboardQuerySubjectV1, OfficialContentEditionV1, OpaqueId,
+        ParticipantSignatureV1, ReplaySeatLifecycleEventV1, ReplaySeatLifecycleKindV1,
+        ScopeRequestV1, Signature64, SpeechTimingAuthorityV1, SubmissionLifecycleV1,
     };
-    use std::collections::BTreeMap;
     use std::collections::VecDeque;
     use std::sync::Mutex;
 
@@ -1941,83 +1942,27 @@ mod tests {
         let public_key = PublicKey32::from_bytes(key.verifying_key().to_bytes());
         let campaign = robin_engine::campaign::Campaign::default();
         let campaign_bytes = bitcode::encode(&campaign);
-        let mission_id = "Dem_Lei_MP".to_owned();
-        let ranked = RankedSessionConfigV1 {
-            custom_rules_config: None,
-            custom_canonical_campaign: None,
-            schema_version: SCHEMA_VERSION_V1,
-            mission_id: mission_id.clone(),
-            content_edition: OfficialContentEditionV1::Demo,
-            content_subject: OfficialContentSubjectV1::FieldMission {
-                mission_id: mission_id.clone(),
-            },
-            simulation_seed: SimulationSeed64::new(42),
+        let mission_id = MISSION_ID.to_owned();
+        let ranked = ranked_session_config(RankedConfigSpec {
+            simulation_seed: 42,
             starting_campaign_sha256: Digest32::digest_bytes(&campaign_bytes),
             starting_campaign_byte_length: campaign_bytes.len() as u64,
             prepared_inputs_projection_sha256: Digest32::from_bytes([18; 32]),
             prepared_mission_inputs_seal_sha256: Digest32::from_bytes([19; 32]),
-            build_manifest_sha256: Digest32::from_bytes([4; 32]),
-            content_manifest_sha256: Digest32::from_bytes([5; 32]),
-            campaign_content_manifest_sha256: None,
-            rules_config_sha256: Digest32::from_bytes([6; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
-            competition_manifest_sha256: None,
-            spellforge_content_sha256: None,
-            resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SpeechTimingAuthorityV1::LanguagePack {
                 canonical_locale: "en-US".to_owned(),
             },
-        };
+        });
         // An individual-level offer request is only valid when the genesis
         // carries the fresh-run preflight grant that admitted it, bound to
         // the same host identity, ranked session, and starting campaign.
-        let fresh_run_preflight_grant = robin_run_protocol::FreshRunPreflightGrantV1 {
-            claim: robin_run_protocol::FreshRunPreflightGrantClaimV1 {
-                schema_version: SCHEMA_VERSION_V1,
-                grant_id: id("fresh-grant-1"),
-                grant_nonce: ChallengeNonce32::from_bytes([21; 32]),
-                grant_authority_public_key: PublicKey32::from_bytes([22; 32]),
-                host_public_key: public_key,
-                grant_request_sha256: Digest32::from_bytes([23; 32]),
-                ranked_session_sha256: ranked.canonical_digest().unwrap(),
-                replay_session_id: Digest32::from_bytes([11; 32]),
-                host_participant_instance_id: Digest32::from_bytes([12; 32]),
-                host_nonce: ChallengeNonce32::from_bytes([13; 32]),
-                scope: robin_run_protocol::FreshRunScopeV1::IndividualLevel,
-                starting_campaign: robin_run_protocol::ArtifactRefV1 {
-                    sha256: Digest32::digest_bytes(&campaign_bytes),
-                    byte_length: campaign_bytes.len() as u64,
-                    media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
-                },
-                admitted_at_unix_ms: 1,
-                expires_at_unix_ms: 1_800_000_000_000,
-            },
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            authority_signature: Signature64::from_bytes([24; 64]),
-        };
-        let genesis = ReplaySessionGenesisV1 {
-            claim: ReplaySessionGenesisClaimV1 {
-                schema_version: SCHEMA_VERSION_V1,
-                network_protocol_version: robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-                host_public_key: public_key,
-                replay_session_id: Digest32::from_bytes([11; 32]),
-                host_participant_instance_id: Digest32::from_bytes([12; 32]),
-                host_nonce: ChallengeNonce32::from_bytes([13; 32]),
-                ranked_session: ranked,
-                fresh_run_preflight_grant: Some(fresh_run_preflight_grant),
-                campaign_continuation_preflight_grant: None,
-                competition_run_grant: None,
-            },
-            algorithm: SignatureAlgorithmV1::Ed25519,
-            host_signature: Signature64::from_bytes([14; 64]),
-        };
-        let host = ParticipantClaimV1 {
-            seat: 0,
-            participant_instance_id: genesis.claim.host_participant_instance_id,
+        let fresh_run_preflight_grant = unsigned_fresh_run_preflight_grant(
             public_key,
-            public_disclosure: ParticipantPublicDisclosureV1::NamedProfile,
-            join_attestation: None,
-        };
+            &ranked,
+            campaign_artifact(&campaign_bytes),
+        );
+        let genesis = unsigned_session_genesis(public_key, ranked, Some(fresh_run_preflight_grant));
+        let host = host_participant_claim(&genesis, public_key);
         let offer_request = SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,
             max_concurrent_players: 1,
@@ -2073,37 +2018,7 @@ mod tests {
             },
             allowed_metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
         };
-        let replay = robin_engine::replay::ReplayData::try_from(robin_engine::replay::ReplayFile {
-            header: robin_engine::replay::ReplayHeader {
-                mission_id: mission_id.clone(),
-                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                    &mission_id,
-                    &mission_id,
-                    &mission_id,
-                )
-                .expect("valid built-in mission-end test descriptor"),
-                rng_seed: 42,
-                sim_config: robin_engine::engine::SimConfig::default(),
-                spellforge_package: None,
-                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
-                total_frames: 1,
-                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
-                campaign: campaign_bytes.clone(),
-            },
-            frames: BTreeMap::from([(
-                0,
-                robin_engine::replay::ReplayFrame {
-                    timeline_before: 0,
-                    timeline_after: 0,
-                    input: robin_engine::engine::SimulationFrameInput::default(),
-                    host_controls: Vec::new(),
-                },
-            )]),
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
-        });
-        let replay = replay.expect("valid mission-end replay fixture");
+        let replay = single_frame_replay(campaign_bytes.clone());
         let compact: Arc<[u8]> =
             robin_replay_format::encode_compact(&replay, robin_replay_format::ENGINE_VERSION_HASH)
                 .unwrap()
