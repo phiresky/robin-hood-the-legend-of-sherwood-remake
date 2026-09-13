@@ -108,22 +108,8 @@ fn sword_strike_consideration_latch_is_one_shot_when_honour_rejects() {
 fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
     let sim = crate::sim_rng::test_context();
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let victim = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_soldier(wp(0.0, 100.0), None));
+    let victim = engine.add_test_entity(make_pc(wp(10.0, 100.0), None));
     let sprite_script = crate::sprite_script::SpriteScript {
         action_id: crate::order::OrderType::WaitingUpright as u16,
         action_done: 0,

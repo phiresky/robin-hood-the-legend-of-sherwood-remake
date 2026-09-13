@@ -197,22 +197,8 @@ fn thrust_a_accepts_an_existing_opponent_during_ordinary_door_transit() {
 #[test]
 fn circle_tail_retains_candidate_past_final_in_the_same_sector() {
     let mut engine = make_engine();
-    let attacker = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let pending_victim = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let pending_victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
     let assets = assets_with_nonstraight_profile(
         SwordStrike::F,
         crate::profiles::WeaponThrustKind::FalseHalfCircle,
@@ -257,38 +243,10 @@ fn domino_propagates_to_actors_in_flight_path() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut engine = make_engine();
-    let hitter = engine.add_test_entity(make_pc(
-        WorldPoint3D {
-            x: 0.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let flyer = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 10.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let mid = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 16.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
-    let far = engine.add_test_entity(make_soldier(
-        WorldPoint3D {
-            x: 22.0,
-            y: 100.0,
-            z: 0.0,
-        },
-        None,
-    ));
+    let hitter = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+    let flyer = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
+    let mid = engine.add_test_entity(make_soldier(wp(16.0, 100.0), None));
+    let far = engine.add_test_entity(make_soldier(wp(22.0, 100.0), None));
 
     // 5 frames of +X motion at 1 unit per frame — short enough to
     // stay inside DOMINO_DISTANCE for the front pair.
