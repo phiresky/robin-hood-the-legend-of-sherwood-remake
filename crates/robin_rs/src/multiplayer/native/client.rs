@@ -8,15 +8,12 @@ use crate::multiplayer::client_outgoing::ClientPublicationAuthority;
 use crate::multiplayer::client_protocol::ClientConfig;
 use crate::multiplayer::client_session::{
     self, ClientHandle, ClientRankedAdmission, ClientSlots, ClientTimer, ClientTimings,
-    ClientTransport, InitialHandshake, RankedResponses, SessionEnd, SessionLinks, StartupFailure,
+    ClientTransport, InitialHandshake, RankedResponses, SessionLinks, StartupFailure,
     WriterCommand, ranked_setup_channel,
 };
 use crate::multiplayer::ranked_client::ClientRankedJoinState;
 use crate::multiplayer::{MessageError, MultiplayerError};
-use robin_engine::multiplayer::{
-    NetFatal, RankedCoSignContextDocument, RankedParticipantRosterDocument,
-    RankedSubmissionAcceptedDocument,
-};
+use robin_engine::multiplayer::NetFatal;
 use std::cell::Cell;
 use std::future::Future;
 
@@ -399,19 +396,6 @@ impl ClientTransport for NativeClientTransport<'_> {
         }
     }
 
-    fn stream_closed() -> SessionEnd {
-        SessionEnd::Graceful
-    }
-
-    fn fatal_outbound(outgoing: &NetOutbound) -> bool {
-        matches!(
-            outgoing,
-            NetOutbound::LeaderboardCoSignRequest { .. }
-                | NetOutbound::ArmLeaderboardCoSignRequest { .. }
-                | NetOutbound::LeaderboardCoSignResponse(_)
-        )
-    }
-
     fn initial_handshake_exhausted(last_error: MultiplayerError) -> MultiplayerError {
         last_error
     }
@@ -483,6 +467,13 @@ impl NativeRankedAdmission {
         self.local_seat.get().expect(
             "native ranked admission runs only after the authoritative Welcome assigned a seat",
         )
+    }
+
+    /// Downgrade the ranked lifecycle after a typed local unavailability was
+    /// answered; the host's browse-only decision resolves the join state.
+    fn downgrade(&self, reason: RankedBrowseOnlyReason, detail: String) {
+        ranked_lifecycle_lock(&self.lifecycle).downgrade(detail.clone());
+        tracing::warn!(?reason, %detail, "client ranked admission downgraded; gameplay remains available");
     }
 
     fn respond_to_ranked_challenge(
@@ -666,16 +657,6 @@ impl ClientRankedAdmission for NativeRankedAdmission {
                 .is_none())
     }
 
-    fn enter_browse_only(&self, reason: RankedBrowseOnlyReason) -> Result<(), MultiplayerError> {
-        self.join_state.mark_browse_only(reason)?;
-        Ok(())
-    }
-
-    fn downgrade(&self, reason: RankedBrowseOnlyReason, detail: String) {
-        ranked_lifecycle_lock(&self.lifecycle).downgrade(detail.clone());
-        tracing::warn!(?reason, %detail, "client ranked admission downgraded; gameplay remains available");
-    }
-
     fn publication_authority(
         &self,
         requires_cosign: bool,
@@ -695,13 +676,15 @@ impl ClientRankedAdmission for NativeRankedAdmission {
         challenge: RankedJoinChallenge,
     ) -> Result<(), MultiplayerError> {
         let responses = links.responses;
-        match self.join_state.receive_wire_challenge(challenge) {
-            Ok(Some(challenge))
+        // An invalid, replayed or replacing challenge is returned to the
+        // shared handler, which applies the one browse-only policy.
+        match self.join_state.receive_wire_challenge(challenge)? {
+            Some(challenge)
                 if self.setup_state.load(Ordering::Acquire) == RANKED_SETUP_AVAILABLE =>
             {
                 self.handle_delivered_ranked_challenge(responses, challenge);
             }
-            Ok(_) if self.setup_state.load(Ordering::Acquire) == RANKED_SETUP_UNAVAILABLE => {
+            _ if self.setup_state.load(Ordering::Acquire) == RANKED_SETUP_UNAVAILABLE => {
                 if let Err(error) = responses.queue(
                     &self.join_state,
                     RankedJoinResponse::Unavailable(
@@ -711,19 +694,7 @@ impl ClientRankedAdmission for NativeRankedAdmission {
                     tracing::warn!(%error, "could not answer ranked challenge with typed unavailability");
                 }
             }
-            Ok(_) => {}
-            Err(error) => {
-                let _ = responses.queue(
-                    &self.join_state,
-                    RankedJoinResponse::Unavailable(
-                        crate::multiplayer::RankedJoinUnavailableReason::LocalRankedSessionMismatch,
-                    ),
-                );
-                self.downgrade(
-                    RankedBrowseOnlyReason::PeerRankedSessionMismatch,
-                    error.to_string(),
-                );
-            }
+            _ => {}
         }
         Ok(())
     }
@@ -821,168 +792,15 @@ impl ClientRankedAdmission for NativeRankedAdmission {
         links: &SessionLinks<'_, Self>,
         accepted: RankedJoinAccepted,
     ) -> Result<(), MultiplayerError> {
-        match self.accept_client_ranked_join(accepted) {
-            Ok(accepted) => {
-                links
-                    .incoming
-                    .send(NetEvent::RankedJoinAccepted(accepted))
-                    .map_err(|_| {
-                        MultiplayerError::ChannelClosed(
-                            "client ranked acknowledgement channel is closed".into(),
-                        )
-                    })?;
-            }
-            Err(error) => self.downgrade(
-                RankedBrowseOnlyReason::PeerAttestationRejected,
-                error.to_string(),
-            ),
-        }
-        Ok(())
-    }
-
-    fn on_roster(
-        &self,
-        links: &SessionLinks<'_, Self>,
-        document: RankedParticipantRosterDocument,
-    ) -> Result<(), MultiplayerError> {
-        let update = (|| {
-            let document = self.join_state.receive_wire_roster_update(document)?;
-            let genesis = ranked_lifecycle_lock(&self.lifecycle)
-                .ranked_client()
-                .map(|client| client.session_genesis.clone())
-                .ok_or_else(|| {
-                    MultiplayerError::Ranked(
-                        "ranked roster update arrived before client lifecycle acceptance".into(),
-                    )
-                })?;
-            let participant_claims =
-                crate::multiplayer::ranked_client::decode_ranked_participant_roster(
-                    &document, &genesis,
-                )?;
-            ranked_lifecycle_lock(&self.lifecycle)
-                .update_ranked_client_roster(&genesis, participant_claims)
-                .map_err(|error| {
-                    MultiplayerError::ranked_document("update ranked client roster", error)
-                })?;
-            Ok::<_, MultiplayerError>(document)
-        })();
-        match update {
-            Ok(document) => links
-                .incoming
-                .send(NetEvent::RankedParticipantRoster(document))
-                .map_err(|_| {
-                    MultiplayerError::ChannelClosed("client ranked roster channel is closed".into())
-                })?,
-            Err(error) => self.downgrade(
-                RankedBrowseOnlyReason::PeerAttestationRejected,
-                error.to_string(),
-            ),
-        }
-        Ok(())
-    }
-
-    fn on_browse_only(
-        &self,
-        links: &SessionLinks<'_, Self>,
-        reason: RankedBrowseOnlyReason,
-    ) -> Result<(), MultiplayerError> {
-        let _ = self.join_state.mark_browse_only(reason);
-        ranked_lifecycle_lock(&self.lifecycle)
-            .downgrade(format!("host downgraded ranked multiplayer: {reason:?}"));
+        let accepted = self.accept_client_ranked_join(accepted)?;
         links
             .incoming
-            .send(NetEvent::RankedBrowseOnly { reason })
+            .send(NetEvent::RankedJoinAccepted(accepted))
             .map_err(|_| {
                 MultiplayerError::ChannelClosed(
-                    "client ranked browse-only channel is closed".into(),
+                    "client ranked acknowledgement channel is closed".into(),
                 )
             })
-    }
-
-    fn on_cosign_context(
-        &self,
-        links: &SessionLinks<'_, Self>,
-        context: RankedCoSignContextDocument,
-    ) -> Result<(), MultiplayerError> {
-        let decoded = decode_ranked_wire_document::<
-            crate::leaderboard_ranked_session::RankedCoSignContextV1,
-        >(context.as_bytes());
-        if let Err(error) = decoded {
-            self.downgrade(
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                format!("host published invalid ranked co-sign context: {error}"),
-            );
-        } else if ranked_lifecycle_lock(&self.lifecycle)
-            .ranked_client()
-            .is_some()
-        {
-            links
-                .incoming
-                .send(NetEvent::RankedCoSignContext(context))
-                .map_err(|_| {
-                    MultiplayerError::ChannelClosed(
-                        "client ranked context channel is closed".into(),
-                    )
-                })?;
-        } else {
-            self.downgrade(
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                "host published ranked co-sign context before client admission".to_string(),
-            );
-        }
-        Ok(())
-    }
-
-    fn on_submission_accepted(
-        &self,
-        links: &SessionLinks<'_, Self>,
-        accepted: RankedSubmissionAcceptedDocument,
-    ) -> Result<(), MultiplayerError> {
-        let decoded = decode_ranked_wire_document::<robin_run_protocol::SubmissionAcceptedV1>(
-            accepted.as_bytes(),
-        );
-        if let Err(error) = decoded {
-            self.downgrade(
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                format!("host published invalid ranked submission acknowledgement: {error}"),
-            );
-        } else if ranked_lifecycle_lock(&self.lifecycle)
-            .ranked_client()
-            .is_some()
-        {
-            links
-                .incoming
-                .send(NetEvent::RankedSubmissionAccepted(accepted))
-                .map_err(|_| {
-                    MultiplayerError::ChannelClosed(
-                        "client ranked submission acknowledgement channel is closed".into(),
-                    )
-                })?;
-        } else {
-            self.downgrade(
-                RankedBrowseOnlyReason::RankedProtocolViolation,
-                "host published a submission acknowledgement before ranked client admission"
-                    .to_string(),
-            );
-        }
-        Ok(())
-    }
-
-    fn on_session_dropped(&self) -> Result<(), MultiplayerError> {
-        if ranked_lifecycle_lock(&self.lifecycle)
-            .browse_only_reason()
-            .is_none()
-            && let Err(error) = self.join_state.begin_reconnect()
-        {
-            ranked_lifecycle_lock(&self.lifecycle).downgrade(format!(
-                "ranked reconnect trust state could not advance: {error}"
-            ));
-        }
-        Ok(())
-    }
-
-    fn reset_after_failed_handshake(&self) -> Result<(), MultiplayerError> {
-        Ok(())
     }
 }
 
