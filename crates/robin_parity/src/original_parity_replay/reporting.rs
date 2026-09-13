@@ -17,7 +17,7 @@ pub(super) fn structured_divergences(
 use super::{
     BTreeMap, BTreeSet, BufWriter, Engine, EntityId, EntityMap, File, PathBuf, Serialize,
     TRACE_SCHEMA_VERSION, TraceElement, TraceEntityId, TraceEntityKind, TraceFlightStep,
-    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch,
+    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch, TraceRunResult,
     TraceVisibilityQuery, VecDeque,
 };
 use std::io::Write as _;
@@ -118,7 +118,7 @@ pub(super) fn write_engine_dump_frame(
     rust_flight_steps: &[robin_engine::movement_diagnostics::ParityFlightStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     differences: &[String],
-) {
+) -> TraceRunResult<()> {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
     let original_entities = options
         .entities
@@ -162,7 +162,7 @@ pub(super) fn write_engine_dump_frame(
         rust_rng_diagnostics,
         differences,
         Some(&original_entities),
-    );
+    )
 }
 
 pub(super) fn write_engine_dump_snapshot_frame(
@@ -191,26 +191,26 @@ pub(super) fn write_engine_dump_snapshot_frame(
     rust_rng_diagnostics: &robin_engine::sim_rng::OriginalRngDiagnostics,
     differences: &[String],
     original_entities: Option<&[&TraceElement]>,
-) {
+) -> TraceRunResult<()> {
     let mapped_entities = options
         .entities
         .iter()
-        .map(|original| {
-            let rust = entity_map.translate(*original);
-            serde_json::json!({
+        .map(|original| -> TraceRunResult<_> {
+            let rust = entity_map.translate(*original)?;
+            Ok(serde_json::json!({
                 "original": original,
                 "rust": {
                     "kind": format!("{:?}", rust.kind()).to_lowercase(),
                     "index": rust.index(),
                 },
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<TraceRunResult<Vec<_>>>()?;
     let selected_rust_indices = options
         .entities
         .iter()
-        .map(|original| entity_map.translate(*original).index() as usize)
-        .collect::<BTreeSet<_>>();
+        .map(|original| Ok(entity_map.translate(*original)?.index() as usize))
+        .collect::<TraceRunResult<BTreeSet<_>>>()?;
     let mut engine_value = robin_util::json_value::to_json_value(diagnostic_engine)
         .expect("serialize diagnostic engine state");
     if !selected_rust_indices.is_empty() {
@@ -263,6 +263,7 @@ pub(super) fn write_engine_dump_snapshot_frame(
             .expect("serialize selected Original parity dump entities");
     }
     write_jsonl_record(writer, &record);
+    Ok(())
 }
 
 pub(super) fn push_rolling_window<T>(frames: &mut VecDeque<T>, frame: T) {
@@ -279,7 +280,7 @@ pub(super) fn write_automatic_rolling_dump(
     header: &TraceHeader,
     entity_map: &EntityMap,
     divergent_frame: u64,
-) -> PathBuf {
+) -> TraceRunResult<PathBuf> {
     assert!(
         !frames.is_empty(),
         "automatic parity dump requires at least one captured frame"
@@ -356,11 +357,11 @@ pub(super) fn write_automatic_rolling_dump(
             &frame.rust_rng_diagnostics,
             &frame.differences,
             None,
-        );
+        )?;
     }
     writer.flush().expect("flush automatic parity dump");
     eprintln!("automatic parity engine dump: {}", path.display());
-    path
+    Ok(path)
 }
 
 pub(super) fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_json::Value) {
@@ -442,7 +443,7 @@ pub(super) fn print_startup_actors(
     engine: &Engine,
     frame: &TraceFrame,
     entity_map: &EntityMap,
-) {
+) -> TraceRunResult<()> {
     eprintln!("{label}:");
     let expected_inactive: Vec<_> = frame
         .elements
@@ -479,7 +480,7 @@ pub(super) fn print_startup_actors(
                         index: 119,
                     })
     }) {
-        let id = entity_map.translate(expected.entity_id);
+        let id = entity_map.translate(expected.entity_id)?;
         let actual = engine
             .get_entity(id)
             .unwrap_or_else(|| panic!("mapped startup actor {id:?} is missing"));
@@ -518,6 +519,7 @@ pub(super) fn print_startup_actors(
             actual.element_data().sector(),
         );
     }
+    Ok(())
 }
 
 /// Wraps a Rust entity id so its `Debug` rendering also carries the original-game

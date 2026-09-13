@@ -6,8 +6,9 @@ use super::{
     EntityMap, GestureQuality, GroupMoveGoalTranslation, LevelAssets, MapPoint, Path, PathBuf,
     PlayerCommand, ReplayDropAleResolution, ReplayGroupMoveResolution, StorageContext,
     TRACE_NATIVE_SUFFIX, TRACE_SCHEMA_VERSION, TraceCampaign, TraceCommand, TraceElement,
-    TraceEntityKind, TraceFrame, TraceHeader, TraceInitialNpcTransient, TraceStartState,
-    TraceStorageResult, WorldPoint3D, ensure_native_binary_trace, native_binary_trace_path,
+    TraceEntityKind, TraceFrame, TraceHeader, TraceInitialNpcTransient, TraceRunResult,
+    TraceStartState, TraceStorageResult, WorldPoint3D, ensure_native_binary_trace,
+    native_binary_trace_path,
 };
 
 pub(super) fn apply_initial_npc_transients(
@@ -270,7 +271,7 @@ impl TraceCommand {
         engine: &Engine,
         drop_ale_resolution: Option<ReplayDropAleResolution>,
         group_move_resolution: Option<ReplayGroupMoveResolution>,
-    ) -> Option<PlayerCommand> {
+    ) -> TraceRunResult<Option<PlayerCommand>> {
         assert!(
             drop_ale_resolution.is_none() || matches!(&self, Self::DropAleAt { .. }),
             "DropAle route metadata was attached to a non-DropAle command"
@@ -279,7 +280,7 @@ impl TraceCommand {
             group_move_resolution.is_none() || matches!(&self, Self::GroupMove { .. }),
             "group-move route metadata was attached to a non-group-move command"
         );
-        Some(match self {
+        Ok(Some(match self {
             Self::BoxSelect {
                 first,
                 second,
@@ -291,7 +292,7 @@ impl TraceCommand {
                 // side effects) twice. Keep accepting the gesture metadata,
                 // but replay only the following resolved commands.
                 let _ = (first, second, append);
-                return None;
+                return Ok(None);
             }
             Self::GroupMove {
                 actors,
@@ -309,7 +310,7 @@ impl TraceCommand {
                         group_move_resolution
                             .as_ref()
                             .and_then(|resolution| resolution.unmapped_goal_search_sector),
-                    ) {
+                    )? {
                     GroupMoveGoalTranslation::Runtime(goal, index) => {
                         engine
                             .fast_grid()
@@ -346,7 +347,7 @@ impl TraceCommand {
                     actors: actors
                         .into_iter()
                         .map(|id| entity_map.translate(id))
-                        .collect(),
+                        .collect::<TraceRunResult<_>>()?,
                     destination,
                     running,
                     show_marker,
@@ -361,19 +362,20 @@ impl TraceCommand {
                             resolution
                                 .recorded_gate_routes
                                 .iter()
-                                .map(|(actor, gates)| {
-                                    (
-                                        entity_map.translate(*actor),
+                                .map(|(actor, gates)| -> TraceRunResult<_> {
+                                    Ok((
+                                        entity_map.translate(*actor)?,
                                         gates
                                             .iter()
                                             .map(|&(gate, direct)| {
-                                                (entity_map.translate_gate(gate), direct)
+                                                Ok((entity_map.translate_gate(gate)?, direct))
                                             })
-                                            .collect(),
-                                    )
+                                            .collect::<TraceRunResult<_>>()?,
+                                    ))
                                 })
-                                .collect()
+                                .collect::<TraceRunResult<_>>()
                         })
+                        .transpose()?
                         .unwrap_or_default(),
                     recorded_failed_gate_routes: group_move_resolution
                         .map(|resolution| {
@@ -381,8 +383,9 @@ impl TraceCommand {
                                 .recorded_failed_gate_routes
                                 .into_iter()
                                 .map(|actor| entity_map.translate(actor))
-                                .collect()
+                                .collect::<TraceRunResult<_>>()
                         })
+                        .transpose()?
                         .unwrap_or_default(),
                 }
             }
@@ -393,8 +396,8 @@ impl TraceCommand {
                 original_command_name,
                 running,
             } => PlayerCommand::LaunchInteraction {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
                 command: command_from_stable_name(&original_command_name),
                 running,
             },
@@ -403,7 +406,7 @@ impl TraceCommand {
                 original_command: _,
                 original_command_name,
             } => PlayerCommand::LaunchSelfAbility {
-                actor: entity_map.translate(actor),
+                actor: entity_map.translate(actor)?,
                 command: command_from_stable_name(&original_command_name),
             },
             Self::LaunchGroundTarget {
@@ -426,7 +429,7 @@ impl TraceCommand {
                     ),
                 };
                 PlayerCommand::LaunchGroundTarget {
-                    actor: entity_map.translate(actor),
+                    actor: entity_map.translate(actor)?,
                     target_pos: target.into(),
                     command: command_from_stable_name(&original_command_name),
                     target_field,
@@ -438,8 +441,8 @@ impl TraceCommand {
                 target,
                 running,
             } => PlayerCommand::LaunchScrollRead {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
                 running,
             },
             Self::SwordStrike {
@@ -450,8 +453,8 @@ impl TraceCommand {
                 with_seek,
                 seek_distance,
             } => PlayerCommand::SwordStrikeCmd {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
                 command: command_from_stable_name(&original_command_name),
                 composite: None,
                 gesture_quality: GestureQuality::PERFECT,
@@ -459,20 +462,20 @@ impl TraceCommand {
                 seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
                 append,
             },
             Self::UnselectAllPcs => PlayerCommand::UnselectAllPcs,
             Self::StopPc { pc } => PlayerCommand::StopPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
             },
             Self::SelectAction { pc, action, .. } => PlayerCommand::SelectResolvedAction {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
                 action: action.into(),
             },
             Self::CancelAction { pc, .. } => match pc {
                 Some(pc) => PlayerCommand::CancelAction {
-                    pc_id: entity_map.translate(pc),
+                    pc_id: entity_map.translate(pc)?,
                 },
                 None => PlayerCommand::UnselectAllActions,
             },
@@ -483,13 +486,13 @@ impl TraceCommand {
                 target,
                 original_action: _,
             } => PlayerCommand::PerformResolvedOrientation {
-                pc_id: entity_map.translate(actor),
+                pc_id: entity_map.translate(actor)?,
                 action: action.into(),
                 mouse_map: mouse_map.into(),
                 target: target.into(),
             },
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
-                pc_id: entity_map.translate(entity),
+                pc_id: entity_map.translate(entity)?,
             },
             Self::CrouchDown => PlayerCommand::CrouchDown,
             Self::StandUp => PlayerCommand::StandUp,
@@ -514,7 +517,7 @@ impl TraceCommand {
                     })
                     .unwrap_or((false, None, None, None));
                 PlayerCommand::DropAleAt {
-                    actor: entity_map.translate(actor),
+                    actor: entity_map.translate(actor)?,
                     target_pos: target.into(),
                     running,
                     already_authorized,
@@ -527,8 +530,8 @@ impl TraceCommand {
                 actor,
                 protected_pc,
             } => PlayerCommand::ShieldSelectProtected {
-                actor: entity_map.translate(actor),
-                protected_pc: entity_map.translate(protected_pc),
+                actor: entity_map.translate(actor)?,
+                protected_pc: entity_map.translate(protected_pc)?,
             },
             Self::BoxUnselect {
                 first,
@@ -539,7 +542,7 @@ impl TraceCommand {
                 // resolved nested unselect message are both recorded, so
                 // replay only the resolved commands that follow.
                 let _ = (first, second, append);
-                return None;
+                return Ok(None);
             }
             Self::RaiseShieldWithDanger {
                 actor,
@@ -549,8 +552,8 @@ impl TraceCommand {
             } => {
                 let danger_point: WorldPoint3D = danger_point.into();
                 PlayerCommand::RaiseShieldWithDanger {
-                    actor: entity_map.translate(actor),
-                    protected_pc: entity_map.translate(protected_pc),
+                    actor: entity_map.translate(actor)?,
+                    protected_pc: entity_map.translate(protected_pc)?,
                     danger_point,
                     danger_point_layer,
                 }
@@ -571,7 +574,7 @@ impl TraceCommand {
             },
             Self::SelectAllPcs => PlayerCommand::SelectAllPcs,
             Self::UnselectPc { pc } => PlayerCommand::UnselectPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
             },
             Self::SelectActionIndex { index } => {
                 // The Original resolves the action-bar shortcut against
@@ -582,22 +585,22 @@ impl TraceCommand {
                         pc_id: *pc_id,
                         action_index: index,
                     },
-                    _ => return None,
+                    _ => return Ok(None),
                 }
             }
             Self::SetLockAlt { on } => PlayerCommand::SetLockAlt(on),
             Self::KeyControl => PlayerCommand::KeyControl,
             Self::KeyReleaseControl => PlayerCommand::KeyReleaseControl,
             Self::StartMacro { pc, slot } => PlayerCommand::StartMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::DeleteMacro { pc, slot } => PlayerCommand::DeleteMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::StartRecordingMacro { pc, slot } => PlayerCommand::StartRecordingMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::ChangeQaMemory { slot } => PlayerCommand::ChangeQaMemory { slot },
@@ -619,14 +622,14 @@ impl TraceCommand {
                     ),
                 }
                 PlayerCommand::HeroSpeak {
-                    pc_id: entity_map.translate(actor),
+                    pc_id: entity_map.translate(actor)?,
                     expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 }
             }
             Self::BeggarDontTalkStamp { entity } => PlayerCommand::BeggarDontTalkStamp {
-                beggar_id: entity_map.translate(entity),
+                beggar_id: entity_map.translate(entity)?,
             },
-        })
+        }))
     }
 }
 
@@ -1263,9 +1266,9 @@ pub(super) fn record_arrow_publication_before_compare(
     engine: &Engine,
     frame: &TraceFrame,
     entity_map: &EntityMap,
-) {
+) -> TraceRunResult<()> {
     if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
-        return;
+        return Ok(());
     }
     let parse_filter = |name: &str| {
         std::env::var(name).ok().map(|value| {
@@ -1277,7 +1280,7 @@ pub(super) fn record_arrow_publication_before_compare(
     if parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
         .is_some_and(|value| u64::from(value) != frame.frame_after)
     {
-        return;
+        return Ok(());
     }
     let projectile_filter =
         parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER");
@@ -1287,7 +1290,7 @@ pub(super) fn record_arrow_publication_before_compare(
         element.kind == TraceEntityKind::Projectile
             && projectile_filter.is_none_or(|value| value == element.creation_order)
     }) {
-        let id = entity_map.translate(original.entity_id);
+        let id = entity_map.translate(original.entity_id)?;
         let entity = engine
             .get_entity(id)
             .unwrap_or_else(|| panic!("mapped diagnostic projectile {id:?} is missing"));
@@ -1327,4 +1330,5 @@ pub(super) fn record_arrow_publication_before_compare(
             position.z.to_bits(),
         );
     }
+    Ok(())
 }

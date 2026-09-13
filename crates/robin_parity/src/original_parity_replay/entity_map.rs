@@ -1,7 +1,7 @@
 //! Original-to-runtime identity translation; semantic ordinals remain unchanged.
 use super::{
     BTreeMap, BTreeSet, Engine, EntityId, EntityIdKind, LevelAssets, MapPoint, SectorNumber,
-    TraceEntityId, TraceEntityKind, TraceFrame,
+    TraceEntityId, TraceEntityKind, TraceFrame, TraceRunError, TraceRunResult,
 };
 
 pub(super) struct EntityMap {
@@ -40,13 +40,19 @@ impl EntityMap {
     /// and then start moving on the first recorded frame. Both mission loading
     /// and legacy-save adoption install the authoritative Original creation
     /// order on every Rust entity, including gaps consumed by mobile masters.
-    pub(super) fn build(engine: &Engine, assets: &LevelAssets, frame: &TraceFrame) -> Self {
+    pub(super) fn build(
+        engine: &Engine,
+        assets: &LevelAssets,
+        frame: &TraceFrame,
+    ) -> TraceRunResult<Self> {
         let mut rust_by_creation_order = BTreeMap::new();
         for (id, entity) in engine.entities_with_ids_iter() {
             let creation_order = engine.original_creation_order(id);
             if let Some((previous, _)) =
                 rust_by_creation_order.insert(creation_order, (id, entity.entity_id_kind()))
             {
+                // Rust-side invariant: mission loading and save adoption
+                // install distinct creation orders on every Rust entity.
                 panic!(
                     "Rust entities {previous:?} and {id:?} share Original creation order \
                      {creation_order}"
@@ -65,12 +71,12 @@ impl EntityMap {
             let expected_kind = EntityIdKind::from(original.entity_id.kind);
             let &(rust_id, actual_kind) = rust_by_creation_order
                 .get(&original.creation_order)
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    TraceRunError::TraceContent(format!(
                         "Original {:?} has creation order {}, absent from the Rust identity table",
                         original.entity_id, original.creation_order
-                    )
-                });
+                    ))
+                })?;
             assert_eq!(
                 actual_kind, expected_kind,
                 "Original {:?} creation order {} has kind {:?}, but Rust {rust_id:?} has kind \
@@ -130,14 +136,14 @@ impl EntityMap {
             .keys()
             .next_back()
             .map_or(0, |highest| highest + 1);
-        Self {
+        Ok(Self {
             entities: result,
             entities_by_creation_order,
             sectors,
             sector_indices,
             gates: engine.legacy_gate_order(assets),
             runtime_creation_order_boundary,
-        }
+        })
     }
 
     /// Whether the Original's raw serial for this element is an exact
@@ -212,7 +218,11 @@ impl EntityMap {
     /// an entity. Match newly persistent entities isomorphically by global
     /// persistent construction rank and require the concrete kind at every
     /// rank to agree; raw order numbers may differ by presentation-only gaps.
-    pub(super) fn extend_runtime_entities(&mut self, engine: &Engine, frame: &TraceFrame) {
+    pub(super) fn extend_runtime_entities(
+        &mut self,
+        engine: &Engine,
+        frame: &TraceFrame,
+    ) -> TraceRunResult<()> {
         self.refresh_trace_indices(frame);
         let originals: Vec<_> = frame
             .elements
@@ -233,6 +243,7 @@ impl EntityMap {
             if let Some((previous, _)) =
                 rust_by_creation_order.insert(creation_order, (id, entity.entity_id_kind()))
             {
+                // Rust-side invariant, as in `build`.
                 panic!(
                     "unmapped Rust entities {previous:?} and {id:?} share Original creation \
                      order {creation_order}"
@@ -257,12 +268,12 @@ impl EntityMap {
             original_identities.clone(),
             rust_identities.clone(),
         )
-        .unwrap_or_else(|detail| {
-            panic!(
+        .map_err(|detail| {
+            TraceRunError::TraceContent(format!(
                 "runtime persistent entity identity mismatch: {detail}; \
                  Original={original_identities:?}; Rust={rust_identities:?}"
-            )
-        });
+            ))
+        })?;
 
         let originals_by_id: BTreeMap<_, _> = originals
             .into_iter()
@@ -282,25 +293,32 @@ impl EntityMap {
                 original.creation_order
             );
         }
+        Ok(())
     }
 
-    pub(super) fn translate(&self, original: TraceEntityId) -> EntityId {
-        *self
-            .entities
-            .get(&original)
-            .unwrap_or_else(|| panic!("original entity {original:?} has no Rust correspondence"))
+    pub(super) fn translate(&self, original: TraceEntityId) -> TraceRunResult<EntityId> {
+        self.entities.get(&original).copied().ok_or_else(|| {
+            TraceRunError::TraceContent(format!(
+                "original entity {original:?} has no Rust correspondence"
+            ))
+        })
     }
 
-    pub(super) fn translate_gate(&self, original: u32) -> u32 {
+    pub(super) fn translate_gate(&self, original: u32) -> TraceRunResult<u32> {
+        // Platform invariant: every supported target has a usize of at least
+        // 32 bits.
         let original_index = usize::try_from(original)
             .unwrap_or_else(|_| panic!("Original gate index {original} exceeds usize"));
-        self.gates
+        Ok(self
+            .gates
             .get(original_index)
             .copied()
-            .unwrap_or_else(|| {
-                panic!("Original gate index {original} is absent from the retained gate topology")
-            })
-            .into()
+            .ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
+                    "Original gate index {original} is absent from the retained gate topology"
+                ))
+            })?
+            .into())
     }
 
     /// Preserve the patch-aware goal sector recorded by group movement.
@@ -314,10 +332,16 @@ impl EntityMap {
         original: i16,
         layer: u16,
         unmapped_goal_search_sector: Option<u16>,
-    ) -> GroupMoveGoalTranslation {
-        let original = u16::try_from(original)
-            .unwrap_or_else(|_| panic!("Original group-move sector is negative: {original}"));
-        if let Some(&runtime) = self.sectors.get(&original) {
+    ) -> TraceRunResult<GroupMoveGoalTranslation> {
+        let original = u16::try_from(original).map_err(|_| {
+            TraceRunError::TraceContent(format!(
+                "Original group-move sector is negative: {original}"
+            ))
+        })?;
+        // The remaining panics are invariants of the map itself: `build`
+        // inserts `sectors` and `sector_indices` together from Rust's canonical
+        // (signed) sector numbers, and `original` came from an `i16`.
+        Ok(if let Some(&runtime) = self.sectors.get(&original) {
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
@@ -326,11 +350,11 @@ impl EntityMap {
             });
             GroupMoveGoalTranslation::Runtime((SectorNumber::new(runtime), layer), index)
         } else if let Some(search_sector) = unmapped_goal_search_sector {
-            let runtime = self.sectors.get(&search_sector).copied().unwrap_or_else(|| {
-                panic!(
+            let runtime = self.sectors.get(&search_sector).copied().ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
                     "successful group-move route terminal Original sector {search_sector} has no retained Rust position-sector mapping"
-                )
-            });
+                ))
+            })?;
             let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
                 panic!("Rust position sector {runtime} exceeds its signed identity domain")
             });
@@ -343,18 +367,19 @@ impl EntityMap {
                 panic!("Original group-move sector {original} exceeds its signed identity domain")
             });
             GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(recorded), layer))
-        }
+        })
     }
 
     pub(super) fn translate_required_drop_ale_goal_sector(
         &self,
         original: u16,
-    ) -> (SectorNumber, robin_engine::fast_find_grid::SectorIndex) {
-        let runtime = self.sectors.get(&original).copied().unwrap_or_else(|| {
-            panic!(
+    ) -> TraceRunResult<(SectorNumber, robin_engine::fast_find_grid::SectorIndex)> {
+        let runtime = self.sectors.get(&original).copied().ok_or_else(|| {
+            TraceRunError::TraceContent(format!(
                 "schema-16 DropAle route goal Original sector {original} has no retained Rust position-sector mapping"
-            )
-        });
+            ))
+        })?;
+        // As above: the remaining panics are invariants of the map itself.
         let runtime = i16::try_from(runtime).unwrap_or_else(|_| {
             panic!("Rust DropAle goal sector {runtime} exceeds its signed identity domain")
         });
@@ -363,7 +388,7 @@ impl EntityMap {
                 "mapped schema-16 DropAle route goal Original sector {original} lost its exact Rust arena identity"
             )
         });
-        (SectorNumber::new(runtime), index)
+        Ok((SectorNumber::new(runtime), index))
     }
 
     pub(super) fn sectors_equivalent(&self, original: u16, rust: u16) -> bool {

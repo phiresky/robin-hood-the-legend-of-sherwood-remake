@@ -3967,6 +3967,7 @@ fn path_events_compare_ordered_request_bits_and_cancelled_validity() {
             std::slice::from_ref(&actual),
             &map
         )
+        .unwrap()
         .is_empty()
     );
 
@@ -3980,6 +3981,7 @@ fn path_events_compare_ordered_request_bits_and_cancelled_validity() {
     };
     assert!(
         compare_path_events(&[expected], &[mismatched], &map)
+            .unwrap()
             .iter()
             .any(|difference| difference.contains(".valid:"))
     );
@@ -5071,7 +5073,7 @@ fn trace_index_refresh_uses_stable_creation_order() {
 
     map.refresh_trace_index(shifted_trace_id, 158);
 
-    assert_eq!(map.translate(shifted_trace_id), rust_id);
+    assert_eq!(map.translate(shifted_trace_id).unwrap(), rust_id);
 }
 
 #[test]
@@ -5098,14 +5100,14 @@ fn group_move_translates_retained_sector_identity_without_click_containment() {
     // recorded waypoint may lie outside that sector's polygon. Translation
     // therefore depends only on retained construction topology.
     assert_eq!(
-        map.translate_group_move_goal_sector(55, 0, None),
+        map.translate_group_move_goal_sector(55, 0, None).unwrap(),
         GroupMoveGoalTranslation::Runtime(
             (SectorNumber::new(23), 0),
             robin_engine::fast_find_grid::SectorIndex::new(7).unwrap(),
         )
     );
     assert_eq!(
-        map.translate_group_move_goal_sector(56, 0, None),
+        map.translate_group_move_goal_sector(56, 0, None).unwrap(),
         GroupMoveGoalTranslation::Runtime(
             (SectorNumber::new(23), 0),
             robin_engine::fast_find_grid::SectorIndex::new(8).unwrap(),
@@ -5113,7 +5115,7 @@ fn group_move_translates_retained_sector_identity_without_click_containment() {
         "two Original sparse slots may share a public identity while retaining distinct arena identities"
     );
     assert_eq!(
-        map.translate_group_move_goal_sector(288, 4, None),
+        map.translate_group_move_goal_sector(288, 4, None).unwrap(),
         GroupMoveGoalTranslation::RecordedUnmapped((SectorNumber::new(288), 4)),
         "a coincident overlay must not erase the recorded route goal"
     );
@@ -5137,7 +5139,7 @@ fn recorded_group_move_gate_uses_retained_mixed_gate_order() {
         runtime_creation_order_boundary: 0,
     };
 
-    assert_eq!(map.translate_gate(1), 3);
+    assert_eq!(map.translate_gate(1).unwrap(), 3);
 }
 
 fn group_move_route_fixture(
@@ -5187,10 +5189,10 @@ fn legacy_route_ordinals_restore_original_append_order() {
     routes[0].draft_diagnostics.remove("result");
     routes[1].draft_diagnostics.remove("result");
 
-    restore_legacy_route_construction_diagnostics(&mut routes);
+    restore_legacy_route_construction_diagnostics(&mut routes).unwrap();
 
-    assert_eq!(required_route_construction_ordinal(&routes[0]), 0);
-    assert_eq!(required_route_construction_ordinal(&routes[1]), 1);
+    assert_eq!(required_route_construction_ordinal(&routes[0]).unwrap(), 0);
+    assert_eq!(required_route_construction_ordinal(&routes[1]).unwrap(), 1);
     for route in &routes {
         assert!(matches!(
             route
@@ -5213,14 +5215,13 @@ fn legacy_route_ordinal_restore_preserves_recorded_append_order() {
         group_move_route_fixture(actor, "move", 1),
     ];
 
-    restore_legacy_route_construction_diagnostics(&mut routes);
+    restore_legacy_route_construction_diagnostics(&mut routes).unwrap();
 
-    assert_eq!(required_route_construction_ordinal(&routes[0]), 0);
-    assert_eq!(required_route_construction_ordinal(&routes[1]), 1);
+    assert_eq!(required_route_construction_ordinal(&routes[0]).unwrap(), 0);
+    assert_eq!(required_route_construction_ordinal(&routes[1]).unwrap(), 1);
 }
 
 #[test]
-#[should_panic(expected = "schema-16 route event lacks an unsigned ordinal")]
 fn current_route_event_without_ordinal_remains_invalid() {
     let actor = TraceEntityId {
         kind: TraceEntityKind::Pc,
@@ -5229,7 +5230,13 @@ fn current_route_event_without_ordinal_remains_invalid() {
     let mut route = group_move_route_fixture(actor, "move", 0);
     route.draft_diagnostics.remove("ordinal");
 
-    required_route_construction_ordinal(&route);
+    let error = required_route_construction_ordinal(&route).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("schema-16 route event lacks an unsigned ordinal"),
+        "{error}"
+    );
 }
 
 fn group_move_route_map(max_gate: u32) -> EntityMap {
@@ -5293,7 +5300,7 @@ fn current_schema_group_move_recovers_ordinary_route_over_door_overlay() {
     let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
     assert_eq!(
-        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
+        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors).unwrap(),
         Some(ReplayGroupMoveResolution {
             door_route: false,
             unmapped_goal_search_sector: Some(64),
@@ -5334,7 +5341,8 @@ fn current_schema_same_sector_group_move_retains_ordinary_goal_kind() {
             &mut consumed,
             &group_move_route_map(0),
             &group_move_sector_kinds(150, None),
-        ),
+        )
+        .unwrap(),
         Some(ReplayGroupMoveResolution {
             door_route: false,
             unmapped_goal_search_sector: None,
@@ -5388,7 +5396,9 @@ fn current_schema_group_moves_share_frame_routes_in_command_order() {
     let sectors = group_move_sector_kinds(117, None);
 
     let first_resolution =
-        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors).unwrap();
+        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors)
+            .unwrap()
+            .unwrap();
     assert_eq!(
         first_resolution.recorded_gate_routes,
         vec![(actor, vec![(53, false)])]
@@ -5396,7 +5406,9 @@ fn current_schema_group_moves_share_frame_routes_in_command_order() {
     assert_eq!(consumed, BTreeSet::from([40]));
 
     let second_resolution =
-        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors).unwrap();
+        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors)
+            .unwrap()
+            .unwrap();
     assert_eq!(
         second_resolution.recorded_gate_routes,
         vec![(actor, vec![(54, true)])]
@@ -5438,7 +5450,7 @@ fn current_schema_group_move_recovers_internal_door_branch_from_retained_goal_ki
     let sectors = group_move_sector_kinds(292, Some((292, 53)));
 
     assert_eq!(
-        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
+        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors).unwrap(),
         Some(ReplayGroupMoveResolution {
             door_route: true,
             unmapped_goal_search_sector: Some(64),
@@ -5477,7 +5489,7 @@ fn current_schema_group_move_retains_door_branch_for_failed_empty_route() {
     let mut consumed = BTreeSet::new();
 
     assert_eq!(
-        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors,),
+        resolve_current_group_move_route(&command, &routes, &mut consumed, &map, &sectors).unwrap(),
         Some(ReplayGroupMoveResolution {
             door_route: true,
             unmapped_goal_search_sector: None,
@@ -5527,7 +5539,8 @@ fn current_schema_failed_ordinary_group_move_is_authoritative() {
             &mut consumed,
             &group_move_route_map(0),
             &group_move_sector_kinds(421, None),
-        ),
+        )
+        .unwrap(),
         Some(ReplayGroupMoveResolution {
             door_route: false,
             unmapped_goal_search_sector: None,
@@ -5570,7 +5583,8 @@ fn successful_patch_group_move_uses_terminal_gate_as_rust_search_sector() {
     let map = group_move_route_map(78);
     let sectors = group_move_sector_kinds(492, None);
     let resolution =
-        resolve_current_group_move_route(&command, &[route], &mut consumed, &map, &sectors);
+        resolve_current_group_move_route(&command, &[route], &mut consumed, &map, &sectors)
+            .unwrap();
 
     assert_eq!(
         resolution,
@@ -5597,7 +5611,8 @@ fn successful_patch_group_move_uses_terminal_gate_as_rust_search_sector() {
             492,
             0,
             resolution.and_then(|resolution| resolution.unmapped_goal_search_sector),
-        ),
+        )
+        .unwrap(),
         GroupMoveGoalTranslation::Runtime(
             (SectorNumber::new(55), 0),
             robin_engine::fast_find_grid::SectorIndex::new(9).unwrap(),
@@ -5663,7 +5678,6 @@ fn drop_ale_route_map(actor: TraceEntityId) -> EntityMap {
 }
 
 #[test]
-#[should_panic(expected = "schema-16 DropAle route has invalid result: None")]
 fn current_drop_ale_route_without_result_remains_invalid() {
     let actor = TraceEntityId {
         kind: TraceEntityKind::Pc,
@@ -5676,7 +5690,13 @@ fn current_drop_ale_route_without_result_remains_invalid() {
     let mut route = drop_ale_route_fixture(actor, target);
     route.draft_diagnostics.remove("result");
 
-    recorded_gate_path_from_event(&route, &drop_ale_route_map(actor));
+    let error = recorded_gate_path_from_event(&route, &drop_ale_route_map(actor)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("schema-16 DropAle route has invalid result: None"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -5709,7 +5729,8 @@ fn current_schema_drop_ale_recovers_save067_route_goal() {
             &drop_ale_route_map(actor),
             None,
             false,
-        ),
+        )
+        .unwrap(),
         Some(ReplayDropAleResolution {
             goal: (SectorNumber::new(55), 4),
             goal_sector_index: robin_engine::fast_find_grid::SectorIndex::new(37),
@@ -5764,7 +5785,8 @@ fn delayed_drop_ale_ignores_route_without_staged_seek() {
         &BTreeSet::new(),
         &drop_ale_route_map(actor),
         |_, _| false,
-    );
+    )
+    .unwrap();
 
     assert!(routes.is_empty());
     assert!(consumed.is_empty());
@@ -5802,7 +5824,8 @@ fn current_schema_delayed_drop_ale_retains_recorded_failure_outcome() {
                 && destination.x.to_bits() == target.x.bits
                 && destination.y.to_bits() == target.y.bits
         },
-    );
+    )
+    .unwrap();
 
     assert_eq!(consumed, BTreeSet::from([7]));
     assert_eq!(routes.len(), 1);
@@ -5838,7 +5861,8 @@ fn current_schema_drop_ale_rejects_duplicate_exact_command_routes() {
         "ordinal".to_owned(),
         TraceJsonValue::from(TraceJsonTree::Unsigned(8)),
     );
-    resolve_current_drop_ale(
+    // The duplicate-route check remains an invariant assertion.
+    let _ = resolve_current_drop_ale(
         &command,
         &[first, second],
         &mut BTreeSet::new(),
@@ -5870,14 +5894,13 @@ fn drop_ale_route_recovery_rejects_nonmatching_point() {
     let mut consumed = BTreeSet::new();
 
     assert_eq!(
-        resolve_current_drop_ale(&command, &routes, &mut consumed, &map, None, false),
+        resolve_current_drop_ale(&command, &routes, &mut consumed, &map, None, false).unwrap(),
         None
     );
     assert!(consumed.is_empty());
 }
 
 #[test]
-#[should_panic(expected = "has no retained Rust position-sector mapping")]
 fn current_schema_drop_ale_rejects_unmapped_authoritative_goal() {
     let actor = TraceEntityId {
         kind: TraceEntityKind::Pc,
@@ -5895,13 +5918,20 @@ fn current_schema_drop_ale_rejects_unmapped_authoritative_goal() {
     let mut map = drop_ale_route_map(actor);
     map.sectors.clear();
 
-    let _ = resolve_current_drop_ale(
+    let error = resolve_current_drop_ale(
         &command,
         &[drop_ale_route_fixture(actor, target)],
         &mut BTreeSet::new(),
         &map,
         None,
         false,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("has no retained Rust position-sector mapping"),
+        "{error}"
     );
 }
 
@@ -5934,7 +5964,8 @@ fn current_schema_drop_ale_recovers_same_sector_actor_goal_without_route() {
             &drop_ale_route_map(actor),
             Some(expected.clone()),
             false,
-        ),
+        )
+        .unwrap(),
         Some(expected)
     );
     assert!(consumed.is_empty());
@@ -5975,9 +6006,6 @@ fn legacy_drop_ale_actor_fallback_requires_exact_same_sector() {
 }
 
 #[test]
-#[should_panic(
-    expected = "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
-)]
 fn current_schema_drop_ale_qa_rejects_actor_sector_as_a_fake_target_fallback() {
     let actor = TraceEntityId {
         kind: TraceEntityKind::Pc,
@@ -5997,13 +6025,20 @@ fn current_schema_drop_ale_qa_rejects_actor_sector_as_a_fake_target_fallback() {
         recorded_gate_path: None,
     };
 
-    let _ = resolve_current_drop_ale(
+    let error = resolve_current_drop_ale(
         &command,
         &[],
         &mut BTreeSet::new(),
         &drop_ale_route_map(actor),
         Some(fake_actor_goal),
         true,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains(
+            "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
+        ),
+        "{error}"
     );
 }
 

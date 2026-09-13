@@ -574,7 +574,7 @@ pub(super) fn run_replay(
         );
         let legacy_additive_omissions = header.initial_npc_transients.is_none();
         if legacy_additive_omissions {
-            restore_legacy_route_construction_diagnostics(&mut frame.route_construction_events);
+            restore_legacy_route_construction_diagnostics(&mut frame.route_construction_events)?;
         }
         validate_trace_frame_with_legacy_additive_omissions(
             header.schema,
@@ -643,7 +643,12 @@ pub(super) fn run_replay(
         // Establish identity from the untouched mission-start state.  Besides
         // being the strongest isomorphism anchor, this lets startup debugging
         // distinguish load-time differences from first-hourglass mutations.
-        let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
+        if entity_map.is_none() {
+            entity_map = Some(EntityMap::build(&engine, &assets, &frame)?);
+        }
+        let map = entity_map
+            .as_mut()
+            .expect("the entity map was established above");
         map.refresh_trace_indices(&frame);
         // Validate the recorded deadlines before handing them to the engine; a
         // malformed event stops the run before any deadline is installed.
@@ -699,7 +704,7 @@ pub(super) fn run_replay(
         let debug_startup =
             frame.frame_before == 0 && std::env::var_os("PARITY_DEBUG_STARTUP").is_some();
         if debug_startup {
-            print_startup_actors("before Rust frame 1", &engine, &frame, map);
+            print_startup_actors("before Rust frame 1", &engine, &frame, map)?;
         }
         let director_completions = frame
             .director_completions
@@ -715,16 +720,16 @@ pub(super) fn run_replay(
         let resolutions = frame
             .resolved_exclamations
             .drain(..)
-            .map(|resolved| {
+            .map(|resolved| -> TraceRunResult<_> {
                 let _selection_diagnostics = (resolved.selected_variant, resolved.selected_entry);
-                robin_engine::sound::ResolvedExclamation {
-                    actor_id: map.translate(resolved.actor).index(),
+                Ok(robin_engine::sound::ResolvedExclamation {
+                    actor_id: map.translate(resolved.actor)?.index(),
                     identifier: resolved.identifier,
                     exclamation_id: resolved.exclamation_id,
                     duration_frames: resolved.duration_frames,
-                }
+                })
             })
-            .collect();
+            .collect::<TraceRunResult<Vec<_>>>()?;
         let external_facts = robin_engine::engine::ExternalFacts::new(
             director_completions,
             Some(robin_engine::engine::SoundBoundary::replay(resolutions)),
@@ -769,23 +774,19 @@ pub(super) fn run_replay(
             .iter()
             .any(|event| event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true));
         let trace_commands_were_empty = frame.commands.is_empty();
-        let ordinary_refresh_eligible = frame
-            .commands
-            .iter()
-            .filter_map(|command| match command {
-                TraceCommand::OrientActionAt { actor, action, .. }
-                    if engine
-                        .parity_replay_setup()
-                        .orientation_would_emit_before_hourglass(
-                            map.translate(*actor),
-                            (*action).into(),
-                        ) =>
-                {
-                    Some((*actor, *action))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let mut ordinary_refresh_eligible = Vec::new();
+        for command in &frame.commands {
+            if let TraceCommand::OrientActionAt { actor, action, .. } = command
+                && engine
+                    .parity_replay_setup()
+                    .orientation_would_emit_before_hourglass(
+                        map.translate(*actor)?,
+                        (*action).into(),
+                    )
+            {
+                ordinary_refresh_eligible.push((*actor, *action));
+            }
+        }
         let force_single_popup_orientation_late = infer_legacy_random_refresh_phase
             && legacy_refresh_orientation_provenance
                 .proves_single_popup_orientation_is_late(&frame.commands, popup_nested_refresh);
@@ -818,9 +819,9 @@ pub(super) fn run_replay(
                 &frame.route_construction_events,
                 &mut consumed_drop_ale_route_ordinals,
                 map,
-                current_drop_ale_same_sector_goal(&command, map, &engine),
+                current_drop_ale_same_sector_goal(&command, map, &engine)?,
                 trace_qa_recording,
-            );
+            )?;
             let group_move_resolution = resolve_current_group_move_route(
                 &command,
                 &frame.route_construction_events,
@@ -832,29 +833,29 @@ pub(super) fn run_replay(
                     .as_ref()
                     .expect("parity replay requires retained Original fast-grid topology")
                     .sectors,
-            );
+            )?;
             advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
             let converted = command.into_player_command(
                 map,
                 &engine,
                 drop_ale_resolution,
                 group_move_resolution,
-            );
+            )?;
             if let Some(command) = converted {
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        let mut commands_after_hourglass = commands_after_hourglass
-            .into_iter()
-            .filter_map(|command| {
+        let mut commands_after_hourglass = {
+            let mut resolved = Vec::new();
+            for command in commands_after_hourglass {
                 let drop_ale_resolution = resolve_current_drop_ale(
                     &command,
                     &frame.route_construction_events,
                     &mut consumed_drop_ale_route_ordinals,
                     map,
-                    current_drop_ale_same_sector_goal(&command, map, &engine),
+                    current_drop_ale_same_sector_goal(&command, map, &engine)?,
                     trace_qa_recording,
-                );
+                )?;
                 let group_move_resolution = resolve_current_group_move_route(
                     &command,
                     &frame.route_construction_events,
@@ -866,17 +867,20 @@ pub(super) fn run_replay(
                         .as_ref()
                         .expect("parity replay requires retained Original fast-grid topology")
                         .sectors,
-                );
+                )?;
                 advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
 
-                command.into_player_command(
+                if let Some(command) = command.into_player_command(
                     map,
                     &engine,
                     drop_ale_resolution,
                     group_move_resolution,
-                )
-            })
-            .collect::<Vec<_>>();
+                )? {
+                    resolved.push(command);
+                }
+            }
+            resolved
+        };
         append_legacy_retained_terminal_success_repair(
             &mut commands_before_hourglass_resolved,
             &mut commands_after_hourglass,
@@ -916,7 +920,7 @@ pub(super) fn run_replay(
             &consumed_group_move_route_ordinals,
             map,
             delayed_drop_ale_route_engine,
-        );
+        )?;
         if debug_stage_timing {
             eprintln!(
                 "parity stage: entering Rust frame {} -> {}",
@@ -1028,8 +1032,8 @@ pub(super) fn run_replay(
             eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
         }
         print_debug_element("after", &engine, &frame);
-        map.extend_runtime_entities(&engine, &frame);
-        record_arrow_publication_before_compare(&engine, &frame, map);
+        map.extend_runtime_entities(&engine, &frame)?;
+        record_arrow_publication_before_compare(&engine, &frame, map)?;
         if debug_stage_timing {
             eprintln!(
                 "parity stage: extended runtime identity through frame {}",
@@ -1065,7 +1069,7 @@ pub(super) fn run_replay(
             let id = map.translate(TraceEntityId {
                 kind: TraceEntityKind::Soldier,
                 index: original_index,
-            });
+            })?;
             let entity = engine.get_entity(id).expect("debug soldier exists");
             let sprite = &entity.element_data().sprite;
             let actor = entity.actor_data().expect("debug soldier 83 is an actor");
@@ -1116,7 +1120,7 @@ pub(super) fn run_replay(
             }
         }
         if debug_startup {
-            print_startup_actors("after Rust frame 1", &engine, &frame, map);
+            print_startup_actors("after Rust frame 1", &engine, &frame, map)?;
         }
 
         let comparison_started = Instant::now();
@@ -1131,7 +1135,7 @@ pub(super) fn run_replay(
             &frame.path_events,
             &actual_path_events,
             map,
-        ));
+        )?);
         differences.extend(compare_frame(
             &engine,
             &assets,
@@ -1142,7 +1146,7 @@ pub(super) fn run_replay(
             header.initial_npc_transients.is_none(),
             header.schema <= LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW,
             &mut legacy_blocked_box_shadows,
-        ));
+        )?);
         if profile_timing {
             comparison_time += comparison_started.elapsed();
         }
@@ -1200,7 +1204,7 @@ pub(super) fn run_replay(
                 &actual_flight_steps,
                 &actual_move_box_extractions,
                 &differences,
-            );
+            )?;
         }
         if automatic_dump_enabled {
             push_rolling_window(
@@ -1293,7 +1297,7 @@ pub(super) fn run_replay(
                     &header,
                     map,
                     frame.frame_after,
-                );
+                )?;
             }
             return Err(TraceRunError::RngDivergence(format!(
                 "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} with script diagnostics {rust_rng_diagnostics:#?} during original frame {}; original ended at draw {rng_end}; Original simulation callsite offsets for the frame: {:?}",
@@ -1386,7 +1390,7 @@ pub(super) fn run_replay(
                     &header,
                     map,
                     frame.frame_after,
-                );
+                )?;
             }
             #[cfg(feature = "client")]
             if http_server.is_some() {

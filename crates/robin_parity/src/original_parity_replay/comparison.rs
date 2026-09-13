@@ -2,7 +2,7 @@
 use super::{
     BTreeMap, Engine, Entity, EntityId, EntityLabel, EntityMap, LegacyBlockedBoxShadow,
     LevelAssets, MapPoint, TraceElement, TraceEntityId, TraceEntityKind, TraceFloat, TraceFrame,
-    TracePathEvent, TracePoint, TraceSequenceLifecycleEvent, TraceVisibilityQuery,
+    TracePathEvent, TracePoint, TraceRunResult, TraceSequenceLifecycleEvent, TraceVisibilityQuery,
     active_pass_door_keys_match, canonicalize_legacy_blocked_box,
     canonicalize_original_runtime_representation, command_from_stable_name,
     original_motion_executor_order_id, original_reset_blocked_box_this_frame,
@@ -46,11 +46,11 @@ pub(super) fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'s
 pub(super) fn canonicalize_authoritative_snapshot(
     value: &mut serde_json::Value,
     entity_map: &EntityMap,
-) {
+) -> TraceRunResult<()> {
     match value {
         serde_json::Value::Array(values) => {
             for value in values {
-                canonicalize_authoritative_snapshot(value, entity_map);
+                canonicalize_authoritative_snapshot(value, entity_map)?;
             }
         }
         serde_json::Value::Object(object) => {
@@ -66,16 +66,16 @@ pub(super) fn canonicalize_authoritative_snapshot(
             if let Some((kind, index)) = entity_reference {
                 let index = u32::try_from(index)
                     .unwrap_or_else(|_| panic!("Original entity index {index} exceeds u32"));
-                let id = entity_map.translate(TraceEntityId { kind, index });
+                let id = entity_map.translate(TraceEntityId { kind, index })?;
                 *value = serde_json::json!({
                     "kind": entity_kind_name(id.kind()),
                     "index": id.index(),
                 });
-                return;
+                return Ok(());
             }
 
             for (key, child) in object {
-                canonicalize_authoritative_snapshot(child, entity_map);
+                canonicalize_authoritative_snapshot(child, entity_map)?;
                 if matches!(
                     key.as_str(),
                     "area" | "sector" | "sector_goal" | "sector_in" | "sector_out"
@@ -91,6 +91,7 @@ pub(super) fn canonicalize_authoritative_snapshot(
         }
         _ => {}
     }
+    Ok(())
 }
 
 /// Whether the original game exposes indeterminate position-interface old-position
@@ -187,7 +188,7 @@ pub(super) fn compare_frame(
     legacy_additive_omissions: bool,
     legacy_missing_draw_view: bool,
     legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
-) -> Vec<String> {
+) -> TraceRunResult<Vec<String>> {
     let mut comparison = FrameComparison {
         engine,
         assets,
@@ -199,9 +200,9 @@ pub(super) fn compare_frame(
         legacy_blocked_box_shadows,
         differences: Vec::new(),
     };
-    comparison.compare_selection(actual_game_code);
-    comparison.compare_entities();
-    comparison.differences
+    comparison.compare_selection(actual_game_code)?;
+    comparison.compare_entities()?;
+    Ok(comparison.differences)
 }
 
 /// One frame's comparison policy and ordered diagnostic sink. This borrowed
@@ -219,7 +220,7 @@ struct FrameComparison<'a> {
 }
 
 impl FrameComparison<'_> {
-    fn compare_entities(&mut self) {
+    fn compare_entities(&mut self) -> TraceRunResult<()> {
         // Actor state is generally the most actionable parity signal. Report it
         // before the (much larger) background-FX table.
         let frame = self.frame;
@@ -242,7 +243,7 @@ impl FrameComparison<'_> {
             if expected.entity_id.kind == TraceEntityKind::Fx {
                 continue;
             }
-            let id = entity_map.translate(expected.entity_id);
+            let id = entity_map.translate(expected.entity_id)?;
             let Some(actual) = engine.get_entity(id) else {
                 self.differences.push(format!(
                     "{:?}: missing in Rust entity table",
@@ -260,16 +261,17 @@ impl FrameComparison<'_> {
                 expected.entity_id
             );
             self.compare_element(expected, actual, id);
-            self.compare_runtime(expected, id);
+            self.compare_runtime(expected, id)?;
             self.compare_actor(expected, actual, id);
-            self.compare_human(expected, actual, id);
+            self.compare_human(expected, actual, id)?;
             self.compare_ammunition(expected, id);
-            self.compare_ai(expected, actual, id);
-            self.compare_detection(expected, actual, id);
+            self.compare_ai(expected, actual, id)?;
+            self.compare_detection(expected, actual, id)?;
         }
+        Ok(())
     }
 
-    fn compare_selection(&mut self, actual_game_code: i32) {
+    fn compare_selection(&mut self, actual_game_code: i32) -> TraceRunResult<()> {
         let engine = self.engine;
         let frame = self.frame;
         let entity_map = self.entity_map;
@@ -285,13 +287,14 @@ impl FrameComparison<'_> {
             .iter()
             .copied()
             .map(|id| entity_map.translate(id))
-            .collect();
+            .collect::<TraceRunResult<_>>()?;
         if engine.selected_hero_ids() != selected {
             differences.push(format!(
                 "selected_pcs: original={selected:?} rust={:?}",
                 engine.selected_hero_ids()
             ));
         }
+        Ok(())
     }
 
     fn compare_element(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
@@ -503,7 +506,7 @@ impl FrameComparison<'_> {
         }
     }
 
-    fn compare_runtime(&mut self, expected: &TraceElement, id: EntityId) {
+    fn compare_runtime(&mut self, expected: &TraceElement, id: EntityId) -> TraceRunResult<()> {
         let engine = self.engine;
         let assets = self.assets;
         let entity_map = self.entity_map;
@@ -571,7 +574,7 @@ impl FrameComparison<'_> {
                 // these presentation-cache fields exactly.
                 project_missing_draw_view_sprite_cache(&mut expected_runtime);
             }
-            canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
+            canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map)?;
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
             collect_json_subset_differences(
                 &format!("{id_label:?}.runtime"),
@@ -580,6 +583,7 @@ impl FrameComparison<'_> {
                 differences,
             );
         }
+        Ok(())
     }
 
     fn compare_actor(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
@@ -697,7 +701,12 @@ impl FrameComparison<'_> {
         }
     }
 
-    fn compare_human(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+    fn compare_human(
+        &mut self,
+        expected: &TraceElement,
+        actual: &Entity,
+        id: EntityId,
+    ) -> TraceRunResult<()> {
         let engine = self.engine;
         let assets = self.assets;
         let entity_map = self.entity_map;
@@ -769,7 +778,7 @@ impl FrameComparison<'_> {
                     .iter()
                     .copied()
                     .map(|opponent| entity_map.translate(opponent))
-                    .collect();
+                    .collect::<TraceRunResult<_>>()?;
                 let actual_human = actual.human_data().unwrap_or_else(|| {
                     panic!("trace reports human opponents for non-human {id:?}")
                 });
@@ -814,6 +823,7 @@ impl FrameComparison<'_> {
                 );
             }
         }
+        Ok(())
     }
 
     fn compare_ammunition(&mut self, expected: &TraceElement, id: EntityId) {
@@ -845,7 +855,12 @@ impl FrameComparison<'_> {
         }
     }
 
-    fn compare_ai(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+    fn compare_ai(
+        &mut self,
+        expected: &TraceElement,
+        actual: &Entity,
+        id: EntityId,
+    ) -> TraceRunResult<()> {
         let engine = self.engine;
         let entity_map = self.entity_map;
         let legacy_additive_omissions = self.legacy_additive_omissions;
@@ -971,7 +986,7 @@ impl FrameComparison<'_> {
                     .iter()
                     .copied()
                     .map(|human| entity_map.translate(human))
-                    .collect();
+                    .collect::<TraceRunResult<_>>()?;
                 let actual_us: Vec<EntityId> = actual_ai
                     .list_us
                     .iter()
@@ -987,7 +1002,7 @@ impl FrameComparison<'_> {
                     .iter()
                     .copied()
                     .map(|human| entity_map.translate(human))
-                    .collect();
+                    .collect::<TraceRunResult<_>>()?;
                 let actual_them: Vec<EntityId> = actual
                     .enemy_ai()
                     .map(|enemy| {
@@ -1030,9 +1045,15 @@ impl FrameComparison<'_> {
                 );
             }
         }
+        Ok(())
     }
 
-    fn compare_detection(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+    fn compare_detection(
+        &mut self,
+        expected: &TraceElement,
+        actual: &Entity,
+        id: EntityId,
+    ) -> TraceRunResult<()> {
         let entity_map = self.entity_map;
         let differences = &mut self.differences;
         if let Some(expected_detection) = &expected.detection {
@@ -1104,7 +1125,7 @@ impl FrameComparison<'_> {
                         "DETDIFF original[{i}] type={} target={:?}->{:?} seen_now={} seen_last={} heard_last={} shadow_now={} shadow_last={} vis={:?}",
                         d.detectable_type,
                         d.target,
-                        entity_map.translate(d.target),
+                        entity_map.translate(d.target)?,
                         d.seen_now,
                         d.seen_last_frame,
                         d.heard_last_frame,
@@ -1153,7 +1174,7 @@ impl FrameComparison<'_> {
                     "detection.detectables",
                     detectable_index,
                     "target",
-                    entity_map.translate(expected_detectable.target),
+                    entity_map.translate(expected_detectable.target)?,
                     actual_detectable.element.unwrap_or_else(|| {
                         panic!("NPC {id:?} detectable {detectable_index} has no target element")
                     }),
@@ -1214,6 +1235,7 @@ impl FrameComparison<'_> {
                 );
             }
         }
+        Ok(())
     }
 }
 
@@ -1604,7 +1626,7 @@ pub(super) fn compare_path_events(
     expected: &[TracePathEvent],
     actual: &[robin_engine::pathfinder::ParityPathEvent],
     entity_map: &EntityMap,
-) -> Vec<String> {
+) -> TraceRunResult<Vec<String>> {
     use robin_engine::pathfinder::ParityPathEvent;
 
     let mut differences = Vec::new();
@@ -1647,14 +1669,15 @@ pub(super) fn compare_path_events(
         }
         compare_path_field!(
             "actor",
-            entity_map.translate(expected_request.actor),
+            entity_map.translate(expected_request.actor)?,
             actual_request.actor
         );
         compare_path_field!(
             "antagonist",
             expected_request
                 .antagonist
-                .map(|entity| entity_map.translate(entity)),
+                .map(|entity| entity_map.translate(entity))
+                .transpose()?,
             actual_request.antagonist
         );
         compare_path_field!("layer", expected_request.layer, actual_request.layer);
@@ -1742,7 +1765,7 @@ pub(super) fn compare_path_events(
             }
         }
     }
-    differences
+    Ok(differences)
 }
 
 /// Compare an authoritative recorded JSON projection against a richer Rust
