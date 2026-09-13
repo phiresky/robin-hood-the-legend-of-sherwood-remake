@@ -70,7 +70,7 @@ robin_engine_types = { path = "crates/robin_engine_types" }
 robin_legacy_save = { path = "crates/robin_legacy_save" }
 robin_lua = { path = "crates/robin_lua" }
 robin_manifest_tool = { path = "crates/robin_manifest_tool" }
-robin_modding_tools = { path = "crates/robin_modding_tools" }
+robin_modding_tools = { path = "crates/robin_modding_tools", default-features = false }
 robin_replay_format = { path = "crates/robin_replay_format" }
 robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # Simulation consumers need wire types, not Ed25519. Authentication callers
@@ -112,7 +112,7 @@ serde-value = "0.7"
 serde_json = "1"
 sha2 = "0.11"
 smallvec = "1.16"
-sqlx = "0.9"
+sqlx = { version = "0.9", default-features = false }
 syn = "3"
 tempfile = "3"
 thiserror = "2"
