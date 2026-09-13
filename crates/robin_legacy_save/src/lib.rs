@@ -25,6 +25,7 @@ mod test_support;
 pub(crate) use robin_data_io::{legacy_io, sbfile};
 pub(crate) use robin_script_types::{natives, scb};
 // Preserve decoder-local paths shared with the simulation adoption pipeline.
+#[cfg(test)]
 pub(crate) use crate as legacy_save;
 
 use serde::{Deserialize, Serialize};
