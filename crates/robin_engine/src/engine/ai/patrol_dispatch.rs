@@ -182,20 +182,12 @@ impl EngineInner {
                     .entities
                     .get(chief_id)
                     .unwrap_or_else(|| panic!("patrol chief {chief} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     chief_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(chief_id, &mut chief_ctx);
@@ -251,20 +243,12 @@ impl EngineInner {
                     .entities
                     .get(source_id)
                     .unwrap_or_else(|| panic!("patrol-dispatch caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     caller_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &caller_scratch.ai_entity_views,
-                    &caller_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &caller_scratch,
+                    assets,
                 )
             };
             let caller_tick = self.build_npc_tick_data(sim, source_id, assets);
@@ -352,20 +336,12 @@ impl EngineInner {
                     .entities
                     .get(target_id)
                     .unwrap_or_else(|| panic!("{stimulus_type:?} target {target} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     target_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
@@ -393,20 +369,12 @@ impl EngineInner {
                     .entities
                     .get(source_id)
                     .unwrap_or_else(|| panic!("Think-result caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     source_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &source_scratch.ai_entity_views,
-                    &source_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &source_scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
@@ -515,20 +483,12 @@ impl EngineInner {
                     .entities
                     .get(target_id)
                     .unwrap_or_else(|| panic!("CALL_ALERT target {target} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     target_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let target_tick = self.build_npc_tick_data(sim, target_id, assets);
@@ -554,20 +514,12 @@ impl EngineInner {
                     .entities
                     .get(source_id)
                     .unwrap_or_else(|| panic!("CALL_ALERT caller {caller} disappeared"));
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     source_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &source_scratch.ai_entity_views,
-                    &source_scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &source_scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(source_id, &mut source_ctx);
@@ -637,20 +589,12 @@ impl EngineInner {
                 let entity = self.world.entities.get(officer_id).unwrap_or_else(|| {
                     panic!("reporting Charly requires missing officer {officer}")
                 });
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     officer_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             let officer_tick = self.build_npc_tick_data(sim, officer_id, assets);
@@ -679,20 +623,12 @@ impl EngineInner {
                     self.world.entities.get(charly_id).unwrap_or_else(|| {
                         panic!("officer response requires missing Charly {charly}")
                     });
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     charly_building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             self.refresh_selected_default_wait_identity(charly_id, &mut charly_ctx);

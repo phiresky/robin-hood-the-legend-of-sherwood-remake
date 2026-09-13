@@ -432,9 +432,6 @@ impl EngineInner {
         // context only after its VM call returns.
         let scratch = self.build_sim_scratch(assets);
         let frame = self.control.frame_counter;
-        let is_forest_level = self.world.weather.is_forest_level;
-        let ambiance = self.world.weather.ambiance;
-        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         let script_driven = self
             .world
             .entities
@@ -448,21 +445,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
-            build_ai_context_from_entity(
-                entity,
-                frame,
-                None,
-                is_forest_level,
-                ambiance,
-                standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            )
+            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
         };
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventAfterScriptGoOn);
         let tick_data = self.build_npc_tick_data(sim, npc_id, assets);
@@ -1192,21 +1175,8 @@ impl EngineInner {
                 panic!("periodic NPC {} disappeared before call", npc_id.index())
             });
 
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
         let entity =
@@ -1374,27 +1344,14 @@ impl EngineInner {
 
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         let building_sector = self.entity_building_sector(entity.element_data().sector());
+        let ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
                 "random-speech NPC {} disappeared before call",
                 npc_id.index()
             )
         });
-        let ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
         if let Some(creation_order) = debug_creation_order {
             let Entity::Civilian(civilian) = &*entity else {
                 panic!(
@@ -1520,9 +1477,6 @@ impl EngineInner {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         let frame = self.control.frame_counter;
-        let is_forest_level = self.world.weather.is_forest_level;
-        let ambiance = self.world.weather.ambiance;
-        let standard_view_polygon_radius = self.ai.standard_view_polygon_radius;
         // Phase 1: read-only — gather context + eyes point + LOS scope.
         let (ctx, eyes) = {
             let entity = self
@@ -1542,21 +1496,7 @@ impl EngineInner {
                 )
             });
             let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = build_ai_context_from_entity(
-                entity,
-                frame,
-                building_sector,
-                is_forest_level,
-                ambiance,
-                standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
-            );
+            let ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
             (ctx, eyes)
         };
 
@@ -1639,21 +1579,8 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx =
+            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
         // Stop the timer and resume the macro VM.  `execute_next_

@@ -141,21 +141,7 @@ impl EngineInner {
             soldier.rider,
             "GALOPP Execute callback owner {entity_id:?} is not a rider"
         );
-        let ctx = build_ai_context_from_entity(
-            entity,
-            current_frame,
-            None,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let ctx = self.ai_context_from_entity(entity, current_frame, None, &scratch, assets);
 
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::EventGaloppLoopEnd);
         // EventGaloppLoopEnd fires on enemy riders mid-charge towards their
@@ -510,20 +496,12 @@ impl EngineInner {
                         panic!("loaded-remark owner {} disappeared", owner.index())
                     });
                 let building_sector = engine.entity_building_sector(entity.element_data().sector());
-                let mut ctx = build_ai_context_from_entity(
+                let mut ctx = engine.ai_context_from_entity(
                     entity,
                     engine.control.frame_counter,
                     building_sector,
-                    engine.world.weather.is_forest_level,
-                    engine.world.weather.ambiance,
-                    engine.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &engine.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &engine.ai.global.all_soldier_handles,
-                    engine.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 let tick_data = engine.build_npc_tick_data(sim, owner, assets);

@@ -534,28 +534,14 @@ impl EngineInner {
                         let entity = self
                             .world
                             .entities
-                            .get_mut(target_id)
+                            .get(target_id)
                             .expect("validated gather-instruction target vanished");
-                        let ctx = build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
+                        let ctx =
+                            self.ai_context_from_entity(entity, frame, None, &scratch, assets);
+                        let enemy_ai = self.world.entities.expect_enemy_ai_mut(
+                            target_id,
+                            format_args!("deferred gather-instruction target human {target}"),
                         );
-                        let enemy_ai = entity.enemy_ai_mut().unwrap_or_else(|| {
-                            panic!(
-                                "deferred gather-instruction target human {target} has no EnemyAi"
-                            )
-                        });
                         enemy_ai.gather_position = position;
                         enemy_ai.gather_direction = direction;
                         enemy_ai.gather_position_instructed = true;
@@ -610,21 +596,8 @@ impl EngineInner {
                                     })
                                     .filter(|(_, entity)| entity.ai_controller().is_some())
                             {
-                                let ctx = build_ai_context_from_entity(
-                                    entity,
-                                    frame,
-                                    None,
-                                    self.world.weather.is_forest_level,
-                                    self.world.weather.ambiance,
-                                    self.ai.standard_view_polygon_radius,
-                                    &scratch.ai_entity_views,
-                                    &scratch.ai_sight_obstacles,
-                                    &self.world.fast_grid,
-                                    &assets.navigation.hiking_paths,
-                                    &assets.navigation.hiking_waypoint_sectors,
-                                    &self.ai.global.all_soldier_handles,
-                                    self.control.sim_config.difficulty,
-                                );
+                                let ctx = self
+                                    .ai_context_from_entity(entity, frame, None, &scratch, assets);
                                 let fallback_tick =
                                     self.build_npc_tick_data(sim, sender_id, assets);
                                 self.dispatch_filtered_stimulus(
@@ -638,21 +611,7 @@ impl EngineInner {
                             }
                             continue;
                         };
-                        build_ai_context_from_entity(
-                            entity,
-                            frame,
-                            None,
-                            self.world.weather.is_forest_level,
-                            self.world.weather.ambiance,
-                            self.ai.standard_view_polygon_radius,
-                            &scratch.ai_entity_views,
-                            &scratch.ai_sight_obstacles,
-                            &self.world.fast_grid,
-                            &assets.navigation.hiking_paths,
-                            &assets.navigation.hiking_waypoint_sectors,
-                            &self.ai.global.all_soldier_handles,
-                            self.control.sim_config.difficulty,
-                        )
+                        self.ai_context_from_entity(entity, frame, None, &scratch, assets)
                     };
                     let target_id = self.expect_human_id_for_ai_handle(
                         target,
@@ -680,21 +639,7 @@ impl EngineInner {
                             else {
                                 continue;
                             };
-                            build_ai_context_from_entity(
-                                entity,
-                                frame,
-                                None,
-                                self.world.weather.is_forest_level,
-                                self.world.weather.ambiance,
-                                self.ai.standard_view_polygon_radius,
-                                &scratch.ai_entity_views,
-                                &scratch.ai_sight_obstacles,
-                                &self.world.fast_grid,
-                                &assets.navigation.hiking_paths,
-                                &assets.navigation.hiking_waypoint_sectors,
-                                &self.ai.global.all_soldier_handles,
-                                self.control.sim_config.difficulty,
-                            )
+                            self.ai_context_from_entity(entity, frame, None, &scratch, assets)
                         };
                         let fallback_tick = self.build_npc_tick_data(sim, sender_id, assets);
                         self.dispatch_filtered_stimulus(
@@ -1560,21 +1505,8 @@ impl EngineInner {
             entity.enemy_ai().is_some(),
             "cross-NPC break-phalanx target human {target} has no EnemyAi"
         );
-        let mut ctx = build_ai_context_from_entity(
-            entity,
-            self.control.frame_counter,
-            None,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
-        );
+        let mut ctx =
+            self.ai_context_from_entity(entity, self.control.frame_counter, None, &scratch, assets);
         self.refresh_selected_default_wait_identity(target_id, &mut ctx);
         // This is a direct recursive `BreakPhalanx` call rather than a typed
         // AI dispatch, but its phalanx enemy-list rebuilding performs live
@@ -2086,23 +2018,15 @@ impl EngineInner {
             .get(target_id)
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared"));
-        let ctx = build_ai_context_from_entity(
+        let ctx = self.ai_context_from_entity(
             self.world
                 .entities
                 .get(target_id)
                 .unwrap_or_else(|| panic!("gather-instruction target {target} disappeared")),
             self.control.frame_counter,
             building_sector,
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
+            &scratch,
+            assets,
         );
         let tick = self.build_npc_tick_data(sim, target_id, assets);
         self.dispatch_think_with_drain_without_forecast(

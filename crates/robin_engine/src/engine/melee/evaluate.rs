@@ -1750,20 +1750,12 @@ impl EngineInner {
                     .entities
                     .get(victim_id)
                     .expect("sword-strike warning victim disappeared");
-                let mut ctx = crate::engine::ai::build_ai_context_from_entity(
+                let mut ctx = self.ai_context_from_entity(
                     victim,
                     frame,
                     self.entity_building_sector(victim.element_data().sector()),
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 );
                 self.refresh_selected_default_wait_identity(victim_id, &mut ctx);
                 let tick = self.build_npc_tick_data_without_forecasts(sim, victim_id, assets);

@@ -5135,23 +5135,15 @@ impl EngineInner {
                     continue;
                 }
                 let building_sector = self.entity_building_sector(civilian.element.sector());
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     self.world
                         .entities
                         .get(npc_id)
                         .expect("civilian disappeared"),
                     self.control.frame_counter,
                     building_sector,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
             ctx.seed_view_radius_cache(&self.ai.view_radius_cache);
@@ -5308,20 +5300,12 @@ impl EngineInner {
                 let Some(entity) = self.world.entities.get(npc_id) else {
                     continue;
                 };
-                build_ai_context_from_entity(
+                self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,
                     None,
-                    self.world.weather.is_forest_level,
-                    self.world.weather.ambiance,
-                    self.ai.standard_view_polygon_radius,
-                    &scratch.ai_entity_views,
-                    &scratch.ai_sight_obstacles,
-                    &self.world.fast_grid,
-                    &assets.navigation.hiking_paths,
-                    &assets.navigation.hiking_waypoint_sectors,
-                    &self.ai.global.all_soldier_handles,
-                    self.control.sim_config.difficulty,
+                    &scratch,
+                    assets,
                 )
             };
 
@@ -6129,20 +6113,12 @@ impl EngineInner {
                 npc_id.index()
             )
         });
-        let mut ctx = build_ai_context_from_entity(
+        let mut ctx = self.ai_context_from_entity(
             entity,
             self.control.frame_counter,
             self.entity_building_sector(entity.element_data().sector()),
-            self.world.weather.is_forest_level,
-            self.world.weather.ambiance,
-            self.ai.standard_view_polygon_radius,
-            &scratch.ai_entity_views,
-            &scratch.ai_sight_obstacles,
-            &self.world.fast_grid,
-            &assets.navigation.hiking_paths,
-            &assets.navigation.hiking_waypoint_sectors,
-            &self.ai.global.all_soldier_handles,
-            self.control.sim_config.difficulty,
+            &scratch,
+            assets,
         );
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
         let enemy_tick = self

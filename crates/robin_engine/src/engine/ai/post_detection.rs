@@ -297,26 +297,18 @@ impl EngineInner {
             .map(|entity| self.entity_building_sector(entity.element_data().sector()))
             .unwrap_or_else(|| panic!("normal-timer NPC {} disappeared", npc_id.index()));
         let ctx = {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
+            let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
                 panic!(
                     "normal-timer NPC {} disappeared before Think",
                     npc_id.index()
                 )
             });
-            let mut ctx = build_ai_context_from_entity(
+            let mut ctx = self.ai_context_from_entity(
                 entity,
                 current_frame,
                 building_sector,
-                self.world.weather.is_forest_level,
-                self.world.weather.ambiance,
-                self.ai.standard_view_polygon_radius,
-                &scratch.ai_entity_views,
-                &scratch.ai_sight_obstacles,
-                &self.world.fast_grid,
-                &assets.navigation.hiking_paths,
-                &assets.navigation.hiking_waypoint_sectors,
-                &self.ai.global.all_soldier_handles,
-                self.control.sim_config.difficulty,
+                &scratch,
+                assets,
             );
             ctx.in_uninterruptible_command = in_uninterruptible_command;
             ctx.enter_swordfight_pending = self
@@ -328,12 +320,13 @@ impl EngineInner {
                 );
             // Clear `timer_is_running` before dispatching
             // `Think(EVENT_TIMER)`.
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!(
                     "normal-timer NPC {} lost its AI controller before Think",
                     npc_id.index()
-                )
-            });
+                ),
+            );
             ai.timer_is_running = false;
             ctx
         };
