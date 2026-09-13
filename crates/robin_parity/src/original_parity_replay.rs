@@ -14,6 +14,7 @@
 //! the unit tests need are imported directly by `tests.rs`.
 
 mod native_storage;
+mod run_error;
 mod runner;
 use native_storage::{
     StorageContext, TraceStorageResult, bench_trace_encodings, conversion_quarantine_path,
@@ -24,6 +25,7 @@ use native_storage::{
     requested_native_trace_path, should_preload_complete_rng_stream, simulation_rng_draws,
     storage_ensure, validate_binary_trace_footer, validate_native_trace,
 };
+use run_error::{TraceRunError, TraceRunResult};
 
 mod trace_codec;
 use trace_codec::{

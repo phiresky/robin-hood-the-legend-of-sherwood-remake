@@ -44,7 +44,9 @@ impl<T> StorageContext<T> for Option<T> {
 macro_rules! storage_ensure {
     ($condition:expr, $($message:tt)+) => {
         if !$condition {
-            return Err(format!($($message)+));
+            // `.into()` also lifts the message into `TraceRunError::Storage`
+            // when the enclosing function returns `TraceRunResult`.
+            return Err(format!($($message)+).into());
         }
     };
 }
