@@ -36,8 +36,11 @@ mod acceptance;
 mod aggregate;
 mod maintenance;
 mod public_queries;
+mod snapshot;
 mod uploads;
 mod worker;
+
+pub use snapshot::{applied_schema_version, snapshot_database};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = robin_run_protocol::HIGHSCORES_DATABASE_SCHEMA_VERSION;
 

@@ -197,6 +197,35 @@ fn live_schema_probe_has_one_config_free_typed_cli_contract() {
 }
 
 #[test]
+fn ops_commands_parse() {
+    let arguments = Arguments::try_parse_from([
+        "robin-highscores-admin",
+        "--config",
+        "/etc/server.toml",
+        "snapshot-db",
+        "/backups/highscores.sqlite3",
+    ])
+    .unwrap();
+    assert!(matches!(
+        arguments.command,
+        Command::SnapshotDb { path } if path == Path::new("/backups/highscores.sqlite3")
+    ));
+    assert!(Arguments::try_parse_from(["robin-highscores-admin", "snapshot-db"]).is_err());
+    assert!(matches!(
+        Arguments::try_parse_from(["robin-highscores-admin", "database-schema-version"])
+            .unwrap()
+            .command,
+        Command::DatabaseSchemaVersion
+    ));
+    assert!(matches!(
+        Arguments::try_parse_from(["robin-highscores-admin", "supported-schema-version"])
+            .unwrap()
+            .command,
+        Command::SupportedSchemaVersion
+    ));
+}
+
+#[test]
 fn all_secret_bootstraps_load_only_the_requested_path() {
     let directory = tempfile::tempdir().unwrap();
     {

@@ -48,6 +48,15 @@ struct Arguments {
 enum Command {
     /// Apply all reviewed SQL migrations. Serving processes never do this.
     Migrate,
+    /// Write a consistent copy of the database (`VACUUM INTO`) to a new path.
+    SnapshotDb {
+        /// Destination file; must not already exist.
+        path: PathBuf,
+    },
+    /// Print the highest migration version applied to the configured database.
+    DatabaseSchemaVersion,
+    /// Print the database schema version this binary requires. Config-free.
+    SupportedSchemaVersion,
     /// Create the durable cursor key without printing or otherwise exposing it.
     InitializeCursorKey,
     /// Create the durable Ed25519 seed used only for scheduled-run grants.
@@ -218,6 +227,31 @@ impl FromStr for RestoreSourceMap {
 pub(super) async fn run() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
     match &arguments.command {
+        Command::SupportedSchemaVersion => {
+            println!("{}", robin_highscores::db::CURRENT_SCHEMA_VERSION);
+            return Ok(());
+        }
+        Command::SnapshotDb { path } => {
+            let config = ServerConfig::load(&arguments.config)?;
+            robin_highscores::db::snapshot_database(
+                &config.database_path,
+                path,
+                config.database_busy_timeout_ms,
+            )
+            .await?;
+            println!("database snapshot written to {}", path.display());
+            return Ok(());
+        }
+        Command::DatabaseSchemaVersion => {
+            let config = ServerConfig::load(&arguments.config)?;
+            let version = robin_highscores::db::applied_schema_version(
+                &config.database_path,
+                config.database_busy_timeout_ms,
+            )
+            .await?;
+            println!("{version}");
+            return Ok(());
+        }
         Command::InitializeBackupAuthorityKeyV2 {
             source_commit,
             activation_lock_fd,
@@ -398,7 +432,10 @@ pub(super) async fn run() -> anyhow::Result<()> {
             database.close_fenced().await?;
             println!("database migrations applied successfully");
         }
-        Command::InitializeCursorKey
+        Command::SnapshotDb { .. }
+        | Command::DatabaseSchemaVersion
+        | Command::SupportedSchemaVersion
+        | Command::InitializeCursorKey
         | Command::InitializeCompetitionRunGrantKey
         | Command::InitializeRunPreflightGrantKey
         | Command::InitializeBackupAuthorityKeyV2 { .. }
