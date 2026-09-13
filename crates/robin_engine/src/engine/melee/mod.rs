@@ -70,7 +70,9 @@ fn should_collect_strike_estimation_human(
     candidate != attacker && (active || principal_opponent == Some(candidate))
 }
 
-fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool {
+/// `None` leaves the creation-order filter unchecked so callers can test the
+/// frame before resolving identity.
+fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: Option<u32>) -> bool {
     use crate::engine::diagnostics::ParityGate;
     static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
     GATE.get_or_init(|| {
@@ -82,10 +84,11 @@ fn sword_damage_lifecycle_debug_matches(frame: u32, creation_order: u32) -> bool
             ],
         )
     })
-    .matches([Some(frame), Some(creation_order)])
+    .matches([Some(frame), creation_order])
 }
 
 impl EngineInner {
+    #[inline(never)]
     pub(in crate::engine) fn trace_reactive_sword_topology(
         &self,
         stage: &'static str,
@@ -162,6 +165,7 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     fn trace_sword_damage_lifecycle(
         &self,
         stage: &'static str,
@@ -172,11 +176,14 @@ impl EngineInner {
         result: Option<combat::SwordDamageResult>,
     ) {
         let frame = self.control.frame_counter;
+        if !sword_damage_lifecycle_debug_matches(frame, None) {
+            return;
+        }
         if self.get_entity(victim).is_none() {
             return;
         }
         let creation_order = self.world.original_creation_order(victim);
-        if !sword_damage_lifecycle_debug_matches(frame, creation_order) {
+        if !sword_damage_lifecycle_debug_matches(frame, Some(creation_order)) {
             return;
         }
 

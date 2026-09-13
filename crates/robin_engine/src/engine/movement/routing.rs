@@ -1,6 +1,37 @@
 use super::*;
 
 impl EngineInner {
+    /// Emit one `AIDECISION` line; `stage` holds the stage-specific payload.
+    #[inline(never)]
+    fn trace_ai_decision(frame: u32, owner: EntityId, stage: std::fmt::Arguments<'_>) {
+        eprintln!("AIDECISION frame={} owner={} {stage}", frame, owner.index());
+    }
+
+    #[inline(never)]
+    fn trace_post_seek_frozen_in_tolerance(&self, owner: EntityId, selected: impl std::fmt::Debug) {
+        eprintln!(
+            "[POST_SEEK frame={} owner={owner:?} stage=frozen_in_tolerance selected={:?} actors_frozen={}]",
+            self.control.frame_counter,
+            selected,
+            self.actors_frozen(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_post_seek_frozen_launch_done(
+        &self,
+        owner: EntityId,
+        launched: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "[POST_SEEK frame={} owner={owner:?} stage=frozen_launch_done launched={launched} current={:?}]",
+            self.control.frame_counter,
+            self.orders
+                .sequence_manager
+                .current_element_for_actor(owner),
+        );
+    }
+
     /// Enqueue an AI-initiated Move intent for this actor.
     ///
     /// Per-actor dedup: only one pending request per actor exists in
@@ -55,20 +86,22 @@ impl EngineInner {
                 entity_id.index(),
             );
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                intent.order_type,
-                intent.target_x.to_bits(),
-                intent.target_y.to_bits(),
-                intent.move_flags,
-                intent.tolerance.to_bits(),
-                intent.no_halt,
-                intent.reverse,
-                intent.find_accessible,
-                intent.ask_obstacle,
-                intent.compute_direction,
+                entity_id,
+                format_args!(
+                    "stage=preflight_enter order={:?} target=({:08x},{:08x}) move_flags={} tolerance_bits={:08x} no_halt={} reverse={} find_accessible={} ask_obstacle={} compute_direction={}",
+                    intent.order_type,
+                    intent.target_x.to_bits(),
+                    intent.target_y.to_bits(),
+                    intent.move_flags,
+                    intent.tolerance.to_bits(),
+                    intent.no_halt,
+                    intent.reverse,
+                    intent.find_accessible,
+                    intent.ask_obstacle,
+                    intent.compute_direction,
+                ),
             );
         }
         // Upper-bound check.  `AiController::go_to` already rejects
@@ -89,14 +122,16 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        level_w.to_bits(),
-                        level_h.to_bits(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_upper_bound level=({:08x},{:08x}) target=({:08x},{:08x})",
+                            level_w.to_bits(),
+                            level_h.to_bits(),
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                        ),
                     );
                 }
                 return false;
@@ -105,10 +140,10 @@ impl EngineInner {
 
         if !intent.find_accessible && !intent.ask_obstacle {
             if debug_decision_path {
-                eprintln!(
-                    "AIDECISION frame={} owner={} stage=preflight_result result=accepted_no_checks",
+                Self::trace_ai_decision(
                     self.control.frame_counter,
-                    entity_id.index(),
+                    entity_id,
+                    format_args!("stage=preflight_result result=accepted_no_checks"),
                 );
             }
             return true;
@@ -142,14 +177,16 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
-                        layer,
-                        move_box,
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_find_accessible target=({:08x},{:08x}) layer={} move_box={:?}",
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            layer,
+                            move_box,
+                        ),
                     );
                 }
                 return false;
@@ -172,16 +209,18 @@ impl EngineInner {
             {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 if debug_decision_path {
-                    eprintln!(
-                        "AIDECISION frame={} owner={} stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                    Self::trace_ai_decision(
                         self.control.frame_counter,
-                        entity_id.index(),
-                        position.x.to_bits(),
-                        position.y.to_bits(),
-                        intent.target_x.to_bits(),
-                        intent.target_y.to_bits(),
-                        layer,
-                        move_box,
+                        entity_id,
+                        format_args!(
+                            "stage=preflight_result result=reject_straight from=({:08x},{:08x}) target=({:08x},{:08x}) layer={} move_box={:?}",
+                            position.x.to_bits(),
+                            position.y.to_bits(),
+                            intent.target_x.to_bits(),
+                            intent.target_y.to_bits(),
+                            layer,
+                            move_box,
+                        ),
                     );
                 }
                 return false;
@@ -189,12 +228,14 @@ impl EngineInner {
         }
 
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=preflight_result result=accepted target=({:08x},{:08x})",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                intent.target_x.to_bits(),
-                intent.target_y.to_bits(),
+                entity_id,
+                format_args!(
+                    "stage=preflight_result result=accepted target=({:08x},{:08x})",
+                    intent.target_x.to_bits(),
+                    intent.target_y.to_bits(),
+                ),
             );
         }
         true
@@ -211,11 +252,13 @@ impl EngineInner {
                 entity_id.index(),
             );
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=set_couldnt_reachpoint caller={}",
+            Self::trace_ai_decision(
                 self.control.frame_counter,
-                entity_id.index(),
-                std::panic::Location::caller(),
+                entity_id,
+                format_args!(
+                    "stage=set_couldnt_reachpoint caller={}",
+                    std::panic::Location::caller()
+                ),
             );
         }
         let ai = self
@@ -1222,11 +1265,9 @@ impl EngineInner {
             if in_tolerance {
                 if has_post_seek {
                     if debug_post_seek_handoff_enabled() {
-                        eprintln!(
-                            "[POST_SEEK frame={} owner={owner:?} stage=frozen_in_tolerance selected={:?} actors_frozen={}]",
-                            self.control.frame_counter,
+                        self.trace_post_seek_frozen_in_tolerance(
+                            owner,
                             (selected.seq_id, selected.elem_idx, selected.order_id),
-                            self.actors_frozen(),
                         );
                     }
                     let launched = self.start_post_seek_sequence(
@@ -1236,13 +1277,7 @@ impl EngineInner {
                         Some((selected.seq_id, selected.elem_idx)),
                     );
                     if debug_post_seek_handoff_enabled() {
-                        eprintln!(
-                            "[POST_SEEK frame={} owner={owner:?} stage=frozen_launch_done launched={launched} current={:?}]",
-                            self.control.frame_counter,
-                            self.orders
-                                .sequence_manager
-                                .current_element_for_actor(owner),
-                        );
+                        self.trace_post_seek_frozen_launch_done(owner, launched);
                     }
                     return order_action;
                 }

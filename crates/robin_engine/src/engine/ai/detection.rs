@@ -50,57 +50,34 @@ fn apply_camp_soldier_boundary_position(
     *position_world = boundary.world;
 }
 
-#[derive(Clone, Copy)]
-struct HearingGateDebugConfig {
-    enabled: bool,
-    frame: u32,
-    creation_order: u32,
-}
+use crate::engine::diagnostics::ParityGate;
+use std::sync::OnceLock;
 
-fn hearing_gate_debug_config() -> &'static HearingGateDebugConfig {
-    static CONFIG: std::sync::OnceLock<HearingGateDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_HEARING_GATE").is_some();
-        if !enabled {
-            return HearingGateDebugConfig {
-                enabled,
-                frame: 0,
-                creation_order: 0,
-            };
-        }
-        let parse_required = crate::engine::diagnostics::required_u32_env;
-        HearingGateDebugConfig {
-            enabled,
-            frame: parse_required("PARITY_DEBUG_HEARING_GATE_FRAME"),
-            creation_order: parse_required("PARITY_DEBUG_HEARING_GATE_CREATION_ORDER"),
-        }
+/// `[frame, creation order]`, both required.
+fn hearing_gate_debug_gate() -> &'static ParityGate<2> {
+    static GATE: OnceLock<ParityGate<2>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_HEARING_GATE",
+            [
+                "PARITY_DEBUG_HEARING_GATE_FRAME",
+                "PARITY_DEBUG_HEARING_GATE_CREATION_ORDER",
+            ],
+        )
     })
 }
 
-#[derive(Clone, Copy)]
-struct DetectableListDebugConfig {
-    enabled: bool,
-    frame: u32,
-    creation_order: u32,
-}
-
-fn detectable_list_debug_config() -> &'static DetectableListDebugConfig {
-    static CONFIG: std::sync::OnceLock<DetectableListDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_DETECTABLE_LIST").is_some();
-        if !enabled {
-            return DetectableListDebugConfig {
-                enabled,
-                frame: 0,
-                creation_order: 0,
-            };
-        }
-        let parse_required = crate::engine::diagnostics::required_u32_env;
-        DetectableListDebugConfig {
-            enabled,
-            frame: parse_required("PARITY_DEBUG_DETECTABLE_LIST_FRAME"),
-            creation_order: parse_required("PARITY_DEBUG_DETECTABLE_LIST_CREATION_ORDER"),
-        }
+/// `[frame, creation order]`, both required.
+fn detectable_list_debug_gate() -> &'static ParityGate<2> {
+    static GATE: OnceLock<ParityGate<2>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_DETECTABLE_LIST",
+            [
+                "PARITY_DEBUG_DETECTABLE_LIST_FRAME",
+                "PARITY_DEBUG_DETECTABLE_LIST_CREATION_ORDER",
+            ],
+        )
     })
 }
 
@@ -122,6 +99,278 @@ fn debug_detectable_list_bucket(
     );
 }
 
+impl EngineInner {
+    #[inline(never)]
+    fn trace_hearing_gate_pre_gate(
+        &self,
+        universal_frame: u32,
+        npc_id: EntityId,
+        creation_order: u32,
+        current_state: crate::ai::AiState,
+        modified_frame: u32,
+        detection_frequency_sounds: u32,
+    ) {
+        let substate = self
+            .world
+            .entities
+            .get(npc_id)
+            .and_then(Entity::ai_controller)
+            .expect("HEARINGGATE owner lost its AI controller")
+            .current_substate;
+        eprintln!(
+            "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"pre_gate\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"modified_frame\":{},\"cadence_remainder\":{},\"state_pass\":{},\"cadence_pass\":{}}}",
+            universal_frame,
+            npc_id.index(),
+            creation_order,
+            current_state as u32,
+            substate as u32,
+            modified_frame,
+            modified_frame % detection_frequency_sounds,
+            !matches!(current_state, crate::ai::AiState::Attacking),
+            modified_frame.is_multiple_of(detection_frequency_sounds),
+        );
+    }
+}
+
+/// `[universal frame, owner creation order]`.
+#[inline(never)]
+fn trace_them_detection_latches(
+    [universal_frame, original_creation_order]: [u32; 2],
+    npc_id: EntityId,
+    committed: bool,
+    enemy_stimuli: &[crate::ai::Stimulus],
+    detectables: &[Detectable],
+    enemy_targets: &[EnemyOpticalTarget],
+) {
+    eprintln!(
+        "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",
+        universal_frame,
+        original_creation_order,
+        npc_id.index(),
+        committed,
+        enemy_stimuli
+            .iter()
+            .map(|stimulus| (stimulus.stimulus_type, stimulus.info))
+            .collect::<Vec<_>>(),
+    );
+    for det in detectables {
+        let target_id = det.element.unwrap_or_else(|| {
+            panic!(
+                "Enemy detectable for NPC {} has no target in THEM diagnostic",
+                npc_id.index()
+            )
+        });
+        let target = enemy_targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "Enemy target {} for NPC {} missing in THEM diagnostic",
+                    target_id.index(),
+                    npc_id.index()
+                )
+            });
+        eprintln!(
+            "[THEM frame={} co={} me={} phase=detection_entry target={} seen_now={} seen_last={} visibility={} dead={} unconscious={}]",
+            universal_frame,
+            original_creation_order,
+            npc_id.index(),
+            target_id.index(),
+            det.seen_now,
+            det.seen_last_frame,
+            det.last_visibility,
+            target.dead,
+            target.unconscious,
+        );
+    }
+}
+
+#[inline(never)]
+fn trace_hearing_gate_target_outside_box(
+    frame_and_creation_order: [u32; 2],
+    npc_id: EntityId,
+    pc: &super::snapshots::PcSnapshot,
+    positions: (MapPoint, crate::coordinates::WorldPoint3D),
+    enemy_detectables: &[Detectable],
+) {
+    let dets = enemy_detectables
+        .iter()
+        .find(|d| d.element == Some(pc.id))
+        .map(|d| (d.heard_last_frame, d.seen_last_frame))
+        .expect("HEARINGGATE tracked PC vanished before box rejection");
+    trace_hearing_gate_target(frame_and_creation_order, npc_id, pc, positions, dets, None);
+}
+
+/// `inside` is `None` for a hear-box rejection, otherwise
+/// `([dx, dy_stretched, dz, modified_volume, max_norm, distance], cover_volume, subjective)`.
+#[inline(never)]
+fn trace_hearing_gate_target(
+    [universal_frame, creation_order]: [u32; 2],
+    npc_id: EntityId,
+    pc: &super::snapshots::PcSnapshot,
+    (position_map, position_world): (MapPoint, crate::coordinates::WorldPoint3D),
+    (det_heard, det_seen): (bool, bool),
+    inside: Option<([f32; 6], &dyn std::fmt::Display, &dyn std::fmt::Display)>,
+) {
+    let noise = pc.produced_noise;
+    let pc_volume = pc.noise_volume;
+    let (bbox_present, bbox_bits) = pc
+        .hear_noise_box
+        .0
+        .map(|bbox| {
+            (
+                true,
+                [
+                    bbox.min().x.to_bits(),
+                    bbox.min().y.to_bits(),
+                    bbox.max().x.to_bits(),
+                    bbox.max().y.to_bits(),
+                ],
+            )
+        })
+        .unwrap_or((false, [0; 4]));
+    match inside {
+        None => eprintln!(
+            "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":false,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"subjective\":-1,\"old_heard\":{},\"old_seen\":{},\"update\":false}}",
+            universal_frame,
+            npc_id.index(),
+            creation_order,
+            pc.id.index(),
+            position_map.x.to_bits(),
+            position_map.y.to_bits(),
+            position_world.x.to_bits(),
+            position_world.y.to_bits(),
+            position_world.z.to_bits(),
+            bbox_present,
+            bbox_bits[0],
+            bbox_bits[1],
+            bbox_bits[2],
+            bbox_bits[3],
+            noise.origin.x.to_bits(),
+            noise.origin.y.to_bits(),
+            noise.noise_type as u32,
+            pc_volume,
+            noise.elevation,
+            det_heard,
+            det_seen,
+        ),
+        Some((
+            [dx_3d, dy_stretched, dz, modified_volume, max_norm, distance],
+            cover_volume,
+            subjective,
+        )) => eprintln!(
+            "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":true,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"dx_bits\":{},\"dy_stretched_bits\":{},\"dz_bits\":{},\"modified_volume_bits\":{},\"max_norm_bits\":{},\"distance_bits\":{},\"cover_volume\":{},\"subjective\":{},\"old_heard\":{},\"old_seen\":{},\"update\":true}}",
+            universal_frame,
+            npc_id.index(),
+            creation_order,
+            pc.id.index(),
+            position_map.x.to_bits(),
+            position_map.y.to_bits(),
+            position_world.x.to_bits(),
+            position_world.y.to_bits(),
+            position_world.z.to_bits(),
+            bbox_present,
+            bbox_bits[0],
+            bbox_bits[1],
+            bbox_bits[2],
+            bbox_bits[3],
+            noise.origin.x.to_bits(),
+            noise.origin.y.to_bits(),
+            noise.noise_type as u32,
+            pc_volume,
+            noise.elevation,
+            dx_3d.to_bits(),
+            dy_stretched.to_bits(),
+            dz.to_bits(),
+            modified_volume.to_bits(),
+            max_norm.to_bits(),
+            distance.to_bits(),
+            cover_volume,
+            subjective,
+            det_heard,
+            det_seen,
+        ),
+    }
+}
+
+/// `[universal frame, viewer creation order]`.
+#[inline(never)]
+fn trace_visibility_stage_human_result(
+    [universal_frame, original_creation_order]: [u32; 2],
+    npc_id: EntityId,
+    target: &EnemyOpticalTarget,
+    q: &ai_vision::VisibilityQuery<'_>,
+    effective_view_radius: Option<f32>,
+    visibility: f32,
+) {
+    let dx = q.target_world.x - q.viewer_world.x;
+    let dy = q.target_world.y - q.viewer_world.y;
+    let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
+    let dz = q.target_world.z - q.viewer_world.z;
+    let square_distance = dx * dx + stretched_y * stretched_y;
+    let square_distance_3d = square_distance + dz * dz;
+    let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
+    eprintln!(
+        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
+        npc_id.index(),
+        target.id.index(),
+        q.viewer_world.x.to_bits(),
+        q.viewer_world.y.to_bits(),
+        q.viewer_world.z.to_bits(),
+        q.target_world.x.to_bits(),
+        q.target_world.y.to_bits(),
+        q.target_world.z.to_bits(),
+        q.viewer_direction,
+        q.view_forward.0.to_bits(),
+        q.view_forward.1.to_bits(),
+        q.real_half_aperture.to_bits(),
+        q.viewer_eye_status as u8,
+        q.viewer_in_building,
+        q.target_in_same_building,
+        q.target_is_active_and_outside_building,
+        target.dead,
+        q.target_unconscious,
+        q.target_passing_door,
+        q.target_posture as u8,
+        q.target_action_state as u8,
+        dx.to_bits(),
+        dy.to_bits(),
+        stretched_y.to_bits(),
+        dz.to_bits(),
+        square_distance.to_bits(),
+        square_distance_3d.to_bits(),
+        view_dot.to_bits(),
+        q.view_radius,
+        effective_view_radius.map_or(-1, |radius| i64::from(radius.to_bits())),
+        visibility.to_bits(),
+    );
+}
+
+#[inline(never)]
+fn trace_visibility_stage_outer_gate(
+    det: &Detectable,
+    target: &EnemyOpticalTarget,
+    npc_id: EntityId,
+    view: &ViewContext<'_>,
+    scan_decision: bool,
+) {
+    let universal_frame = view.universal_frame;
+    let original_creation_order = view.original_creation_order;
+    let viewer_inside_building = view.viewer_inside_building;
+    let view_radius = view.view_radius;
+    eprintln!(
+        "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
+        npc_id.index(),
+        target.id.index(),
+        det.last_visibility.to_bits(),
+        view.ground_position.x.to_bits(),
+        view.ground_position.y.to_bits(),
+        target.ground_position.x.to_bits(),
+        target.ground_position.y.to_bits(),
+    );
+}
+
+#[inline(never)]
 fn debug_detectable_list_entries(
     stage: &str,
     bucket: usize,
@@ -130,8 +379,7 @@ fn debug_detectable_list_entries(
     frame: u32,
     creation_order: u32,
 ) {
-    let config = detectable_list_debug_config();
-    if !config.enabled || frame != config.frame || creation_order != config.creation_order {
+    if !detectable_list_debug_gate().matches([Some(frame), Some(creation_order)]) {
         return;
     }
     eprintln!(
@@ -166,94 +414,66 @@ fn debug_all_detectable_list_buckets(
     }
 }
 
-#[derive(Clone, Copy)]
-struct DetectableMutationDebugTarget {
-    slot: u32,
-    creation_order: u32,
-}
-
-#[derive(Clone, Copy)]
-struct DetectableMutationDebugConfig {
-    enabled: bool,
-    owner_slot: u32,
-    owner_creation_order: u32,
-    targets: [DetectableMutationDebugTarget; 3],
-}
-
-fn detectable_mutation_debug_config() -> &'static DetectableMutationDebugConfig {
-    static CONFIG: std::sync::OnceLock<DetectableMutationDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_DETECTABLE_MUTATION").is_some();
-        if !enabled {
-            return DetectableMutationDebugConfig {
-                enabled,
-                owner_slot: 0,
-                owner_creation_order: 0,
-                targets: [DetectableMutationDebugTarget {
-                    slot: 0,
-                    creation_order: 0,
-                }; 3],
-            };
-        }
-        let parse_required = crate::engine::diagnostics::required_u32_env;
-        let target = |index: usize| DetectableMutationDebugTarget {
-            slot: parse_required(&format!(
-                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_{index}_SLOT"
-            )),
-            creation_order: parse_required(&format!(
-                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_{index}_CREATION_ORDER"
-            )),
-        };
-        DetectableMutationDebugConfig {
-            enabled,
-            owner_slot: parse_required("PARITY_DEBUG_DETECTABLE_MUTATION_OWNER_SLOT"),
-            owner_creation_order: parse_required(
+/// `[owner slot, owner creation order, (target slot, target creation order) × 3]`,
+/// all required.
+fn detectable_mutation_debug_gate() -> &'static ParityGate<8> {
+    static GATE: OnceLock<ParityGate<8>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_DETECTABLE_MUTATION",
+            [
+                "PARITY_DEBUG_DETECTABLE_MUTATION_OWNER_SLOT",
                 "PARITY_DEBUG_DETECTABLE_MUTATION_OWNER_CREATION_ORDER",
-            ),
-            targets: [target(0), target(1), target(2)],
-        }
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_0_SLOT",
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_0_CREATION_ORDER",
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_1_SLOT",
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_1_CREATION_ORDER",
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_2_SLOT",
+                "PARITY_DEBUG_DETECTABLE_MUTATION_TARGET_2_CREATION_ORDER",
+            ],
+        )
     })
 }
 
+/// `(slot, creation order)` of the three selected targets. Enabled gates only.
+fn detectable_mutation_debug_targets() -> impl Iterator<Item = (u32, u32)> {
+    let gate = detectable_mutation_debug_gate();
+    (0..3).map(|target| (gate.required(2 + 2 * target), gate.required(3 + 2 * target)))
+}
+
 pub(super) fn detectable_mutation_debug_enabled() -> bool {
-    detectable_mutation_debug_config().enabled
+    detectable_mutation_debug_gate().enabled()
 }
 
 pub(super) fn detectable_mutation_debug_owner_slot_matches(owner_slot: u32) -> bool {
-    let config = detectable_mutation_debug_config();
-    config.enabled && config.owner_slot == owner_slot
+    detectable_mutation_debug_enabled()
+        && detectable_mutation_debug_gate().required(0) == owner_slot
 }
 
 pub(super) fn detectable_mutation_debug_target_slot_matches(target_slot: u32) -> bool {
-    let config = detectable_mutation_debug_config();
-    config.enabled
-        && config
-            .targets
-            .iter()
-            .any(|target| target.slot == target_slot)
+    detectable_mutation_debug_enabled()
+        && detectable_mutation_debug_targets().any(|(slot, _)| slot == target_slot)
 }
 
 pub(super) fn detectable_mutation_debug_owner_matches(
     owner_slot: u32,
     owner_creation_order: u32,
 ) -> bool {
-    let config = detectable_mutation_debug_config();
-    config.enabled
-        && config.owner_slot == owner_slot
-        && config.owner_creation_order == owner_creation_order
+    detectable_mutation_debug_owner_slot_matches(owner_slot)
+        && detectable_mutation_debug_gate().required(1) == owner_creation_order
 }
 
 pub(super) fn detectable_mutation_debug_target_matches(
     target_slot: u32,
     target_creation_order: u32,
 ) -> bool {
-    let config = detectable_mutation_debug_config();
-    config.enabled
-        && config.targets.iter().any(|target| {
-            target.slot == target_slot && target.creation_order == target_creation_order
+    detectable_mutation_debug_enabled()
+        && detectable_mutation_debug_targets().any(|(slot, creation_order)| {
+            slot == target_slot && creation_order == target_creation_order
         })
 }
 
+#[inline(never)]
 pub(super) fn debug_detectable_mutation_event(
     stage: &str,
     caller: &str,
@@ -290,15 +510,15 @@ fn debug_detectable_mutation_snapshot(
     if !detectable_mutation_debug_owner_matches(owner_id.index(), owner_creation_order) {
         return;
     }
-    for target in detectable_mutation_debug_config().targets {
+    for (target_slot, target_creation_order) in detectable_mutation_debug_targets() {
         let matching = detectable_lists
             .iter()
             .enumerate()
             .find_map(|(bucket, entries)| {
                 entries.iter().find_map(|detectable| {
                     let entity_id = detectable.element?;
-                    (entity_id.index() == target.slot
-                        && creation_order_for(entity_id) == Some(target.creation_order))
+                    (entity_id.index() == target_slot
+                        && creation_order_for(entity_id) == Some(target_creation_order))
                     .then_some((bucket, entries.len()))
                 })
             });
@@ -310,8 +530,8 @@ fn debug_detectable_mutation_snapshot(
             owner_id.index(),
             owner_creation_order,
             bucket,
-            target.slot,
-            target.creation_order,
+            target_slot,
+            target_creation_order,
             matching.is_some(),
             matching.is_some(),
             length,
@@ -337,29 +557,18 @@ pub(crate) fn debug_detectable_mutation_load_snapshot(
     );
 }
 
-#[derive(Clone, Copy)]
-struct VisibilityStageDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    viewer_creation_order: Option<u32>,
-    target_slot: Option<u32>,
-}
-
-fn visibility_stage_debug_config() -> &'static VisibilityStageDebugConfig {
-    static CONFIG: std::sync::OnceLock<VisibilityStageDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_VISIBILITY_STAGE").is_some();
-        let parse = |name| {
-            enabled
-                .then(|| crate::engine::diagnostics::optional_u32_env(name))
-                .flatten()
-        };
-        VisibilityStageDebugConfig {
-            enabled,
-            frame: parse("PARITY_DEBUG_VISIBILITY_STAGE_FRAME"),
-            viewer_creation_order: parse("PARITY_DEBUG_VISIBILITY_STAGE_VIEWER_CREATION_ORDER"),
-            target_slot: parse("PARITY_DEBUG_VISIBILITY_STAGE_TARGET_SLOT"),
-        }
+/// `[frame, viewer creation order, target slot]`, all optional.
+fn visibility_stage_debug_gate() -> &'static ParityGate<3> {
+    static GATE: OnceLock<ParityGate<3>> = OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_VISIBILITY_STAGE",
+            [
+                "PARITY_DEBUG_VISIBILITY_STAGE_FRAME",
+                "PARITY_DEBUG_VISIBILITY_STAGE_VIEWER_CREATION_ORDER",
+                "PARITY_DEBUG_VISIBILITY_STAGE_TARGET_SLOT",
+            ],
+        )
     })
 }
 
@@ -368,15 +577,11 @@ fn visibility_stage_debug_enabled(
     viewer_creation_order: u32,
     target: EntityId,
 ) -> bool {
-    let config = visibility_stage_debug_config();
-    config.enabled
-        && config.frame.is_none_or(|expected| expected == frame)
-        && config
-            .viewer_creation_order
-            .is_none_or(|expected| expected == viewer_creation_order)
-        && config
-            .target_slot
-            .is_none_or(|expected| expected == target.index())
+    visibility_stage_debug_gate().matches([
+        Some(frame),
+        Some(viewer_creation_order),
+        Some(target.index()),
+    ])
 }
 
 /// One live PC/soldier entry in an NPC's mixed Enemy detectable list.
@@ -1427,35 +1632,23 @@ impl EngineInner {
                 hearing_factor,
             )
         };
-        let hearing_debug_config = hearing_gate_debug_config();
-        let hearing_debug = hearing_debug_config.enabled
-            && universal_frame == hearing_debug_config.frame
-            && self.original_static_creation_order(npc_id) == hearing_debug_config.creation_order;
+        let hearing_debug_gate = hearing_gate_debug_gate();
+        let hearing_debug = hearing_debug_gate.matches([Some(universal_frame), None])
+            && hearing_debug_gate
+                .matches([None, Some(self.original_static_creation_order(npc_id))]);
         let hearing_debug_creation_order =
             hearing_debug.then(|| self.original_static_creation_order(npc_id));
         let hearing_debug_modified_frame = hearing_debug_creation_order.map(|creation_order| {
             refresh_detection_modified_frame(universal_frame, creation_order)
         });
         if hearing_debug {
-            let substate = self
-                .world
-                .entities
-                .get(npc_id)
-                .and_then(Entity::ai_controller)
-                .expect("HEARINGGATE owner lost its AI controller")
-                .current_substate;
-            let modified_frame = hearing_debug_modified_frame.expect("HEARINGGATE frame missing");
-            eprintln!(
-                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"pre_gate\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"state\":{},\"substate\":{},\"modified_frame\":{},\"cadence_remainder\":{},\"state_pass\":{},\"cadence_pass\":{}}}",
+            self.trace_hearing_gate_pre_gate(
                 universal_frame,
-                npc_id.index(),
+                npc_id,
                 hearing_debug_creation_order.expect("HEARINGGATE creation order missing"),
-                current_state as u32,
-                substate as u32,
-                modified_frame,
-                modified_frame % DETECTION_FREQUENCY_SOUNDS,
-                !matches!(current_state, AiState::Attacking),
-                modified_frame.is_multiple_of(DETECTION_FREQUENCY_SOUNDS),
+                current_state,
+                hearing_debug_modified_frame.expect("HEARINGGATE frame missing"),
+                DETECTION_FREQUENCY_SOUNDS,
             );
         }
         // Attacking NPCs are already locked onto their target
@@ -1559,50 +1752,16 @@ impl EngineInner {
                         pc.hear_noise_box.contains_point(position_map) || hearing_factor > 1.0;
                     if !inside_hear_box {
                         if hearing_debug {
-                            let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
-                                .iter()
-                                .find(|d| d.element == Some(pc.id))
-                                .map(|d| (d.heard_last_frame, d.seen_last_frame))
-                                .expect("HEARINGGATE tracked PC vanished before box rejection");
-                            let (bbox_present, bbox_bits) = pc
-                                .hear_noise_box
-                                .0
-                                .map(|bbox| {
-                                    (
-                                        true,
-                                        [
-                                            bbox.min().x.to_bits(),
-                                            bbox.min().y.to_bits(),
-                                            bbox.max().x.to_bits(),
-                                            bbox.max().y.to_bits(),
-                                        ],
-                                    )
-                                })
-                                .unwrap_or((false, [0; 4]));
-                            eprintln!(
-                                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":false,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"subjective\":-1,\"old_heard\":{},\"old_seen\":{},\"update\":false}}",
-                                universal_frame,
-                                npc_id.index(),
-                                hearing_debug_creation_order
-                                    .expect("HEARINGGATE creation order missing"),
-                                pc.id.index(),
-                                position_map.x.to_bits(),
-                                position_map.y.to_bits(),
-                                position_world.x.to_bits(),
-                                position_world.y.to_bits(),
-                                position_world.z.to_bits(),
-                                bbox_present,
-                                bbox_bits[0],
-                                bbox_bits[1],
-                                bbox_bits[2],
-                                bbox_bits[3],
-                                noise.origin.x.to_bits(),
-                                noise.origin.y.to_bits(),
-                                noise.noise_type as u32,
-                                pc_volume,
-                                noise.elevation,
-                                det_heard,
-                                det_seen,
+                            trace_hearing_gate_target_outside_box(
+                                [
+                                    universal_frame,
+                                    hearing_debug_creation_order
+                                        .expect("HEARINGGATE creation order missing"),
+                                ],
+                                npc_id,
+                                pc,
+                                (position_map, position_world),
+                                &npc.detectable_lists[enemy_idx],
                             );
                         }
                         None
@@ -1654,53 +1813,21 @@ impl EngineInner {
                             });
 
                         if hearing_debug {
-                            let (bbox_present, bbox_bits) = pc
-                                .hear_noise_box
-                                .0
-                                .map(|bbox| {
-                                    (
-                                        true,
-                                        [
-                                            bbox.min().x.to_bits(),
-                                            bbox.min().y.to_bits(),
-                                            bbox.max().x.to_bits(),
-                                            bbox.max().y.to_bits(),
-                                        ],
-                                    )
-                                })
-                                .unwrap_or((false, [0; 4]));
-                            eprintln!(
-                                "HEARINGGATE {{\"engine\":\"rust\",\"stage\":\"target\",\"frame\":{},\"owner_slot\":{},\"owner_creation_order\":{},\"target_slot\":{},\"inside_box\":true,\"listener_map_bits\":[{},{}],\"listener_world_bits\":[{},{},{}],\"bbox_present\":{},\"bbox_bits\":[{},{},{},{}],\"noise_origin_bits\":[{},{}],\"noise_type\":{},\"noise_volume\":{},\"noise_elevation\":{},\"dx_bits\":{},\"dy_stretched_bits\":{},\"dz_bits\":{},\"modified_volume_bits\":{},\"max_norm_bits\":{},\"distance_bits\":{},\"cover_volume\":{},\"subjective\":{},\"old_heard\":{},\"old_seen\":{},\"update\":true}}",
-                                universal_frame,
-                                npc_id.index(),
-                                hearing_debug_creation_order
-                                    .expect("HEARINGGATE creation order missing"),
-                                pc.id.index(),
-                                position_map.x.to_bits(),
-                                position_map.y.to_bits(),
-                                position_world.x.to_bits(),
-                                position_world.y.to_bits(),
-                                position_world.z.to_bits(),
-                                bbox_present,
-                                bbox_bits[0],
-                                bbox_bits[1],
-                                bbox_bits[2],
-                                bbox_bits[3],
-                                noise.origin.x.to_bits(),
-                                noise.origin.y.to_bits(),
-                                noise.noise_type as u32,
-                                pc_volume,
-                                noise.elevation,
-                                dx_3d.to_bits(),
-                                dy_stretched.to_bits(),
-                                dz.to_bits(),
-                                modified_volume.to_bits(),
-                                max_norm.to_bits(),
-                                distance.to_bits(),
-                                cover_volume,
-                                subjective,
-                                det_heard,
-                                det_seen,
+                            trace_hearing_gate_target(
+                                [
+                                    universal_frame,
+                                    hearing_debug_creation_order
+                                        .expect("HEARINGGATE creation order missing"),
+                                ],
+                                npc_id,
+                                pc,
+                                (position_map, position_world),
+                                (det_heard, det_seen),
+                                Some((
+                                    [dx_3d, dy_stretched, dz, modified_volume, max_norm, distance],
+                                    &cover_volume,
+                                    &subjective,
+                                )),
                             );
                         }
 
@@ -1889,11 +2016,9 @@ impl EngineInner {
                 }
             }
 
-            let detectable_list_debug_creation_order = {
-                let config = detectable_list_debug_config();
-                (config.enabled && universal_frame == config.frame)
-                    .then(|| self.original_static_creation_order(npc_id))
-            };
+            let detectable_list_debug_creation_order = detectable_list_debug_gate()
+                .matches([Some(universal_frame), None])
+                .then(|| self.original_static_creation_order(npc_id));
             if detectable_mutation_debug_owner_slot_matches(npc_id.index()) {
                 let owner_creation_order = self.original_static_creation_order(npc_id);
                 if detectable_mutation_debug_owner_matches(npc_id.index(), owner_creation_order) {
@@ -2913,47 +3038,14 @@ impl EngineInner {
                 .matches([Some(universal_frame), Some(original_creation_order)])
             };
             if debug_them {
-                eprintln!(
-                    "[THEM frame={} co={} me={} phase=detection_latches committed={} stimuli={:?}]",
-                    universal_frame,
-                    original_creation_order,
-                    npc_id.index(),
+                trace_them_detection_latches(
+                    [universal_frame, original_creation_order],
+                    npc_id,
                     committed,
-                    enemy_stimuli
-                        .iter()
-                        .map(|stimulus| (stimulus.stimulus_type, stimulus.info))
-                        .collect::<Vec<_>>(),
+                    &enemy_stimuli,
+                    &npc.detectable_lists[enemy_idx],
+                    enemy_targets,
                 );
-                for det in &npc.detectable_lists[enemy_idx] {
-                    let target_id = det.element.unwrap_or_else(|| {
-                        panic!(
-                            "Enemy detectable for NPC {} has no target in THEM diagnostic",
-                            npc_id.index()
-                        )
-                    });
-                    let target = enemy_targets
-                        .iter()
-                        .find(|target| target.id == target_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "Enemy target {} for NPC {} missing in THEM diagnostic",
-                                target_id.index(),
-                                npc_id.index()
-                            )
-                        });
-                    eprintln!(
-                        "[THEM frame={} co={} me={} phase=detection_entry target={} seen_now={} seen_last={} visibility={} dead={} unconscious={}]",
-                        universal_frame,
-                        original_creation_order,
-                        npc_id.index(),
-                        target_id.index(),
-                        det.seen_now,
-                        det.seen_last_frame,
-                        det.last_visibility,
-                        target.dead,
-                        target.unconscious,
-                    );
-                }
             }
 
             // The detection-built tick input is assembled before the latch
@@ -5771,16 +5863,7 @@ fn scan_enemy_detectable(
     let debug_visibility_stage =
         visibility_stage_debug_enabled(universal_frame, original_creation_order, target_id);
     if debug_visibility_stage {
-        eprintln!(
-            "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"outer_gate\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"last_visibility_bits\":{},\"viewer_inside_building\":{viewer_inside_building},\"viewer_ground_bits\":[{},{}],\"target_ground_bits\":[{},{}],\"view_radius\":{view_radius},\"scan_decision\":{scan_decision}}}",
-            npc_id.index(),
-            target_id.index(),
-            det.last_visibility.to_bits(),
-            me_ground_position.x.to_bits(),
-            me_ground_position.y.to_bits(),
-            target.ground_position.x.to_bits(),
-            target.ground_position.y.to_bits(),
-        );
+        trace_visibility_stage_outer_gate(det, target, npc_id, view, scan_decision);
     }
     if !scan_decision {
         tracing::trace!(
@@ -5958,48 +6041,13 @@ fn scan_enemy_detectable(
             radius
         });
         if debug_visibility_stage {
-            let dx = q.target_world.x - q.viewer_world.x;
-            let dy = q.target_world.y - q.viewer_world.y;
-            let stretched_y = dy * crate::position_interface::INVERSE_ASPECT_RATIO;
-            let dz = q.target_world.z - q.viewer_world.z;
-            let square_distance = dx * dx + stretched_y * stretched_y;
-            let square_distance_3d = square_distance + dz * dz;
-            let view_dot = dx * q.view_forward.0 + stretched_y * q.view_forward.1;
-            eprintln!(
-                "VISSTAGE {{\"engine\":\"rust\",\"stage\":\"human_result\",\"frame\":{universal_frame},\"viewer_slot\":{},\"viewer_creation_order\":{original_creation_order},\"target_slot\":{},\"viewer_world_bits\":[{},{},{}],\"target_world_bits\":[{},{},{}],\"viewer_direction\":{},\"view_forward_bits\":[{},{}],\"real_half_aperture_bits\":{},\"eye_status\":{},\"viewer_in_building\":{},\"target_same_building\":{},\"target_active_outside\":{},\"target_dead\":{},\"target_unconscious\":{},\"target_passing_door\":{},\"target_posture\":{},\"target_action_state\":{},\"dx_bits\":{},\"dy_bits\":{},\"stretched_y_bits\":{},\"dz_bits\":{},\"square_distance_bits\":{},\"square_distance_3d_bits\":{},\"view_dot_bits\":{},\"view_radius\":{},\"effective_radius_bits\":{},\"visibility_bits\":{}}}",
-                npc_id.index(),
-                target_id.index(),
-                q.viewer_world.x.to_bits(),
-                q.viewer_world.y.to_bits(),
-                q.viewer_world.z.to_bits(),
-                q.target_world.x.to_bits(),
-                q.target_world.y.to_bits(),
-                q.target_world.z.to_bits(),
-                q.viewer_direction,
-                q.view_forward.0.to_bits(),
-                q.view_forward.1.to_bits(),
-                q.real_half_aperture.to_bits(),
-                q.viewer_eye_status as u8,
-                q.viewer_in_building,
-                q.target_in_same_building,
-                q.target_is_active_and_outside_building,
-                target.dead,
-                q.target_unconscious,
-                q.target_passing_door,
-                q.target_posture as u8,
-                q.target_action_state as u8,
-                dx.to_bits(),
-                dy.to_bits(),
-                stretched_y.to_bits(),
-                dz.to_bits(),
-                square_distance.to_bits(),
-                square_distance_3d.to_bits(),
-                view_dot.to_bits(),
-                q.view_radius,
-                effective_view_radius
-                    .get()
-                    .map_or(-1, |radius| i64::from(radius.to_bits())),
-                visibility.to_bits(),
+            trace_visibility_stage_human_result(
+                [universal_frame, original_creation_order],
+                npc_id,
+                target,
+                &q,
+                effective_view_radius.get(),
+                visibility,
             );
         }
         tracing::trace!(

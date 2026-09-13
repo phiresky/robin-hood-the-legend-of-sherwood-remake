@@ -1017,18 +1017,15 @@ impl EngineInner {
         let engine_verdict_pending =
             ai.engine_deferred_end_think_frames != 0 && !ai.engine_completion_verdict_resolved;
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
+            Self::trace_surface_completion_enter(
                 self.control.frame_counter,
-                npc_id.index(),
-                ai.completion_latch_inside_think,
-                ai.couldnt_reachpoint,
-                ai.already_on_point,
-                ai.already_turned,
-                typed_tail_pending,
-                retain_couldnt_reachpoint,
-                engine_verdict_pending,
-                ai.outbox.reentrant.owner_work,
+                npc_id,
+                ai,
+                [
+                    typed_tail_pending,
+                    retain_couldnt_reachpoint,
+                    engine_verdict_pending,
+                ],
             );
         }
         let event = if !ai.completion_latch_inside_think {
@@ -1070,17 +1067,54 @@ impl EngineInner {
             ai.close_engine_deferred_end_think_frames();
         }
         if debug_decision_path {
-            eprintln!(
-                "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
-                self.control.frame_counter,
-                npc_id.index(),
-                ai.couldnt_reachpoint,
-                ai.already_on_point,
-                ai.already_turned,
-                ai.outbox.reentrant.self_stimuli,
-                ai.outbox.reentrant.owner_work,
-            );
+            Self::trace_surface_completion_result(self.control.frame_counter, npc_id, event, ai);
         }
+    }
+
+    /// `[typed_tail_pending, retain_couldnt, engine_verdict_pending]`.
+    #[inline(never)]
+    fn trace_surface_completion_enter(
+        frame: u32,
+        npc_id: EntityId,
+        ai: &crate::ai::AiController,
+        [
+            typed_tail_pending,
+            retain_couldnt_reachpoint,
+            engine_verdict_pending,
+        ]: [bool; 3],
+    ) {
+        eprintln!(
+            "AIDECISION frame={} owner={} stage=surface_completion_enter inside_think={} couldnt={} already_on_point={} already_turned={} typed_tail_pending={} retain_couldnt={} engine_verdict_pending={} owner_work={:?}",
+            frame,
+            npc_id.index(),
+            ai.completion_latch_inside_think,
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.already_turned,
+            typed_tail_pending,
+            retain_couldnt_reachpoint,
+            engine_verdict_pending,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_surface_completion_result(
+        frame: u32,
+        npc_id: EntityId,
+        event: Option<crate::ai::StimulusType>,
+        ai: &crate::ai::AiController,
+    ) {
+        eprintln!(
+            "AIDECISION frame={} owner={} stage=surface_completion_result event={event:?} couldnt={} already_on_point={} already_turned={} self_stimuli={:?} owner_work={:?}",
+            frame,
+            npc_id.index(),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.already_turned,
+            ai.outbox.reentrant.self_stimuli,
+            ai.outbox.reentrant.owner_work,
+        );
     }
 
     pub(in crate::engine) fn process_synchronous_reentrant_actions_for(

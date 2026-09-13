@@ -8,6 +8,70 @@ use crate::element::{ActionState, Command, Entity, EntityId, Posture};
 use crate::order::OrderType;
 use crate::sequence::SequenceElementData;
 
+impl EngineInner {
+    #[inline(never)]
+    fn trace_opponent_order_choose(
+        &self,
+        entity_id: EntityId,
+        opponents: &impl std::fmt::Debug,
+        candidates: &[usize],
+        pick: usize,
+        rng_before: impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase=choose owner={} before={opponents:?} candidates={candidates:?} pick={} rng_before={:?} rng_after={:?}",
+            self.control.frame_counter,
+            entity_id.index(),
+            candidates[pick],
+            rng_before,
+            self.control.rng.original_replay_cursor(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_opponent_order_choose_done(&self, entity_id: EntityId, new_principal: usize) {
+        let after = self
+            .world
+            .entities
+            .get(entity_id)
+            .and_then(Entity::human_data)
+            .map(|human| human.opponents.ids());
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
+            self.control.frame_counter,
+            entity_id.index(),
+            new_principal,
+        );
+    }
+
+    /// `phase` is `enter_opponent` or `enter_initiator`.
+    #[inline(never)]
+    fn trace_opponent_order_enter(
+        &self,
+        phase: &str,
+        owner: EntityId,
+        other: EntityId,
+        before: impl std::fmt::Debug,
+        fresh: bool,
+    ) {
+        let after = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::human_data)
+            .map(|human| human.opponents.ids());
+        eprintln!(
+            "PARITY_OPPONENT_ORDER frame={} phase={phase} owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
+            self.control.frame_counter,
+            owner.index(),
+            other.index(),
+            before,
+            fresh,
+            self.control.rng.original_replay_cursor(),
+        );
+    }
+}
+
 thread_local! {
     /// The original game's swordfight preparation scope is a
     /// non-serialized synchronous call-stack guard. Key the equivalent
@@ -611,13 +675,12 @@ impl EngineInner {
                 0..candidates.len(),
             );
             if debug {
-                eprintln!(
-                    "PARITY_OPPONENT_ORDER frame={} phase=choose owner={} before={opponents:?} candidates={candidates:?} pick={} rng_before={:?} rng_after={:?}",
-                    self.control.frame_counter,
-                    entity_id.index(),
-                    candidates[pick],
+                self.trace_opponent_order_choose(
+                    entity_id,
+                    &opponents,
+                    &candidates,
+                    pick,
                     rng_before.flatten(),
-                    self.control.rng.original_replay_cursor(),
                 );
             }
             candidates[pick]
@@ -644,18 +707,7 @@ impl EngineInner {
             self.take_smalltalk_initiative(entity_id);
         }
         if debug {
-            let after = self
-                .world
-                .entities
-                .get(entity_id)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=choose_done owner={} chosen_index={} after={after:?}",
-                self.control.frame_counter,
-                entity_id.index(),
-                new_principal,
-            );
+            self.trace_opponent_order_choose_done(entity_id, new_principal);
         }
     }
 
@@ -1222,20 +1274,12 @@ impl EngineInner {
             opponent_jump_line,
         );
         if debug_opponent {
-            let after = self
-                .world
-                .entities
-                .get(opponent)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=enter_opponent owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
-                self.control.frame_counter,
-                opponent.index(),
-                initiator.index(),
+            self.trace_opponent_order_enter(
+                "enter_opponent",
+                opponent,
+                initiator,
                 opponent_before.flatten(),
                 opponent_added,
-                self.control.rng.original_replay_cursor(),
             );
         }
         // The original game's opponent insertion owns these side effects and performs them
@@ -1254,20 +1298,12 @@ impl EngineInner {
             aggressor_jump_line,
         );
         if debug_initiator {
-            let after = self
-                .world
-                .entities
-                .get(initiator)
-                .and_then(Entity::human_data)
-                .map(|human| human.opponents.ids());
-            eprintln!(
-                "PARITY_OPPONENT_ORDER frame={} phase=enter_initiator owner={} other={} before={:?} after={after:?} fresh={} rng={:?}",
-                self.control.frame_counter,
-                initiator.index(),
-                opponent.index(),
+            self.trace_opponent_order_enter(
+                "enter_initiator",
+                initiator,
+                opponent,
                 initiator_before.flatten(),
                 initiator_added,
-                self.control.rng.original_replay_cursor(),
             );
         }
         if initiator_added {

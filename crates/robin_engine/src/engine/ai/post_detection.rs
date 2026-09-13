@@ -139,6 +139,7 @@ fn take_enemy_detection_tick_data(
 use crate::element::EntityId;
 
 impl EngineInner {
+    #[inline(never)]
     fn bored_owner_boundary_debug(&self, npc_id: EntityId, phase: &str) {
         let frame = self.control.frame_counter;
         let owner = npc_id.index();

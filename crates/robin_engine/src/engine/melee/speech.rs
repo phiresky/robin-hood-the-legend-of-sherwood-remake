@@ -680,11 +680,12 @@ impl EngineInner {
         let probe = crate::combat::tiredness_debug_matches(creation_order);
         if is_swordfighting || is_moving {
             if probe {
-                let tiredness = entity.human_data().map_or(0, |human| human.tiredness);
-                eprintln!(
-                    "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation_skipped \
-                     tiredness={tiredness} swordfighting={} moving={}",
-                    is_swordfighting as u8, is_moving as u8
+                Self::trace_tiredness_recuperation_skipped(
+                    frame,
+                    creation_order,
+                    entity,
+                    is_swordfighting,
+                    is_moving,
                 );
             }
             return;
@@ -697,12 +698,45 @@ impl EngineInner {
         let before = human.tiredness;
         human.tiredness = human.tiredness.saturating_sub(recuperation);
         if probe {
-            eprintln!(
-                "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation \
-                 before={before} after={} endurance={endurance} recuperation={recuperation}",
-                human.tiredness
+            Self::trace_tiredness_recuperation(
+                frame,
+                creation_order,
+                [before, human.tiredness],
+                endurance,
+                recuperation,
             );
         }
+    }
+
+    #[inline(never)]
+    fn trace_tiredness_recuperation_skipped(
+        frame: u32,
+        creation_order: u32,
+        entity: &Entity,
+        is_swordfighting: bool,
+        is_moving: bool,
+    ) {
+        let tiredness = entity.human_data().map_or(0, |human| human.tiredness);
+        eprintln!(
+            "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation_skipped \
+             tiredness={tiredness} swordfighting={} moving={}",
+            is_swordfighting as u8, is_moving as u8
+        );
+    }
+
+    /// `[before, after]` tiredness.
+    #[inline(never)]
+    fn trace_tiredness_recuperation<T: std::fmt::Display>(
+        frame: u32,
+        creation_order: u32,
+        [before, after]: [T; 2],
+        endurance: impl std::fmt::Display,
+        recuperation: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "RUST_TIREDNESS frame={frame} co={creation_order} site=recuperation \
+             before={before} after={after} endurance={endurance} recuperation={recuperation}",
+        );
     }
 
     // ─── Tie-up (public, called from natives/UI) ────────────────────

@@ -4,6 +4,59 @@
 
 use super::*;
 
+impl EngineInner {
+    #[inline(never)]
+    fn trace_sword_damage_apply(
+        &self,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        strike: impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
+            self.control.frame_counter,
+            victim_id,
+            self.world.original_creation_order(victim_id),
+            attacker_id,
+            attacker_id.map(|id| self.world.original_creation_order(id)),
+            strike,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_good_strike_before_dispatch(
+        &self,
+        atk_id: EntityId,
+        creation_order: u32,
+        victim_id: EntityId,
+        result: impl std::fmt::Debug,
+        victim_died: bool,
+    ) {
+        let attacker = self.expect_entity(atk_id, "GOOD_STRIKE attacker");
+        let enemy = self
+            .world
+            .entities
+            .expect_enemy_ai(atk_id, format_args!("GOOD_STRIKE attacker"));
+        let victim = self.expect_entity(victim_id, "GOOD_STRIKE victim");
+        eprintln!(
+            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
+            self.control.frame_counter,
+            atk_id.index(),
+            creation_order,
+            victim_id.index(),
+            result,
+            victim_died,
+            victim.is_unconscious(),
+            victim.element_data().posture(),
+            enemy.base.current_state,
+            enemy.base.current_substate,
+            attacker
+                .actor_data()
+                .and_then(|actor| actor.installed_order),
+        );
+    }
+}
+
 #[inline]
 fn provoke_roll_succeeds(roll: u32, fighting_ability: u16) -> bool {
     (roll as f32) < 0.2_f32 * f32::from(fighting_ability)
@@ -458,15 +511,7 @@ impl EngineInner {
         // `translate_ladder_wall_fall`.  Push strikes reach the same
         // helper through `apply_push_effect`.
         if super::strikes::sword_damage_debug_enabled() {
-            eprintln!(
-                "[SWORDDMG f={} victim={:?} (co {}) attacker={:?} (co {:?}) strike={:?}]",
-                self.control.frame_counter,
-                victim_id,
-                self.world.original_creation_order(victim_id),
-                attacker_id,
-                attacker_id.map(|id| self.world.original_creation_order(id)),
-                strike,
-            );
+            self.trace_sword_damage_apply(victim_id, attacker_id, strike);
         }
 
         // Look up the attacker's weapon profile
@@ -1196,27 +1241,12 @@ impl EngineInner {
                         self.control.frame_counter,
                         creation_order,
                     ) {
-                        let attacker = self.expect_entity(atk_id, "GOOD_STRIKE attacker");
-                        let enemy = self
-                            .world
-                            .entities
-                            .expect_enemy_ai(atk_id, format_args!("GOOD_STRIKE attacker"));
-                        let victim = self.expect_entity(victim_id, "GOOD_STRIKE victim");
-                        eprintln!(
-                            "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
-                            self.control.frame_counter,
-                            atk_id.index(),
+                        self.trace_good_strike_before_dispatch(
+                            atk_id,
                             creation_order,
-                            victim_id.index(),
+                            victim_id,
                             result,
                             victim_died,
-                            victim.is_unconscious(),
-                            victim.element_data().posture(),
-                            enemy.base.current_state,
-                            enemy.base.current_substate,
-                            attacker
-                                .actor_data()
-                                .and_then(|actor| actor.installed_order),
                         );
                     }
                 }

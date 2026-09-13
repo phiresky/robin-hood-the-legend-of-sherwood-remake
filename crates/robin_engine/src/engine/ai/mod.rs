@@ -105,14 +105,6 @@ fn beam_door_waypoints_into_houses(
     }
 }
 
-#[derive(Debug)]
-struct RefreshViewLifecycleDebugConfig {
-    enabled: bool,
-    from_frame: u32,
-    through_frame: u32,
-    creation_order: Option<u32>,
-}
-
 #[cfg(test)]
 mod building_door_membership_tests {
     use super::{beam_door_waypoints_into_houses, door_belongs_to_ai_house};
@@ -191,40 +183,20 @@ mod building_door_membership_tests {
     }
 }
 
-fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugConfig {
-    static CONFIG: std::sync::OnceLock<RefreshViewLifecycleDebugConfig> =
-        std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE").is_some();
-        if !enabled {
-            return RefreshViewLifecycleDebugConfig {
-                enabled: false,
-                from_frame: 0,
-                through_frame: u32::MAX,
-                creation_order: None,
-            };
-        }
-        let parse = |name: &str, default: u32| {
-            std::env::var(name).map_or(default, |value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for RVLIFE diagnostic: {error}")
-                })
-            })
-        };
-        RefreshViewLifecycleDebugConfig {
-            enabled: true,
-            from_frame: parse("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_FROM", 0),
-            through_frame: parse("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_THROUGH", u32::MAX),
-            creation_order: std::env::var("PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_CREATION_ORDER")
-                .ok()
-                .map(|value| {
-                    value.parse::<u32>().unwrap_or_else(|error| {
-                        panic!(
-                            "invalid PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_CREATION_ORDER={value:?}: {error}"
-                        )
-                    })
-                }),
-        }
+/// `[from frame (default 0), through frame (default u32::MAX), creation order]`,
+/// all optional.
+fn refresh_view_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE",
+            [
+                "PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_FROM",
+                "PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_THROUGH",
+                "PARITY_DEBUG_REFRESH_VIEW_LIFECYCLE_CREATION_ORDER",
+            ],
+        )
     })
 }
 
@@ -232,8 +204,10 @@ fn refresh_view_lifecycle_debug_config() -> &'static RefreshViewLifecycleDebugCo
 /// audits. This is deliberately process-local diagnostic state: it must not
 /// enter snapshots, state hashes, or the simulation RNG stream.
 pub(super) fn building_exit_wait_owner_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_BUILDING_EXIT_WAIT_OWNER", []))
+        .enabled()
 }
 
 /// Select the fleeing side for a two-allegiance doorway battle.
@@ -393,116 +367,64 @@ fn reconsider_observation_debug_matches(frame: u32, creation_order: u32, handle:
     reconsider_observation_debug_gate().matches([Some(frame), Some(creation_order), Some(handle)])
 }
 
-#[derive(Debug)]
-struct CivilianRandomSpeechDebugConfig {
-    enabled: bool,
-    frame: u32,
-    creation_order: u32,
-}
-
-fn civilian_random_speech_debug_config() -> &'static CivilianRandomSpeechDebugConfig {
-    static CONFIG: std::sync::OnceLock<CivilianRandomSpeechDebugConfig> =
-        std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH").is_some();
-        if !enabled {
-            return CivilianRandomSpeechDebugConfig {
-                enabled: false,
-                frame: 0,
-                creation_order: 0,
-            };
-        }
-        let parse = crate::engine::diagnostics::required_u32_env;
-        CivilianRandomSpeechDebugConfig {
-            enabled,
-            frame: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME"),
-            creation_order: parse("PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_CREATION_ORDER"),
-        }
+/// `[frame, creation order]`, both required.
+fn civilian_random_speech_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH",
+            [
+                "PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_FRAME",
+                "PARITY_DEBUG_CIVILIAN_RANDOM_SPEECH_CREATION_ORDER",
+            ],
+        )
     })
 }
 
-#[derive(Debug)]
-struct SpeechLifecycleDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    actor: Option<u32>,
-}
-
-fn speech_lifecycle_debug_config() -> &'static SpeechLifecycleDebugConfig {
-    static CONFIG: std::sync::OnceLock<SpeechLifecycleDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_SPEECH_LIFECYCLE").is_some();
-        if !enabled {
-            return SpeechLifecycleDebugConfig {
-                enabled: false,
-                frame: None,
-                actor: None,
-            };
-        }
-        let parse = crate::engine::diagnostics::optional_u32_env;
-        SpeechLifecycleDebugConfig {
-            enabled: true,
-            frame: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME"),
-            actor: parse("PARITY_DEBUG_SPEECH_LIFECYCLE_ACTOR"),
-        }
+/// `[frame, actor slot]`, both optional.
+fn speech_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_SPEECH_LIFECYCLE",
+            [
+                "PARITY_DEBUG_SPEECH_LIFECYCLE_FRAME",
+                "PARITY_DEBUG_SPEECH_LIFECYCLE_ACTOR",
+            ],
+        )
     })
 }
 
-#[derive(Debug)]
-struct PatrolTurnLifecycleDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    creation_order: Option<u32>,
-}
-
-fn patrol_turn_lifecycle_debug_config() -> &'static PatrolTurnLifecycleDebugConfig {
-    static CONFIG: std::sync::OnceLock<PatrolTurnLifecycleDebugConfig> = std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_PATROL_TURN_LIFECYCLE").is_some();
-        if !enabled {
-            return PatrolTurnLifecycleDebugConfig {
-                enabled: false,
-                frame: None,
-                creation_order: None,
-            };
-        }
-        let parse = crate::engine::diagnostics::optional_u32_env;
-        PatrolTurnLifecycleDebugConfig {
-            enabled,
-            frame: parse("PARITY_DEBUG_PATROL_TURN_FRAME"),
-            creation_order: parse("PARITY_DEBUG_PATROL_TURN_CREATION_ORDER"),
-        }
+/// `[frame, creation order]`, both optional.
+fn patrol_turn_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<2> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_PATROL_TURN_LIFECYCLE",
+            [
+                "PARITY_DEBUG_PATROL_TURN_FRAME",
+                "PARITY_DEBUG_PATROL_TURN_CREATION_ORDER",
+            ],
+        )
     })
 }
 
-#[derive(Debug)]
-struct ArcherStepBackLifecycleDebugConfig {
-    enabled: bool,
-    frame: Option<u32>,
-    creation_order: Option<u32>,
-    owner_handle: Option<u32>,
-}
-
-fn archer_step_back_lifecycle_debug_config() -> &'static ArcherStepBackLifecycleDebugConfig {
-    static CONFIG: std::sync::OnceLock<ArcherStepBackLifecycleDebugConfig> =
-        std::sync::OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let enabled = std::env::var_os("PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE").is_some();
-        if !enabled {
-            return ArcherStepBackLifecycleDebugConfig {
-                enabled: false,
-                frame: None,
-                creation_order: None,
-                owner_handle: None,
-            };
-        }
-        let parse = crate::engine::diagnostics::optional_u32_env;
-        ArcherStepBackLifecycleDebugConfig {
-            enabled,
-            frame: parse("PARITY_DEBUG_ARCHER_STEP_BACK_FRAME"),
-            creation_order: parse("PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER"),
-            owner_handle: parse("PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE"),
-        }
+/// `[frame, creation order, owner handle]`, all optional.
+fn archer_step_back_lifecycle_debug_gate() -> &'static crate::engine::diagnostics::ParityGate<3> {
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<3>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        ParityGate::from_env(
+            "PARITY_DEBUG_ARCHER_STEP_BACK_LIFECYCLE",
+            [
+                "PARITY_DEBUG_ARCHER_STEP_BACK_FRAME",
+                "PARITY_DEBUG_ARCHER_STEP_BACK_CREATION_ORDER",
+                "PARITY_DEBUG_ARCHER_STEP_BACK_OWNER_HANDLE",
+            ],
+        )
     })
 }
 
@@ -515,36 +437,54 @@ fn archer_step_back_lifecycle_debug_matches(
     creation_order: Option<u32>,
     owner_handle: u32,
 ) -> bool {
-    let config = archer_step_back_lifecycle_debug_config();
-    config.enabled
-        && config.frame.is_none_or(|expected| expected == frame)
-        && config
-            .creation_order
-            .is_none_or(|expected| Some(expected) == creation_order)
-        && config
-            .owner_handle
-            .is_none_or(|expected| expected == owner_handle)
+    archer_step_back_lifecycle_debug_gate().matches_required([
+        Some(frame),
+        creation_order,
+        Some(owner_handle),
+    ])
+}
+
+/// `[installed, concrete]` animations.
+#[inline(never)]
+fn trace_archer_step_back_context(
+    frame: u32,
+    original_creation_order: Option<u32>,
+    elem: &crate::element::ElementData,
+    actor: Option<&crate::element::ActorData>,
+    [self_animation, concrete_self_animation]: [crate::order::OrderType; 2],
+    self_action_state: impl std::fmt::Debug,
+    self_animation_reached_action_done: bool,
+) {
+    let sprite = &elem.sprite;
+    eprintln!(
+        "[ARCHERSTEP frame={frame} co={original_creation_order:?} me={} phase=context installed={self_animation:?} concrete={concrete_self_animation:?} action_state={self_action_state:?} motion_state={:?} order_id={:?} last_execute_order_id={:?} sprite_action={:?} row={} sprite_frame={} frame_count={} done_frame={} done_counter={} reached_done={self_animation_reached_action_done}]",
+        elem.index_in_elements_list,
+        actor.map(|actor| actor.continuation.motion_state),
+        actor.and_then(|actor| actor.installed_order.map(|order| order.order_id)),
+        actor.and_then(|actor| actor.last_execute_order_id),
+        sprite.last_action,
+        sprite.current_row,
+        sprite.current_frame,
+        sprite.frame_count,
+        sprite.action_done_frame,
+        sprite.action_done_counter,
+    );
 }
 
 impl EngineInner {
     fn patrol_turn_lifecycle_debug_matches(&self, owner: EntityId) -> bool {
-        let config = patrol_turn_lifecycle_debug_config();
-        if !config.enabled
-            || config
-                .frame
-                .is_some_and(|frame| frame != self.control.frame_counter)
-        {
+        let gate = patrol_turn_lifecycle_debug_gate();
+        if !gate.matches([Some(self.control.frame_counter), None]) {
             return false;
         }
         let creation_order = self.world.original_creation_order(owner);
-        !config
-            .creation_order
-            .is_some_and(|expected| expected != creation_order)
+        gate.matches([None, Some(creation_order)])
     }
 
     /// Opt-in, process-local trace of patrol Turn registration and ownership.
     /// It deliberately reads only live state and writes only stderr, so it
     /// cannot affect serialization, state hashes, ordering, or RNG.
+    #[inline(never)]
     pub(super) fn debug_patrol_turn_lifecycle(&self, boundary: &'static str, owner: EntityId) {
         if !self.patrol_turn_lifecycle_debug_matches(owner) {
             return;
@@ -611,6 +551,7 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     pub(super) fn debug_patrol_turn_instruct(
         &self,
         owner: EntityId,
@@ -3319,19 +3260,14 @@ pub(super) fn build_ai_context_from_entity(
         original_creation_order,
         elem.index_in_elements_list as u32,
     ) {
-        let sprite = &elem.sprite;
-        eprintln!(
-            "[ARCHERSTEP frame={frame} co={original_creation_order:?} me={} phase=context installed={self_animation:?} concrete={concrete_self_animation:?} action_state={self_action_state:?} motion_state={:?} order_id={:?} last_execute_order_id={:?} sprite_action={:?} row={} sprite_frame={} frame_count={} done_frame={} done_counter={} reached_done={self_animation_reached_action_done}]",
-            elem.index_in_elements_list,
-            actor.map(|actor| actor.continuation.motion_state),
-            actor.and_then(|actor| actor.installed_order.map(|order| order.order_id)),
-            actor.and_then(|actor| actor.last_execute_order_id),
-            sprite.last_action,
-            sprite.current_row,
-            sprite.current_frame,
-            sprite.frame_count,
-            sprite.action_done_frame,
-            sprite.action_done_counter,
+        trace_archer_step_back_context(
+            frame,
+            original_creation_order,
+            elem,
+            actor,
+            [self_animation, concrete_self_animation],
+            self_action_state,
+            self_animation_reached_action_done,
         );
     }
     tracing::trace!(
@@ -4885,63 +4821,22 @@ impl EngineInner {
         }
 
         if building_exit_wait_owner_debug_enabled() {
-            static INVOCATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let invocation = INVOCATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let describe = |ids: &[EntityId]| {
-                ids.iter()
-                    .map(|&id| (id, self.world.original_creation_order(id)))
-                    .collect::<Vec<_>>()
-            };
-            eprintln!(
-                "BEXITWAIT {{\"event\":\"enemy_in_house_alert\",\"invocation\":{invocation},\"frame\":{},\"source\":{:?},\"source_creation_order\":{},\"building_sector\":{building_sector_num},\"occupants\":{:?},\"royalists\":{:?},\"lacklandists\":{:?},\"civilians\":{:?}}}",
-                self.control.frame_counter,
+            self.trace_enemy_in_house_alert(
                 source,
-                self.world.original_creation_order(source),
-                describe(&occupant_ids),
-                describe(
+                building_sector_num,
+                &occupant_ids,
+                [
                     fighter_ids
                         .get(&crate::element::Camp::Royalists)
                         .map(Vec::as_slice)
-                        .unwrap_or(&[])
-                ),
-                describe(
+                        .unwrap_or(&[]),
                     fighter_ids
                         .get(&crate::element::Camp::Lacklandists)
                         .map(Vec::as_slice)
-                        .unwrap_or(&[])
-                ),
-                describe(&civilian_ids),
+                        .unwrap_or(&[]),
+                    &civilian_ids,
+                ],
             );
-            for &eid in &occupant_ids {
-                let Some(entity) = self.world.entities.get(eid) else {
-                    continue;
-                };
-                let detail = match entity {
-                    Entity::Soldier(s) => format!(
-                        "soldier lp={} unconscious={} camp={:?} posture={:?}",
-                        s.npc.life_points,
-                        s.human.unconscious,
-                        s.soldier.cached_camp,
-                        entity.element_data().posture()
-                    ),
-                    Entity::Civilian(c) => format!(
-                        "civilian lp={} unconscious={}",
-                        c.npc.life_points, c.human.unconscious
-                    ),
-                    Entity::Pc(p) => {
-                        format!(
-                            "pc lp={} unconscious={}",
-                            p.pc.life_points, p.human.unconscious
-                        )
-                    }
-                    _ => "other".to_string(),
-                };
-                eprintln!(
-                    "BEXITWAIT_OCC {:?} co={} {detail}",
-                    eid,
-                    self.world.original_creation_order(eid)
-                );
-            }
         }
 
         let source_camp = self.expect_entity(source, "building alert source").camp();
@@ -5458,13 +5353,7 @@ impl EngineInner {
     ) {
         let think_debug = self.debug_think_stimulus_matches(npc_id);
         if think_debug {
-            eprintln!(
-                "THINK_STIMULUS phase=before_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
-                self.control.frame_counter,
-                npc_id.index(),
-                self.world.original_creation_order(npc_id),
-                self.control.rng.original_replay_cursor(),
-            );
+            self.trace_think_stimulus_panic_launch("before_panic_launch", npc_id);
         }
         // Peel the request off the AI base.
         let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -5743,12 +5632,75 @@ impl EngineInner {
 
         self.begin_panic_no_door_branch(sim, assets, npc_id, &request, ctx, is_civilian);
         if think_debug {
+            self.trace_think_stimulus_panic_launch("after_panic_launch", npc_id);
+        }
+    }
+
+    /// `phase` is `before_panic_launch` or `after_panic_launch`.
+    #[inline(never)]
+    fn trace_think_stimulus_panic_launch(&self, phase: &str, npc_id: EntityId) {
+        eprintln!(
+            "THINK_STIMULUS phase={phase} frame={} owner={} creation_order={} rng_cursor={:?}",
+            self.control.frame_counter,
+            npc_id.index(),
+            self.world.original_creation_order(npc_id),
+            self.control.rng.original_replay_cursor(),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_enemy_in_house_alert(
+        &self,
+        source: EntityId,
+        building_sector_num: impl std::fmt::Display,
+        occupant_ids: &[EntityId],
+        [royalists, lacklandists, civilian_ids]: [&[EntityId]; 3],
+    ) {
+        static INVOCATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let invocation = INVOCATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let describe = |ids: &[EntityId]| {
+            ids.iter()
+                .map(|&id| (id, self.world.original_creation_order(id)))
+                .collect::<Vec<_>>()
+        };
+        eprintln!(
+            "BEXITWAIT {{\"event\":\"enemy_in_house_alert\",\"invocation\":{invocation},\"frame\":{},\"source\":{:?},\"source_creation_order\":{},\"building_sector\":{building_sector_num},\"occupants\":{:?},\"royalists\":{:?},\"lacklandists\":{:?},\"civilians\":{:?}}}",
+            self.control.frame_counter,
+            source,
+            self.world.original_creation_order(source),
+            describe(occupant_ids),
+            describe(royalists),
+            describe(lacklandists),
+            describe(civilian_ids),
+        );
+        for &eid in occupant_ids {
+            let Some(entity) = self.world.entities.get(eid) else {
+                continue;
+            };
+            let detail = match entity {
+                Entity::Soldier(s) => format!(
+                    "soldier lp={} unconscious={} camp={:?} posture={:?}",
+                    s.npc.life_points,
+                    s.human.unconscious,
+                    s.soldier.cached_camp,
+                    entity.element_data().posture()
+                ),
+                Entity::Civilian(c) => format!(
+                    "civilian lp={} unconscious={}",
+                    c.npc.life_points, c.human.unconscious
+                ),
+                Entity::Pc(p) => {
+                    format!(
+                        "pc lp={} unconscious={}",
+                        p.pc.life_points, p.human.unconscious
+                    )
+                }
+                _ => "other".to_string(),
+            };
             eprintln!(
-                "THINK_STIMULUS phase=after_panic_launch frame={} owner={} creation_order={} rng_cursor={:?}",
-                self.control.frame_counter,
-                npc_id.index(),
-                self.world.original_creation_order(npc_id),
-                self.control.rng.original_replay_cursor(),
+                "BEXITWAIT_OCC {:?} co={} {detail}",
+                eid,
+                self.world.original_creation_order(eid)
             );
         }
     }
@@ -6156,13 +6108,7 @@ impl EngineInner {
                 ctx.original_creation_order,
             )
         {
-            eprintln!(
-                "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"script_set_ai_state\",\"stimulus\":\"no_event\"}}",
-                ctx.frame,
-                npc_id.index(),
-                ctx.original_creation_order
-                    .expect("phase6 caller diagnostic matched an owner without creation order"),
-            );
+            Self::trace_seek_area_script_caller(npc_id, ctx);
         }
         enemy_ai.seek_area(
             sim,
@@ -6178,5 +6124,16 @@ impl EngineInner {
         // scope and must finish before its later movement/order tail is
         // exposed to the enclosing native barrier.
         self.drain_ai_owner_work_for(sim, assets, npc_id);
+    }
+
+    #[inline(never)]
+    fn trace_seek_area_script_caller(npc_id: EntityId, ctx: &crate::ai::AiContext) {
+        eprintln!(
+            "SEEKAREA_CALLER {{\"frame\":{},\"owner_handle\":{},\"owner_creation_order\":{},\"caller\":\"script_set_ai_state\",\"stimulus\":\"no_event\"}}",
+            ctx.frame,
+            npc_id.index(),
+            ctx.original_creation_order
+                .expect("phase6 caller diagnostic matched an owner without creation order"),
+        );
     }
 }

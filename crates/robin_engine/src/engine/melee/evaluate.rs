@@ -45,14 +45,20 @@ struct ReactiveStepBackDebug {
 }
 
 fn reactive_step_back_debug_config() -> Option<ReactiveStepBackDebug> {
-    static CONFIG: std::sync::OnceLock<Option<ReactiveStepBackDebug>> = std::sync::OnceLock::new();
-    *CONFIG.get_or_init(|| {
-        std::env::var_os("PARITY_DEBUG_REACTIVE_STEP_BACK")?;
-        let parse_required = crate::engine::diagnostics::required_u32_env;
-        Some(ReactiveStepBackDebug {
-            frame: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME"),
-            creation_order: parse_required("PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER"),
-        })
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<2>> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        ParityGate::from_env_required(
+            "PARITY_DEBUG_REACTIVE_STEP_BACK",
+            [
+                "PARITY_DEBUG_REACTIVE_STEP_BACK_FRAME",
+                "PARITY_DEBUG_REACTIVE_STEP_BACK_CREATION_ORDER",
+            ],
+        )
+    });
+    gate.enabled().then(|| ReactiveStepBackDebug {
+        frame: gate.required(0),
+        creation_order: gate.required(1),
     })
 }
 
@@ -76,6 +82,371 @@ pub(super) fn reactive_sword_debug_frame_matches(frame: u32) -> bool {
 
 pub(super) fn reactive_sword_debug_creation_order_matches(creation_order: u32) -> bool {
     reactive_sword_debug_gate().matches([None, Some(creation_order)])
+}
+
+/// `[REACTIVE_SWORD frame co victim attacker <detail>]`.
+#[inline(never)]
+fn trace_reactive_sword(
+    frame: u32,
+    creation_order: u32,
+    [victim, attacker]: [EntityId; 2],
+    detail: std::fmt::Arguments<'_>,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} {detail}]",
+        frame,
+        creation_order,
+        victim.index(),
+        attacker.index(),
+    );
+}
+
+/// Same line shape as [`trace_reactive_sword`], labelled by a proposal debug.
+#[inline(never)]
+pub(super) fn trace_reactive_sword_for(
+    debug: crate::combat::SwordStrikeProposalDebug,
+    detail: std::fmt::Arguments<'_>,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} {detail}]",
+        debug.frame, debug.victim_creation_order, debug.victim, debug.attacker,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_sword_nearby_owner(
+    debug: crate::combat::SwordStrikeProposalDebug,
+    index: usize,
+    target_index: u32,
+) {
+    eprintln!(
+        "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby_owner index={} target={}]",
+        debug.frame, debug.victim_creation_order, debug.victim, index, target_index,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_step_back_goal_result(
+    debug: ReactiveStepBackDebug,
+    [victim_id, attacker_id]: [EntityId; 2],
+    [victim_ai_pos, attacker_ai_pos]: [crate::ai::Position; 2],
+    [good_dist, min_dist]: [u16; 2],
+    step_back_goal: impl std::fmt::Debug,
+) {
+    eprintln!(
+        "REACTIVE_STEP_BACK frame={} co={} phase=goal_result victim={} attacker={} victim_position=({:08x},{:08x},sector={:?},level={}) attacker_position=({:08x},{:08x}) good_distance={} min_distance={} result={:?}",
+        debug.frame,
+        debug.creation_order,
+        victim_id.index(),
+        attacker_id.index(),
+        victim_ai_pos.x.to_bits(),
+        victim_ai_pos.y.to_bits(),
+        victim_ai_pos.sector,
+        victim_ai_pos.level,
+        attacker_ai_pos.x.to_bits(),
+        attacker_ai_pos.y.to_bits(),
+        good_dist,
+        min_dist,
+        step_back_goal,
+    );
+}
+
+#[inline(never)]
+fn trace_reactive_step_back_after_goto(
+    debug: ReactiveStepBackDebug,
+    victim_id: EntityId,
+    ai: &crate::ai_enemy::EnemyAi,
+    step_back_goal: crate::ai::Position,
+    flags: impl std::fmt::Debug,
+) {
+    eprintln!(
+        "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
+        debug.frame,
+        debug.creation_order,
+        victim_id.index(),
+        ai.base.current_state,
+        ai.base.current_substate,
+        step_back_goal.x.to_bits(),
+        step_back_goal.y.to_bits(),
+        step_back_goal.sector,
+        step_back_goal.level,
+        flags,
+        ai.base.couldnt_reachpoint,
+        ai.base.already_on_point,
+        ai.base.completion_latch_inside_think,
+        ai.base.outbox.actor.orders.len(),
+        ai.base.outbox.reentrant.owner_work,
+    );
+}
+
+impl EngineInner {
+    /// The victim's creation order when the reactive-sword diagnostic selects
+    /// it on `frame`. The frame filter is tested before identity is resolved.
+    fn reactive_sword_debug_creation_order(&self, frame: u32, victim: EntityId) -> Option<u32> {
+        if !reactive_sword_debug_frame_matches(frame) {
+            return None;
+        }
+        let creation_order = self.world.original_creation_order(victim);
+        reactive_sword_debug_creation_order_matches(creation_order).then_some(creation_order)
+    }
+
+    #[inline(never)]
+    pub(super) fn trace_reactive_sword_proposal_boundary(
+        &self,
+        debug: crate::combat::SwordStrikeProposalDebug,
+        caller: &str,
+        rng_before: impl std::fmt::Debug,
+        proposed: impl std::fmt::Debug,
+    ) {
+        trace_reactive_sword_for(
+            debug,
+            format_args!(
+                "phase=proposal_boundary caller={caller} rng_before={:?} rng_after={:?} result={:?}",
+                rng_before,
+                self.control.rng.original_replay_cursor(),
+                proposed,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_tiredness_weak_threshold_read(
+        &self,
+        entity_id: EntityId,
+        tiredness: impl std::fmt::Display,
+        tired: bool,
+    ) {
+        let creation_order = self.world.original_creation_order(entity_id);
+        if !crate::combat::tiredness_debug_matches(creation_order) {
+            return;
+        }
+        eprintln!(
+            "RUST_TIREDNESS frame={} co={creation_order} site=weak_threshold_read \
+             tiredness={tiredness} verdict={}",
+            self.control.frame_counter,
+            if tired { "tired" } else { "ok" }
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_sword_warning(
+        &self,
+        [frame, creation_order]: [u32; 2],
+        [victim_id, attacker_id]: [EntityId; 2],
+        strike: impl std::fmt::Debug,
+        npc_substate: Option<crate::ai::Substate>,
+        [is_swordfighting, in_swordfight_substate]: [bool; 2],
+    ) {
+        let known = self
+            .get_entity(victim_id)
+            .and_then(Entity::enemy_ai)
+            .map(|ai| {
+                [
+                    ai.known_enemy_strike_1,
+                    ai.known_enemy_strike_2,
+                    ai.known_enemy_strike_3,
+                ]
+            });
+        let attacker_command_strike = self
+            .orders
+            .sequence_manager
+            .current_element_for_actor(attacker_id)
+            .and_then(|(seq_id, elem_idx)| {
+                self.orders.sequence_manager.get_element(seq_id, elem_idx)
+            })
+            .and_then(|element| SwordStrike::from_command(element.command));
+        trace_reactive_sword(
+            frame,
+            creation_order,
+            [victim_id, attacker_id],
+            format_args!(
+                "phase=warning strike={:?} attacker_command_strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}",
+                strike,
+                attacker_command_strike,
+                npc_substate,
+                is_swordfighting,
+                in_swordfight_substate,
+                known,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_sword_parry_timing(
+        &self,
+        debug: crate::combat::SwordStrikeProposalDebug,
+        victim_id: EntityId,
+    ) {
+        let sprite = &self
+            .get_entity(victim_id)
+            .expect("reactive sword timing debug victim disappeared")
+            .element_data()
+            .sprite;
+        let action = crate::order::OrderType::TransitionWaitingSwordParryingSword;
+        let timing = |conversion: &[u16], scripts: &[crate::sprite_script::SpriteScript]| {
+            let row = conversion.get(action as usize).copied()?;
+            if row == crate::sprite_script::UNMAPPED {
+                return None;
+            }
+            let script = scripts.get(row as usize)?;
+            let frame_count = script.frame_ids.len();
+            let waits = script
+                .delays
+                .iter()
+                .copied()
+                .take((script.action_done as usize + 1).min(frame_count))
+                .collect::<Vec<_>>();
+            let startup = waits.iter().copied().fold(0u16, u16::saturating_add);
+            Some((row, script.action_done, frame_count, waits, startup))
+        };
+        let primary = timing(&sprite.conversion, &sprite.scripts);
+        let alternate = sprite
+            .alternate_conversion
+            .as_deref()
+            .zip(sprite.alternate_scripts.as_deref())
+            .and_then(|(conversion, scripts)| timing(conversion, scripts));
+        trace_reactive_sword_for(
+            debug,
+            format_args!(
+                "phase=parry_timing active_alternate={} primary_key={:?} alternate_key={:?} current={:?} primary={:?} alternate={:?}",
+                sprite.use_alternate_profile,
+                sprite.profile_cache_key,
+                sprite.alternate_profile_cache_key,
+                if sprite.use_alternate_profile {
+                    alternate.as_ref()
+                } else {
+                    primary.as_ref()
+                },
+                primary,
+                alternate,
+            ),
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_step_back_parry_selected(
+        &self,
+        debug: ReactiveStepBackDebug,
+        [victim_id, attacker_id]: [EntityId; 2],
+        victim_fighting_ability: impl std::fmt::Display,
+        push_back_distance: u16,
+    ) {
+        let victim = self.expect_entity(victim_id, "reactive step-back diagnostic victim");
+        let ai = self.world.entities.expect_ai_controller(
+            victim_id,
+            format_args!("reactive step-back diagnostic victim"),
+        );
+        eprintln!(
+            "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
+            debug.frame,
+            debug.creation_order,
+            victim_id.index(),
+            attacker_id.index(),
+            victim_fighting_ability,
+            push_back_distance,
+            ai.current_state,
+            ai.current_substate,
+            victim.element_data().position_map().x.to_bits(),
+            victim.element_data().position_map().y.to_bits(),
+            victim.element_data().sector(),
+            victim.element_data().layer(),
+            victim
+                .actor_data()
+                .and_then(|actor| actor.installed_order)
+                .map(|order| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd),
+            self.actor_command(victim_id),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.completion_latch_inside_think,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_reactive_step_back_after_drain(
+        &self,
+        debug: ReactiveStepBackDebug,
+        victim_id: EntityId,
+    ) {
+        let victim = self.expect_entity(
+            victim_id,
+            "reactive step-back diagnostic victim after drain",
+        );
+        let ai = self.world.entities.expect_ai_controller(
+            victim_id,
+            format_args!("reactive step-back diagnostic victim after drain"),
+        );
+        eprintln!(
+            "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
+            debug.frame,
+            debug.creation_order,
+            victim_id.index(),
+            ai.current_state,
+            ai.current_substate,
+            victim
+                .actor_data()
+                .and_then(|actor| actor.installed_order)
+                .map(|order| order.order_type)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd),
+            self.actor_command(victim_id),
+            ai.couldnt_reachpoint,
+            ai.already_on_point,
+            ai.completion_latch_inside_think,
+            ai.outbox.reentrant.self_stimuli,
+            ai.outbox.reentrant.owner_work,
+        );
+    }
+
+    /// `[attacker frames, ring-in frames]`.
+    #[inline(never)]
+    fn trace_parade_timer(
+        &self,
+        [victim_id, attacker_id]: [EntityId; 2],
+        animation_strike: SwordStrike,
+        [attacker_anim_frames, strike_frames]: [u32; 2],
+    ) {
+        let anim = strike_to_animation(animation_strike);
+        let sprite = &self
+            .expect_entity(attacker_id, "parade timer diagnostic attacker")
+            .element_data()
+            .sprite;
+        let row = sprite.current_conversion()[anim as usize];
+        let waits = |r: u16| {
+            (0..sprite.num_frames_for_row(r))
+                .map(|i| sprite.wait_time(r, i))
+                .collect::<Vec<_>>()
+        };
+        eprintln!(
+            "[PARADE_TIMER] frame={} victim_co={:?} attacker_co={:?} animation={anim:?} conversion_row={row} action_done={} num_frames={} waits={:?} live_row={} live_frame={} frames={attacker_anim_frames} ring_in={strike_frames}",
+            self.control.frame_counter,
+            self.world.original_creation_order(victim_id),
+            self.world.original_creation_order(attacker_id),
+            sprite.action_done_for_row(row),
+            sprite.num_frames_for_row(row),
+            waits(row),
+            sprite.current_row,
+            sprite.current_frame,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_bad_experience(
+        &self,
+        soldier_id: EntityId,
+        strike: SwordStrike,
+        fighting_ability: impl std::fmt::Display,
+    ) {
+        let creation_order = self.world.original_creation_order(soldier_id);
+        eprintln!(
+            "[BAD_EXPERIENCE frame={} co={} soldier={} strike={:?} ability={}]",
+            self.control.frame_counter,
+            creation_order,
+            soldier_id.index(),
+            strike,
+            fighting_ability,
+        );
+    }
 }
 
 pub(super) fn opponent_sword_strike_time_limit(
@@ -945,20 +1316,12 @@ impl EngineInner {
             return;
         }
 
-        {
-            let creation_order = self.world.original_creation_order(entity_id);
-            if crate::combat::tiredness_debug_matches(creation_order) {
-                eprintln!(
-                    "RUST_TIREDNESS frame={} co={creation_order} site=weak_threshold_read \
-                     tiredness={tiredness} verdict={}",
-                    self.control.frame_counter,
-                    if tiredness >= TIREDNESS_WEAK_THRESHOLD {
-                        "tired"
-                    } else {
-                        "ok"
-                    }
-                );
-            }
+        if crate::combat::tiredness_debug_enabled() {
+            self.trace_tiredness_weak_threshold_read(
+                entity_id,
+                tiredness,
+                tiredness >= TIREDNESS_WEAK_THRESHOLD,
+            );
         }
         if tiredness >= TIREDNESS_WEAK_THRESHOLD {
             self.launch_element(crate::sequence::SequenceElement::new(
@@ -1057,20 +1420,20 @@ impl EngineInner {
             nonmutual_gate_roll = Some(roll);
             if roll >= 10 {
                 let frame = self.control.frame_counter;
-                if reactive_sword_debug_frame_matches(frame) {
-                    let creation_order = self.world.original_creation_order(entity_id);
-                    if reactive_sword_debug_creation_order_matches(creation_order) {
-                        eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}]",
-                            frame,
-                            creation_order,
-                            entity_id.index(),
-                            principal_id.index(),
+                if let Some(creation_order) =
+                    self.reactive_sword_debug_creation_order(frame, entity_id)
+                {
+                    trace_reactive_sword(
+                        frame,
+                        creation_order,
+                        [entity_id, principal_id],
+                        format_args!(
+                            "phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}",
                             roll,
                             is_pc,
                             is_pc && self.selected_hero_ids().contains(&entity_id),
-                        );
-                    }
+                        ),
+                    );
                 }
                 return;
             }
@@ -1110,22 +1473,16 @@ impl EngineInner {
         let dz = principal_pos.z - self_pos.z;
         let near = is_within_smalltalk_strike_range(self_max, dx * dx + dy * dy + dz * dz);
         let frame = self.control.frame_counter;
-        if reactive_sword_debug_frame_matches(frame) {
-            let creation_order = self.world.original_creation_order(entity_id);
-            if reactive_sword_debug_creation_order_matches(creation_order) {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}]",
-                    frame,
-                    creation_order,
-                    entity_id.index(),
-                    principal_id.index(),
-                    mutual,
-                    nonmutual_gate_roll,
-                    near,
-                    is_pc,
-                    selected_pc,
-                );
-            }
+        if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, entity_id) {
+            trace_reactive_sword(
+                frame,
+                creation_order,
+                [entity_id, principal_id],
+                format_args!(
+                    "phase=evaluate_gate mutual={} nonmutual_roll={:?} near={} is_pc={} selected_pc={}",
+                    mutual, nonmutual_gate_roll, near, is_pc, selected_pc,
+                ),
+            );
         }
         if !near {
             self.update_swordfight_distance(sim, assets, entity_id);
@@ -1336,15 +1693,11 @@ impl EngineInner {
         );
         self.apply_strike_selection_sweep_rebase(assets, pc_id, sweep_rebase);
         if let Some(debug) = debug {
-            eprintln!(
-                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_evaluate rng_before={:?} rng_after={:?} result={:?}]",
-                debug.frame,
-                debug.victim_creation_order,
-                debug.victim,
-                debug.attacker,
+            self.trace_reactive_sword_proposal_boundary(
+                debug,
+                "pc_evaluate",
                 rng_before,
-                self.control.rng.original_replay_cursor(),
-                proposed,
+                &proposed,
             );
         }
 
@@ -1671,41 +2024,14 @@ impl EngineInner {
                             .then_some(creation_order)
                     })
                     .flatten();
-                if reactive_sword_debug_frame_matches(frame) {
-                    let creation_order = self.world.original_creation_order(victim_id);
-                    if reactive_sword_debug_creation_order_matches(creation_order) {
-                        let known =
-                            self.get_entity(victim_id)
-                                .and_then(Entity::enemy_ai)
-                                .map(|ai| {
-                                    [
-                                        ai.known_enemy_strike_1,
-                                        ai.known_enemy_strike_2,
-                                        ai.known_enemy_strike_3,
-                                    ]
-                                });
-                        let attacker_command_strike = self
-                            .orders
-                            .sequence_manager
-                            .current_element_for_actor(attacker_id)
-                            .and_then(|(seq_id, elem_idx)| {
-                                self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                            })
-                            .and_then(|element| SwordStrike::from_command(element.command));
-                        eprintln!(
-                            "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning strike={:?} attacker_command_strike={:?} substate={:?} swordfighting={} accepted_substate={} known={:?}]",
-                            frame,
-                            creation_order,
-                            victim_id.index(),
-                            attacker_id.index(),
-                            strike,
-                            attacker_command_strike,
-                            npc_substate,
-                            is_swordfighting,
-                            in_swordfight_substate,
-                            known,
-                        );
-                    }
+                if let Some(creation_order) = debug {
+                    self.trace_reactive_sword_warning(
+                        [frame, creation_order],
+                        [victim_id, attacker_id],
+                        strike,
+                        npc_substate,
+                        [is_swordfighting, in_swordfight_substate],
+                    );
                 }
                 let scratch = self.build_owner_context_scratch_without_forecast(assets);
                 let victim = self
@@ -1731,14 +2057,15 @@ impl EngineInner {
                     sim, assets, victim_id, &stimulus, &ctx, &tick,
                 );
                 if let Some(creation_order) = debug {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=warning_return rng_before={:?} rng_after={:?}]",
+                    trace_reactive_sword(
                         frame,
                         creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
-                        rng_before,
-                        self.control.rng.original_replay_cursor(),
+                        [victim_id, attacker_id],
+                        format_args!(
+                            "phase=warning_return rng_before={:?} rng_after={:?}",
+                            rng_before,
+                            self.control.rng.original_replay_cursor(),
+                        ),
                     );
                 }
                 continue;
@@ -1854,52 +2181,7 @@ impl EngineInner {
                 })
                 .flatten();
             if let Some(debug) = debug {
-                let sprite = &self
-                    .get_entity(victim_id)
-                    .expect("reactive sword timing debug victim disappeared")
-                    .element_data()
-                    .sprite;
-                let action = crate::order::OrderType::TransitionWaitingSwordParryingSword;
-                let timing =
-                    |conversion: &[u16], scripts: &[crate::sprite_script::SpriteScript]| {
-                        let row = conversion.get(action as usize).copied()?;
-                        if row == crate::sprite_script::UNMAPPED {
-                            return None;
-                        }
-                        let script = scripts.get(row as usize)?;
-                        let frame_count = script.frame_ids.len();
-                        let waits = script
-                            .delays
-                            .iter()
-                            .copied()
-                            .take((script.action_done as usize + 1).min(frame_count))
-                            .collect::<Vec<_>>();
-                        let startup = waits.iter().copied().fold(0u16, u16::saturating_add);
-                        Some((row, script.action_done, frame_count, waits, startup))
-                    };
-                let primary = timing(&sprite.conversion, &sprite.scripts);
-                let alternate = sprite
-                    .alternate_conversion
-                    .as_deref()
-                    .zip(sprite.alternate_scripts.as_deref())
-                    .and_then(|(conversion, scripts)| timing(conversion, scripts));
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=parry_timing active_alternate={} primary_key={:?} alternate_key={:?} current={:?} primary={:?} alternate={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
-                    sprite.use_alternate_profile,
-                    sprite.profile_cache_key,
-                    sprite.alternate_profile_cache_key,
-                    if sprite.use_alternate_profile {
-                        alternate.as_ref()
-                    } else {
-                        primary.as_ref()
-                    },
-                    primary,
-                    alternate,
-                );
+                self.trace_reactive_sword_parry_timing(debug, victim_id);
             }
 
             // Human-actor strike selection always limits a
@@ -1925,16 +2207,15 @@ impl EngineInner {
                     .opponent_sword_strike_time_limit_for_actor(victim_id, target_id_for_nearby)
                     .unwrap_or(1000);
                 if let (Some(debug), Some(raw_frames)) = (debug, raw_frames) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}]",
-                        debug.frame,
-                        debug.victim_creation_order,
-                        debug.victim,
-                        debug.attacker,
-                        target_id_for_nearby.index(),
-                        principal_animation,
-                        raw_frames,
-                        time_limit,
+                    trace_reactive_sword_for(
+                        debug,
+                        format_args!(
+                            "phase=pc_principal principal={} animation={:?} raw_frames_from_now={} time_limit={}",
+                            target_id_for_nearby.index(),
+                            principal_animation,
+                            raw_frames,
+                            time_limit,
+                        ),
                     );
                 }
                 Some(time_limit)
@@ -1981,15 +2262,11 @@ impl EngineInner {
             );
             self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
             if let Some(debug) = debug {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=pc_reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
-                    debug.frame,
-                    debug.victim_creation_order,
-                    debug.victim,
-                    debug.attacker,
+                self.trace_reactive_sword_proposal_boundary(
+                    debug,
+                    "pc_reactive_warning",
                     rng_before,
-                    self.control.rng.original_replay_cursor(),
-                    proposed,
+                    &proposed,
                 );
             }
 
@@ -2087,18 +2364,17 @@ impl EngineInner {
         // memory slots. It does not use the animation-derived strike here.
         let Some(command_strike) = attacker_command_strike else {
             let frame = self.control.frame_counter;
-            if reactive_sword_debug_frame_matches(frame) {
-                let creation_order = self.world.original_creation_order(victim_id);
-                if reactive_sword_debug_creation_order_matches(creation_order) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=no_selected_strike animation_strike={:?}]",
-                        frame,
-                        creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
+            if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id)
+            {
+                trace_reactive_sword(
+                    frame,
+                    creation_order,
+                    [victim_id, attacker_id],
+                    format_args!(
+                        "phase=recognition accepted=false reason=no_selected_strike animation_strike={:?}",
                         animation_strike,
-                    );
-                }
+                    ),
+                );
             }
             return;
         };
@@ -2115,36 +2391,31 @@ impl EngineInner {
         };
         if !is_known {
             let frame = self.control.frame_counter;
-            if reactive_sword_debug_frame_matches(frame) {
-                let creation_order = self.world.original_creation_order(victim_id);
-                if reactive_sword_debug_creation_order_matches(creation_order) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=false reason=unknown command_strike={:?} animation_strike={:?}]",
-                        frame,
-                        creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
-                        command_strike,
-                        animation_strike,
-                    );
-                }
+            if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id)
+            {
+                trace_reactive_sword(
+                    frame,
+                    creation_order,
+                    [victim_id, attacker_id],
+                    format_args!(
+                        "phase=recognition accepted=false reason=unknown command_strike={:?} animation_strike={:?}",
+                        command_strike, animation_strike,
+                    ),
+                );
             }
             return;
         }
         let frame = self.control.frame_counter;
-        if reactive_sword_debug_frame_matches(frame) {
-            let creation_order = self.world.original_creation_order(victim_id);
-            if reactive_sword_debug_creation_order_matches(creation_order) {
-                eprintln!(
-                    "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=recognition accepted=true command_strike={:?} animation_strike={:?}]",
-                    frame,
-                    creation_order,
-                    victim_id.index(),
-                    attacker_id.index(),
-                    command_strike,
-                    animation_strike,
-                );
-            }
+        if let Some(creation_order) = self.reactive_sword_debug_creation_order(frame, victim_id) {
+            trace_reactive_sword(
+                frame,
+                creation_order,
+                [victim_id, attacker_id],
+                format_args!(
+                    "phase=recognition accepted=true command_strike={:?} animation_strike={:?}",
+                    command_strike, animation_strike,
+                ),
+            );
         }
 
         // ── 2. Record this strike experience (promote to head of list).
@@ -2336,14 +2607,7 @@ impl EngineInner {
                     is_walking_with_sword,
                 };
                 if let (Some(debug), Some(index)) = (debug, nearby_debug_index.as_mut()) {
-                    eprintln!(
-                        "[REACTIVE_SWORD frame={} co={} victim={} phase=nearby_owner index={} target={}]",
-                        debug.frame,
-                        debug.victim_creation_order,
-                        debug.victim,
-                        *index,
-                        eid.index(),
-                    );
+                    trace_reactive_sword_nearby_owner(debug, *index, eid.index());
                     *index += 1;
                 }
                 Some(nearby)
@@ -2419,15 +2683,11 @@ impl EngineInner {
         );
         self.apply_strike_selection_sweep_rebase(assets, victim_id, sweep_rebase);
         if let Some(debug) = debug {
-            eprintln!(
-                "[REACTIVE_SWORD frame={} co={} victim={} attacker={} phase=proposal_boundary caller=reactive_warning rng_before={:?} rng_after={:?} result={:?}]",
-                debug.frame,
-                debug.victim_creation_order,
-                debug.victim,
-                debug.attacker,
+            self.trace_reactive_sword_proposal_boundary(
+                debug,
+                "reactive_warning",
                 rng_before,
-                self.control.rng.original_replay_cursor(),
-                proposed,
+                &proposed,
             );
         }
 
@@ -2446,36 +2706,11 @@ impl EngineInner {
                         && debug.creation_order == self.world.original_creation_order(victim_id)
                 });
                 if let Some(debug) = step_back_debug {
-                    let victim =
-                        self.expect_entity(victim_id, "reactive step-back diagnostic victim");
-                    let ai = self.world.entities.expect_ai_controller(
-                        victim_id,
-                        format_args!("reactive step-back diagnostic victim"),
-                    );
-                    eprintln!(
-                        "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
-                        debug.frame,
-                        debug.creation_order,
-                        victim_id.index(),
-                        attacker_id.index(),
+                    self.trace_reactive_step_back_parry_selected(
+                        debug,
+                        [victim_id, attacker_id],
                         victim_fighting_ability,
                         push_back_distance,
-                        ai.current_state,
-                        ai.current_substate,
-                        victim.element_data().position_map().x.to_bits(),
-                        victim.element_data().position_map().y.to_bits(),
-                        victim.element_data().sector(),
-                        victim.element_data().layer(),
-                        victim
-                            .actor_data()
-                            .and_then(|actor| actor.installed_order)
-                            .map(|order| order.order_type)
-                            .unwrap_or(crate::order::OrderType::NonanimationEnd),
-                        self.actor_command(victim_id),
-                        ai.couldnt_reachpoint,
-                        ai.already_on_point,
-                        ai.completion_latch_inside_think,
-                        ai.outbox.reentrant.owner_work,
                     );
                 }
 
@@ -2585,20 +2820,11 @@ impl EngineInner {
                         crate::position_interface::SWORDFIGHT_ASPECT_RATIO,
                     );
                     if let Some(debug) = step_back_debug {
-                        eprintln!(
-                            "REACTIVE_STEP_BACK frame={} co={} phase=goal_result victim={} attacker={} victim_position=({:08x},{:08x},sector={:?},level={}) attacker_position=({:08x},{:08x}) good_distance={} min_distance={} result={:?}",
-                            debug.frame,
-                            debug.creation_order,
-                            victim_id.index(),
-                            attacker_id.index(),
-                            victim_ai_pos.x.to_bits(),
-                            victim_ai_pos.y.to_bits(),
-                            victim_ai_pos.sector,
-                            victim_ai_pos.level,
-                            attacker_ai_pos.x.to_bits(),
-                            attacker_ai_pos.y.to_bits(),
-                            good_dist,
-                            min_dist,
+                        trace_reactive_step_back_goal_result(
+                            debug,
+                            [victim_id, attacker_id],
+                            [victim_ai_pos, attacker_ai_pos],
+                            [good_dist, min_dist],
                             step_back_goal,
                         );
                     }
@@ -2627,23 +2853,12 @@ impl EngineInner {
                                 &ctx,
                             );
                             if let Some(debug) = step_back_debug {
-                                eprintln!(
-                                    "REACTIVE_STEP_BACK frame={} co={} phase=after_goto victim={} state={:?} substate={:?} goal=({:08x},{:08x},sector={:?},level={}) flags={:?} couldnt={} already={} inside_think={} pending_orders={} owner_work={:?}",
-                                    debug.frame,
-                                    debug.creation_order,
-                                    victim_id.index(),
-                                    ai.base.current_state,
-                                    ai.base.current_substate,
-                                    step_back_goal.x.to_bits(),
-                                    step_back_goal.y.to_bits(),
-                                    step_back_goal.sector,
-                                    step_back_goal.level,
+                                trace_reactive_step_back_after_goto(
+                                    debug,
+                                    victim_id,
+                                    ai,
+                                    step_back_goal,
                                     flags,
-                                    ai.base.couldnt_reachpoint,
-                                    ai.base.already_on_point,
-                                    ai.base.completion_latch_inside_think,
-                                    ai.base.outbox.actor.orders.len(),
-                                    ai.base.outbox.reentrant.owner_work,
                                 );
                             }
                         }
@@ -2653,33 +2868,7 @@ impl EngineInner {
                             sim, victim_id, assets,
                         );
                         if let Some(debug) = step_back_debug {
-                            let victim = self.expect_entity(
-                                victim_id,
-                                "reactive step-back diagnostic victim after drain",
-                            );
-                            let ai = self.world.entities.expect_ai_controller(
-                                victim_id,
-                                format_args!("reactive step-back diagnostic victim after drain"),
-                            );
-                            eprintln!(
-                                "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
-                                debug.frame,
-                                debug.creation_order,
-                                victim_id.index(),
-                                ai.current_state,
-                                ai.current_substate,
-                                victim
-                                    .actor_data()
-                                    .and_then(|actor| actor.installed_order)
-                                    .map(|order| order.order_type)
-                                    .unwrap_or(crate::order::OrderType::NonanimationEnd),
-                                self.actor_command(victim_id),
-                                ai.couldnt_reachpoint,
-                                ai.already_on_point,
-                                ai.completion_latch_inside_think,
-                                ai.outbox.reentrant.self_stimuli,
-                                ai.outbox.reentrant.owner_work,
-                            );
+                            self.trace_reactive_step_back_after_drain(debug, victim_id);
                         }
                         tracing::debug!(
                             ?victim_id,
@@ -2736,27 +2925,10 @@ impl EngineInner {
                 // in the original game for the attacker so the
                 // ring frame can be reconstructed by hand.
                 if parade_timer_debug_enabled() {
-                    let anim = strike_to_animation(animation_strike);
-                    let sprite = &self
-                        .expect_entity(attacker_id, "parade timer diagnostic attacker")
-                        .element_data()
-                        .sprite;
-                    let row = sprite.current_conversion()[anim as usize];
-                    let waits = |r: u16| {
-                        (0..sprite.num_frames_for_row(r))
-                            .map(|i| sprite.wait_time(r, i))
-                            .collect::<Vec<_>>()
-                    };
-                    eprintln!(
-                        "[PARADE_TIMER] frame={} victim_co={:?} attacker_co={:?} animation={anim:?} conversion_row={row} action_done={} num_frames={} waits={:?} live_row={} live_frame={} frames={attacker_anim_frames} ring_in={strike_frames}",
-                        self.control.frame_counter,
-                        self.world.original_creation_order(victim_id),
-                        self.world.original_creation_order(attacker_id),
-                        sprite.action_done_for_row(row),
-                        sprite.num_frames_for_row(row),
-                        waits(row),
-                        sprite.current_row,
-                        sprite.current_frame,
+                    self.trace_parade_timer(
+                        [victim_id, attacker_id],
+                        animation_strike,
+                        [u32::from(attacker_anim_frames), strike_frames],
                     );
                 }
 
@@ -2950,15 +3122,7 @@ impl EngineInner {
 
         let bad_experience_debug = bad_experience_debug_enabled();
         if bad_experience_debug {
-            let creation_order = self.world.original_creation_order(soldier_id);
-            eprintln!(
-                "[BAD_EXPERIENCE frame={} co={} soldier={} strike={:?} ability={}]",
-                self.control.frame_counter,
-                creation_order,
-                soldier_id.index(),
-                strike,
-                fighting_ability,
-            );
+            self.trace_bad_experience(soldier_id, strike, fighting_ability);
         }
         if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(soldier_id)
             && let crate::element::AiBrain::Enemy(ref mut ai) = s.npc.ai_brain
@@ -3205,11 +3369,15 @@ mod tests {
 }
 
 fn parade_timer_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_PARADE_TIMER").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_PARADE_TIMER", []))
+        .enabled()
 }
 
 fn bad_experience_debug_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("PARITY_DEBUG_BAD_EXPERIENCE").is_some())
+    use crate::engine::diagnostics::ParityGate;
+    static GATE: std::sync::OnceLock<ParityGate<0>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| ParityGate::from_env("PARITY_DEBUG_BAD_EXPERIENCE", []))
+        .enabled()
 }

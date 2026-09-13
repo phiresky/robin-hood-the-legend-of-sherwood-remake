@@ -1249,39 +1249,22 @@ impl EngineInner {
         let register_number = civilian.npc.register_number;
         let frame_phase = npc_hourglass_frame_phase(current_frame, u32::from(register_number));
         let debug_creation_order = {
-            let config = civilian_random_speech_debug_config();
-            if !config.enabled || config.frame != current_frame {
+            let gate = civilian_random_speech_debug_gate();
+            if !gate.matches([Some(current_frame), None]) {
                 None
             } else {
                 let creation_order = self.world.original_creation_order(npc_id);
-                (config.creation_order == creation_order).then_some(creation_order)
+                gate.matches([None, Some(creation_order)])
+                    .then_some(creation_order)
             }
         };
         if let Some(creation_order) = debug_creation_order {
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!(
-                    "random-speech civilian {} has non-friendly AI",
-                    npc_id.index()
-                )
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=eligibility register={register_number} frame_phase={frame_phase} human_hourglass_continued=true active={} profile={} civilian_type={:?} is_beggar={} dont_talk={} current_remark={:?} remark_flags={} ai_locks={:?} script_locked={} will_call={} will_draw_gate={}]",
-                npc_id.index(),
-                civilian.element.active,
-                civilian.civilian.civilian_profile_index.0,
-                civilian.civilian.cached_civilian_type,
-                civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
-                ai.beggar_dont_talk_counter,
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                ai.base.locks_flag_field,
-                ai.base.script_locked,
-                frame_phase == 0,
-                frame_phase == 0
-                    && civilian.civilian.cached_civilian_type
-                        == crate::profiles::CivilianType::Beggar
-                    && ai.beggar_dont_talk_counter == 0
-                    && ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence,
+            Self::trace_civilian_random_speech_eligibility(
+                [current_frame, creation_order],
+                npc_id,
+                entity,
+                register_number,
+                (frame_phase, frame_phase == 0),
             );
         }
         if frame_phase != 0 {
@@ -1294,25 +1277,11 @@ impl EngineInner {
             self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         let entity = self.expect_entity_mut(npc_id, "random-speech NPC before call");
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) = &*entity else {
-                panic!(
-                    "random-speech civilian {} changed entity kind before call",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            let source_animation = ctx
-                .entity_view(ai.base.me)
-                .map(|view| view.current_animation);
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                source_animation == Some(crate::order::OrderType::Weeping),
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
+            Self::trace_civilian_random_speech_before_call(
+                [current_frame, creation_order],
+                npc_id,
+                entity,
+                &ctx,
             );
         }
         {
@@ -1322,26 +1291,7 @@ impl EngineInner {
                 .random_speech(sim, 0, &ctx);
         }
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) = self.expect_entity(npc_id, "random-speech civilian")
-            else {
-                panic!(
-                    "random-speech civilian {} changed entity kind",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                ai.beggar_dont_talk_counter,
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
-            );
+            self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
         }
         // The original game's random speech runs synchronously before the following
         // NPC lock gate. Rust's AI borrow records Say in owner_work, so close
@@ -1349,27 +1299,134 @@ impl EngineInner {
         // short-circuit the remainder of the actor update.
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
         if let Some(creation_order) = debug_creation_order {
-            let Entity::Civilian(civilian) =
-                self.expect_entity(npc_id, "random-speech civilian after drain")
-            else {
-                panic!(
-                    "random-speech civilian {} changed entity kind after drain",
-                    npc_id.index()
-                )
-            };
-            let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
-                panic!("random-speech civilian {} changed AI kind", npc_id.index())
-            };
-            eprintln!(
-                "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
-                npc_id.index(),
-                ai.base.current_remark,
-                ai.base.current_remark_flags,
-                civilian.element.sprite.last_action,
-                ai.base.outbox.reentrant.owner_work.len(),
-                ai.base.outbox.reentrant.owner_work,
-            );
+            self.trace_civilian_random_speech_after_drain(current_frame, creation_order, npc_id);
         }
+    }
+
+    /// `[frame, creation order]`; `frame_phase` pairs the phase with its
+    /// `== 0` call verdict.
+    #[inline(never)]
+    fn trace_civilian_random_speech_eligibility(
+        [current_frame, creation_order]: [u32; 2],
+        npc_id: EntityId,
+        entity: &Entity,
+        register_number: impl std::fmt::Display,
+        (frame_phase, will_call): (impl std::fmt::Display, bool),
+    ) {
+        let Entity::Civilian(civilian) = entity else {
+            panic!("random-speech NPC {} is not a civilian", npc_id.index())
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!(
+                "random-speech civilian {} has non-friendly AI",
+                npc_id.index()
+            )
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=eligibility register={register_number} frame_phase={frame_phase} human_hourglass_continued=true active={} profile={} civilian_type={:?} is_beggar={} dont_talk={} current_remark={:?} remark_flags={} ai_locks={:?} script_locked={} will_call={} will_draw_gate={}]",
+            npc_id.index(),
+            civilian.element.active,
+            civilian.civilian.civilian_profile_index.0,
+            civilian.civilian.cached_civilian_type,
+            civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar,
+            ai.beggar_dont_talk_counter,
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            ai.base.locks_flag_field,
+            ai.base.script_locked,
+            will_call,
+            will_call
+                && civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar
+                && ai.beggar_dont_talk_counter == 0
+                && ai.base.current_remark == crate::ai::Remark::TheSoundOfSilence,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_before_call(
+        [current_frame, creation_order]: [u32; 2],
+        npc_id: EntityId,
+        entity: &Entity,
+        ctx: &crate::ai::AiContext,
+    ) {
+        let Entity::Civilian(civilian) = entity else {
+            panic!(
+                "random-speech civilian {} changed entity kind before call",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        let source_animation = ctx
+            .entity_view(ai.base.me)
+            .map(|view| view.current_animation);
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            source_animation == Some(crate::order::OrderType::Weeping),
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_after_call(
+        &self,
+        current_frame: u32,
+        creation_order: u32,
+        npc_id: EntityId,
+    ) {
+        let Entity::Civilian(civilian) = self.expect_entity(npc_id, "random-speech civilian")
+        else {
+            panic!(
+                "random-speech civilian {} changed entity kind",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_call_before_drain dont_talk={} current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            ai.beggar_dont_talk_counter,
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_civilian_random_speech_after_drain(
+        &self,
+        current_frame: u32,
+        creation_order: u32,
+        npc_id: EntityId,
+    ) {
+        let Entity::Civilian(civilian) =
+            self.expect_entity(npc_id, "random-speech civilian after drain")
+        else {
+            panic!(
+                "random-speech civilian {} changed entity kind after drain",
+                npc_id.index()
+            )
+        };
+        let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
+            panic!("random-speech civilian {} changed AI kind", npc_id.index())
+        };
+        eprintln!(
+            "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=after_drain current_remark={:?} remark_flags={} live_animation={:?} owner_work_count={} owner_work={:?}]",
+            npc_id.index(),
+            ai.base.current_remark,
+            ai.base.current_remark_flags,
+            civilian.element.sprite.last_action,
+            ai.base.outbox.reentrant.owner_work.len(),
+            ai.base.outbox.reentrant.owner_work,
+        );
     }
 
     // ── Per-frame ambush-point peek scan ─────────

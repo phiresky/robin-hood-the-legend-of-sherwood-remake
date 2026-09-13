@@ -1,6 +1,56 @@
 use super::*;
 
 impl EngineInner {
+    #[inline(never)]
+    fn trace_primary_swap_friend_apply(
+        frame: u32,
+        npc_id: EntityId,
+        friend_id: EntityId,
+        old_target: impl std::fmt::Debug,
+        new_target: impl std::fmt::Display,
+    ) {
+        eprintln!(
+            "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
+            frame,
+            npc_id.index(),
+            friend_id,
+            old_target,
+            new_target,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_consider_report_drain_start(
+        frame: u32,
+        npc_id: EntityId,
+        pending_mutations: &impl std::fmt::Debug,
+    ) {
+        eprintln!(
+            "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_mutations\":{:?}}}",
+            frame,
+            npc_id.index(),
+            pending_mutations,
+        );
+    }
+
+    #[inline(never)]
+    fn trace_consider_report_drain_end(
+        frame: u32,
+        npc_id: EntityId,
+        bodies: &[crate::element::Detectable],
+    ) {
+        let body_ids = bodies
+            .iter()
+            .map(|detectable| detectable.element.map(EntityId::index))
+            .collect::<Vec<_>>();
+        eprintln!(
+            "CONSIDERREPORT {{\"stage\":\"drain_end\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+            frame,
+            npc_id.index(),
+            body_ids
+        );
+    }
+
     #[cfg(test)]
     pub(in crate::engine) fn tick_enemy_ai(
         &mut self,
@@ -589,10 +639,9 @@ impl EngineInner {
                     npc_id.index(),
                 )
             {
-                eprintln!(
-                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
+                Self::trace_primary_swap_friend_apply(
                     self.control.frame_counter,
-                    npc_id.index(),
+                    npc_id,
                     friend_id,
                     friend_ai.primary_target,
                     new_target.get(),
@@ -1178,11 +1227,10 @@ impl EngineInner {
             use crate::element::DetectableType;
             if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
             {
-                eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_start\",\"frame\":{},\"owner\":{},\"pending_mutations\":{:?}}}",
+                Self::trace_consider_report_drain_start(
                     self.control.frame_counter,
-                    npc_id.index(),
-                    effects.detectable_mutations,
+                    npc_id,
+                    &effects.detectable_mutations,
                 );
             }
             let mutation_debug_enabled = detection::detectable_mutation_debug_enabled();
@@ -1351,15 +1399,10 @@ impl EngineInner {
             }
             if crate::ai::consider_report_debug_matches(self.control.frame_counter, npc_id.index())
             {
-                let body_ids = npc.detectable_lists[DetectableType::Body as usize]
-                    .iter()
-                    .map(|detectable| detectable.element.map(EntityId::index))
-                    .collect::<Vec<_>>();
-                eprintln!(
-                    "CONSIDERREPORT {{\"stage\":\"drain_end\",\"frame\":{},\"owner\":{},\"body_ids\":{:?}}}",
+                Self::trace_consider_report_drain_end(
                     self.control.frame_counter,
-                    npc_id.index(),
-                    body_ids
+                    npc_id,
+                    &npc.detectable_lists[DetectableType::Body as usize],
                 );
             }
         }

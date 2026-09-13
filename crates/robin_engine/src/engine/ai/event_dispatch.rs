@@ -1068,20 +1068,15 @@ impl EngineInner {
 
     // ─── Owner-local NPC speech ─────────────────────────────────
 
+    #[inline(never)]
     pub(in crate::engine) fn debug_speech_lifecycle(
         &self,
         actor_id: u32,
         phase: &str,
         detail: impl std::fmt::Debug,
     ) {
-        let config = speech_lifecycle_debug_config();
-        if !config.enabled {
-            return;
-        }
         let frame = self.control.frame_counter;
-        if !config.frame.is_none_or(|expected| expected == frame)
-            || !config.actor.is_none_or(|expected| expected == actor_id)
-        {
+        if !speech_lifecycle_debug_gate().matches([Some(frame), Some(actor_id)]) {
             return;
         }
         let sound = &self.feedback.sound_sim;
@@ -1108,6 +1103,7 @@ impl EngineInner {
         );
     }
 
+    #[inline(never)]
     fn debug_speech_attempt_gate_snapshot(
         &self,
         assets: &LevelAssets,
@@ -1116,16 +1112,8 @@ impl EngineInner {
     ) {
         use crate::ai::RemarkTargetFlags;
 
-        let config = speech_lifecycle_debug_config();
-        if !config.enabled {
-            return;
-        }
         let frame = self.control.frame_counter;
-        if !config.frame.is_none_or(|expected| expected == frame)
-            || !config
-                .actor
-                .is_none_or(|expected| expected == owner.index())
-        {
+        if !speech_lifecycle_debug_gate().matches([Some(frame), Some(owner.index())]) {
             return;
         }
 
