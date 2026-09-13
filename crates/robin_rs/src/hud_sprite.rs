@@ -159,22 +159,15 @@ impl<B: Copy + PartialEq> ButtonTooltipTracker<B> {
 }
 
 /// Shared font and cursor-relative placement for all button-family tooltips.
-#[derive(serde::Serialize)]
+///
+/// No serde impls: this is a transient call parameter borrowing live fonts,
+/// never stored or persisted, so the repo-wide "serde on new structs" rule
+/// does not apply (a `Deserialize` could only ever return an error).
 pub struct TooltipPlacement<'a> {
-    #[serde(skip)]
     pub font: &'a crate::native_font::Font,
-    #[serde(skip)]
     pub shadow: Option<&'a crate::native_font::Font>,
     pub mouse: (i32, i32),
     pub cursor_size: (i32, i32),
-}
-
-impl<'de, 'a> serde::Deserialize<'de> for TooltipPlacement<'a> {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "tooltip placement requires live font ownership",
-        ))
-    }
 }
 
 pub fn draw_tooltip<B, T: Into<Option<String>>>(
@@ -284,8 +277,11 @@ pub(crate) fn retire<const N: usize>(renderer: &mut Renderer, banks: [&mut Sprit
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod test_support;
+
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     fn sparse_bank_contract<B: HudButton<N>, const N: usize>() {
@@ -341,30 +337,6 @@ pub(crate) mod tests {
         assert!(Button::StartMission.shadow());
         assert!(Button::QuitMission.shadow());
         assert!(Button::SherwoodTrading.shadow());
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
-        fn verify<B: HudButton<N>, const N: usize>(renderer: &mut Renderer) {
-            let mut sprites = ButtonSprites::<B, N>::default();
-            let button = B::ALL[0];
-            let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
-            let handle = upload.handle();
-            sprites.banks[button.index()][BTN_STATE_NORMAL] = Some((upload, 1, 1));
-            assert_eq!(sprites.frame(button, BTN_STATE_HOVER, 0).unwrap().0, handle);
-            renderer.draw_surface(handle, None, None, 0).unwrap();
-            sprites.retire(renderer);
-            sprites.retire(renderer);
-            assert!(sprites.frame(button, BTN_STATE_NORMAL, 0).is_none());
-            assert!(renderer.surface_dimensions(handle).is_err());
-            assert_eq!(
-                &renderer.try_capture_frame_rgba().unwrap().2[..4],
-                &[248, 252, 248, 255]
-            );
-        }
-        verify::<crate::zoom_hud::ZoomButton, 2>(renderer);
-        verify::<crate::stature_hud::StatureButton, 2>(renderer);
-        verify::<crate::sherwood_hud::SherwoodButton, 5>(renderer);
     }
 
     #[test]
