@@ -31,7 +31,7 @@ use crate::publication_v3::{
 use crate::{
     MAX_DOCUMENT_BYTES, artifact_from_file, config_parent, ensure_absent_output, path_to_manifest,
     read_regular_file_bounded, resolve_path, staging_directory, strict_json_from_slice,
-    validate_mount_root, validate_regular_file, walk_regular_files, write_bytes,
+    validate_mount_root, validate_regular_file, walk_regular_files, write_new_file_bytes,
 };
 
 const PLAN_SCHEMA_VERSION: u32 = 2;

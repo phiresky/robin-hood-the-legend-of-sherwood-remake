@@ -10,9 +10,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::SimConfig;
 use robin_engine::profiles::ProfileManager;
@@ -104,9 +104,9 @@ pub fn author_campaign_template_matrix_v1(plan_path: &Path, output: &Path) -> Re
             artifact == entry.artifact,
             "matrix artifact changed during authoring"
         );
-        crate::write_bytes(&staging.path().join(&entry.path), &bytes)?;
+        crate::write_new_file_bytes(&staging.path().join(&entry.path), &bytes)?;
     }
-    crate::write_bytes(
+    crate::write_new_file_bytes(
         &staging.path().join(CAMPAIGN_TEMPLATE_MATRIX_MANIFEST_V1),
         &canonical_json_bytes(&matrix)?,
     )?;
@@ -426,7 +426,10 @@ fn validate_matrix_document_v1(matrix: &CampaignTemplateMatrixV1) -> Result<()> 
                 && paths.insert(entry.path.clone()),
             "campaign-template matrix entry has a substituted kind or path"
         );
-        validate_relative_matrix_path_v1(&entry.path)?;
+        crate::fs_util::validate_relative_path(
+            Path::new(&entry.path),
+            "campaign-template matrix path",
+        )?;
     }
     for pair in matrix.entries.as_chunks::<2>().0 {
         ensure!(
@@ -490,32 +493,8 @@ fn validate_matrix_tree_with_authority_v1(
     validate_matrix_directories_v1(root, &expected_files)
 }
 
-fn validate_relative_matrix_path_v1(path: &str) -> Result<()> {
-    let path = Path::new(path);
-    ensure!(
-        !path.is_absolute()
-            && path
-                .components()
-                .all(|component| matches!(component, Component::Normal(_))),
-        "campaign-template matrix path is not canonical relative"
-    );
-    Ok(())
-}
-
 fn manifest_path_v1(path: &Path) -> Result<String> {
-    let mut output = String::new();
-    for component in path.components() {
-        let Component::Normal(component) = component else {
-            bail!("matrix path is not canonical relative")
-        };
-        let component = component.to_str().context("matrix path is not UTF-8")?;
-        if !output.is_empty() {
-            output.push('/');
-        }
-        output.push_str(component);
-    }
-    ensure!(!output.is_empty(), "matrix path is empty");
-    Ok(output)
+    Ok(crate::fs_util::validate_relative_path(path, "matrix path")?.to_owned())
 }
 
 fn validate_matrix_directories_v1(root: &Path, files: &BTreeSet<String>) -> Result<()> {

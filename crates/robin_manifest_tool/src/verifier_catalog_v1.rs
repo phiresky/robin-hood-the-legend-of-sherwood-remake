@@ -1020,7 +1020,7 @@ fn tree_inventory(root: &Path) -> Result<(BTreeSet<PathBuf>, BTreeSet<PathBuf>)>
         .map(|(relative, _)| relative)
         .chain(&directories)
     {
-        ensure_safe_relative_path(relative)?;
+        crate::fs_util::validate_relative_path(relative, "authority relative path")?;
     }
     Ok((
         files.into_iter().map(|(relative, _)| relative).collect(),
@@ -1130,20 +1130,6 @@ fn ensure_normalized_absolute(path: &Path) -> Result<()> {
             matches!(component, Component::RootDir | Component::Normal(_)),
             "path contains a noncanonical or escaping component: {}",
             path.display()
-        );
-    }
-    Ok(())
-}
-
-fn ensure_safe_relative_path(path: &Path) -> Result<()> {
-    ensure!(
-        !path.as_os_str().is_empty() && !path.is_absolute(),
-        "authority relative path is empty or absolute"
-    );
-    for component in path.components() {
-        ensure!(
-            matches!(component, Component::Normal(_)),
-            "authority relative path escapes its root"
         );
     }
     Ok(())
@@ -1366,7 +1352,7 @@ mod tests {
         assert!(validate_source_commit(&"0".repeat(40)).is_err());
         assert!(validate_source_commit(&"A".repeat(40)).is_err());
         assert!(parse_digest(&"0".repeat(64), "test").is_err());
-        assert!(ensure_safe_relative_path(Path::new("a/../b")).is_err());
+        assert!(crate::fs_util::validate_relative_path(Path::new("a/../b"), "test").is_err());
         assert!(reject_placeholders(b"token = 'CHANGEme'", "test").is_err());
     }
 

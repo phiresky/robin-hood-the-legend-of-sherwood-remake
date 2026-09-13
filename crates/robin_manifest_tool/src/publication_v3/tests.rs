@@ -305,25 +305,7 @@ fn synthetic_cloudflare_materialization_authority_v1(
 }
 
 fn make_test_tree_writable(root: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let inventory = publication_tree_inventory_v3(root)?;
-    for file in inventory.files {
-        fs::set_permissions(root.join(file.path), fs::Permissions::from_mode(0o600))?;
-    }
-    let mut directories = inventory.directories;
-    directories.sort_by_key(|directory| {
-        std::cmp::Reverse(Path::new(&directory.path).components().count())
-    });
-    for directory in directories {
-        let path = if directory.path == "." {
-            root.to_path_buf()
-        } else {
-            root.join(directory.path)
-        };
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
+    crate::fs_util::set_tree_modes(root, 0o600, 0o700)
 }
 
 fn pinned_json(label: &[u8]) -> PinnedArtifactSourceV3 {

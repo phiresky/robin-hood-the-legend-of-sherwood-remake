@@ -76,11 +76,11 @@ pub fn assemble_vps_release_v2(plan_path: &Path, output: &Path) -> Result<Digest
             files,
         };
         manifest.validate_current_candidate()?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join(RELEASE_MANIFEST_FILE),
             &canonical_json_bytes(&manifest)?,
         )?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join(SOURCE_COMMIT_FILE),
             format!("{}\n", plan.source_commit).as_bytes(),
         )?;
@@ -376,11 +376,11 @@ pub(super) fn materialize_bundle(
             &file.artifact,
         )?;
     }
-    write_bytes(
+    write_new_file_bytes(
         &root.join(ROOT_ONCE_SHA256SUMS_FILE),
         &expected_root_once_sha256sums(root)?,
     )?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join(DEPLOY_BOOTSTRAP_SHA256SUMS_FILE),
         &expected_deploy_bootstrap_sha256sums(root)?,
     )?;
@@ -437,7 +437,7 @@ pub(super) fn materialize_bundle(
         roots: plan.private_raw_roots.clone(),
     };
     declarations.validate()?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join(RAW_ROOT_DECLARATIONS_FILE),
         &canonical_json_bytes(&declarations)?,
     )?;
@@ -547,7 +547,7 @@ pub(super) fn payload_inventory(root: &Path) -> Result<Vec<VpsReleaseFileV2>> {
 
 pub(super) fn write_mode_inventory(root: &Path) -> Result<()> {
     let bytes = expected_mode_inventory_with_future_metadata(root)?;
-    write_bytes(&root.join(MODE_INVENTORY_FILE), &bytes)
+    write_new_file_bytes(&root.join(MODE_INVENTORY_FILE), &bytes)
 }
 
 pub(super) fn expected_mode_inventory_with_future_metadata(root: &Path) -> Result<Vec<u8>> {
@@ -608,7 +608,7 @@ pub(super) fn mode_inventory_bytes(entries: &BTreeMap<String, (char, u32)>) -> R
 }
 
 pub(super) fn write_sha256sums(root: &Path) -> Result<()> {
-    write_bytes(&root.join(SHA256SUMS_FILE), &expected_sha256sums(root)?)
+    write_new_file_bytes(&root.join(SHA256SUMS_FILE), &expected_sha256sums(root)?)
 }
 
 pub(super) fn expected_sha256sums(root: &Path) -> Result<Vec<u8>> {

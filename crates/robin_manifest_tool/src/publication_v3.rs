@@ -62,7 +62,7 @@ use crate::{
     resolve_path, strict_json_from_slice, validate_complete_ranked_rules_config_v1,
     validate_current_official_ranked_build_v2, validate_mount_root,
     validate_official_projection_rules_config_v1, validate_regular_file, walk_regular_files,
-    write_bytes, write_canonical, write_digest_document,
+    write_canonical, write_digest_document, write_new_file_bytes,
 };
 
 const PUBLICATION_PLAN_SCHEMA_VERSION: u32 = 3;
@@ -949,7 +949,7 @@ pub fn assemble_publication_v3(plan_path: &Path, output: &Path) -> Result<Digest
             &staging.path().join("publication-manifest-v3.json"),
             &manifest,
         )?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join("publication-manifest-v3.sha256"),
             manifest.canonical_digest()?.to_string().as_bytes(),
         )?;
@@ -965,7 +965,7 @@ pub fn assemble_publication_v3(plan_path: &Path, output: &Path) -> Result<Digest
         let lock = publication_lock(&topology, manifest.canonical_digest()?)?;
         write_canonical(&staging.path().join("publication-lock-v3.json"), &lock)?;
         let lock_sha256 = lock.canonical_digest()?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join("publication-lock-v3.sha256"),
             lock_sha256.to_string().as_bytes(),
         )?;

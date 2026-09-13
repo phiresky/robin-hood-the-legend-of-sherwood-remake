@@ -44,8 +44,8 @@ use crate::{
     resolve_path, shipping_source_manifest_v2, staging_directory, strict_json_from_slice,
     validate_current_official_ranked_build_v2, validate_mount_root,
     validate_official_projection_rules_config_v1, validate_regular_file,
-    validate_static_projection_exporter, walk_regular_files, write_bytes, write_canonical,
-    write_digest_document, write_shared_bytes,
+    validate_static_projection_exporter, walk_regular_files, write_canonical,
+    write_digest_document, write_new_file_bytes, write_shared_bytes,
 };
 
 const PLAN_V3_SCHEMA_VERSION: u32 = 3;
@@ -1526,8 +1526,8 @@ fn materialize_v3(
             .join("private/projection-executions")
             .join(lane.receipt_sha256.to_string());
         write_canonical(&execution.join("record.json"), &lane.execution_record)?;
-        write_bytes(&execution.join("stdout.json"), &lane.projection.stdout)?;
-        write_bytes(&execution.join("stderr.log"), &lane.projection.stderr)?;
+        write_new_file_bytes(&execution.join("stdout.json"), &lane.projection.stdout)?;
+        write_new_file_bytes(&execution.join("stderr.log"), &lane.projection.stderr)?;
         ensure!(
             artifact_from_file(&execution.join("stdout.json"), JSON_MEDIA_TYPE)?
                 == lane.execution_record.stdout
@@ -1604,7 +1604,7 @@ fn materialize_v3(
                     &authored.manifest.subject,
                     component.kind,
                 )?;
-                write_bytes(&bundle.join("catalog").join(relative), bytes)?;
+                write_new_file_bytes(&bundle.join("catalog").join(relative), bytes)?;
                 if edition.edition == OfficialContentEditionV1::Demo {
                     let public = demo_content_object_path_v1(*content_digest, component)?;
                     write_shared_bytes(&root.join("public").join(public), bytes)?;
@@ -1613,12 +1613,12 @@ fn materialize_v3(
         }
     }
     write_canonical(&root.join("official-content-digests.json"), digests)?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join("official-content-digests.sha256"),
         digests.canonical_digest()?.to_string().as_bytes(),
     )?;
     write_canonical(&root.join("projection-authority-matrix-v3.json"), matrix)?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join("projection-authority-matrix-v3.sha256"),
         matrix.canonical_digest()?.to_string().as_bytes(),
     )?;
@@ -1764,32 +1764,7 @@ fn make_executable_read_only(path: &Path) -> Result<()> {
 }
 
 fn make_tree_writable(root: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        if !root.exists() {
-            return Ok(());
-        }
-        let mut directories = vec![root.to_path_buf()];
-        for (_, file) in walk_regular_files(root)? {
-            fs::set_permissions(file, fs::Permissions::from_mode(0o600))?;
-        }
-        let mut pending = vec![root.to_path_buf()];
-        while let Some(directory) = pending.pop() {
-            for entry in fs::read_dir(&directory)? {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    pending.push(entry.path());
-                    directories.push(entry.path());
-                }
-            }
-        }
-        directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-        for directory in directories {
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-        }
-    }
-    Ok(())
+    crate::fs_util::set_tree_modes(root, 0o600, 0o700)
 }
 
 fn official_lane_order() -> [(OfficialContentEditionV1, OfficialProjectionSourceFormatV1); 4] {

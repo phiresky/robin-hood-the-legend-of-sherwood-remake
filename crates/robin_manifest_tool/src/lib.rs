@@ -29,9 +29,9 @@ pub mod vps_release_v2;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write as _};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail, ensure};
+use anyhow::{Context as _, Result, ensure};
 use goblin::elf::{Elf, header, program_header};
 use robin_run_protocol::{
     ArtifactRefV1, BrowserIdentitySignerBuildIdentityV2, BrowserIdentitySignerBuildRecipeV2,
@@ -768,7 +768,7 @@ pub fn canonicalize_document(
             )?;
             let canonical_bytes = document.bitcode_bytes()?;
             let digest = Digest32::digest_bytes(&canonical_bytes);
-            write_bytes(output, &canonical_bytes)?;
+            write_new_file_bytes(output, &canonical_bytes)?;
             Ok(AuthoredDocument {
                 digest,
                 canonical_bytes,
@@ -924,7 +924,7 @@ where
     document.validate()?;
     let canonical_bytes = canonical_json_bytes(document)?;
     let digest = Digest32::digest_bytes(&canonical_bytes);
-    write_bytes(output, &canonical_bytes)?;
+    write_new_file_bytes(output, &canonical_bytes)?;
     Ok(AuthoredDocument {
         digest,
         canonical_bytes,
@@ -944,7 +944,7 @@ where
     // PublishedRulesetV1 is intentionally addressed by its embedded immutable
     // ruleset digest; its mutable operational status is never immutable-cache
     // content despite sharing the lookup key.
-    write_bytes(&root.join(kind).join(format!("{digest}.json")), &bytes)
+    write_new_file_bytes(&root.join(kind).join(format!("{digest}.json")), &bytes)
 }
 
 fn write_canonical<T>(path: &Path, document: &T) -> Result<()>
@@ -952,7 +952,7 @@ where
     T: Serialize + robin_run_protocol::Validate,
 {
     document.validate()?;
-    write_bytes(path, &canonical_json_bytes(document)?)
+    write_new_file_bytes(path, &canonical_json_bytes(document)?)
 }
 
 fn artifact_from_file(path: &Path, media_type: &str) -> Result<ArtifactRefV1> {
@@ -1008,7 +1008,7 @@ fn copy_artifact_exact(source: &Path, output: &Path, expected: &ArtifactRefV1) -
     Ok(())
 }
 
-fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_new_file_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1033,7 +1033,7 @@ fn write_shared_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
         );
         return Ok(());
     }
-    write_bytes(path, bytes)
+    write_new_file_bytes(path, bytes)
 }
 
 fn validate_mount_root(path: &Path) -> Result<()> {
@@ -1053,20 +1053,8 @@ fn validate_mount_root(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_relative_source_path(path: &Path) -> Result<()> {
-    ensure!(!path.as_os_str().is_empty(), "source path is empty");
-    ensure!(!path.is_absolute(), "source path must be relative");
-    ensure!(
-        path.components()
-            .all(|component| matches!(component, Component::Normal(_))),
-        "source path contains '.', '..', a prefix, or a root"
-    );
-    path_to_manifest(path)?;
-    Ok(())
-}
-
 fn resolve_mounted_file(root: &Path, relative: &Path) -> Result<PathBuf> {
-    validate_relative_source_path(relative)?;
+    fs_util::validate_relative_path(relative, "source path")?;
     let canonical_root = fs::canonicalize(root)?;
     let candidate = root.join(relative);
     validate_regular_file(&candidate)?;
@@ -1083,40 +1071,7 @@ fn walk_regular_files(root: &Path) -> Result<Vec<(PathBuf, PathBuf)>> {
 }
 
 fn path_to_manifest(path: &Path) -> Result<String> {
-    validate_relative_source_path_shallow(path)?;
-    let mut output = String::new();
-    for (index, component) in path.components().enumerate() {
-        let Component::Normal(component) = component else {
-            bail!("path is not canonical relative")
-        };
-        let component = component
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("path is not UTF-8"))?;
-        ensure!(
-            !component.contains(['/', '\\']) && !component.is_empty(),
-            "path component is invalid"
-        );
-        if index != 0 {
-            output.push('/');
-        }
-        output.push_str(component);
-    }
-    ensure!(!output.is_empty(), "path is empty");
-    Ok(output)
-}
-
-fn validate_relative_source_path_shallow(path: &Path) -> Result<()> {
-    ensure!(
-        fs_util::valid_relative_path(path.to_str().context("path is not UTF-8")?),
-        "path is not canonical relative"
-    );
-    ensure!(!path.is_absolute(), "path is absolute");
-    ensure!(
-        path.components()
-            .all(|component| matches!(component, Component::Normal(_))),
-        "path is not canonical relative"
-    );
-    Ok(())
+    Ok(fs_util::validate_relative_path(path, "path")?.to_owned())
 }
 
 fn resolve_path(base: &Path, path: &mut PathBuf) {
@@ -1206,29 +1161,7 @@ fn sync_directory_tree(root: &Path) -> Result<()> {
 }
 
 fn make_verifier_bundles_read_only(root: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-    if !root.exists() {
-        return Ok(());
-    }
-    let mut directories = vec![root.to_path_buf()];
-    for (_, file) in walk_regular_files(root)? {
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o444))?;
-    }
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
-        for entry in fs::read_dir(&directory)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                pending.push(entry.path());
-                directories.push(entry.path());
-            }
-        }
-    }
-    directories.sort_by_key(|directory| std::cmp::Reverse(directory.components().count()));
-    for directory in directories {
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o555))?;
-    }
-    Ok(())
+    fs_util::set_tree_modes(root, 0o444, 0o555)
 }
 
 fn strict_json_from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
@@ -1238,6 +1171,7 @@ fn strict_json_from_slice<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::bail;
 
     #[test]
     fn document_kinds_advertise_live_stages_and_reject_retired_authority() {
