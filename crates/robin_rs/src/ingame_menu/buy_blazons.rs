@@ -27,8 +27,9 @@ use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, dim_screen, draw_background,
-    enter_modal_gpu_phase, render_text_in_box_aligned_font,
+    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, FOCUS_OUTLINE, MENU_H, MENU_W, MenuTransform,
+    TextAlign, VAlign, dim_screen, draw_background, enter_modal_gpu_phase,
+    render_text_in_box_aligned_font,
 };
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
@@ -221,15 +222,9 @@ impl BuyBlazonsModalState {
                     (sx + WIN_W) as f32,
                     (sy + WIN_H) as f32,
                 )),
-                Renderer::create_color_16(30, 25, 15),
+                FALLBACK_PANEL_FILL,
             );
-            renderer.draw_rect_outline_screen(
-                sx,
-                sy,
-                sx + WIN_W,
-                sy + WIN_H,
-                Renderer::create_color_16(180, 160, 100),
-            );
+            renderer.draw_rect_outline_screen(sx, sy, sx + WIN_W, sy + WIN_H, FALLBACK_PANEL_EDGE);
         }
         let font = resources.debrief_font_any();
         if let Some(font) = font {
@@ -254,13 +249,7 @@ impl BuyBlazonsModalState {
         };
         let (sx, sy) = transform.to_screen(focused_x, focused_y);
         let (ex, ey) = transform.to_screen(focused_x + self.btn_w, focused_y + self.btn_h);
-        renderer.draw_rect_outline_screen(
-            sx - 1,
-            sy - 1,
-            ex + 1,
-            ey + 1,
-            Renderer::create_color_16(255, 220, 80),
-        );
+        renderer.draw_rect_outline_screen(sx - 1, sy - 1, ex + 1, ey + 1, FOCUS_OUTLINE);
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input_state);
         }

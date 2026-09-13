@@ -33,7 +33,7 @@ use robin_engine::sprite::BBox;
 
 use super::layout::{
     BTN_STATE_DISABLED, BTN_STATE_HOVER, BTN_STATE_NORMAL, BTN_STATE_PRESSED, BTN_STATE_SELECTED,
-    MenuTransform,
+    FALLBACK_PANEL_FILL, MenuTransform,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
 
@@ -1207,7 +1207,7 @@ pub fn draw_widget_radio(
         } else if hovered {
             Renderer::create_color_16(60, 50, 30)
         } else {
-            Renderer::create_color_16(30, 25, 15)
+            FALLBACK_PANEL_FILL
         };
         renderer.fill_screen(
             Some(&engine_sprite::BBox::from_coords(

@@ -14,8 +14,8 @@ use crate::widget::FrameWnd;
 use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
-    MenuTransform, dim_screen, draw_fallback_rect, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt_font,
+    MenuTransform, TruncationMarker, dim_screen, draw_fallback_rect, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt_font, truncate_to_pixel_width,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_ALPHA_VISION_FIELD,
@@ -524,7 +524,12 @@ impl GraphicsScreen {
                 }
             }
             if self.page == 2 && !self.parameter_status.is_empty() {
-                let status = fit_label(font, &self.parameter_status, 580);
+                let status = truncate_to_pixel_width(
+                    font,
+                    &self.parameter_status,
+                    580,
+                    TruncationMarker::ScalarEllipsisAlways,
+                );
                 render_text_virt_font(renderer, font, transform, &status, 30, 410);
             }
         }
@@ -802,39 +807,14 @@ fn draw_preset_list(
                 Renderer::create_color_16(80, 60, 35),
             );
         }
-        let label = fit_label(font, &preset.label, PRESET_LIST_W - 8);
+        let label = truncate_to_pixel_width(
+            font,
+            &preset.label,
+            PRESET_LIST_W - 8,
+            TruncationMarker::ScalarEllipsisAlways,
+        );
         render_text_virt_font(renderer, font, transform, &label, PRESET_LIST_X + 4, y + 1);
     }
-}
-
-fn fit_label<'a>(
-    font: &crate::native_font::Font,
-    label: &'a str,
-    max_w: i32,
-) -> std::borrow::Cow<'a, str> {
-    fit_label_by(label, max_w, |candidate| font.text_width(candidate))
-}
-
-fn fit_label_by(
-    label: &str,
-    max_w: i32,
-    measure: impl Fn(&str) -> i32,
-) -> std::borrow::Cow<'_, str> {
-    if measure(label) <= max_w {
-        return std::borrow::Cow::Borrowed(label);
-    }
-    let mut out = String::with_capacity(label.len() + 3);
-    out.push_str(label);
-    out.push_str("...");
-    // Preserve the existing scalar-at-a-time removal and whole-candidate
-    // measurement; kerning means character widths cannot simply be added.
-    while out.len() > 3 && measure(&out) > max_w {
-        out.truncate(out.len() - 3);
-        out.pop();
-        out.push_str("...");
-    }
-    // Legacy graphics labels retain the ellipsis even if it cannot fit.
-    std::borrow::Cow::Owned(out)
 }
 
 fn parameter_rows(
@@ -1171,17 +1151,32 @@ fn selecting_builtin_presets_clears_stale_import_feedback() {
 
 #[test]
 fn graphics_label_fitting_preserves_scalar_boundaries_and_ellipsis_policy() {
+    use crate::ingame_menu::layout::truncate_to_pixel_width_by;
+    const POLICY: TruncationMarker = TruncationMarker::ScalarEllipsisAlways;
     let measure = |value: &str| value.chars().count() as i32;
     assert!(matches!(
-        fit_label_by("é🏹", 2, measure),
+        truncate_to_pixel_width_by("é🏹", 2, POLICY, measure),
         std::borrow::Cow::Borrowed("é🏹")
     ));
-    assert_eq!(fit_label_by("é🏹罗宾AB", 5, measure), "é🏹...");
-    assert_eq!(fit_label_by("abcdef", 3, measure), "...");
-    assert_eq!(fit_label_by("abcdef", 0, measure), "...");
-    assert_eq!(fit_label_by("", -1, measure), "...");
     assert_eq!(
-        fit_label_by("abcdef", 2, |value| if value == "abcd..." { 2 } else { 10 }),
+        truncate_to_pixel_width_by("é🏹罗宾AB", 5, POLICY, measure),
+        "é🏹..."
+    );
+    assert_eq!(
+        truncate_to_pixel_width_by("abcdef", 3, POLICY, measure),
+        "..."
+    );
+    assert_eq!(
+        truncate_to_pixel_width_by("abcdef", 0, POLICY, measure),
+        "..."
+    );
+    assert_eq!(truncate_to_pixel_width_by("", -1, POLICY, measure), "...");
+    assert_eq!(
+        truncate_to_pixel_width_by("abcdef", 2, POLICY, |value| if value == "abcd..." {
+            2
+        } else {
+            10
+        }),
         "abcd..."
     );
 }

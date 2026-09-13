@@ -689,10 +689,6 @@ fn format_profile_row(profile: &PlayerProfileRow, resources: &IngameMenuResource
     )
 }
 
-fn point_in_rect(px: i32, py: i32, x: i32, y: i32, w: i32, h: i32) -> bool {
-    px >= x && px < x + w && py >= y && py < y + h
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // Name-entry modal (shared between New Player and Rename)
 // ═══════════════════════════════════════════════════════════════════
@@ -1133,36 +1129,36 @@ impl NamePromptState {
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if point_in_rect(
-                        vx,
-                        vy,
-                        self.confirm_row_x,
-                        self.confirm_row_y,
-                        self.ok_w,
-                        self.ok_h,
-                    ) {
+                    if (MenuRect {
+                        x: self.confirm_row_x,
+                        y: self.confirm_row_y,
+                        w: self.ok_w,
+                        h: self.ok_h,
+                    })
+                    .contains(vx, vy)
+                    {
                         confirmed = true;
-                    } else if point_in_rect(
-                        vx,
-                        vy,
-                        self.confirm_row_x + self.ok_w + self.ok_cancel_gap,
-                        self.confirm_row_y,
-                        self.cancel_w,
-                        self.cancel_h,
-                    ) {
+                    } else if (MenuRect {
+                        x: self.confirm_row_x + self.ok_w + self.ok_cancel_gap,
+                        y: self.confirm_row_y,
+                        w: self.cancel_w,
+                        h: self.cancel_h,
+                    })
+                    .contains(vx, vy)
+                    {
                         cancelled = true;
                     } else if self.is_new_player {
                         for ((_id, _label, level), (radio_x, radio_y)) in
                             self.diff_labels.iter().zip(self.diff_positions)
                         {
-                            if point_in_rect(
-                                vx,
-                                vy,
-                                radio_x - 8,
-                                radio_y - 8,
-                                self.diff_btn_w + 16,
-                                self.diff_btn_h + 38,
-                            ) {
+                            if (MenuRect {
+                                x: radio_x - 8,
+                                y: radio_y - 8,
+                                w: self.diff_btn_w + 16,
+                                h: self.diff_btn_h + 38,
+                            })
+                            .contains(vx, vy)
+                            {
                                 self.difficulty = *level;
                                 break;
                             }
@@ -1792,16 +1788,23 @@ impl DifficultyPromptState {
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if point_in_rect(vx, vy, self.ok_x, self.button_y, self.ok_w, self.ok_h) {
+                    if (MenuRect {
+                        x: self.ok_x,
+                        y: self.button_y,
+                        w: self.ok_w,
+                        h: self.ok_h,
+                    })
+                    .contains(vx, vy)
+                    {
                         confirmed = true;
-                    } else if point_in_rect(
-                        vx,
-                        vy,
-                        self.cancel_x,
-                        self.button_y,
-                        self.cancel_w,
-                        self.cancel_h,
-                    ) {
+                    } else if (MenuRect {
+                        x: self.cancel_x,
+                        y: self.button_y,
+                        w: self.cancel_w,
+                        h: self.cancel_h,
+                    })
+                    .contains(vx, vy)
+                    {
                         cancelled = true;
                     } else if (DIFFICULTY_PRESET_Y..DIFFICULTY_PRESET_Y + DIFFICULTY_PRESET_H)
                         .contains(&vy)
@@ -1809,14 +1812,14 @@ impl DifficultyPromptState {
                         for index in 0..self.preset_labels.len() {
                             let x = DIFFICULTY_PRESET_X
                                 + index as i32 * (DIFFICULTY_PRESET_W + DIFFICULTY_PRESET_GAP);
-                            if point_in_rect(
-                                vx,
-                                vy,
+                            if (MenuRect {
                                 x,
-                                DIFFICULTY_PRESET_Y,
-                                DIFFICULTY_PRESET_W,
-                                DIFFICULTY_PRESET_H,
-                            ) {
+                                y: DIFFICULTY_PRESET_Y,
+                                w: DIFFICULTY_PRESET_W,
+                                h: DIFFICULTY_PRESET_H,
+                            })
+                            .contains(vx, vy)
+                            {
                                 self.difficulty = preset_at(index, self.custom_rules);
                                 break;
                             }

@@ -18,7 +18,7 @@ use crate::widget::FrameWnd;
 use winit::keyboard::KeyCode;
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
+    FOCUS_OUTLINE, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
     enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
@@ -459,13 +459,7 @@ impl ShortcutsScreen {
         {
             let (sx, sy) = transform.to_screen(mb.x, mb.y);
             let (ex, ey) = transform.to_screen(mb.x + mb.w, mb.y + mb.h);
-            renderer.draw_rect_outline_screen(
-                sx - 1,
-                sy - 1,
-                ex + 1,
-                ey + 1,
-                Renderer::create_color_16(255, 220, 80),
-            );
+            renderer.draw_rect_outline_screen(sx - 1, sy - 1, ex + 1, ey + 1, FOCUS_OUTLINE);
         }
 
         if let Some(c) = &cursor {

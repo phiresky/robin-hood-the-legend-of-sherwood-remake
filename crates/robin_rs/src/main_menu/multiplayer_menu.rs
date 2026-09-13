@@ -7,8 +7,8 @@ use crate::application::require;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
-    MENU_H, MENU_W, MenuRect, MenuTransform, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, fitting_grapheme_prefix_by, render_text_virt_font,
+    MENU_H, MENU_W, MenuRect, MenuTransform, TruncationMarker, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt_font, truncate_to_pixel_width,
 };
 use crate::ingame_menu::resources::IngameMenuResources;
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -1338,11 +1338,16 @@ fn render_menu(
             let row_area_x = (LIST_RECT.x + 10) as f32;
             let row_area_w = (scroll_view.content_width() - 12) as f32;
             for cell in column_layout.layout_row(&row, row_area_x, row_area_w) {
-                let fitted = truncate_to_pixel_width(font, cell.text.trim(), cell.span_w as i32);
+                let fitted = truncate_to_pixel_width(
+                    font,
+                    cell.text.trim(),
+                    cell.span_w as i32,
+                    TruncationMarker::Clip,
+                );
                 if fitted.is_empty() {
                     continue;
                 }
-                let text_w = font.text_width(fitted) as f32;
+                let text_w = font.text_width(&fitted) as f32;
                 let cell_x = match cell.align {
                     ColumnAlign::Left => cell.span_x,
                     ColumnAlign::Center => cell.span_x + (cell.span_w - text_w) / 2.0,
@@ -1352,7 +1357,7 @@ fn render_menu(
                     renderer,
                     font,
                     transform,
-                    fitted,
+                    &fitted,
                     cell_x.round() as i32,
                     LIST_RECT.y + 6 + visible_i as i32 * ROW_HEIGHT,
                 );
@@ -1541,16 +1546,6 @@ fn menu_column_layout(mode: &MenuMode) -> ColumnLayout {
             (0.18, ColumnAlign::Left),
         ]),
     }
-}
-
-fn truncate_to_pixel_width<'a>(font: &Font, text: &'a str, max_w: i32) -> &'a str {
-    if max_w <= 0 {
-        return "";
-    }
-    if font.text_width(text) <= max_w {
-        return text;
-    }
-    fitting_grapheme_prefix_by(text, max_w, |candidate| font.text_width(candidate))
 }
 
 fn draw_panel(renderer: &mut Renderer, transform: MenuTransform, rect: &MenuRect) {

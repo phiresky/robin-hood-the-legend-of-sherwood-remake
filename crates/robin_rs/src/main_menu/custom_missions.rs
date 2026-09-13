@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{
-    MENU_W, MenuTransform, align_bottom_right, dim_screen, elide_text_to_width_by,
-    enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
+    FALLBACK_PANEL_EDGE, MENU_W, MenuTransform, align_bottom_right, dim_screen,
+    elide_text_to_width_by, enter_modal_gpu_phase, render_text_virt_font, wrap_text_for_box_font,
 };
 use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo};
 use crate::mod_pack::{MissionEntry, MissionStatus, enumerate_missions, scan_mission_roots};
@@ -481,7 +481,7 @@ fn draw_list(
         )),
         Renderer::create_color_16(20, 15, 10),
     );
-    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, Renderer::create_color_16(180, 160, 100));
+    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, FALLBACK_PANEL_EDGE);
 
     for idx in view.visible_range() {
         let row_y = view.row_y(idx);
@@ -552,7 +552,7 @@ fn draw_detail_pane(
         )),
         Renderer::create_color_16(20, 15, 10),
     );
-    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, Renderer::create_color_16(180, 160, 100));
+    renderer.draw_rect_outline_screen(sx0, sy0, sx1, sy1, FALLBACK_PANEL_EDGE);
 
     // Same body font as the rows + the main menu's profile info block,
     // so the detail pane visually matches the rest of the menu.

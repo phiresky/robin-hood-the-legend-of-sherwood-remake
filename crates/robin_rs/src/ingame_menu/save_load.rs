@@ -17,8 +17,8 @@ use jiff::{Timestamp, tz::TimeZone};
 use std::borrow::Cow;
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, fitting_grapheme_prefix_by, render_text_virt_font,
+    MenuRect, MenuTransform, TruncationMarker, align_bottom_right, dim_screen,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font, truncate_to_pixel_width,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_MSG_REALLY_DELETE_SAVEGAME,
@@ -294,7 +294,12 @@ impl LoadPickerModalState {
                 continue;
             };
             let raw_label = row_label(row, save_manager, &visible, &metadata_text);
-            let label = truncate_to_pixel_width(font, &raw_label, row_area_w);
+            let label = truncate_to_pixel_width(
+                font,
+                &raw_label,
+                row_area_w,
+                TruncationMarker::AsciiEllipsis,
+            );
             if !label.is_empty() {
                 render_text_virt_font(renderer, font, transform, &label, row_area_x, row_y);
             }
@@ -311,7 +316,12 @@ impl LoadPickerModalState {
             .filter(|line| !line.is_empty())
             .enumerate()
             {
-                let detail = truncate_to_pixel_width(font, detail, row_area_w);
+                let detail = truncate_to_pixel_width(
+                    font,
+                    detail,
+                    row_area_w,
+                    TruncationMarker::AsciiEllipsis,
+                );
                 if !detail.is_empty() {
                     render_text_virt_font(
                         renderer,
@@ -714,7 +724,7 @@ fn draw_preview(
         .iter()
         .enumerate()
     {
-        let fitted = truncate_to_pixel_width(font, line, panel_w);
+        let fitted = truncate_to_pixel_width(font, line, panel_w, TruncationMarker::AsciiEllipsis);
         if !fitted.is_empty() {
             render_text_virt_font(
                 renderer,
@@ -998,41 +1008,6 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
     }
 }
 
-/// Truncate `text` to the longest prefix that fits in `max_w` pixels
-/// when rendered with `font`. Oversize text gets an ASCII ellipsis so
-/// clipped metadata is visibly abbreviated instead of looking like a
-/// broken string.
-pub(crate) fn truncate_to_pixel_width<'a>(
-    font: &crate::native_font::Font,
-    text: &'a str,
-    max_w: i32,
-) -> Cow<'a, str> {
-    truncate_to_pixel_width_by(text, max_w, |candidate| font.text_width(candidate))
-}
-
-fn truncate_to_pixel_width_by(
-    text: &str,
-    max_w: i32,
-    measure: impl Fn(&str) -> i32,
-) -> Cow<'_, str> {
-    if max_w <= 0 {
-        return Cow::Borrowed("");
-    }
-    if measure(text) <= max_w {
-        return Cow::Borrowed(text);
-    }
-
-    let ellipsis = "...";
-    let ellipsis_w = measure(ellipsis);
-    if ellipsis_w > max_w {
-        return Cow::Borrowed("");
-    }
-
-    let budget = max_w - ellipsis_w;
-    let prefix = fitting_grapheme_prefix_by(text, budget, measure);
-    Cow::Owned(format!("{prefix}{ellipsis}"))
-}
-
 /// Resync the input-field widget to the current selection. In Save
 /// mode, an existing-slot selection prefills the widget with that
 /// slot's display text (so the user can edit in place and overwrite);
@@ -1220,16 +1195,18 @@ mod tests {
 
     #[test]
     fn save_text_truncation_borrows_unchanged_text() {
+        use crate::ingame_menu::layout::truncate_to_pixel_width_by;
+        const POLICY: TruncationMarker = TruncationMarker::AsciiEllipsis;
         let text = String::from("café");
         let measure = |text: &str| text.chars().count() as i32;
-        let fitted = super::truncate_to_pixel_width_by(&text, 4, measure);
+        let fitted = truncate_to_pixel_width_by(&text, 4, POLICY, measure);
         assert!(matches!(fitted, std::borrow::Cow::Borrowed(_)));
         assert_eq!(fitted.as_ptr(), text.as_ptr());
         for width in [0, 1, 2] {
-            let empty = super::truncate_to_pixel_width_by(&text, width, measure);
+            let empty = truncate_to_pixel_width_by(&text, width, POLICY, measure);
             assert!(matches!(empty, std::borrow::Cow::Borrowed("")));
         }
-        let shortened = super::truncate_to_pixel_width_by(&text, 3, measure);
+        let shortened = truncate_to_pixel_width_by(&text, 3, POLICY, measure);
         assert!(matches!(shortened, std::borrow::Cow::Owned(_)));
         assert_eq!(shortened, "...");
     }
@@ -1252,9 +1229,36 @@ mod tests {
             ("ab cd ef", 6, "ab ..."),
         ] {
             assert_eq!(
-                super::truncate_to_pixel_width_by(text, width, measure),
+                crate::ingame_menu::layout::truncate_to_pixel_width_by(
+                    text,
+                    width,
+                    TruncationMarker::AsciiEllipsis,
+                    measure
+                ),
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn clip_truncation_keeps_whole_graphemes_without_marker() {
+        let measure = |text: &str| text.chars().count() as i32;
+        for (text, width, expected) in [
+            ("abcdef", 6, "abcdef"),
+            ("abcdef", 4, "abcd"),
+            ("abcdef", 0, ""),
+            ("abcdef", -1, ""),
+            ("e\u{301}clair", 1, ""),
+            ("e\u{301}clair", 3, "e\u{301}c"),
+        ] {
+            let fitted = crate::ingame_menu::layout::truncate_to_pixel_width_by(
+                text,
+                width,
+                TruncationMarker::Clip,
+                measure,
+            );
+            assert!(matches!(fitted, std::borrow::Cow::Borrowed(_)));
+            assert_eq!(fitted, expected);
         }
     }
 

@@ -1838,10 +1838,11 @@ impl SaveLoadTaskState {
                     renderer,
                     font,
                     self.transform,
-                    &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                    &crate::ingame_menu::layout::truncate_to_pixel_width(
                         font,
                         &format!("{prefix}{label}"),
                         view.content_width() - 20,
+                        crate::ingame_menu::layout::TruncationMarker::AsciiEllipsis,
                     ),
                     40,
                     row_y,
@@ -1853,10 +1854,11 @@ impl SaveLoadTaskState {
                         renderer,
                         font,
                         self.transform,
-                        &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                        &crate::ingame_menu::layout::truncate_to_pixel_width(
                             font,
                             detail,
                             view.content_width() - 34,
+                            crate::ingame_menu::layout::TruncationMarker::AsciiEllipsis,
                         ),
                         54,
                         row_y + 16 * (line_index as i32 + 1),

@@ -33,6 +33,78 @@ pub(crate) fn fitting_grapheme_prefix_by(
     &text[..fit_end]
 }
 
+/// How [`truncate_to_pixel_width`] marks text that had to be shortened.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TruncationMarker {
+    /// Clip after the last whole grapheme that fits, without a marker.
+    /// Non-positive widths yield "".
+    Clip,
+    /// Reserve room for an ASCII `...` after the last fitting grapheme so
+    /// clipped text is visibly abbreviated. Yields "" when the width is
+    /// non-positive or `...` alone does not fit.
+    AsciiEllipsis,
+    /// Graphics-options label policy: drop one Unicode scalar at a time,
+    /// measuring the complete candidate each step (kerning means widths
+    /// cannot simply be added), and keep `...` even when it cannot fit.
+    // TODO: fold into `AsciiEllipsis` once grapheme-boundary trimming and an
+    // omitted unfittable marker are acceptable for the graphics labels.
+    ScalarEllipsisAlways,
+}
+
+/// Shorten `text` to `max_w` pixels in `font` using the given marker policy.
+/// Text that already fits is returned borrowed and unchanged.
+pub(crate) fn truncate_to_pixel_width<'a>(
+    font: &Font,
+    text: &'a str,
+    max_w: i32,
+    marker: TruncationMarker,
+) -> std::borrow::Cow<'a, str> {
+    truncate_to_pixel_width_by(text, max_w, marker, |candidate| font.text_width(candidate))
+}
+
+pub(crate) fn truncate_to_pixel_width_by(
+    text: &str,
+    max_w: i32,
+    marker: TruncationMarker,
+    measure: impl Fn(&str) -> i32,
+) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    const ELLIPSIS: &str = "...";
+    match marker {
+        TruncationMarker::Clip | TruncationMarker::AsciiEllipsis => {
+            if max_w <= 0 {
+                return Cow::Borrowed("");
+            }
+            if measure(text) <= max_w {
+                return Cow::Borrowed(text);
+            }
+            if marker == TruncationMarker::Clip {
+                return Cow::Borrowed(fitting_grapheme_prefix_by(text, max_w, measure));
+            }
+            let ellipsis_w = measure(ELLIPSIS);
+            if ellipsis_w > max_w {
+                return Cow::Borrowed("");
+            }
+            let prefix = fitting_grapheme_prefix_by(text, max_w - ellipsis_w, measure);
+            Cow::Owned(format!("{prefix}{ELLIPSIS}"))
+        }
+        TruncationMarker::ScalarEllipsisAlways => {
+            if measure(text) <= max_w {
+                return Cow::Borrowed(text);
+            }
+            let mut out = String::with_capacity(text.len() + ELLIPSIS.len());
+            out.push_str(text);
+            out.push_str(ELLIPSIS);
+            while out.len() > ELLIPSIS.len() && measure(&out) > max_w {
+                out.truncate(out.len() - ELLIPSIS.len());
+                out.pop();
+                out.push_str(ELLIPSIS);
+            }
+            Cow::Owned(out)
+        }
+    }
+}
+
 /// Elide at grapheme boundaries, optionally marking text whose hidden
 /// continuation is outside this string. The complete candidate is measured so
 /// font spacing remains part of the width calculation.
@@ -298,6 +370,21 @@ pub struct MenuRect {
     pub h: i32,
 }
 
+impl MenuRect {
+    /// Half-open hit test: the left/top edges are inside, the right/bottom
+    /// edges (`x + w`, `y + h`) are outside.
+    pub const fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
+/// Dark fill of the panel drawn when a menu window bitmap is unavailable.
+pub const FALLBACK_PANEL_FILL: u16 = robin_util::color::rgb565(30, 25, 15);
+/// Parchment-gold edge of fallback panels, buttons and slider tracks.
+pub const FALLBACK_PANEL_EDGE: u16 = robin_util::color::rgb565(180, 160, 100);
+/// Keyboard-focus outline drawn around the focused button.
+pub const FOCUS_OUTLINE: u16 = robin_util::color::rgb565(255, 220, 80);
+
 // ═══════════════════════════════════════════════════════════════════
 // Window background
 // ═══════════════════════════════════════════════════════════════════
@@ -399,7 +486,7 @@ pub fn draw_fallback_rect(renderer: &mut Renderer, x: i32, y: i32, w: i32, h: i3
         )),
         bg,
     );
-    let border = Renderer::create_color_16(180, 160, 100);
+    let border = FALLBACK_PANEL_EDGE;
     renderer.draw_rect_outline_screen(x, y, x + w, y + h, border);
 }
 
@@ -410,8 +497,8 @@ pub fn draw_fallback_panel(renderer: &mut Renderer, transform: MenuTransform, re
         renderer,
         transform,
         rect,
-        Renderer::create_color_16(30, 25, 15),
-        Renderer::create_color_16(180, 160, 100),
+        FALLBACK_PANEL_FILL,
+        FALLBACK_PANEL_EDGE,
     );
 }
 
@@ -465,7 +552,7 @@ pub fn draw_slider(
         y + rect.h / 2 - 3,
         x + rect.w,
         y + rect.h / 2 + 3,
-        Renderer::create_color_16(180, 160, 100),
+        FALLBACK_PANEL_EDGE,
     );
     // Thumb
     let t = if max == 0 {
