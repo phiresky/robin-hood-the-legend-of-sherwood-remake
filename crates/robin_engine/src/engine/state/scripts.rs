@@ -45,7 +45,7 @@ impl<'de> serde::Deserialize<'de> for ScriptRuntime {
 pub(crate) struct PersistedScriptRuntime {
     globals: Vec<i32>,
 
-    mission: Option<crate::engine::PersistedMissionScript>,
+    mission: Option<MissionScript>,
     #[serde(default)]
     spellforge: crate::spellforge::SpellforgeTape,
 }
@@ -63,7 +63,7 @@ impl PersistedScriptRuntime {
             mission: value
                 .mission
                 .as_ref()
-                .map(crate::engine::PersistedMissionScript::capture)
+                .map(MissionScript::persisted_clone)
                 .transpose()?,
             spellforge: value.spellforge.clone(),
         })
@@ -72,9 +72,7 @@ impl PersistedScriptRuntime {
     pub(crate) fn into_runtime(self) -> ScriptRuntime {
         ScriptRuntime {
             globals: self.globals,
-            mission: self
-                .mission
-                .map(crate::engine::PersistedMissionScript::into_runtime),
+            mission: self.mission,
             spellforge: self.spellforge,
             native_attachments_ready: false,
         }
