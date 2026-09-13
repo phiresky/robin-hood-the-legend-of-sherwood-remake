@@ -109,7 +109,7 @@ fn color_action_fill() -> u16 {
     Renderer::create_color_16(40, 50, 35)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, enum_map::Enum)]
 enum ActionButtonVisual {
     Disabled,
     Normal,

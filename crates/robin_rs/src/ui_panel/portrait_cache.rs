@@ -1,4 +1,8 @@
 use super::*;
+use enum_map::EnumMap;
+
+/// Per-character action icon bank: interaction state → the three action slots.
+pub(super) type ActionIconBank = EnumMap<ActionButtonVisual, [Option<SurfaceHandle>; 3]>;
 
 /// Pre-loaded portrait renderer surfaces and action button icons, keyed by [`CharacterKind`].
 ///
@@ -6,6 +10,11 @@ use super::*;
 /// passed to [`HudDrawCtx::draw_panel`] each frame.  The per-character arrays are
 /// indexed via `CharacterKind::as_index()` (`CharacterKind::COUNT`
 /// slots).
+///
+/// The remaining singleton `Option<SurfaceHandle>` fields are kept named on
+/// purpose: each one is read by exactly one draw site with its own placement
+/// rule, and the loader is already table-driven, so an enum-indexed map would
+/// only rename `portraits.guard_surface` to `portraits.indicators[Guard]`.
 pub struct PortraitCache {
     /// Unique retirement authority for every managed upload in this cache.
     pub(super) owned_surfaces: Vec<OwnedSurface>,
@@ -14,7 +23,7 @@ pub struct PortraitCache {
     /// Borrowed renderer surface for each character's face portrait.
     pub(super) surfaces: [Option<SurfaceHandle>; CharacterKind::COUNT],
     /// Per-character action icons, indexed by interaction state then action.
-    pub(super) action_surfaces: [Option<[[Option<SurfaceHandle>; 3]; 5]>; CharacterKind::COUNT],
+    pub(super) action_surfaces: [Option<ActionIconBank>; CharacterKind::COUNT],
     /// Localized display name per character.
     pub(super) localized_names: [Option<String>; CharacterKind::COUNT],
     /// Generic scroll decoration surfaces (shared by all portraits).
@@ -196,6 +205,8 @@ impl PortraitCache {
         Ok(())
     }
 
+    /// Upload every asset group in a fixed order (the order of
+    /// `owned_surfaces` follows it).
     pub(super) fn load_contents(
         &mut self,
         res: &mut ResourceManager,
@@ -203,36 +214,82 @@ impl PortraitCache {
         files: &robin_engine::sbfile::SbFileSystem,
     ) -> anyhow::Result<()> {
         let mut timer = crate::game_session::PhaseTimer::new("portrait cache load");
-        for kind in CharacterKind::VARIANTS {
-            let slot = kind.as_index();
-            let res_id = kind.portrait_resource();
+        self.load_character_portraits(res, renderer)?;
+        timer.step("character portraits");
+        self.load_allied_art(renderer, files)?;
+        timer.step("embedded allied art");
+        self.load_scrolls_and_borders(res, renderer)?;
+        timer.step("scrolls + borders");
+        self.load_action_icons(res, renderer)?;
+        timer.step("action icons");
+        self.load_fighting_overlays(res, renderer)?;
+        self.load_indicators_and_overlays(res, renderer)?;
+        timer.step("indicators + blazons + overlays");
+        self.load_requirement_tables(res, renderer)?;
+        timer.step("requirements tables");
+        timer.total();
+        Ok(())
+    }
 
-            // Portrait resources are BTTN type with bitmask 0b1110;
-            // sub_id 0 is absent, sub_id 1 is the default portrait.
-            match res.get_picture(res_id, 1) {
+    /// Upload the first available of `sub_ids` for an optional resource.
+    /// A miss is logged with the last lookup error and leaves the slot empty.
+    fn load_optional_picture(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+        res_id: ResourceId,
+        sub_ids: &[usize],
+        label: &str,
+    ) -> anyhow::Result<Option<SurfaceHandle>> {
+        let mut last_error = None;
+        for &sub_id in sub_ids {
+            match res.get_picture(res_id, sub_id) {
                 Ok(pic) => {
-                    let surface_id =
-                        owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded portrait for {:?}: resource {res_id}, surface {surface_id:?} ({}x{})",
-                        kind,
+                        "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
-                    self.surfaces[slot] = Some(surface_id);
+                    return Ok(Some(sid));
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to load portrait for {kind:?} (resource {res_id}): {e}",);
-                }
+                Err(error) => last_error = Some(error),
             }
+        }
+        let error = last_error.expect("optional picture lookup needs at least one sub_id");
+        tracing::warn!("Failed to load {label} (resource {res_id}): {error}");
+        Ok(None)
+    }
+
+    fn load_character_portraits(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
+        for kind in CharacterKind::VARIANTS {
+            // Portrait resources are BTTN type with bitmask 0b1110;
+            // sub_id 0 is absent, sub_id 1 is the default portrait.
+            self.surfaces[kind.as_index()] = self.load_optional_picture(
+                res,
+                renderer,
+                kind.portrait_resource(),
+                &[1],
+                &format!("portrait for {kind:?}"),
+            )?;
         }
 
         tracing::info!(
             "Portrait cache: {} surfaces loaded",
             self.surfaces.iter().filter(|s| s.is_some()).count(),
         );
-        timer.step("character portraits");
+        Ok(())
+    }
 
+    fn load_allied_art(
+        &mut self,
+        renderer: &mut Renderer,
+        files: &robin_engine::sbfile::SbFileSystem,
+    ) -> anyhow::Result<()> {
         self.allied_portrait_background = Some(load_ui_image(
             renderer,
             files,
@@ -296,77 +353,48 @@ impl PortraitCache {
                 &format!("allied state icon {index}"),
             )?);
         }
-        timer.step("embedded allied art");
+        Ok(())
+    }
 
+    fn load_scrolls_and_borders(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
-        for (res_id, field, label) in [
-            (
-                RHID_TOP_SCROLL,
-                &mut self.top_scroll_surface as &mut Option<SurfaceHandle>,
-                "top scroll",
-            ),
-            (
-                RHID_TOP_SCROLL_ALTERNATE,
-                &mut self.top_scroll_alt_surface,
-                "top scroll alt",
-            ),
-            (
-                RHID_BOTTOM_SCROLL,
-                &mut self.bottom_scroll_surface,
-                "bottom scroll",
-            ),
-        ] {
-            match res.get_picture(res_id, 1) {
-                Ok(pic) => {
-                    // Build pixel-level hit mask for the top scroll so clicks on
-                    // transparent curved parchment edges fall through.
-                    if res_id == RHID_TOP_SCROLL {
-                        let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
-                        self.top_scroll_hit_mask = Some(picture_hit_mask(pic, tc)?);
-                        tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
-                    }
-
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
-                }
-            }
+        // Build pixel-level hit mask for the top scroll so clicks on
+        // transparent curved parchment edges fall through.
+        if let Ok(pic) = res.get_picture(RHID_TOP_SCROLL, 1) {
+            let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
+            self.top_scroll_hit_mask = Some(picture_hit_mask(pic, tc)?);
+            tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
         }
+        self.top_scroll_surface =
+            self.load_optional_picture(res, renderer, RHID_TOP_SCROLL, &[1], "top scroll")?;
+        self.top_scroll_alt_surface = self.load_optional_picture(
+            res,
+            renderer,
+            RHID_TOP_SCROLL_ALTERNATE,
+            &[1],
+            "top scroll alt",
+        )?;
+        self.bottom_scroll_surface =
+            self.load_optional_picture(res, renderer, RHID_BOTTOM_SCROLL, &[1], "bottom scroll")?;
 
-        for (res_id, field, label) in [
-            (
-                resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
-                &mut self.portrait_page_left as &mut Option<SurfaceHandle>,
-                "portrait page left",
-            ),
-            (
-                resource_ids::RHID_PORTRAIT_SCROLL_RIGHT,
-                &mut self.portrait_page_right,
-                "portrait page right",
-            ),
-        ] {
-            let picture = match res.get_picture(res_id, 1) {
-                Ok(picture) => Ok(picture),
-                Err(_) => res.get_picture(res_id, 0),
-            };
-            match picture {
-                Ok(pic) => {
-                    *field = Some(owned_picture_surface(
-                        renderer,
-                        &mut self.owned_surfaces,
-                        pic,
-                    )?)
-                }
-                Err(error) => tracing::warn!("Failed to load {label}: {error}"),
-            }
-        }
+        self.portrait_page_left = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
+            &[1, 0],
+            "portrait page left",
+        )?;
+        self.portrait_page_right = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_PORTRAIT_SCROLL_RIGHT,
+            &[1, 0],
+            "portrait page right",
+        )?;
 
         // ── Load panel border frame pieces ──
         // Choose the center piece based on screen width (800 vs 1024).
@@ -375,52 +403,49 @@ impl PortraitCache {
         } else {
             RHID_MIDDLE_800
         };
-        for (res_id, field, label) in [
-            (
-                RHID_TOP_LEFT_CORNER,
-                &mut self.border_top_left as &mut Option<SurfaceHandle>,
-                "border top-left",
-            ),
-            (
-                RHID_TOP_RIGHT_CORNER,
-                &mut self.border_top_right,
-                "border top-right",
-            ),
-            (
-                RHID_BOTTOM_LEFT_CORNER,
-                &mut self.border_bottom_left,
-                "border bottom-left",
-            ),
-            (
-                RHID_BOTTOM_RIGHT_CORNER,
-                &mut self.border_bottom_right,
-                "border bottom-right",
-            ),
-            (middle_id, &mut self.border_middle, "border middle"),
-        ] {
-            match res.get_picture(res_id, 0) {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
-                }
-            }
-        }
+        self.border_top_left = self.load_optional_picture(
+            res,
+            renderer,
+            RHID_TOP_LEFT_CORNER,
+            &[0],
+            "border top-left",
+        )?;
+        self.border_top_right = self.load_optional_picture(
+            res,
+            renderer,
+            RHID_TOP_RIGHT_CORNER,
+            &[0],
+            "border top-right",
+        )?;
+        self.border_bottom_left = self.load_optional_picture(
+            res,
+            renderer,
+            RHID_BOTTOM_LEFT_CORNER,
+            &[0],
+            "border bottom-left",
+        )?;
+        self.border_bottom_right = self.load_optional_picture(
+            res,
+            renderer,
+            RHID_BOTTOM_RIGHT_CORNER,
+            &[0],
+            "border bottom-right",
+        )?;
+        self.border_middle =
+            self.load_optional_picture(res, renderer, middle_id, &[0], "border middle")?;
+        Ok(())
+    }
 
-        timer.step("scrolls + borders");
-
-        // ── Load action button icons (normal + focused + pressed states) ──
+    /// Load action button icons (normal + focused + pressed states).
+    fn load_action_icons(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
             let action_res_ids = kind.action_resources();
-            let mut icons = [[None; 3]; 5];
+            let mut icons = ActionIconBank::default();
             for (i, opt_id) in action_res_ids.iter().enumerate() {
                 let Some(res_id) = opt_id else {
                     continue;
@@ -438,7 +463,7 @@ impl PortraitCache {
                 ] {
                     match res.get_picture(*res_id, sub_id) {
                         Ok(pic) => {
-                            icons[state as usize][i] = Some(owned_picture_surface(
+                            icons[state][i] = Some(owned_picture_surface(
                                 renderer,
                                 &mut self.owned_surfaces,
                                 pic,
@@ -457,31 +482,25 @@ impl PortraitCache {
             "Portrait cache: {} action icon sets loaded",
             self.action_surfaces.iter().filter(|s| s.is_some()).count(),
         );
-        timer.step("action icons");
+        Ok(())
+    }
 
-        // ── Load fighting sword overlay surfaces (per character) ──
+    /// Load fighting sword overlay surfaces (per character).
+    fn load_fighting_overlays(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         for kind in CharacterKind::VARIANTS {
-            let slot = kind.as_index();
-            let res_id = kind.fighting_resource();
-            // Fighting overlays are PICT type; sub_id 0 is the default picture.
-            match res.get_picture(res_id, 0) {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded fighting overlay for {kind:?}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    self.fighting_surfaces[slot] = Some(sid);
-                }
-                Err(_) => {
-                    // Try sub_id 1 as fallback (some resources use BTTN layout)
-                    if let Ok(pic) = res.get_picture(res_id, 1) {
-                        let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                        self.fighting_surfaces[slot] = Some(sid);
-                    }
-                }
-            }
+            // Fighting overlays are PICT type; sub_id 0 is the default
+            // picture, sub_id 1 the fallback for resources using BTTN layout.
+            self.fighting_surfaces[kind.as_index()] = self.load_optional_picture(
+                res,
+                renderer,
+                kind.fighting_resource(),
+                &[0, 1],
+                &format!("fighting overlay for {kind:?}"),
+            )?;
         }
         tracing::info!(
             "Portrait cache: {} fighting overlays loaded",
@@ -490,201 +509,126 @@ impl PortraitCache {
                 .filter(|s| s.is_some())
                 .count(),
         );
+        Ok(())
+    }
 
+    fn load_indicators_and_overlays(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         // ── Load guard and trumpet indicator surfaces ──
-        for (res_id, field, label) in [
-            (
-                resource_ids::RHID_GUARD,
-                &mut self.guard_surface as &mut Option<SurfaceHandle>,
-                "guard indicator",
-            ),
-            (
-                resource_ids::RHID_TRUMPET,
-                &mut self.trumpet_surface,
-                "trumpet indicator",
-            ),
-            (
-                resource_ids::RHID_CLOVER,
-                &mut self.amulet_surface,
-                "amulet/clover indicator",
-            ),
-        ] {
-            // Try sub_id 0 first, then sub_id 1
-            let pic = match res.get_picture(res_id, 0) {
-                Ok(p) => Ok(p),
-                Err(_) => res.get_picture(res_id, 1),
-            };
-            match pic {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
-                }
-            }
-        }
+        self.guard_surface = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_GUARD,
+            &[0, 1],
+            "guard indicator",
+        )?;
+        self.trumpet_surface = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_TRUMPET,
+            &[0, 1],
+            "trumpet indicator",
+        )?;
+        self.amulet_surface = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_CLOVER,
+            &[0, 1],
+            "amulet/clover indicator",
+        )?;
 
         // ── Load QA icon surfaces (RHID_QUICKACTION / _IN_PROGRESS) ──
         // RHID_QUICKACTION is the normal icon and RHID_QUICKACTION_IN_PROGRESS
         // is the recording-alternate.  Shared across all PCs and all three slots.
-        for (res_id, field, label) in [
-            (
-                resource_ids::RHID_QUICKACTION,
-                &mut self.qa_icon_surface as &mut Option<SurfaceHandle>,
-                "QA icon",
-            ),
-            (
-                resource_ids::RHID_QUICKACTION_IN_PROGRESS,
-                &mut self.qa_icon_recording_surface,
-                "QA icon (recording)",
-            ),
-        ] {
-            let pic = match res.get_picture(res_id, 1) {
-                Ok(p) => Ok(p),
-                Err(_) => res.get_picture(res_id, 0),
-            };
-            match pic {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
-                }
-            }
-        }
+        self.qa_icon_surface = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_QUICKACTION,
+            &[1, 0],
+            "QA icon",
+        )?;
+        self.qa_icon_recording_surface = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_QUICKACTION_IN_PROGRESS,
+            &[1, 0],
+            "QA icon (recording)",
+        )?;
 
         // ── Load PC-info popup resources (backgrounds + pips) ──
         // Backgrounds and pip rows both live at sub_id 0.  We blit one pip
         // per lit slot rather than maintaining widget visibility flags.
-        for (res_id, field, label) in [
-            (
-                resource_ids::RHID_INFO_POPUP_BKGND_TINY,
-                &mut self.info_popup_bg_tiny as &mut Option<SurfaceHandle>,
-                "info popup bg (tiny)",
-            ),
-            (
-                resource_ids::RHID_INFO_POPUP_BKGND_HUGE,
-                &mut self.info_popup_bg_huge,
-                "info popup bg (huge)",
-            ),
-            (
-                resource_ids::RHID_INFO_POPUP_SWORD,
-                &mut self.info_popup_sword,
-                "info popup sword pip",
-            ),
-            (
-                resource_ids::RHID_INFO_POPUP_BOW,
-                &mut self.info_popup_bow,
-                "info popup bow pip",
-            ),
-        ] {
-            let pic = match res.get_picture(res_id, 0) {
-                Ok(p) => Ok(p),
-                Err(_) => res.get_picture(res_id, 1),
-            };
-            match pic {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
-                }
-            }
-        }
+        self.info_popup_bg_tiny = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_INFO_POPUP_BKGND_TINY,
+            &[0, 1],
+            "info popup bg (tiny)",
+        )?;
+        self.info_popup_bg_huge = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_INFO_POPUP_BKGND_HUGE,
+            &[0, 1],
+            "info popup bg (huge)",
+        )?;
+        self.info_popup_sword = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_INFO_POPUP_SWORD,
+            &[0, 1],
+            "info popup sword pip",
+        )?;
+        self.info_popup_bow = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_INFO_POPUP_BOW,
+            &[0, 1],
+            "info popup bow pip",
+        )?;
 
         // ── Load blazon-bar icons (tiny set) ──
         // `RHID_BLAZON_TINY` carries 3 sub-pictures: 0 = empty, 1 = normal
         // (won), 2 = castle (to-collect).  The tiny set is the default
         // layout on 800+ width panels.
-        for (sub_id, field, label) in [
-            (
-                0usize,
-                &mut self.blazon_tiny_empty as &mut Option<SurfaceHandle>,
-                "blazon tiny empty",
-            ),
-            (1, &mut self.blazon_tiny_normal, "blazon tiny normal"),
-            (2, &mut self.blazon_tiny_castle, "blazon tiny castle"),
-        ] {
-            match res.get_picture(resource_ids::RHID_BLAZON_TINY, sub_id) {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {} sub {sub_id}, surface {sid:?} ({}x{})",
-                        resource_ids::RHID_BLAZON_TINY,
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label}: {e}");
-                }
-            }
-        }
+        let blazon = resource_ids::RHID_BLAZON_TINY;
+        self.blazon_tiny_empty =
+            self.load_optional_picture(res, renderer, blazon, &[0], "blazon tiny empty")?;
+        self.blazon_tiny_normal =
+            self.load_optional_picture(res, renderer, blazon, &[1], "blazon tiny normal")?;
+        self.blazon_tiny_castle =
+            self.load_optional_picture(res, renderer, blazon, &[2], "blazon tiny castle")?;
 
         // ── Load requirements-bar status overlays (yes/no, selected) ──
         // `RHID_YES_NO` has sub 0 = yes tick, sub 1 = no cross.
-        for (res_id, sub_id, field, label) in [
-            (
-                resource_ids::RHID_YES_NO,
-                0usize,
-                &mut self.req_yes as &mut Option<SurfaceHandle>,
-                "requirements yes overlay",
-            ),
-            (
-                resource_ids::RHID_YES_NO,
-                1,
-                &mut self.req_no,
-                "requirements no overlay",
-            ),
-            (
-                resource_ids::RHID_SELECTED_ACTION,
-                0,
-                &mut self.req_selected,
-                "requirements selected overlay",
-            ),
-        ] {
-            match res.get_picture(res_id, sub_id) {
-                Ok(pic) => {
-                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
-                    tracing::info!(
-                        "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid:?} ({}x{})",
-                        pic.width,
-                        pic.height,
-                    );
-                    *field = Some(sid);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to load {label}: {e}");
-                }
-            }
-        }
+        let yes_no = resource_ids::RHID_YES_NO;
+        self.req_yes =
+            self.load_optional_picture(res, renderer, yes_no, &[0], "requirements yes overlay")?;
+        self.req_no =
+            self.load_optional_picture(res, renderer, yes_no, &[1], "requirements no overlay")?;
+        self.req_selected = self.load_optional_picture(
+            res,
+            renderer,
+            resource_ids::RHID_SELECTED_ACTION,
+            &[0],
+            "requirements selected overlay",
+        )?;
+        Ok(())
+    }
 
-        timer.step("indicators + blazons + overlays");
-
-        // ── Pre-load all per-slot sub-pictures of the requirements-bar
-        //    icon tables.  Each resource carries one sub-picture per
-        //    character-profile or per-action enum value.  Loading the full
-        //    table here lets `draw_requirements_bar` blit `(res_id, sub_id)`
-        //    without ever re-borrowing the `ResourceManager` at render time.
+    /// Pre-load all per-slot sub-pictures of the requirements-bar icon
+    /// tables.  Each resource carries one sub-picture per character-profile
+    /// or per-action enum value.  Loading the full table here lets
+    /// `draw_requirements_bar` blit `(res_id, sub_id)` without ever
+    /// re-borrowing the `ResourceManager` at render time.
+    fn load_requirement_tables(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+    ) -> anyhow::Result<()> {
         for res_id in [
             resource_ids::RHID_REQUIRED_PC,
             resource_ids::RHID_REQUIRED_ACTION,
@@ -708,8 +652,6 @@ impl PortraitCache {
                 self.sub_pictures.insert((res_id, sub_id), surface);
             }
         }
-        timer.step("requirements tables");
-        timer.total();
         Ok(())
     }
 
@@ -752,7 +694,7 @@ impl PortraitCache {
     ) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_surfaces[kind.as_index()]
             .as_ref()
-            .map(|icons| &icons[state as usize])
+            .map(|icons| &icons[state])
     }
 
     /// Look up the fighting sword overlay surface for a character.
