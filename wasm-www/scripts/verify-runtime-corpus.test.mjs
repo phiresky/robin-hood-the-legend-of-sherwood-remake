@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { brotliCompressSync } from 'node:zlib';
 import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
 import { createHash } from 'node:crypto';
-import { copyFile, cp, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, lstat, mkdir, mkdtemp, open, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -288,6 +288,67 @@ test('runtime update retains immutable wasm versions and never imports the datad
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     await assert.rejects(readFile(resolve(updated, DEMO_CONTENT_MANIFEST_PATH)), /ENOENT/u);
+});
+
+async function setTreeModes(path, directoryMode, fileMode) {
+    const facts = await lstat(path);
+    if (!facts.isDirectory()) {
+        await chmod(path, fileMode);
+        return;
+    }
+    // Writable first so children can be changed, then the requested mode.
+    await chmod(path, 0o700);
+    for (const entry of await readdir(path)) await setTreeModes(resolve(path, entry), directoryMode, fileMode);
+    await chmod(path, directoryMode);
+}
+
+async function treeModes(path, prefix = '') {
+    const modes = [[prefix, (await lstat(path)).mode & 0o777]];
+    if ((await lstat(path)).isDirectory()) {
+        for (const entry of (await readdir(path)).sort()) modes.push(...await treeModes(resolve(path, entry), `${prefix}/${entry}`));
+    }
+    return modes;
+}
+
+test('runtime update assembles onto a read-only archived corpus without making it writable', async t => {
+    const first = await runtimeAddition('111111111111');
+    const second = await runtimeAddition('222222222222');
+    const release = await datadirRelease();
+    const root = await mkdtemp(resolve(tmpdir(), 'runtime-readonly-'));
+    const original = resolve(root, 'original');
+    const updated = resolve(root, 'updated');
+    t.after(async () => {
+        await setTreeModes(original, 0o755, 0o644).catch(() => {});
+        await Promise.all([
+            rm(first, { recursive: true, force: true }), rm(second, { recursive: true, force: true }),
+            rm(release.root, { recursive: true, force: true }), rm(root, { recursive: true, force: true }),
+        ]);
+    });
+    await assembleRuntimeCorpus({
+        existing: null, addition: first, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: original,
+    });
+    await setTreeModes(original, 0o555, 0o444);
+    const archivedModes = await treeModes(original);
+
+    const result = await assembleRuntimeCorpus({
+        existing: original, addition: second, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: updated,
+    });
+    assert.equal(result.assetCount, 22);
+    assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
+    assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
+    assert.deepEqual(await treeModes(original), archivedModes);
+    assert.equal(JSON.parse(await readFile(resolve(original, 'wasm/latest.json'))).short, '111111111111');
+
+    // A failed assembly removes its read-only-derived staging tree.
+    const failed = resolve(root, 'failed');
+    await assert.rejects(assembleRuntimeCorpus({
+        existing: original, addition: first, datadirAuthority: release.authority,
+        datadirDeployment: release.receipt, output: failed,
+    }));
+    assert.deepEqual((await readdir(root)).filter(name => name.includes('assembling')), []);
+    assert.deepEqual(await treeModes(original), archivedModes);
 });
 
 function canonicalJson(value) {

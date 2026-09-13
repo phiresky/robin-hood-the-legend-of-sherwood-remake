@@ -1,4 +1,4 @@
-import { cp, copyFile, lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
+import { chmod, cp, copyFile, lstat, mkdir, mkdtemp, readdir, rename, rm } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyDatadirDeploymentReceipt } from './datadir-release-authority.mjs';
@@ -23,6 +23,31 @@ function requireDisjointOutput(output, inputs) {
             throw new Error(`output must be disjoint from every input: ${output} overlaps ${input}`);
         }
     }
+}
+
+/**
+ * Retained runtime corpora are archived read-only and `cp` preserves directory
+ * modes. Only the private staging copy's directories become owner-writable, so
+ * a new build can be added and a failed staging tree can be removed. The
+ * archived source is never modified.
+ */
+async function makeStagingDirectoriesWritable(directory) {
+    const facts = await lstat(directory);
+    if (!facts.isDirectory()) return;
+    await chmod(directory, facts.mode | 0o700);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.isDirectory()) await makeStagingDirectoriesWritable(resolve(directory, entry.name));
+    }
+}
+
+/**
+ * Replace a mutable pointer file in the staging copy. Archived files may be
+ * read-only, so the staged copy is unlinked (its directory is writable) instead
+ * of being opened for writing.
+ */
+async function replaceStagedFile(source, destination) {
+    await rm(destination, { force: true });
+    await copyFile(source, destination);
 }
 
 function requireDemoBinding(runtime, deployment) {
@@ -87,6 +112,7 @@ export async function assembleRuntimeCorpus({
                 force: false,
                 errorOnExist: true,
             });
+            await makeStagingDirectoriesWritable(stagingRoot);
         } else {
             for (const entry of await readdir(existingRoot)) {
                 await cp(resolve(existingRoot, entry), resolve(stagingRoot, entry), {
@@ -95,6 +121,7 @@ export async function assembleRuntimeCorpus({
                     errorOnExist: true,
                 });
             }
+            await makeStagingDirectoriesWritable(stagingRoot);
             const destination = resolve(stagingRoot, 'wasm', additionAuthority.latest.short);
             await requireAbsent(destination);
             await cp(resolve(additionRoot, 'wasm', additionAuthority.latest.short), destination, {
@@ -102,15 +129,17 @@ export async function assembleRuntimeCorpus({
                 force: false,
                 errorOnExist: true,
             });
-            await copyFile(resolve(additionRoot, 'wasm/latest.json'), resolve(stagingRoot, 'wasm/latest.json'));
+            await replaceStagedFile(resolve(additionRoot, 'wasm/latest.json'), resolve(stagingRoot, 'wasm/latest.json'));
         }
-        await copyFile(deploymentPath, resolve(stagingRoot, DATADIR_BINDING_PATH));
+        await replaceStagedFile(deploymentPath, resolve(stagingRoot, DATADIR_BINDING_PATH));
+        await rm(resolve(stagingRoot, '_headers'), { force: true });
         await stageCloudflareHeaders('runtime', stagingRoot);
         const metrics = await verifyRuntimeCorpus(stagingRoot, { datadirAuthorityPath: authorityPath, retainedGenerations });
         await requireAbsent(outputRoot);
         await rename(stagingRoot, outputRoot);
         return metrics;
     } catch (error) {
+        await makeStagingDirectoriesWritable(stagingRoot);
         await rm(stagingRoot, { recursive: true, force: true });
         throw error;
     }
