@@ -131,7 +131,7 @@ impl LegacySequenceManagerState {
             let mut sequences = Vec::new();
             reserve(reader, &mut sequences, sequence_count, "sequences")?;
             for index in 0..sequence_count {
-                sequences.push(reader.scope(format!("sequences[{index}]"), |reader| {
+                sequences.push(reader.scope_indexed("sequences", index, |reader| {
                     Ok(LegacyManagedSequence {
                         start_offset: reader.offset(),
                         body: read_sequence_with_pre_serialization(reader, &limits.payload)?,
@@ -150,8 +150,9 @@ impl LegacySequenceManagerState {
                 "deferred_elements",
             )?;
             for index in 0..deferred_count {
-                deferred_elements.push(reader.scope(
-                    format!("deferred_elements[{index}]"),
+                deferred_elements.push(reader.scope_indexed(
+                    "deferred_elements",
+                    index,
                     |reader| {
                         let offset = reader.offset();
                         let element = read_sequence_element_ref(reader, "element")?;

@@ -1124,7 +1124,7 @@ fn read_ai_log_lines(
         let count = reader.read_count_u32("count", maximum)?;
         let mut values = reserve(reader, "items", count)?;
         for index in 0..count {
-            values.push(reader.scope(format!("items[{index}]"), |reader| {
+            values.push(reader.scope_indexed("items", index, |reader| {
                 Ok(match abi_profile {
                     LegacySaveAbiProfile::PortLinuxI386V48 => {
                         LegacyAiLogLine::PortLinuxType(reader.read_i32("log_type")?)
@@ -1149,7 +1149,7 @@ fn read_ai_log_lines(
 
 fn read_ai_position(
     reader: &mut LegacyReader<'_>,
-    field: impl Into<std::borrow::Cow<'static, str>>,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyAiPosition> {
     reader.scope(field, |reader| {
         reader.read_signature(
@@ -1181,7 +1181,7 @@ fn read_path_status(
         ensure_count(reader, "history.count", count, maximum_history)?;
         let mut history = reserve(reader, "history", count)?;
         for index in 0..count {
-            history.push(reader.scope(format!("history[{index}]"), |reader| {
+            history.push(reader.scope_indexed("history", index, |reader| {
                 Ok(LegacyAiPathHistoryEntry {
                     position_x: reader.read_f32("position.x")?,
                     position_y: reader.read_f32("position.y")?,
@@ -1210,7 +1210,7 @@ fn read_stimulus_list(
     let count = reader.read_count_u32("stimulus_queue.count", maximum)?;
     let mut values = reserve(reader, "stimulus_queue", count)?;
     for index in 0..count {
-        values.push(reader.scope(format!("stimulus_queue[{index}]"), |reader| {
+        values.push(reader.scope_indexed("stimulus_queue", index, |reader| {
             read_stimulus(reader, maximum_nested_list)
         })?);
     }

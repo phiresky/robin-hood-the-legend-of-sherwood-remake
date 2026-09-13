@@ -108,7 +108,7 @@ fn read_sequence(
     reserve(reader, &mut elements, count, "elements")?;
     let mut counted_in_progress = 0_usize;
     for index in 0..count {
-        let element = reader.scope(format!("elements[{index}]"), |reader| {
+        let element = reader.scope_indexed("elements", index, |reader| {
             LegacyInlineSequenceElement::read(reader, limits, nesting_depth, use_pre_serialization)
         })?;
         if element.base().state == 2 {
@@ -263,7 +263,7 @@ impl LegacySequenceElementBase {
         let mut orders = Vec::new();
         reserve(reader, &mut orders, order_count, "orders")?;
         for index in 0..order_count {
-            orders.push(reader.scope(format!("orders[{index}]"), LegacyInlineOrder::read)?);
+            orders.push(reader.scope_indexed("orders", index, LegacyInlineOrder::read)?);
         }
         let manager_fixups = if use_pre_serialization {
             let next_offset = reader.offset();
@@ -438,9 +438,9 @@ impl LegacySequenceElementGeneric {
         let mut fields = Vec::new();
         reserve(reader, &mut fields, count, "fields")?;
         for index in 0..count {
-            fields.push(reader.scope(format!("fields[{index}]"), |reader| {
-                LegacyGenericField::read(reader)
-            })?);
+            fields.push(
+                reader.scope_indexed("fields", index, |reader| LegacyGenericField::read(reader))?,
+            );
         }
         Ok(Self { base, fields })
     }

@@ -64,7 +64,7 @@ impl LegacyElementEnvelope {
         let mut previous_creation_order = None;
 
         for slot in 0..count {
-            let record = reader.scope(format!("elements[{slot}]"), |reader| {
+            let record = reader.scope_indexed("elements", slot, |reader| {
                 LegacyElementRecord::read(reader, slot, config)
             })?;
 

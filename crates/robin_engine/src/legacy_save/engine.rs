@@ -8,7 +8,7 @@ use super::read_helpers::DEFAULT_LIST_LIMIT;
 use super::read_helpers::{read_array, read_point2};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyContext, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 
@@ -262,7 +262,7 @@ fn read_short_briefing_vec(
         let count = reader.read_count_u32("count", limit)?;
         let mut values = try_vec(reader, "items", count)?;
         for index in 0..count {
-            values.push(reader.scope(format!("items[{index}]"), |reader| {
+            values.push(reader.scope_indexed("items", index, |reader| {
                 Ok(LegacyShortBriefing {
                     id: reader.read_u32("id")?,
                     done: reader.read_bool("done")?,
@@ -380,7 +380,7 @@ impl LegacySoundSourceManager {
             }
             let mut slots = try_vec(reader, "slots", count)?;
             for index in 0..count {
-                slots.push(reader.scope(format!("slots[{index}]"), |reader| {
+                slots.push(reader.scope_indexed("slots", index, |reader| {
                     let slot_index = reader.read_i16("slot_index")?;
                     if slot_index == -1 {
                         Ok(None)
@@ -463,7 +463,7 @@ impl LegacySoundSource {
             }
             let mut shape = try_vec(reader, "shape", count)?;
             for index in 0..count {
-                shape.push(read_point2(reader, format!("shape[{index}]"))?);
+                shape.push(read_point2(reader, LegacyContext::Indexed("shape", index))?);
             }
             Ok(Self {
                 kind,

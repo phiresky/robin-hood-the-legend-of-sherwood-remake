@@ -403,9 +403,9 @@ pub fn read_fx_masked_payload(
 
 fn read_point2_f32(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyPoint2 {
             x: reader.read_f32("x")?,
             y: reader.read_f32("y")?,
@@ -415,9 +415,9 @@ fn read_point2_f32(
 
 fn read_point2_f64(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyPoint2 {
             x: read_f64(reader, "x")? as f32,
             y: read_f64(reader, "y")? as f32,

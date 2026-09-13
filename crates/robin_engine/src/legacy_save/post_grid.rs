@@ -228,7 +228,7 @@ impl LegacyFastFindGridState {
             let mut patches = Vec::new();
             reserve(reader, &mut patches, topology.patches.len(), "patches")?;
             for (index, patch_topology) in topology.patches.iter().enumerate() {
-                patches.push(reader.scope(format!("patches[{index}]"), |reader| {
+                patches.push(reader.scope_indexed("patches", index, |reader| {
                     read_patch(reader, patch_topology, limits, payload_limits)
                 })?);
             }
@@ -238,7 +238,7 @@ impl LegacyFastFindGridState {
             for (index, topology) in topology.gates.iter().enumerate() {
                 gates.push(match topology {
                     LegacyGateTopology::Door => {
-                        LegacyGateState::Door(reader.scope(format!("gates[{index}]"), read_door)?)
+                        LegacyGateState::Door(reader.scope_indexed("gates", index, read_door)?)
                     }
                     LegacyGateTopology::Stateless => LegacyGateState::Stateless,
                 });
@@ -249,30 +249,27 @@ impl LegacyFastFindGridState {
                 let LegacyScriptObjectTopology::Sector { associated_class } = script_object else {
                     continue;
                 };
-                script_sectors.push(reader.scope(
-                    format!("script_objects[{index}]"),
-                    |reader| {
-                        reader.read_signature(
-                            "fingerprint",
-                            FINGERPRINT_SCRIPT_SECTOR,
-                            "script-sector fingerprint",
-                        )?;
-                        let occupants = read_occupants(reader, limits)?;
-                        let script_members = associated_class
-                            .as_deref()
-                            .map(|class_name| {
-                                reader.scope("script_members", |reader| {
-                                    context.read_sector_script_members(reader, class_name)
-                                })
+                script_sectors.push(reader.scope_indexed("script_objects", index, |reader| {
+                    reader.read_signature(
+                        "fingerprint",
+                        FINGERPRINT_SCRIPT_SECTOR,
+                        "script-sector fingerprint",
+                    )?;
+                    let occupants = read_occupants(reader, limits)?;
+                    let script_members = associated_class
+                        .as_deref()
+                        .map(|class_name| {
+                            reader.scope("script_members", |reader| {
+                                context.read_sector_script_members(reader, class_name)
                             })
-                            .transpose()?;
-                        Ok(LegacyScriptSectorState {
-                            script_object_index: index,
-                            occupants,
-                            script_members,
                         })
-                    },
-                )?);
+                        .transpose()?;
+                    Ok(LegacyScriptSectorState {
+                        script_object_index: index,
+                        occupants,
+                        script_members,
+                    })
+                })?);
             }
 
             let mut special_sectors = Vec::new();
@@ -291,33 +288,37 @@ impl LegacyFastFindGridState {
                         }
                     }
                     LegacySectorTopology::Building => {
-                        reader.scope(format!("sectors[{index}].building"), |reader| {
-                            reader.read_signature(
-                                "fingerprint",
-                                FINGERPRINT_BUILDING_SECTOR,
-                                "building-sector fingerprint",
-                            )?;
-                            Ok(LegacySpecialSectorState::Building {
-                                sector_index: index,
-                                occupants: read_occupants(reader, limits)?,
-                                arrow_reserve: reader.read_bool("arrow_reserve")?,
+                        reader.scope_indexed("sectors", index, |reader| {
+                            reader.scope("building", |reader| {
+                                reader.read_signature(
+                                    "fingerprint",
+                                    FINGERPRINT_BUILDING_SECTOR,
+                                    "building-sector fingerprint",
+                                )?;
+                                Ok(LegacySpecialSectorState::Building {
+                                    sector_index: index,
+                                    occupants: read_occupants(reader, limits)?,
+                                    arrow_reserve: reader.read_bool("arrow_reserve")?,
+                                })
                             })
                         })?
                     }
                     LegacySectorTopology::Lift => {
-                        reader.scope(format!("sectors[{index}].lift"), |reader| {
-                            reader.read_signature(
-                                "fingerprint",
-                                FINGERPRINT_LIFT_SECTOR,
-                                "lift-sector fingerprint",
-                            )?;
-                            Ok(LegacySpecialSectorState::Lift {
-                                sector_index: index,
-                                occupants_pc: reader.read_u16("occupants_pc")?,
-                                occupants: reader.read_u16("occupants")?,
-                                occupied_upwards: reader.read_bool("occupied_upwards")?,
-                                occupied_downwards: reader.read_bool("occupied_downwards")?,
-                                wait_time: reader.read_u32("wait_time")?,
+                        reader.scope_indexed("sectors", index, |reader| {
+                            reader.scope("lift", |reader| {
+                                reader.read_signature(
+                                    "fingerprint",
+                                    FINGERPRINT_LIFT_SECTOR,
+                                    "lift-sector fingerprint",
+                                )?;
+                                Ok(LegacySpecialSectorState::Lift {
+                                    sector_index: index,
+                                    occupants_pc: reader.read_u16("occupants_pc")?,
+                                    occupants: reader.read_u16("occupants")?,
+                                    occupied_upwards: reader.read_bool("occupied_upwards")?,
+                                    occupied_downwards: reader.read_bool("occupied_downwards")?,
+                                    wait_time: reader.read_u32("wait_time")?,
+                                })
                             })
                         })?
                     }
@@ -337,8 +338,9 @@ impl LegacyFastFindGridState {
                 "static_repulsive_points",
             )?;
             for index in 0..point_count {
-                static_repulsive_points.push(reader.scope(
-                    format!("static_repulsive_points[{index}]"),
+                static_repulsive_points.push(reader.scope_indexed(
+                    "static_repulsive_points",
+                    index,
                     |reader| {
                         Ok(LegacyLayeredRepulsivePoint {
                             point: read_repulsive_point(reader)?,

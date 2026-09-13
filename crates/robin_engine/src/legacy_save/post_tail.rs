@@ -344,7 +344,7 @@ impl LegacyGlobalAiState {
                 "seek_points",
             )?;
             for index in 0..topology.seek_point_count {
-                seek_points.push(reader.scope(format!("seek_points[{index}]"), |reader| {
+                seek_points.push(reader.scope_indexed("seek_points", index, |reader| {
                     reader.read_signature(
                         "fingerprint",
                         FINGERPRINT_SEEK_POINT,
@@ -369,8 +369,9 @@ impl LegacyGlobalAiState {
             for (sector_index, &point_count) in
                 topology.archery_sector_point_counts.iter().enumerate()
             {
-                archery_sectors.push(reader.scope(
-                    format!("archery_sectors[{sector_index}]"),
+                archery_sectors.push(reader.scope_indexed(
+                    "archery_sectors",
+                    sector_index,
                     |reader| {
                         let start_offset = reader.offset();
                         reader.read_signature(
@@ -462,7 +463,7 @@ impl LegacyPathfinderState {
             let mut requests = Vec::new();
             reserve(reader, &mut requests, count, "requests")?;
             for index in 0..count {
-                requests.push(reader.scope(format!("requests[{index}]"), |reader| {
+                requests.push(reader.scope_indexed("requests", index, |reader| {
                     Ok(LegacyPathRequest {
                         action: reader.read_i32("action")?,
                         reverse: reader.read_bool("reverse")?,
@@ -490,8 +491,9 @@ impl LegacyPathfinderState {
                 "layer_area_states",
             )?;
             for (layer_index, &area_count) in topology.path_graph_area_counts.iter().enumerate() {
-                layer_area_states.push(reader.scope(
-                    format!("layer_area_states[{layer_index}]"),
+                layer_area_states.push(reader.scope_indexed(
+                    "layer_area_states",
+                    layer_index,
                     |reader| {
                         let mut states = Vec::new();
                         reserve(reader, &mut states, area_count, "states")?;
@@ -552,7 +554,7 @@ impl LegacyMissionStatistics {
             let mut pc_names = Vec::new();
             reserve(reader, &mut pc_names, count, "pc_names")?;
             for index in 0..count {
-                pc_names.push(reader.scope(format!("pc_names[{index}]"), |reader| {
+                pc_names.push(reader.scope_indexed("pc_names", index, |reader| {
                     reader.read_wide_string("value", limits.wide_string_code_units)
                 })?);
             }

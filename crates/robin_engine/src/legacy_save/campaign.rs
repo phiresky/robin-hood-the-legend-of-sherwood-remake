@@ -715,9 +715,7 @@ fn read_vec<T>(
         .try_reserve_exact(count)
         .map_err(|_| reader.allocation_error(count_offset, field, count))?;
     for index in 0..count {
-        values.push(reader.scope(format!("{field}[{index}]"), |reader| {
-            read_item(reader, index)
-        })?);
+        values.push(reader.scope_indexed(field, index, |reader| read_item(reader, index))?);
     }
     Ok(values)
 }

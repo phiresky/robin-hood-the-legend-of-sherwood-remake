@@ -132,12 +132,13 @@ impl LegacyHikingGuideState {
             let mut paths = Vec::new();
             reserve(reader, &mut paths, topology.paths.len(), "paths")?;
             for (path_index, path) in topology.paths.iter().enumerate() {
-                paths.push(reader.scope(format!("paths[{path_index}]"), |reader| {
+                paths.push(reader.scope_indexed("paths", path_index, |reader| {
                     let mut waypoints = Vec::new();
                     reserve(reader, &mut waypoints, path.waypoints.len(), "waypoints")?;
                     for (waypoint_index, waypoint) in path.waypoints.iter().enumerate() {
-                        waypoints.push(reader.scope(
-                            format!("waypoints[{waypoint_index}]"),
+                        waypoints.push(reader.scope_indexed(
+                            "waypoints",
+                            waypoint_index,
                             |reader| {
                                 let start_offset = reader.offset();
                                 reader.read_signature(
@@ -258,7 +259,7 @@ impl LegacyStandaloneProjectilePayload {
             let mut trajectory = Vec::new();
             reserve(reader, &mut trajectory, count, "trajectory")?;
             for index in 0..count {
-                trajectory.push(reader.scope(format!("trajectory[{index}]"), |reader| {
+                trajectory.push(reader.scope_indexed("trajectory", index, |reader| {
                     Ok(LegacyTrajectoryPoint {
                         time: reader.read_u16("time")?,
                         bounce: reader.read_bool("bounce")?,
@@ -439,11 +440,11 @@ fn read_sprite(
         "animation_replacements",
     )?;
     for index in 0..count {
-        animation_replacements.push(
-            reader.scope(format!("animation_replacements[{index}]"), |reader| {
-                Ok((reader.read_u32("from")?, reader.read_u32("to")?))
-            })?,
-        );
+        animation_replacements.push(reader.scope_indexed(
+            "animation_replacements",
+            index,
+            |reader| Ok((reader.read_u32("from")?, reader.read_u32("to")?)),
+        )?);
     }
     let position = reader.scope("position", read_position)?;
     Ok(LegacySpritePayload {

@@ -91,7 +91,7 @@ impl LegacyFailedPathRequests {
             let mut requests = Vec::new();
             reserve(reader, &mut requests, count, "requests")?;
             for index in 0..count {
-                requests.push(reader.scope(format!("requests[{index}]"), |reader| {
+                requests.push(reader.scope_indexed("requests", index, |reader| {
                     Ok(LegacyFailedPathRequest {
                         action: reader.read_i32("action")?,
                         reverse: reader.read_bool("reverse")?,
@@ -173,8 +173,9 @@ impl LegacyMinimapState {
                 "highlighted_elements",
             )?;
             for index in 0..count {
-                highlighted_elements.push(reader.scope(
-                    format!("highlighted_elements[{index}]"),
+                highlighted_elements.push(reader.scope_indexed(
+                    "highlighted_elements",
+                    index,
                     |reader| {
                         Ok(LegacyMinimapHighlight {
                             element: read_element_ref(reader, "element")?,
@@ -215,7 +216,7 @@ pub struct LegacyElementSelection {
 impl LegacyElementSelection {
     pub fn read(
         reader: &mut LegacyReader<'_>,
-        field: impl Into<std::borrow::Cow<'static, str>>,
+        field: impl Into<crate::legacy_io::LegacyContext>,
         maximum: usize,
     ) -> LegacyResult<Self> {
         reader.scope(field, |reader| {
@@ -294,7 +295,7 @@ impl LegacyGroundMarkState {
             let mut marks = Vec::new();
             reserve(reader, &mut marks, count, "marks")?;
             for index in 0..count {
-                marks.push(reader.scope(format!("marks[{index}]"), |reader| {
+                marks.push(reader.scope_indexed("marks", index, |reader| {
                     Ok(LegacyGroundMark {
                         current_sprite_frame: reader.read_u16("current_sprite_frame")?,
                         current_level: reader.read_u16("current_level")?,
@@ -367,7 +368,7 @@ impl LegacyTitbitsState {
             let mut titbits = Vec::new();
             reserve(reader, &mut titbits, count, "items")?;
             for index in 0..count {
-                titbits.push(reader.scope(format!("items[{index}]"), |reader| {
+                titbits.push(reader.scope_indexed("items", index, |reader| {
                     Ok(LegacyTitbit {
                         kind: reader.read_i32("kind")?,
                         frame_count: reader.read_u16("frame_count")?,

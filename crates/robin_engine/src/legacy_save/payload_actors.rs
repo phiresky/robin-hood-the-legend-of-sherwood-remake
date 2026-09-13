@@ -236,14 +236,16 @@ pub struct LegacyPcQuickActionMetadata {
 
 impl LegacyPcQuickActionMetadata {
     fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope(format!("quick_actions[{index}].metadata"), |reader| {
-            Ok(Self {
-                number_of_special_quick_actions: reader
-                    .read_u16("number_of_special_quick_actions")?,
-                quickito: reader.read_u32("quickito")?,
-                titbit: reader.read_u32("titbit")?,
-                button: reader.read_u16("button")?,
-                interactor: read_element_ref(reader, "interactor")?,
+        reader.scope_indexed("quick_actions", index, |reader| {
+            reader.scope("metadata", |reader| {
+                Ok(Self {
+                    number_of_special_quick_actions: reader
+                        .read_u16("number_of_special_quick_actions")?,
+                    quickito: reader.read_u32("quickito")?,
+                    titbit: reader.read_u32("titbit")?,
+                    button: reader.read_u16("button")?,
+                    interactor: read_element_ref(reader, "interactor")?,
+                })
             })
         })
     }
@@ -265,20 +267,22 @@ impl<SequencePayload> LegacyPcQuickActionSequences<SequencePayload> {
             LegacySaveAbiProfile,
         ) -> LegacyResult<SequencePayload>,
     ) -> LegacyResult<Self> {
-        reader.scope(format!("quick_actions[{index}].sequences"), |reader| {
-            let has_action = reader.read_bool("has_action")?;
-            let action = if has_action {
-                Some(reader.scope("action", |reader| read_sequence(reader, abi_profile))?)
-            } else {
-                None
-            };
-            let has_seek = reader.read_bool("has_seek")?;
-            let seek = if has_seek {
-                Some(reader.scope("seek", |reader| read_sequence(reader, abi_profile))?)
-            } else {
-                None
-            };
-            Ok(Self { action, seek })
+        reader.scope_indexed("quick_actions", index, |reader| {
+            reader.scope("sequences", |reader| {
+                let has_action = reader.read_bool("has_action")?;
+                let action = if has_action {
+                    Some(reader.scope("action", |reader| read_sequence(reader, abi_profile))?)
+                } else {
+                    None
+                };
+                let has_seek = reader.read_bool("has_seek")?;
+                let seek = if has_seek {
+                    Some(reader.scope("seek", |reader| read_sequence(reader, abi_profile))?)
+                } else {
+                    None
+                };
+                Ok(Self { action, seek })
+            })
         })
     }
 }
@@ -333,7 +337,7 @@ pub struct LegacyPortraitQuickIcon {
 
 impl LegacyPortraitQuickIcon {
     fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope(format!("quick_icons[{index}]"), |reader| {
+        reader.scope_indexed("quick_icons", index, |reader| {
             Ok(Self {
                 titbit_id: reader.read_u32("titbit_id")?,
                 running: reader.read_bool("running")?,
@@ -411,7 +415,7 @@ pub struct LegacyHumanSkill {
 
 impl LegacyHumanSkill {
     fn read(reader: &mut LegacyReader<'_>, index: usize) -> LegacyResult<Self> {
-        reader.scope(format!("skills[{index}]"), |reader| {
+        reader.scope_indexed("skills", index, |reader| {
             Ok(Self {
                 capacity: reader.read_u32("capacity")?,
                 experience: reader.read_u32("experience")?,

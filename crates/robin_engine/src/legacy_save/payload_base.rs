@@ -10,7 +10,7 @@ use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
 use super::read_helpers::{read_array, read_count_u16 as read_bounded_u16};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyContext, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
@@ -326,11 +326,11 @@ impl LegacySpritePayload {
             "animation_replacements",
         )?;
         for index in 0..count {
-            animation_replacements.push(
-                reader.scope(format!("animation_replacements[{index}]"), |reader| {
-                    Ok((reader.read_u32("from")?, reader.read_u32("to")?))
-                })?,
-            );
+            animation_replacements.push(reader.scope_indexed(
+                "animation_replacements",
+                index,
+                |reader| Ok((reader.read_u32("from")?, reader.read_u32("to")?)),
+            )?);
         }
         let position = reader.scope("position", |reader| LegacyPositionPayload::read(reader))?;
         Ok(Self {
@@ -551,7 +551,7 @@ impl LegacyPathStatus {
         let mut history = Vec::new();
         reserve(reader, &mut history, history_count, "history")?;
         for index in 0..history_count {
-            history.push(reader.scope(format!("history[{index}]"), |reader| {
+            history.push(reader.scope_indexed("history", index, |reader| {
                 Ok(LegacyPathHistoryEntry {
                     position: read_point2(reader, "position")?,
                     sector: read_sector_ref(reader, "sector")?,
@@ -624,7 +624,7 @@ impl LegacyMobilePayload {
         let mut sprites = Vec::new();
         reserve(reader, &mut sprites, sprite_count, "sprites")?;
         for index in 0..sprite_count {
-            sprites.push(reader.scope(format!("sprites[{index}]"), |reader| {
+            sprites.push(reader.scope_indexed("sprites", index, |reader| {
                 LegacyFxMaskedPayload::read(reader, limits)
             })?);
         }
@@ -634,7 +634,10 @@ impl LegacyMobilePayload {
         let mut vibrations = Vec::new();
         reserve(reader, &mut vibrations, vibration_count, "vibrations")?;
         for index in 0..vibration_count {
-            vibrations.push(read_point2(reader, format!("vibrations[{index}]"))?);
+            vibrations.push(read_point2(
+                reader,
+                LegacyContext::Indexed("vibrations", index),
+            )?);
         }
         let animation = reader.read_u32("animation")?;
         let hook = read_point2(reader, "hook")?;
@@ -814,7 +817,10 @@ impl LegacyActorPayload {
         let mut bypass_points = Vec::new();
         reserve(reader, &mut bypass_points, bypass_count, "bypass_points")?;
         for index in 0..bypass_count {
-            bypass_points.push(read_point2(reader, format!("bypass_points[{index}]"))?);
+            bypass_points.push(read_point2(
+                reader,
+                LegacyContext::Indexed("bypass_points", index),
+            )?);
         }
         let script_class = reader.read_string("script_class")?;
         let script_members = if script_class.is_empty() {
@@ -973,7 +979,7 @@ impl LegacyShieldPayload {
             polygon: LegacyPoint2 { x: 0.0, y: 0.0 },
         }; 4];
         for (index, point) in points.iter_mut().enumerate() {
-            *point = reader.scope(format!("points[{index}]"), |reader| {
+            *point = reader.scope_indexed("points", index, |reader| {
                 Ok(LegacyShieldPoint {
                     obstacle: [
                         reader.read_f32("obstacle.x")?,
@@ -1077,7 +1083,7 @@ impl LegacyHumanPayload {
         let mut opponents = Vec::new();
         reserve(reader, &mut opponents, opponent_count, "opponents")?;
         for index in 0..opponent_count {
-            opponents.push(reader.scope(format!("opponents[{index}]"), |reader| {
+            opponents.push(reader.scope_indexed("opponents", index, |reader| {
                 Ok(LegacySwordOpponent {
                     opponent: read_element_ref(reader, "opponent")?,
                     jump_line: read_line_ref(reader, "jump_line")?,
@@ -1394,24 +1400,25 @@ impl LegacyNpcPayload {
         let old_frame = reader.read_u32("old_frame")?;
         let mut buckets = Vec::with_capacity(6);
         for bucket_index in 0..6 {
-            buckets.push(reader.scope(
-                format!("detectable_buckets[{bucket_index}]"),
-                |reader| {
+            buckets.push(
+                reader.scope_indexed("detectable_buckets", bucket_index, |reader| {
                     let count =
                         reader.read_count_u32("entries.count", limits.npc_detectables_per_type)?;
                     let mut entries = Vec::new();
                     reserve(reader, &mut entries, count, "entries")?;
                     for index in 0..count {
-                        entries.push(
-                            reader.scope(format!("entries[{index}]"), LegacyDetectable::read)?,
-                        );
+                        entries.push(reader.scope_indexed(
+                            "entries",
+                            index,
+                            LegacyDetectable::read,
+                        )?);
                     }
                     Ok(LegacyDetectableBucket {
                         entries,
                         suspect: reader.read_u16("suspect")?,
                     })
-                },
-            )?);
+                })?,
+            );
         }
         let buckets_offset = reader.offset();
         let detectable_buckets: [LegacyDetectableBucket; 6] =
@@ -1575,9 +1582,9 @@ pub(super) fn read_line_ref(
 
 fn read_box3(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<LegacyContext>,
 ) -> LegacyResult<LegacyBoundingBox3> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyBoundingBox3 {
             x_min: reader.read_f32("x_min")?,
             x_max: reader.read_f32("x_max")?,
@@ -1591,9 +1598,9 @@ fn read_box3(
 
 fn read_plane3(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<LegacyContext>,
 ) -> LegacyResult<LegacyPlane3> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyPlane3 {
             a: read_point3(reader, "a")?,
             b: read_point3(reader, "b")?,

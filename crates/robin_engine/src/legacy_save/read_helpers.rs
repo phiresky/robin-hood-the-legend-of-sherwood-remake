@@ -29,9 +29,9 @@ pub(super) const fn hex_nibble(value: u8) -> u8 {
 
 pub(super) fn read_point2(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyPoint2> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyPoint2 {
             x: reader.read_f32("x")?,
             y: reader.read_f32("y")?,
@@ -41,9 +41,9 @@ pub(super) fn read_point2(
 
 pub(super) fn read_point3(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyPoint3> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyPoint3 {
             x: reader.read_f32("x")?,
             y: reader.read_f32("y")?,
@@ -54,9 +54,9 @@ pub(super) fn read_point3(
 
 pub(super) fn read_box2(
     reader: &mut LegacyReader<'_>,
-    field: impl std::fmt::Display,
+    field: impl Into<crate::legacy_io::LegacyContext>,
 ) -> LegacyResult<LegacyBoundingBox2> {
-    reader.scope(field.to_string(), |reader| {
+    reader.scope(field, |reader| {
         Ok(LegacyBoundingBox2 {
             top_left: read_point2(reader, "top_left")?,
             bottom_right: read_point2(reader, "bottom_right")?,

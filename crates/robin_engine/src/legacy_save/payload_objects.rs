@@ -246,7 +246,7 @@ impl LegacyProjectilePayload {
             let mut trajectory = Vec::new();
             reserve(reader, &mut trajectory, count, "trajectory")?;
             for index in 0..count {
-                trajectory.push(reader.scope(format!("trajectory[{index}]"), |reader| {
+                trajectory.push(reader.scope_indexed("trajectory", index, |reader| {
                     Ok(LegacyTrajectoryPoint {
                         time: reader.read_u16("time")?,
                         bounce: reader.read_bool("bounce")?,

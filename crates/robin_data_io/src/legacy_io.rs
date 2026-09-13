@@ -46,10 +46,48 @@ pub enum LegacyIoErrorKind {
     InvalidUtf16(#[source] std::string::FromUtf16Error),
 }
 
+/// One segment of a [`LegacyReader`] error-context path.
+///
+/// Indexed segments stay unformatted until an error is actually built, so the
+/// per-element scopes of large lists allocate nothing on the success path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LegacyContext {
+    Name(Cow<'static, str>),
+    /// Rendered as `name[index]`.
+    Indexed(&'static str, usize),
+}
+
+impl fmt::Display for LegacyContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(name) => f.write_str(name),
+            Self::Indexed(name, index) => write!(f, "{name}[{index}]"),
+        }
+    }
+}
+
+impl From<&'static str> for LegacyContext {
+    fn from(name: &'static str) -> Self {
+        Self::Name(Cow::Borrowed(name))
+    }
+}
+
+impl From<String> for LegacyContext {
+    fn from(name: String) -> Self {
+        Self::Name(Cow::Owned(name))
+    }
+}
+
+impl From<Cow<'static, str>> for LegacyContext {
+    fn from(name: Cow<'static, str>) -> Self {
+        Self::Name(name)
+    }
+}
+
 /// Typed, contextual reads over the read-only legacy-file compatibility layer.
 pub struct LegacyReader<'a> {
     file: &'a mut SbFile,
-    context: Vec<Cow<'static, str>>,
+    context: Vec<LegacyContext>,
 }
 
 impl<'a> LegacyReader<'a> {
@@ -71,13 +109,25 @@ impl<'a> LegacyReader<'a> {
     /// Add a field/container prefix for all errors produced by `read`.
     pub fn scope<T>(
         &mut self,
-        context: impl Into<Cow<'static, str>>,
+        context: impl Into<LegacyContext>,
         read: impl FnOnce(&mut Self) -> LegacyResult<T>,
     ) -> LegacyResult<T> {
         self.context.push(context.into());
         let result = read(self);
         self.context.pop();
         result
+    }
+
+    /// [`Self::scope`] for one list element, reported as `name[index]`.
+    ///
+    /// The segment is formatted only if an error is built inside `read`.
+    pub fn scope_indexed<T>(
+        &mut self,
+        name: &'static str,
+        index: usize,
+        read: impl FnOnce(&mut Self) -> LegacyResult<T>,
+    ) -> LegacyResult<T> {
+        self.scope(LegacyContext::Indexed(name, index), read)
     }
 
     pub fn invalid_value(
@@ -297,14 +347,24 @@ impl<'a> LegacyReader<'a> {
     }
 
     fn field_path(&self, field: impl fmt::Display) -> String {
+        use std::fmt::Write as _;
+
         let field = field.to_string();
         if self.context.is_empty() {
-            field
-        } else if field.is_empty() {
-            self.context.join(".")
-        } else {
-            format!("{}.{}", self.context.join("."), field)
+            return field;
         }
+        let mut path = String::new();
+        for (position, segment) in self.context.iter().enumerate() {
+            if position != 0 {
+                path.push('.');
+            }
+            write!(path, "{segment}").expect("formatting into a String cannot fail");
+        }
+        if !field.is_empty() {
+            path.push('.');
+            path.push_str(&field);
+        }
+        path
     }
 }
 

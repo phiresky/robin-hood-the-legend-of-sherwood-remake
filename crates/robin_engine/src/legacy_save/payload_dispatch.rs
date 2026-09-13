@@ -147,17 +147,16 @@ impl LegacyElementPayloadStream {
             })?;
 
         for expected in &envelope.records {
-            let record =
-                reader.scope(format!("element_payloads[{}]", expected.slot), |reader| {
-                    Self::read_record(
-                        reader,
-                        abi_profile,
-                        expected,
-                        campaign_character_count,
-                        limits,
-                        context,
-                    )
-                })?;
+            let record = reader.scope_indexed("element_payloads", expected.slot, |reader| {
+                Self::read_record(
+                    reader,
+                    abi_profile,
+                    expected,
+                    campaign_character_count,
+                    limits,
+                    context,
+                )
+            })?;
             tracing::debug!(
                 slot = record.slot,
                 class = ?record.header.class,
