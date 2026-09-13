@@ -111,8 +111,10 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 .last_mp_rollback
                 .as_ref()
                 .map_or(0, |r| r.replayed_frames);
-            let last_rollback_total_us =
-                runtime.last_mp_rollback.as_ref().map_or(0, |r| r.total_us);
+            let last_rollback_total_us = runtime
+                .last_mp_rollback
+                .as_ref()
+                .map_or(0, |r| r.total.as_micros());
             tracing::warn!(
                 frame,
                 local = format!("{local_hash:016x}"),

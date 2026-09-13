@@ -12,6 +12,7 @@ use robin_engine::sim_timeline::{RestorePolicy, replay_authoritative_frame_profi
 use robin_engine::spellforge::SpellforgeRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum MultiplayerAdmissionEvent {
@@ -70,13 +71,24 @@ pub(crate) struct MultiplayerRollbackTelemetry {
     pub(super) target_frame: u32,
     pub(super) late_input_count: usize,
     pub(super) replayed_frames: u32,
-    pub(super) total_us: u128,
-    pub(super) restore_us: u128,
-    pub(super) replay_us: u128,
-    pub(super) replay_remember_us: u128,
-    pub(super) replay_command_lookup_us: u128,
-    pub(super) replay_apply_us: u128,
-    pub(super) replay_tick_us: u128,
+    /// Whole rollback, including the restore and every replayed frame.
+    pub(super) total: Duration,
+    pub(super) restore: Duration,
+    /// Every replayed frame together; the four fields below split it.
+    pub(super) replay: Duration,
+    pub(super) replay_remember: Duration,
+    pub(super) replay_command_lookup: Duration,
+    pub(super) replay_apply: Duration,
+    pub(super) replay_tick: Duration,
+}
+
+/// Engine replay timings arrive as raw microsecond counts.
+// TODO: switch `robin_engine::sim_timeline::ReplayFrameTiming` to `Duration`
+// fields as well; it is outside this module's ownership.
+fn duration_from_micros(micros: u128) -> Duration {
+    Duration::from_micros(
+        u64::try_from(micros).expect("replay frame timing exceeds the u64 microsecond range"),
+    )
 }
 
 /// Attach the host snapshot's exact embedded Spellforge package before the
@@ -704,20 +716,20 @@ pub(super) fn drain_net_inputs(
                 earliest,
                 late_input_count,
             ) {
-                telemetry.total_us = rollback_start.elapsed().as_micros();
+                telemetry.total = rollback_start.elapsed();
                 tracing::info!(
                     path = telemetry.path,
                     earliest_frame = telemetry.earliest_frame,
                     target_frame = telemetry.target_frame,
                     replayed_frames = telemetry.replayed_frames,
                     late_inputs = telemetry.late_input_count,
-                    total_us = telemetry.total_us,
-                    restore_us = telemetry.restore_us,
-                    replay_us = telemetry.replay_us,
-                    replay_remember_us = telemetry.replay_remember_us,
-                    replay_command_lookup_us = telemetry.replay_command_lookup_us,
-                    replay_apply_us = telemetry.replay_apply_us,
-                    replay_tick_us = telemetry.replay_tick_us,
+                    total_us = telemetry.total.as_micros(),
+                    restore_us = telemetry.restore.as_micros(),
+                    replay_us = telemetry.replay.as_micros(),
+                    replay_remember_us = telemetry.replay_remember.as_micros(),
+                    replay_command_lookup_us = telemetry.replay_command_lookup.as_micros(),
+                    replay_apply_us = telemetry.replay_apply.as_micros(),
+                    replay_tick_us = telemetry.replay_tick.as_micros(),
                     "multiplayer rollback timing"
                 );
                 manager.engine = new_engine;
@@ -730,13 +742,13 @@ pub(super) fn drain_net_inputs(
                     target_frame: effective_frame,
                     late_input_count,
                     replayed_frames: effective_frame.saturating_sub(earliest),
-                    total_us: rollback_start.elapsed().as_micros(),
-                    restore_us: 0,
-                    replay_us: 0,
-                    replay_remember_us: 0,
-                    replay_command_lookup_us: 0,
-                    replay_apply_us: 0,
-                    replay_tick_us: 0,
+                    total: rollback_start.elapsed(),
+                    restore: Duration::ZERO,
+                    replay: Duration::ZERO,
+                    replay_remember: Duration::ZERO,
+                    replay_command_lookup: Duration::ZERO,
+                    replay_apply: Duration::ZERO,
+                    replay_tick: Duration::ZERO,
                 };
                 tracing::info!(
                     path = telemetry.path,
@@ -744,7 +756,7 @@ pub(super) fn drain_net_inputs(
                     target_frame = telemetry.target_frame,
                     replayed_frames = telemetry.replayed_frames,
                     late_inputs = telemetry.late_input_count,
-                    total_us = telemetry.total_us,
+                    total_us = telemetry.total.as_micros(),
                     "multiplayer rollback timing"
                 );
                 manager.engine = new_engine;
@@ -887,7 +899,7 @@ fn rewind_from_recent_timeline_history(
 ) -> Option<(Engine, MultiplayerRollbackTelemetry)> {
     let restore_start = web_time::Instant::now();
     let mut snapshot = rewind_buffer.restore_recent(start_frame, RestorePolicy::Exact)?;
-    let restore_us = restore_start.elapsed().as_micros();
+    let restore = restore_start.elapsed();
 
     // Rebuild corrected checkpoints transactionally. A missing command (or
     // any future fallible replay input) must leave the last known-good recent
@@ -895,27 +907,27 @@ fn rewind_from_recent_timeline_history(
     // reconstruction.
     let mut corrected_history = rewind_buffer.recent_checkpoints().clone();
     corrected_history.truncate_after(start_frame);
-    let mut replay_remember_us = 0;
-    let mut replay_command_lookup_us = 0;
-    let mut replay_apply_us = 0;
-    let mut replay_tick_us = 0;
+    let mut replay_remember = Duration::ZERO;
+    let mut replay_command_lookup = Duration::ZERO;
+    let mut replay_apply = Duration::ZERO;
+    let mut replay_tick = Duration::ZERO;
     let replay_start = web_time::Instant::now();
     while snapshot.frame < target_frame {
         let remember_start = web_time::Instant::now();
         corrected_history.remember(snapshot.clone());
-        replay_remember_us += remember_start.elapsed().as_micros();
+        replay_remember += remember_start.elapsed();
         let command_lookup_start = web_time::Instant::now();
         let frame = rewind_buffer.frame_for(snapshot.frame)?;
-        replay_command_lookup_us += command_lookup_start.elapsed().as_micros();
+        replay_command_lookup += command_lookup_start.elapsed();
         let replayed_frame = replay_authoritative_frame_profiled(&mut snapshot, assets, frame);
-        replay_apply_us += replayed_frame.timing.apply_us;
-        replay_tick_us += replayed_frame.timing.tick_us;
+        replay_apply += duration_from_micros(replayed_frame.timing.apply_us);
+        replay_tick += duration_from_micros(replayed_frame.timing.tick_us);
         let _discarded_frame_output = replayed_frame.output;
     }
     let remember_start = web_time::Instant::now();
     corrected_history.remember(snapshot.clone());
-    replay_remember_us += remember_start.elapsed().as_micros();
-    let replay_us = replay_start.elapsed().as_micros();
+    replay_remember += remember_start.elapsed();
+    let replay = replay_start.elapsed();
     rewind_buffer.replace_recent_checkpoints(corrected_history);
 
     Some((
@@ -926,13 +938,13 @@ fn rewind_from_recent_timeline_history(
             target_frame,
             late_input_count,
             replayed_frames: target_frame.saturating_sub(start_frame),
-            total_us: 0,
-            restore_us,
-            replay_us,
-            replay_remember_us,
-            replay_command_lookup_us,
-            replay_apply_us,
-            replay_tick_us,
+            total: Duration::ZERO,
+            restore,
+            replay,
+            replay_remember,
+            replay_command_lookup,
+            replay_apply,
+            replay_tick,
         },
     ))
 }
