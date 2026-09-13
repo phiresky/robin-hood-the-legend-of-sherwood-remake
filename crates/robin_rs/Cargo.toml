@@ -220,9 +220,10 @@ web-sys = { version = "0.3", features = [
     "UrlSearchParams",
 ] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "stream"] }
-# Browser response-stream adapter; wasm-bindgen 0.2.128 supports linking this
-# alongside the older wasm-streams version still used by reqwest.
-wasm-streams = "0.6"
+# Must match reqwest's wasm-streams, also enabled by iroh: mixed versions
+# produce duplicate JavaScript exports rejected by the wasm-bindgen CLI.
+# TODO: Upgrade to 0.6 once reqwest updates its stream adapter dependency.
+wasm-streams = "0.5"
 console_error_panic_hook = "0.1"
 tracing-wasm = "0.2"
 gloo-timers = { version = "0.4", features = ["futures"] }

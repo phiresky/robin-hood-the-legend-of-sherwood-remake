@@ -1375,7 +1375,7 @@ mod tests {
         );
 
         let mut moving_wasm_bindgen = draft.clone();
-        moving_wasm_bindgen.wasm_bindgen_cli.version = "0.2.128".into();
+        moving_wasm_bindgen.wasm_bindgen_cli.version = "0.0.0".into();
         assert!(
             moving_wasm_bindgen.author().is_err(),
             "public build accepted a non-pinned wasm-bindgen version"
