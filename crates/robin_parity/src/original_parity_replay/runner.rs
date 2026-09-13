@@ -176,7 +176,7 @@ async fn capture_full_frame_zero_screenshot(
 
     let (_launcher_campaign, profiles, application_context) = robin_rs::main_entry::rust_init()
         .map_err(|error| TraceRunError::Input(format!("initialize game: {error}")))?;
-    let campaign = restore_campaign(&header.campaign, &profiles);
+    let campaign = restore_campaign(&header.campaign, &profiles)?;
     let game_args = robin_rs::main_entry::try_parse_cli_from([
         "original_parity_replay",
         "--mission",
@@ -357,10 +357,10 @@ pub(super) fn run_replay(
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
     #[cfg(feature = "client")]
     let (mut engine, assets, mut host, background, mission_scb, _menu_text) =
-        initialize_engine(&header, initial_rng_draws.clone());
+        initialize_engine(&header, initial_rng_draws.clone())?;
     #[cfg(not(feature = "client"))]
     let (mut engine, assets, mission_scb) =
-        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing);
+        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing)?;
     let mut loaded_save_host = None;
     let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {
@@ -426,7 +426,7 @@ pub(super) fn run_replay(
         );
     }
     if let Some(transients) = header.initial_npc_transients.as_deref() {
-        apply_initial_npc_transients(&mut engine, transients);
+        apply_initial_npc_transients(&mut engine, transients)?;
         eprintln!(
             "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
             transients.len()
@@ -1330,7 +1330,7 @@ pub(super) fn run_replay(
                 // simulation tick, then runs one-shot post-initialization
                 // hook after refresh/sound. Apply that boundary only after
                 // comparing this frame, before advancing to the next one.
-                cross_post_initialize_frame(&mut engine, &assets);
+                cross_post_initialize_frame(&mut engine, &assets)?;
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -1423,7 +1423,7 @@ pub(super) fn run_replay(
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
-        cross_post_initialize_frame(&mut engine, &assets);
+        cross_post_initialize_frame(&mut engine, &assets)?;
         #[cfg(feature = "client")]
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;

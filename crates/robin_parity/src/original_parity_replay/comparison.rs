@@ -262,7 +262,7 @@ impl FrameComparison<'_> {
             );
             self.compare_element(expected, actual, id);
             self.compare_runtime(expected, id)?;
-            self.compare_actor(expected, actual, id);
+            self.compare_actor(expected, actual, id)?;
             self.compare_human(expected, actual, id)?;
             self.compare_ammunition(expected, id);
             self.compare_ai(expected, actual, id)?;
@@ -586,7 +586,12 @@ impl FrameComparison<'_> {
         Ok(())
     }
 
-    fn compare_actor(&mut self, expected: &TraceElement, actual: &Entity, id: EntityId) {
+    fn compare_actor(
+        &mut self,
+        expected: &TraceElement,
+        actual: &Entity,
+        id: EntityId,
+    ) -> TraceRunResult<()> {
         let engine = self.engine;
         let frame = self.frame;
         let late_movement_retranslations = self.late_movement_retranslations;
@@ -662,7 +667,7 @@ impl FrameComparison<'_> {
                 differences,
                 id,
                 "actor.command",
-                command_from_stable_name(&expected_actor.command_name),
+                command_from_stable_name(&expected_actor.command_name)?,
                 engine.actor_command(id),
             );
             if !legacy_additive_omissions {
@@ -694,11 +699,12 @@ impl FrameComparison<'_> {
                     differences,
                     id,
                     "actor.sequence_element.command",
-                    command_from_stable_name(&expected_sequence.command_name),
+                    command_from_stable_name(&expected_sequence.command_name)?,
                     engine.actor_command(id),
                 );
             }
         }
+        Ok(())
     }
 
     fn compare_human(

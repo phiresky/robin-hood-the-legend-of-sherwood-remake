@@ -4072,9 +4072,12 @@ fn clean_terminator_retains_completion_metadata() {
 #[test]
 fn original_commands_map_by_semantic_name() {
     assert_eq!(Action::from(TraceAction::Bow), Action::Bow);
-    assert_eq!(command_from_stable_name("raise_bow"), Command::RaiseBow);
-    assert_eq!(command_from_stable_name("jump"), Command::JumpCmd);
-    assert_eq!(command_from_stable_name("roll"), Command::Jump);
+    assert_eq!(
+        command_from_stable_name("raise_bow").unwrap(),
+        Command::RaiseBow
+    );
+    assert_eq!(command_from_stable_name("jump").unwrap(), Command::JumpCmd);
+    assert_eq!(command_from_stable_name("roll").unwrap(), Command::Jump);
 }
 
 #[test]
