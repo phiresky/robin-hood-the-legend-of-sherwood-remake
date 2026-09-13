@@ -5885,13 +5885,14 @@ dependencies = [
  "hex",
  "i_overlay 8.1.1",
  "indexmap",
- "json-patch",
  "nonmax",
  "num_enum",
  "rayon",
  "robin_content",
  "robin_data_io",
  "robin_engine_types",
+ "robin_legacy_save",
+ "robin_level_data",
  "robin_run_protocol",
  "robin_script_types",
  "robin_state_hash_derive",
@@ -5900,7 +5901,6 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde-value",
- "serde_ignored",
  "serde_json",
  "serde_json_any_key",
  "sha2 0.11.0",
@@ -5927,6 +5927,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]
@@ -5987,6 +5988,40 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "robin_legacy_save"
+version = "0.0.0"
+dependencies = [
+ "num_enum",
+ "robin_data_io",
+ "robin_script_types",
+ "robin_test_support",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "robin_level_data"
+version = "0.0.0"
+dependencies = [
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "json-patch",
+ "num_enum",
+ "robin_data_io",
+ "robin_engine_types",
+ "robin_state_hash_derive",
+ "robin_test_support",
+ "robin_util",
+ "serde",
+ "serde_ignored",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
 ]
 
 [[package]]

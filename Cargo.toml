@@ -16,6 +16,8 @@ members = [
     "crates/robin_modding_tools",
     "crates/robin_engine",
     "crates/robin_engine_types",
+    "crates/robin_legacy_save",
+    "crates/robin_level_data",
     "crates/robin_lua",
     "crates/robin_ranked_verification",
     "crates/robin_run_protocol",
@@ -66,6 +68,8 @@ robin_assets = { path = "crates/robin_assets" }
 robin_asset_codecs = { path = "crates/robin_asset_codecs" }
 robin_engine = { path = "crates/robin_engine" }
 robin_engine_types = { path = "crates/robin_engine_types" }
+robin_legacy_save = { path = "crates/robin_legacy_save" }
+robin_level_data = { path = "crates/robin_level_data" }
 robin_lua = { path = "crates/robin_lua" }
 robin_manifest_tool = { path = "crates/robin_manifest_tool" }
 robin_modding_tools = { path = "crates/robin_modding_tools", default-features = false }

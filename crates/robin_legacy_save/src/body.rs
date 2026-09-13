@@ -8,7 +8,7 @@
 //! omitted mission shape from the caller.
 //!
 //! This is deliberately only a byte-level parse. Resolving legacy references
-//! and adopting the result into [`crate::Engine`] is a separate conversion
+//! and adopting the result into simulation state is a separate conversion
 //! step.
 
 use serde::{Deserialize, Serialize};
