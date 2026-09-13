@@ -67,7 +67,6 @@ url.workspace = true
 uuid = { version = "1", features = ["serde", "v7"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix_legacy = { package = "nix", version = "0.29", features = ["fs"] }
 sd-notify = "0.5"
 
 [dev-dependencies]

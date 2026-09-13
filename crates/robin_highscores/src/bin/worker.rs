@@ -9,7 +9,7 @@ use robin_highscores::verifier::{
 };
 use robin_highscores::{
     CampaignStore, Database, ReplayStore, ServerConfig,
-    deployment::validate_worker_authority_layout,
+    deployment::{validate_catalog_covers_server, validate_worker_authority_layout},
     garbage_collect_campaigns, reconcile_campaign_inventory,
     storage_admission::{ensure_worker_final_campaign_capacity, ensure_worker_lease_capacity},
 };
@@ -274,7 +274,6 @@ fn read_worker_config(path: &Path) -> anyhow::Result<Vec<u8>> {
     read_regular_file_no_symlinks(path, 1024 * 1024)
 }
 
-use robin_highscores::runtime_authority::validate_catalog_covers_server;
 use robin_highscores::service::{
     ServiceNotifier, StartupStatusNotifier, SystemdNotifier, wait_for_shutdown_signal,
 };

@@ -27,7 +27,6 @@ pub const HARD_MAX_PAGE_SIZE: u32 = 100;
 const HARD_MAX_OPERATOR_DOCUMENT_BYTES: u64 = 1024 * 1024;
 pub const DEFAULT_RUNTIME_FENCE_DIRECTORY: &str =
     "/home/robinhood/.local/share/robin-highscores/runtime-fence";
-const HARD_MAX_CANDIDATE_MANIFEST_DOCUMENTS: usize = 100_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -406,29 +405,6 @@ impl ServerConfig {
     }
 
     fn validate_for_secret_scope(&self, scope: ConfigSecretScope) -> anyhow::Result<()> {
-        self.validate_for_secret_scope_with_candidate(scope, None)
-    }
-
-    /// Validate a candidate's server document without resolving any of its
-    /// immutable release paths through ambient pathnames. Deployment probes
-    /// supply campaign bytes captured from the exact descriptors used by the
-    /// authenticated structural scan instead.
-    pub(crate) fn validate_for_runtime_probe(
-        &self,
-        authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-        source_commit: &str,
-    ) -> anyhow::Result<()> {
-        self.validate_for_secret_scope_with_candidate(
-            ConfigSecretScope::Worker,
-            Some((authenticated_candidate_files, source_commit)),
-        )
-    }
-
-    fn validate_for_secret_scope_with_candidate(
-        &self,
-        scope: ConfigSecretScope,
-        candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
-    ) -> anyhow::Result<()> {
         self.validate_limits_and_backup_paths()?;
         self.validate_paths_and_secrets(scope)?;
         self.validate_cors_origins()?;
@@ -441,7 +417,7 @@ impl ServerConfig {
                 "duplicate admission profile ID: {}",
                 profile.id
             );
-            self.validate_profile(profile, candidate)?;
+            self.validate_profile(profile)?;
         }
         self.validate_competitions(&profile_ids)
     }
@@ -802,11 +778,7 @@ impl ServerConfig {
         Ok(())
     }
 
-    fn validate_profile(
-        &self,
-        profile: &AdmissionProfile,
-        candidate: Option<(&BTreeMap<String, Vec<u8>>, &str)>,
-    ) -> anyhow::Result<()> {
+    fn validate_profile(&self, profile: &AdmissionProfile) -> anyhow::Result<()> {
         profile.content_subject.validate().map_err(|error| {
             anyhow::anyhow!(
                 "invalid content subject in admission profile {}: {error}",
@@ -1100,25 +1072,14 @@ impl ServerConfig {
             profile.id
         );
         let (actual_digest, actual_byte_length) =
-            if let Some((authenticated_candidate_files, source_commit)) = candidate {
-                let expected_parent = Path::new(crate::deployment::paths::INSTALLED_RELEASE_ROOT)
-                    .join(source_commit)
-                    .join("private/campaign-states");
-                hash_authenticated_candidate_campaign_state(
-                    authenticated_candidate_files,
-                    campaign_state_path,
-                    &expected_parent,
-                    HARD_MAX_CAMPAIGN_BYTES,
-                )?
-            } else {
-                let path = campaign_state_path;
-                hash_regular_file_no_symlinks(path, HARD_MAX_CAMPAIGN_BYTES).map_err(|error| {
+            hash_regular_file_no_symlinks(campaign_state_path, HARD_MAX_CAMPAIGN_BYTES).map_err(
+                |error| {
                     anyhow::anyhow!(
                         "canonical campaign-state path in profile {} is unsafe: {error}",
                         profile.id
                     )
-                })?
-            };
+                },
+            )?;
         anyhow::ensure!(
             actual_digest
                 == profile
@@ -1319,176 +1280,6 @@ impl ManifestRegistry {
             })?,
         })
     }
-
-    /// Load the immutable manifest registry from bytes captured by an already
-    /// authenticated candidate scan. This is intentionally crate-private:
-    /// serving uses installed paths, while deployment probes must never reopen
-    /// a candidate pathname after its descriptors were authenticated.
-    pub(crate) fn load_from_candidate(
-        authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-    ) -> anyhow::Result<Self> {
-        Ok(Self {
-            builds: load_candidate_build_documents(authenticated_candidate_files)?,
-            content_manifests: load_candidate_documents(
-                authenticated_candidate_files,
-                "content-manifests",
-                |document: &ContentManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            campaign_content_manifests: load_candidate_documents(
-                authenticated_candidate_files,
-                "campaign-content-manifests",
-                |document: &CampaignContentManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            rules_configs: load_candidate_documents(
-                authenticated_candidate_files,
-                "rules-configs",
-                |document: &RulesConfigIdentityV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            rulesets: load_candidate_published_rulesets(authenticated_candidate_files)?,
-            competitions: load_candidate_documents(
-                authenticated_candidate_files,
-                "competitions",
-                |document: &CompetitionManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-            policies: load_candidate_documents(
-                authenticated_candidate_files,
-                "policies",
-                |document: &ImmutablePolicyManifestV1| {
-                    document.validate()?;
-                    Ok(document.canonical_digest()?)
-                },
-            )?,
-        })
-    }
-}
-
-fn load_candidate_build_documents(
-    authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-) -> anyhow::Result<BTreeMap<Digest32, LoadedBuildManifest>> {
-    let public_documents = load_candidate_documents(
-        authenticated_candidate_files,
-        "builds",
-        |document: &VersionedBuildManifest| {
-            document.validate()?;
-            Ok(document.canonical_digest()?)
-        },
-    )?;
-    let mut builds = BTreeMap::new();
-    let mut semantic_identities = BTreeMap::new();
-    for (public_digest, public_document) in public_documents {
-        let loaded = LoadedBuildManifest::new(public_document)?;
-        anyhow::ensure!(
-            loaded.public_digest() == public_digest,
-            "loaded candidate build document changed public identity"
-        );
-        anyhow::ensure!(
-            semantic_identities
-                .insert(loaded.semantic_digest(), public_digest)
-                .is_none(),
-            "multiple candidate build documents normalize to semantic build identity {}",
-            loaded.semantic_digest()
-        );
-        anyhow::ensure!(
-            builds.insert(public_digest, loaded).is_none(),
-            "duplicate candidate build manifest digest {public_digest}"
-        );
-    }
-    Ok(builds)
-}
-
-fn load_candidate_published_rulesets(
-    authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-) -> anyhow::Result<BTreeMap<Digest32, PublishedRulesetV1>> {
-    let immutable = load_candidate_documents(
-        authenticated_candidate_files,
-        "ruleset-manifests",
-        |document: &RulesetManifestV1| {
-            document.validate()?;
-            Ok(document.canonical_digest()?)
-        },
-    )?;
-    let published = load_candidate_documents(
-        authenticated_candidate_files,
-        "published-rulesets",
-        |document: &PublishedRulesetV1| {
-            document.validate()?;
-            Ok(document.ruleset_manifest_sha256)
-        },
-    )?;
-    anyhow::ensure!(
-        immutable.len() == published.len(),
-        "candidate ruleset manifest and publication directories have different identity sets"
-    );
-    for (digest, publication) in &published {
-        anyhow::ensure!(
-            immutable.get(digest) == Some(&publication.manifest),
-            "candidate published ruleset {digest} embeds a substituted manifest"
-        );
-    }
-    anyhow::ensure!(
-        immutable
-            .keys()
-            .all(|digest| published.contains_key(digest)),
-        "candidate immutable ruleset has no publication status"
-    );
-    Ok(published)
-}
-
-fn load_candidate_documents<T, F>(
-    authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-    kind: &str,
-    mut identity: F,
-) -> anyhow::Result<BTreeMap<Digest32, T>>
-where
-    T: DeserializeOwned,
-    F: FnMut(&T) -> anyhow::Result<Digest32>,
-{
-    let prefix = format!("config/manifests/{kind}/");
-    let mut documents = BTreeMap::new();
-    for (path, bytes) in authenticated_candidate_files {
-        let Some(name) = path.strip_prefix(&prefix) else {
-            continue;
-        };
-        anyhow::ensure!(
-            !name.is_empty() && !name.contains('/'),
-            "candidate manifest registry contains a non-file entry"
-        );
-        anyhow::ensure!(
-            documents.len() < HARD_MAX_CANDIDATE_MANIFEST_DOCUMENTS,
-            "candidate manifest directory exceeds its document-count limit"
-        );
-        let stem = name
-            .strip_suffix(".json")
-            .ok_or_else(|| anyhow::anyhow!("candidate manifest filename must end in .json"))?;
-        let expected = digest32(stem, "candidate manifest filename")?;
-        anyhow::ensure!(
-            bytes.len() <= usize::try_from(HARD_MAX_OPERATOR_DOCUMENT_BYTES)?,
-            "candidate manifest document exceeds its byte limit"
-        );
-        let document: T = serde_json::from_slice(bytes)?;
-        let actual = identity(&document)?;
-        anyhow::ensure!(
-            actual == expected,
-            "candidate manifest document digest does not match filename {name}"
-        );
-        anyhow::ensure!(
-            documents.insert(actual, document).is_none(),
-            "duplicate candidate manifest digest {actual}"
-        );
-    }
-    Ok(documents)
 }
 
 fn load_build_documents(root: &Path) -> anyhow::Result<BTreeMap<Digest32, LoadedBuildManifest>> {
@@ -1607,34 +1398,6 @@ where
 use crate::secure_fs::{
     open_regular_no_symlinks, read_bounded_no_symlinks as read_regular_file_no_symlinks,
 };
-
-fn hash_authenticated_candidate_campaign_state(
-    authenticated_candidate_files: &BTreeMap<String, Vec<u8>>,
-    configured_absolute_path: &Path,
-    expected_ambient_parent: &Path,
-    limit: u64,
-) -> anyhow::Result<([u8; 32], u64)> {
-    anyhow::ensure!(
-        configured_absolute_path.is_absolute()
-            && configured_absolute_path.parent() == Some(expected_ambient_parent),
-        "canonical campaign-state path escapes the candidate release"
-    );
-    let name = configured_absolute_path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("canonical campaign state has no filename"))?;
-    let relative = Path::new("private/campaign-states").join(name);
-    let relative = relative
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("canonical campaign-state filename is not UTF-8"))?;
-    let bytes = authenticated_candidate_files
-        .get(relative)
-        .ok_or_else(|| anyhow::anyhow!("authenticated candidate omits campaign state"))?;
-    anyhow::ensure!(
-        !bytes.is_empty() && bytes.len() <= usize::try_from(limit)?,
-        "authenticated candidate campaign state is empty or exceeds its byte limit"
-    );
-    Ok((Sha256::digest(bytes).into(), u64::try_from(bytes.len())?))
-}
 
 fn hash_regular_file_no_symlinks(path: &Path, limit: u64) -> anyhow::Result<([u8; 32], u64)> {
     let mut file = open_regular_no_symlinks(path)?;
@@ -2255,61 +2018,6 @@ mod tests {
                 HARD_MAX_CAMPAIGN_BYTES,
             )
             .is_err()
-        );
-    }
-
-    #[test]
-    fn candidate_campaign_identity_never_reopens_the_ambient_absolute_path() {
-        let authenticated_candidate_files = BTreeMap::from([(
-            "private/campaign-states/campaign.bin".to_owned(),
-            b"candidate bytes".to_vec(),
-        )]);
-
-        let ambient = tempfile::tempdir().unwrap();
-        let ambient_parent = ambient.path().join("release/private/campaign-states");
-        let configured = ambient_parent.join("campaign.bin");
-        let expected = (
-            Sha256::digest(b"candidate bytes").into(),
-            b"candidate bytes".len() as u64,
-        );
-
-        // A not-yet-installed candidate has no ambient release pathname.
-        assert!(!configured.exists());
-        assert_eq!(
-            hash_authenticated_candidate_campaign_state(
-                &authenticated_candidate_files,
-                &configured,
-                &ambient_parent,
-                HARD_MAX_CAMPAIGN_BYTES,
-            )
-            .unwrap(),
-            expected
-        );
-
-        // Even a malicious ambient file, including a replacement between
-        // probes, is irrelevant: both fields are derived from the retained FD.
-        std::fs::create_dir_all(&ambient_parent).unwrap();
-        std::fs::write(&configured, b"malicious short bytes").unwrap();
-        assert_eq!(
-            hash_authenticated_candidate_campaign_state(
-                &authenticated_candidate_files,
-                &configured,
-                &ambient_parent,
-                HARD_MAX_CAMPAIGN_BYTES,
-            )
-            .unwrap(),
-            expected
-        );
-        std::fs::write(&configured, vec![0xa5; 4096]).unwrap();
-        assert_eq!(
-            hash_authenticated_candidate_campaign_state(
-                &authenticated_candidate_files,
-                &configured,
-                &ambient_parent,
-                HARD_MAX_CAMPAIGN_BYTES,
-            )
-            .unwrap(),
-            expected
         );
     }
 

@@ -8,14 +8,188 @@
 pub mod paths;
 
 use crate::ServerConfig;
+use crate::config::ViewerContentRequirementConfig;
 use robin_run_protocol::{
-    CanonicalDocument as _, Digest32, OfficialContentEditionV1, OfficialSourceTreeManifestV2,
-    Validate as _, VerifierJobConfigCatalogV1,
+    CanonicalCampaignStatePinV1, CanonicalDocument as _, Digest32, OfficialContentEditionV1,
+    OfficialSourceTreeManifestV2, RunScopeKindV1, Validate as _, VerifierJobConfigCatalogV1,
+    VerifierJobRouteV1, canonical_json_bytes,
 };
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
+
+/// Every catalog entry must embed exactly the manifests the server admits, and
+/// the catalog must cover exactly the route matrix of the admission profiles.
+pub fn validate_catalog_covers_server(
+    catalog: &VerifierJobConfigCatalogV1,
+    server: &ServerConfig,
+) -> anyhow::Result<()> {
+    for entry in &catalog.entries {
+        let route = &entry.route;
+        let build = server
+            .manifests
+            .builds
+            .get(&route.build_manifest_sha256)
+            .ok_or_else(|| anyhow::anyhow!("job catalog references an unavailable build"))?;
+        let content = server
+            .manifests
+            .content_manifests
+            .get(&route.content_manifest_sha256)
+            .ok_or_else(|| anyhow::anyhow!("job catalog references unavailable content"))?;
+        let rules = server
+            .manifests
+            .rules_configs
+            .get(&route.rules_config_sha256)
+            .ok_or_else(|| anyhow::anyhow!("job catalog references unavailable rules"))?;
+        let ruleset = server
+            .manifests
+            .rulesets
+            .get(&route.ruleset_manifest_sha256)
+            .ok_or_else(|| anyhow::anyhow!("job catalog references unavailable ruleset"))?;
+        anyhow::ensure!(
+            build.public_document() == &entry.build_manifest
+                && content == &entry.content_manifest
+                && rules == &entry.rules_config
+                && ruleset.manifest == entry.ruleset_manifest,
+            "job catalog embeds a substituted manifest"
+        );
+        match (
+            route.campaign_content_manifest_sha256,
+            &entry.campaign_content_manifest,
+        ) {
+            (None, None) => {}
+            (Some(digest), Some(document))
+                if server.manifests.campaign_content_manifests.get(&digest) == Some(document) => {}
+            _ => anyhow::bail!("job catalog campaign authority is unavailable or substituted"),
+        }
+        match (
+            route.competition_manifest_sha256,
+            &entry.competition_manifest,
+        ) {
+            (None, None) => {}
+            (Some(digest), Some(document))
+                if server.manifests.competitions.get(&digest) == Some(document) => {}
+            _ => anyhow::bail!("job catalog competition authority is unavailable or substituted"),
+        }
+    }
+
+    let mut expected = BTreeMap::<Vec<u8>, CanonicalCampaignStatePinV1>::new();
+    for profile in &server.admission_profiles {
+        let content_digest = parse_digest(&profile.content_manifest_id, "profile content")?;
+        let content = server
+            .manifests
+            .content_manifests
+            .get(&content_digest)
+            .ok_or_else(|| anyhow::anyhow!("profile content is unavailable"))?;
+        anyhow::ensure!(
+            (!profile.viewer_available && profile.viewer_content_requirement.is_none())
+                || matches!(
+                    (content.edition, profile.viewer_content_requirement),
+                    (
+                        OfficialContentEditionV1::Demo,
+                        Some(ViewerContentRequirementConfig::BundledDemo),
+                    ) | (
+                        OfficialContentEditionV1::Full,
+                        Some(ViewerContentRequirementConfig::UserLocalRetail),
+                    )
+                ),
+            "profile has a substituted viewer entitlement"
+        );
+        let build = parse_digest(&profile.build_manifest_id, "profile build")?;
+        let rules = parse_digest(&profile.config_id, "profile rules")?;
+        let ruleset = parse_digest(&profile.ruleset_id, "profile ruleset")?;
+        let competitions = std::iter::once(None)
+            .chain(
+                server
+                    .competitions
+                    .iter()
+                    .filter(|competition| competition.admission_profile_id == profile.id)
+                    .map(|competition| {
+                        parse_digest(&competition.manifest_sha256, "competition").map(Some)
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+            )
+            .collect::<Vec<_>>();
+        let mut scopes = profile
+            .allowed_scopes
+            .iter()
+            .map(|scope| match scope.as_str() {
+                "individual_level" => Ok(RunScopeKindV1::IndividualLevel),
+                "campaign_genesis" | "campaign_continuation" => Ok(RunScopeKindV1::Campaign),
+                _ => anyhow::bail!("invalid profile scope"),
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        scopes.sort_by_key(|scope| match scope {
+            RunScopeKindV1::IndividualLevel => 0,
+            RunScopeKindV1::Campaign => 1,
+        });
+        scopes.dedup();
+        for scope_kind in scopes {
+            let campaign = match scope_kind {
+                RunScopeKindV1::IndividualLevel => None,
+                RunScopeKindV1::Campaign => Some(parse_digest(
+                    profile
+                        .campaign_content_manifest_id
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("campaign profile omits catalog"))?,
+                    "campaign catalog",
+                )?),
+            };
+            for competition in &competitions {
+                let route = VerifierJobRouteV1 {
+                    schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
+                    scope_kind,
+                    content_edition: content.edition,
+                    content_subject: content.subject.clone(),
+                    build_manifest_sha256: build,
+                    content_manifest_sha256: content_digest,
+                    campaign_content_manifest_sha256: campaign,
+                    rules_config_sha256: rules,
+                    ruleset_manifest_sha256: ruleset,
+                    competition_manifest_sha256: *competition,
+                };
+                route.validate()?;
+                let bytes = canonical_json_bytes(&route)?;
+                if let Some(previous) =
+                    expected.insert(bytes, profile.canonical_campaign_state.clone())
+                {
+                    anyhow::ensure!(
+                        previous == profile.canonical_campaign_state,
+                        "profiles substitute campaign state for one worker route"
+                    );
+                }
+            }
+        }
+    }
+    let actual = catalog
+        .entries
+        .iter()
+        .map(|entry| {
+            Ok((
+                canonical_json_bytes(&entry.route)?,
+                entry.canonical_campaign_state.clone(),
+            ))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    anyhow::ensure!(
+        actual == expected,
+        "worker catalog is not the exact admitted route matrix"
+    );
+    Ok(())
+}
+
+fn parse_digest(value: &str, label: &str) -> anyhow::Result<Digest32> {
+    anyhow::ensure!(
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && value.bytes().any(|byte| byte != b'0'),
+        "{label} is not canonical nonzero lowercase SHA-256"
+    );
+    Ok(value.parse()?)
+}
 
 pub use paths::{
     DEMO_RAW_CONTENT_ROOT, FULL_RAW_CONTENT_ROOT, INSTALLED_RELEASE_ROOT as RELEASES_ROOT,
