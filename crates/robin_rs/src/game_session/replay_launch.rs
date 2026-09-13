@@ -16,14 +16,14 @@ pub(crate) struct PreparedReplayLaunch {
     pub(crate) campaign: Campaign,
     pub(crate) mission_idx: usize,
     pub(crate) location: MissionLocation,
-    pub(crate) launch: crate::main_entry::MissionLaunch,
+    pub(crate) launch: crate::main_entry::MissionRequest,
     pub(crate) rng_seed: u64,
     pub(crate) sim_config: engine_api::SimConfig,
 }
 
 pub(super) fn prepare_replay_mission(
     profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     data: robin_engine::replay::ReplayData,
     paused: bool,
 ) -> Result<PreparedReplayLaunch, MissionError> {
@@ -111,13 +111,13 @@ pub(super) fn prepare_replay_mission(
 pub(crate) async fn prepare_replay_launch(
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     data: robin_engine::replay::ReplayData,
     paused: bool,
 ) -> Result<PreparedReplayLaunch, MissionError> {
     crate::replay_format::validate_replay_data(&data)
         .map_err(|error| MissionError::replay(format!("invalid replay: {error}")))?;
-    if args.mission_start_legacy_save.is_some() {
+    if args.config.capture.legacy_save.is_some() {
         return Err(MissionError::launch(
             "custom/current replay playback cannot be combined with Original parity save capture",
         ));
@@ -134,9 +134,15 @@ pub(crate) async fn prepare_replay_launch(
     }
 
     let resolved = resolve_replay_mission_assets(application_context, &data).await?;
-    let mut prepared = prepare_replay_mission(profiles, args, data, paused)?;
-    prepared.launch.resolved_mission_assets = Some(std::sync::Arc::new(resolved));
-    Ok(prepared)
+    let prepared = prepare_replay_mission(profiles, args, data, paused)?;
+    Ok(PreparedReplayLaunch {
+        launch: prepared
+            .launch
+            .with_content(crate::main_entry::MissionContent::exact_assets(
+                std::sync::Arc::new(resolved),
+            )),
+        ..prepared
+    })
 }
 
 async fn resolve_replay_mission_assets(

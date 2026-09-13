@@ -5,10 +5,8 @@ use std::ffi::OsString;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 
-use crate::host::ApplicationContext;
 use crate::replay_format::COMPACT_PREFIX;
 use robin_engine::engine as engine_api;
-use robin_engine::replay as engine_replay;
 
 /// Extension required for replay files — keeps the format searchable
 /// and future-proofs us if we ever want to associate `.rhrec.jsonl` with
@@ -37,19 +35,6 @@ fn parse_replay_spec(s: &str) -> Result<String, String> {
     // friendlier error is easy to give when the user clearly fat-
     // fingered a `rhrec` variant.
     Ok(s.to_string())
-}
-
-pub(super) fn requested_replay_data(
-    args: &MissionLaunch,
-) -> Result<Option<engine_replay::ReplayData>, super::LaunchError> {
-    if let Some(data) = args.replay_data.clone() {
-        return Ok(Some(data));
-    }
-    args.replay
-        .as_deref()
-        .map(crate::replay_format::load_replay_spec)
-        .transpose()
-        .map_err(|error| super::LaunchError::replay(format!("failed to load replay: {error}")))
 }
 
 /// Robin Hood — The Legend of Sherwood (Rust port)
@@ -254,200 +239,6 @@ pub struct CliArgs {
     pub mp_nickname: String,
 }
 
-/// Process-owned mission request, prepared from the raw CLI/URL configuration.
-/// Decoded payloads and asset/export authority can only be installed in process;
-/// deserialization always starts with an unprepared request.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct MissionLaunch {
-    /// Raw CLI/URL configuration, without process or mission handoffs.
-    pub config: CliArgs,
-    /// Process services and startup options bound to this launch. Parsed
-    /// options seed a bootstrap context; application startup installs readiness.
-    #[serde(skip)]
-    pub global_options: ApplicationContext,
-    /// Already-decoded replay, installed before engine construction so the
-    /// canonical header supplies the initial world, seed and simulation config.
-    #[serde(skip)]
-    pub replay_data: Option<engine_replay::ReplayData>,
-    /// Evidence for this cold reconstruction; reset for unrelated launches.
-    #[serde(skip)]
-    pub mission_restart: bool,
-    /// Exact admitted asset mount, retained throughout the session and its
-    /// same-mission restarts. Persisted replay/save formats retain their own
-    /// executable packages; this lease owns only process-local mount lifetimes.
-    #[serde(skip)]
-    pub resolved_mission_assets:
-        Option<std::sync::Arc<crate::mission_asset_restore::ResolvedMissionAssets>>,
-    /// Authority installed only by the native official projection exporter.
-    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    #[serde(skip)]
-    pub simulation_content_export:
-        Option<crate::official_projection_export::SimulationContentExportRequest>,
-    /// Browser shell attestation that this durable local identity previously
-    /// redeemed the invitation. The host remains authoritative.
-    #[serde(skip)]
-    pub browser_join_redeemed: bool,
-
-    /// Internal outer-mission handoff. A replacement host consumes the exact
-    /// authenticated session/seat roster retained by the previous transport.
-    #[serde(skip)]
-    pub mp_continue_session: bool,
-
-    /// Internal handoff from the custom-mission picker. Spellforge-tagged
-    /// launches carry the bits needed to construct a required `LuaSession`;
-    /// Vanilla-tagged custom missions carry the same launch metadata but
-    /// intentionally produce no Lua state. `None` for every non-mod launch.
-    /// Not a real CLI flag; not serialised.
-    #[serde(skip)]
-    pub pending_lua_mission: Option<PendingLuaMission>,
-    /// Exact canonical full-mod envelope used by a custom multiplayer host or
-    /// joiner. The host distributes these bytes before Welcome; the joiner
-    /// keeps the independently validated cache lease/mount in HostTransport.
-    #[serde(skip)]
-    pub pending_distributed_mod: Option<std::sync::Arc<[u8]>>,
-
-    /// Internal one-shot render request used by the `render_mission_map`
-    /// example. The mission session captures the complete level through the
-    /// regular screenshot machinery, writes it here, and exits. This is
-    /// deliberately not a launcher flag:
-    /// the Cargo example is the supported CLI for this specialized tool.
-    #[serde(skip)]
-    pub mission_start_map_output: Option<std::path::PathBuf>,
-
-    /// Absolute simulation frame for `mission_start_map_output`. Frame zero is
-    /// the post-`Initialize`, pre-tick state.
-    #[serde(skip)]
-    pub mission_start_map_frame: u32,
-
-    /// Apply the original `UBIQUITY` / `UNBLIP` reveal-all-NPCs cheat to
-    /// the one-shot mission-start map before it is rendered.
-    #[serde(skip)]
-    pub mission_start_reveal_all: bool,
-
-    /// Include gameplay fog in a one-shot mission map export. Full-map
-    /// exports default this off so tool output remains complete.
-    #[serde(skip)]
-    pub mission_start_fog_of_war: bool,
-
-    /// Internal one-shot capture mode used by parity tooling. Unlike the map
-    /// exporter, this captures the saved viewport and includes the ordinary
-    /// gameplay HUD.
-    #[serde(skip)]
-    pub mission_start_viewport_capture: bool,
-
-    /// Exact Original v48 save bytes to adopt after constructing the mission
-    /// topology and before the one-shot frame-zero capture.
-    #[serde(skip)]
-    pub mission_start_legacy_save: Option<Vec<u8>>,
-
-    /// Preserve the caller-supplied campaign when `--mission` selects the
-    /// one-shot capture mission. Parity captures supply the exact recorded
-    /// roster and campaign state instead of the map exporter's representative
-    /// team.
-    #[serde(skip)]
-    pub preserve_forced_mission_campaign: bool,
-}
-
-impl<'de> Deserialize<'de> for MissionLaunch {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Serialize, Deserialize)]
-        struct Configuration {
-            #[serde(default)]
-            config: CliArgs,
-        }
-        // Decode configuration only. Recompute its effective startup policy;
-        // defaulting a skipped context would silently discard nondefault flags.
-        // No services, decoded payloads, leases or restart evidence are restored.
-        let decoded = Configuration::deserialize(deserializer)?;
-        Ok(Self::from(decoded.config))
-    }
-}
-
-impl From<CliArgs> for MissionLaunch {
-    fn from(config: CliArgs) -> Self {
-        // Derive startup policy without reinstalling process-wide options or
-        // constructing a discarded default configuration.
-        let global_options = ApplicationContext::bootstrap(options_from_args(&config));
-        Self {
-            config,
-            global_options,
-            browser_join_redeemed: false,
-            mp_continue_session: false,
-            pending_lua_mission: None,
-            pending_distributed_mod: None,
-            mission_start_map_output: None,
-            mission_start_map_frame: 0,
-            mission_start_reveal_all: false,
-            mission_start_fog_of_war: false,
-            mission_start_viewport_capture: false,
-            mission_start_legacy_save: None,
-            preserve_forced_mission_campaign: false,
-            replay_data: None,
-            mission_restart: false,
-            resolved_mission_assets: None,
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            simulation_content_export: None,
-        }
-    }
-}
-
-impl MissionLaunch {
-    /// Start a canonical replay request without first cloning the previous
-    /// recording or retaining its admitted custom-asset leases. Capture and
-    /// process policy intentionally survive, just as they do across startup.
-    pub(crate) fn for_replay(&self, data: engine_replay::ReplayData, paused: bool) -> Self {
-        let mut config = self.config.clone();
-        config.replay = None;
-        config.custom_mission = None;
-        config.start_paused |= paused;
-        Self {
-            config,
-            global_options: self.global_options.clone(),
-            replay_data: Some(data),
-            mission_restart: false,
-            resolved_mission_assets: None,
-            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            simulation_content_export: self.simulation_content_export.clone(),
-            browser_join_redeemed: self.browser_join_redeemed,
-            mp_continue_session: self.mp_continue_session,
-            pending_lua_mission: None,
-            pending_distributed_mod: None,
-            mission_start_map_output: self.mission_start_map_output.clone(),
-            mission_start_map_frame: self.mission_start_map_frame,
-            mission_start_reveal_all: self.mission_start_reveal_all,
-            mission_start_fog_of_war: self.mission_start_fog_of_war,
-            mission_start_viewport_capture: self.mission_start_viewport_capture,
-            mission_start_legacy_save: self.mission_start_legacy_save.clone(),
-            preserve_forced_mission_campaign: self.preserve_forced_mission_campaign,
-        }
-    }
-}
-
-impl std::ops::Deref for MissionLaunch {
-    type Target = CliArgs;
-    fn deref(&self) -> &CliArgs {
-        &self.config
-    }
-}
-
-impl std::ops::DerefMut for MissionLaunch {
-    fn deref_mut(&mut self) -> &mut CliArgs {
-        &mut self.config
-    }
-}
-
-/// Exact executable-package handoff for one live custom mission. Archive
-/// identity/mount lifetime lives in `resolved_mission_assets`; this structure
-/// never carries a path which Lua startup could reopen.
-#[derive(Debug, Clone)]
-pub struct PendingLuaMission {
-    pub rhm_basename: String,
-    pub requires_spellforge: bool,
-    /// Exact already-admitted package supplied by live, replay, save, or
-    /// multiplayer preparation. Startup never consults a local library.
-    pub spellforge_package: Option<robin_engine::spellforge::SpellforgePackage>,
-}
-
 impl Default for CliArgs {
     fn default() -> Self {
         let args = Self {
@@ -535,21 +326,26 @@ pub fn set_pending_browser_join(_code: String, _redeemed: bool) -> Result<(), St
     )
 }
 
+/// Resolve the launcher's join route while building the run's configuration:
+/// `cli` and `browser_join_redeemed` are the run config under construction.
 #[cfg(feature = "multiplayer")]
-pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), super::LaunchError> {
+pub(super) fn resolve_join_ticket(
+    cli: &mut CliArgs,
+    browser_join_redeemed: &mut bool,
+) -> Result<(), super::LaunchError> {
     #[cfg(target_arch = "wasm32")]
-    if args.join.is_none() {
+    if cli.join.is_none() {
         if let Some((code, redeemed)) =
             PENDING_BROWSER_JOIN.with(|pending| pending.borrow_mut().take())
         {
-            args.join = Some(code);
-            args.browser_join_redeemed = redeemed;
+            cli.join = Some(code);
+            *browser_join_redeemed = redeemed;
         }
     }
-    let Some(code) = args.join.as_deref() else {
+    let Some(code) = cli.join.as_deref() else {
         return Ok(());
     };
-    if args.server || args.connect.is_some() || args.mission.is_some() {
+    if cli.server || cli.connect.is_some() || cli.mission.is_some() {
         return Err(super::LaunchError::arguments(
             "--join cannot be combined with --server, --connect, or --mission",
         ));
@@ -557,18 +353,18 @@ pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), super:
     let ticket = crate::multiplayer::join_ticket::BrowserJoinTicket::decode_authenticated(code)?;
     ticket.validate_use_at(
         current_epoch_seconds()?,
-        if args.browser_join_redeemed {
+        if *browser_join_redeemed {
             crate::multiplayer::join_ticket::InvitationUse::RedeemedReconnect
         } else {
             crate::multiplayer::join_ticket::InvitationUse::Initial
         },
     )?;
-    apply_authenticated_join_route(args, &ticket, cfg!(target_arch = "wasm32"))
+    apply_authenticated_join_route(cli, &ticket, cfg!(target_arch = "wasm32"))
 }
 
 #[cfg(feature = "multiplayer")]
 fn apply_authenticated_join_route(
-    args: &mut MissionLaunch,
+    cli: &mut CliArgs,
     ticket: &crate::multiplayer::join_ticket::BrowserJoinTicket,
     browser_interactive_preflight: bool,
 ) -> Result<(), super::LaunchError> {
@@ -580,23 +376,26 @@ fn apply_authenticated_join_route(
         // carries those bytes into the real connection. Setting `mission` or
         // `connect` here would instead take the direct-mission fast path and
         // reject every non-vanilla host as un-preflighted content.
-        args.force_main_menu = true;
+        cli.force_main_menu = true;
         return Ok(());
     }
 
     let endpoint_addr = ticket.endpoint_addr()?;
     let connect = serde_json::to_string(&endpoint_addr)
         .expect("validated iroh EndpointAddr serialization cannot fail");
-    args.connect = Some(connect);
-    args.mission = Some(ticket.payload().mission_id.clone());
-    args.proto = None;
-    args.mp_expected_players = Some(ticket.payload().expected_players);
-    args.mp_mission_profile_id = ticket.payload().mission_profile_id;
+    cli.connect = Some(connect);
+    cli.mission = Some(ticket.payload().mission_id.clone());
+    cli.proto = None;
+    cli.mp_expected_players = Some(ticket.payload().expected_players);
+    cli.mp_mission_profile_id = ticket.payload().mission_profile_id;
     Ok(())
 }
 
 #[cfg(not(feature = "multiplayer"))]
-pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), super::LaunchError> {
+pub(super) fn resolve_join_ticket(
+    args: &mut CliArgs,
+    _browser_join_redeemed: &mut bool,
+) -> Result<(), super::LaunchError> {
     if args.join.is_some() || args.server || args.connect.is_some() {
         return Err(super::LaunchError::arguments(
             "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`",
@@ -615,7 +414,7 @@ fn current_epoch_seconds() -> Result<u64, super::LaunchError> {
         })
 }
 
-fn options_from_args(args: &CliArgs) -> engine_api::GlobalOptions {
+pub(super) fn options_from_args(args: &CliArgs) -> engine_api::GlobalOptions {
     engine_api::GlobalOptions {
         sound_enabled: !args.no_sound,
         script_enabled: !args.no_script,
@@ -717,12 +516,17 @@ mod tests {
 
     #[cfg(feature = "multiplayer")]
     use super::apply_authenticated_join_route;
-    use super::{requested_replay_data, try_parse_cli_from};
+    use super::try_parse_cli_from;
     use crate::main_entry::callbacks::{
         PreparedLoad, current_mission_id, recommended_export_team, required_mission_id,
         validate_save_mission, validated_save_reload_target,
     };
+    use crate::main_entry::launch::requested_replay_data;
+    use crate::main_entry::{
+        LaunchConfig, MissionContent, MissionRequest, MissionStartCapture, PendingLuaMission,
+    };
     use robin_engine::campaign::Campaign;
+    use std::sync::Arc;
 
     const RUNTIME_HANDOFF_FIELDS: &[&str] = &[
         "replay_data",
@@ -743,24 +547,25 @@ mod tests {
         "global_options",
     ];
 
-    fn assert_unprepared_launch(launch: &super::MissionLaunch) {
+    fn assert_unprepared_launch(launch: &MissionRequest) {
         assert!(!launch.mission_restart);
         assert!(launch.replay_data.is_none());
-        assert!(launch.resolved_mission_assets.is_none());
-        assert!(launch.pending_lua_mission.is_none());
-        assert!(launch.pending_distributed_mod.is_none());
-        assert!(launch.mission_start_map_output.is_none());
-        assert_eq!(launch.mission_start_map_frame, 0);
-        assert!(!launch.mission_start_reveal_all);
-        assert!(!launch.mission_start_fog_of_war);
-        assert!(!launch.mission_start_viewport_capture);
-        assert!(launch.mission_start_legacy_save.is_none());
-        assert!(!launch.preserve_forced_mission_campaign);
-        assert!(!launch.mp_continue_session);
-        assert!(!launch.browser_join_redeemed);
-        assert!(launch.global_options.preparation_files().is_err());
+        assert!(launch.content.resolved_mission_assets.is_none());
+        assert!(launch.content.pending_lua_mission.is_none());
+        assert!(launch.content.pending_distributed_mod.is_none());
+        let capture = &launch.config.capture;
+        assert!(capture.map_output.is_none());
+        assert_eq!(capture.map_frame, 0);
+        assert!(!capture.reveal_all);
+        assert!(!capture.fog_of_war);
+        assert!(!capture.viewport_capture);
+        assert!(capture.legacy_save.is_none());
+        assert!(!capture.preserve_forced_mission_campaign);
+        assert!(!launch.multiplayer.continue_session);
+        assert!(!launch.config.browser_join_redeemed);
+        assert!(launch.config.global_options.preparation_files().is_err());
         #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-        assert!(launch.simulation_content_export.is_none());
+        assert!(launch.config.simulation_content_export.is_none());
     }
 
     #[test]
@@ -780,14 +585,14 @@ mod tests {
             let name = field.ident.as_ref().unwrap().to_string();
             assert!(
                 !RUNTIME_HANDOFF_FIELDS.contains(&name.as_str()),
-                "{name} belongs to MissionLaunch"
+                "{name} belongs to LaunchConfig or MissionRequest"
             );
         }
     }
 
     #[test]
     fn decoded_launch_configuration_retains_flags_without_runtime_authority() {
-        let launch = super::MissionLaunch::from(super::CliArgs {
+        let launch = LaunchConfig::from(super::CliArgs {
             no_sound: true,
             no_script: true,
             goldeneye: true,
@@ -800,15 +605,14 @@ mod tests {
             ..Default::default()
         });
         let wire = serde_json::to_value(&launch).unwrap();
-        let decoded: super::MissionLaunch = serde_json::from_value(wire).unwrap();
+        let decoded: LaunchConfig = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(
             serde_json::to_value(decoded.global_options.options()).unwrap(),
             serde_json::to_value(launch.global_options.options()).unwrap()
         );
         assert!(crate::host::ReadyApplicationContext::try_from(decoded.global_options).is_err());
-        assert!(decoded.replay_data.is_none());
-        assert!(decoded.resolved_mission_assets.is_none());
-        assert!(!decoded.mission_restart);
+        let request: MissionRequest = serde_json::from_value(wire).unwrap();
+        assert_unprepared_launch(&request);
     }
 
     #[test]
@@ -822,69 +626,98 @@ mod tests {
         for field in RUNTIME_HANDOFF_FIELDS {
             assert!(encoded_raw.get(field.replace('_', "-")).is_none());
         }
-        let launch = super::MissionLaunch::from(raw);
-        assert!(launch.headless);
-        assert!(!launch.global_options.sound_enabled);
+        let launch = MissionRequest::from(LaunchConfig::from(raw));
+        assert!(launch.config.cli.headless);
+        assert!(!launch.config.global_options.sound_enabled);
         assert_unprepared_launch(&launch);
 
         let mut input = serde_json::json!({"config": {"headless": true}});
         for field in RUNTIME_HANDOFF_FIELDS {
             input[*field] = serde_json::json!({"forged": true});
         }
-        let injected: super::MissionLaunch = serde_json::from_value(input).unwrap();
-        assert!(injected.headless);
+        let injected: MissionRequest = serde_json::from_value(input).unwrap();
+        assert!(injected.config.cli.headless);
         assert_unprepared_launch(&injected);
     }
 
     #[test]
-    fn runtime_handoffs_clone_in_process_but_do_not_round_trip_through_configuration() {
-        let launch = super::MissionLaunch {
+    fn runtime_handoffs_share_configuration_but_do_not_round_trip_through_it() {
+        let config = Arc::new(LaunchConfig {
             browser_join_redeemed: true,
-            mp_continue_session: true,
-            pending_lua_mission: Some(super::PendingLuaMission {
-                rhm_basename: "custom".into(),
-                requires_spellforge: false,
-                spellforge_package: None,
-            }),
-            pending_distributed_mod: Some(std::sync::Arc::from([1u8, 2, 3])),
-            mission_start_map_output: Some("capture.png".into()),
-            mission_start_map_frame: 42,
-            mission_start_reveal_all: true,
-            mission_start_fog_of_war: true,
-            mission_start_viewport_capture: true,
-            mission_start_legacy_save: Some(vec![4, 5, 6]),
-            preserve_forced_mission_campaign: true,
+            capture: MissionStartCapture {
+                map_output: Some("capture.png".into()),
+                map_frame: 42,
+                reveal_all: true,
+                fog_of_war: true,
+                viewport_capture: true,
+                legacy_save: Some(vec![4, 5, 6]),
+                preserve_forced_mission_campaign: true,
+            },
             ..Default::default()
-        };
-        let cloned = launch.clone();
-        assert_eq!(cloned.mission_start_map_frame, 42);
-        assert_eq!(cloned.mission_start_legacy_save, Some(vec![4, 5, 6]));
-        assert!(std::sync::Arc::ptr_eq(
-            cloned.pending_distributed_mod.as_ref().unwrap(),
-            launch.pending_distributed_mod.as_ref().unwrap(),
-        ));
-        let encoded = serde_json::to_value(&cloned).unwrap();
+        });
+        let launch = MissionRequest::new(Arc::clone(&config))
+            .with_content(MissionContent {
+                pending_lua_mission: Some(PendingLuaMission {
+                    rhm_basename: "custom".into(),
+                    requires_spellforge: false,
+                    spellforge_package: None,
+                }),
+                pending_distributed_mod: Some(Arc::from([1u8, 2, 3])),
+                ..Default::default()
+            })
+            .with_session_continuation(true);
+        // Every launch shares, never copies, the process configuration.
+        let next = MissionRequest::new(Arc::clone(&config));
+        assert!(Arc::ptr_eq(&launch.config, &next.config));
+        assert_eq!(next.config.capture.map_frame, 42);
+        assert_eq!(next.config.capture.legacy_save, Some(vec![4, 5, 6]));
+        assert!(next.content.pending_distributed_mod.is_none());
+        assert!(!next.multiplayer.continue_session);
+        let encoded = serde_json::to_value(&launch).unwrap();
         for field in RUNTIME_HANDOFF_FIELDS {
             assert!(encoded.get(*field).is_none());
         }
-        let decoded: super::MissionLaunch = serde_json::from_value(encoded).unwrap();
+        let decoded: MissionRequest = serde_json::from_value(encoded).unwrap();
         assert_unprepared_launch(&decoded);
     }
 
     /// Decode a launch configuration exactly as the launch `Deserialize` impl
     /// does and reduce it to comparable values: the configuration, the derived
     /// startup options, and whether any runtime authority was installed.
+    /// `LaunchConfig` and `MissionRequest` must accept and reject the same
+    /// inputs identically.
     fn decode_launch_fixture(
         input: &str,
     ) -> Result<(serde_json::Value, serde_json::Value, bool), String> {
-        let launch: super::MissionLaunch =
-            serde_json::from_str(input).map_err(|error| error.to_string())?;
-        assert_unprepared_launch(&launch);
-        Ok((
-            serde_json::to_value(&launch.config).unwrap(),
-            serde_json::to_value(launch.global_options.options()).unwrap(),
-            launch.global_options.preparation_files().is_ok(),
-        ))
+        let config = serde_json::from_str::<LaunchConfig>(input).map_err(|error| error.to_string());
+        let request =
+            serde_json::from_str::<MissionRequest>(input).map_err(|error| error.to_string());
+        match (config, request) {
+            (Err(config), Err(request)) => {
+                assert_eq!(config, request, "input: {input}");
+                Err(config)
+            }
+            (Ok(config), Ok(request)) => {
+                assert_unprepared_launch(&request);
+                assert_eq!(
+                    serde_json::to_value(&request.config.cli).unwrap(),
+                    serde_json::to_value(&config.cli).unwrap()
+                );
+                assert_eq!(request.replay, config.cli.replay);
+                assert_eq!(request.start_paused, config.cli.start_paused);
+                assert_eq!(request.multiplayer.server, config.cli.server);
+                Ok((
+                    serde_json::to_value(&config.cli).unwrap(),
+                    serde_json::to_value(config.global_options.options()).unwrap(),
+                    config.global_options.preparation_files().is_ok(),
+                ))
+            }
+            (config, request) => panic!(
+                "LaunchConfig and MissionRequest disagree on {input}: {:?} vs {:?}",
+                config.map(|_| ()),
+                request.map(|_| ())
+            ),
+        }
     }
 
     /// Fixture table for the launch configuration `Deserialize` behaviour.
@@ -980,7 +813,7 @@ mod tests {
             mp_nickname: "nick".into(),
             ..Default::default()
         };
-        let launch = super::MissionLaunch::from(config.clone());
+        let launch = LaunchConfig::from(config.clone());
         assert_eq!(
             serde_json::to_value(&launch).unwrap(),
             serde_json::json!({ "config": serde_json::to_value(&config).unwrap() })
@@ -1011,11 +844,8 @@ mod tests {
         )
         .unwrap();
         let code = ticket.encode();
-        let mut args = super::MissionLaunch {
-            config: super::CliArgs {
-                join: Some(code.clone()),
-                ..Default::default()
-            },
+        let mut args = super::CliArgs {
+            join: Some(code.clone()),
             ..Default::default()
         };
 
@@ -1025,8 +855,10 @@ mod tests {
         assert!(args.force_main_menu);
         assert!(args.connect.is_none());
         assert!(args.mission.is_none());
-        assert!(args.pending_distributed_mod.is_none());
-        assert!(args.pending_lua_mission.is_none());
+        let launch = MissionRequest::from(LaunchConfig::from(args));
+        assert_eq!(launch.multiplayer.join.as_deref(), Some(code.as_str()));
+        assert!(launch.content.pending_distributed_mod.is_none());
+        assert!(launch.content.pending_lua_mission.is_none());
     }
 
     #[test]
@@ -1044,13 +876,13 @@ mod tests {
         ])
         .unwrap();
 
-        let args = super::MissionLaunch::from(args);
+        let args = LaunchConfig::from(args);
         assert!(!args.global_options.sound_enabled);
         assert!(!args.global_options.script_enabled);
         assert!(args.global_options.highlander2);
         assert!(args.global_options.bypass_fog_sprites_crash);
         assert!(args.global_options.whatsup);
-        assert!(args.goldeneye);
+        assert!(args.cli.goldeneye);
         assert!(args.global_options.golden_eye);
         assert!(args.global_options.ignore_default_loose);
         assert!(args.global_options.check_sound_data);
@@ -1201,37 +1033,51 @@ mod tests {
 
     #[test]
     fn replay_request_replaces_assets_without_changing_capture_or_pause_policy() {
-        let mut previous = super::MissionLaunch {
+        let config = Arc::new(LaunchConfig {
+            cli: super::CliArgs {
+                replay: Some("old recording".into()),
+                custom_mission: Some("old archive".into()),
+                start_paused: true,
+                ..Default::default()
+            },
+            capture: MissionStartCapture {
+                legacy_save: Some(vec![1, 2, 3]),
+                map_frame: 42,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let previous = MissionRequest {
             mission_restart: true,
-            mission_start_legacy_save: Some(vec![1, 2, 3]),
-            mission_start_map_frame: 42,
-            mp_continue_session: true,
             replay_data: Some(replay_launch_fixture()),
-            pending_distributed_mod: Some(std::sync::Arc::from([4u8, 5, 6])),
-            pending_lua_mission: Some(super::PendingLuaMission {
+            ..MissionRequest::new(config)
+        }
+        .with_content(MissionContent {
+            custom_mission: Some("old archive".into()),
+            pending_distributed_mod: Some(Arc::from([4u8, 5, 6])),
+            pending_lua_mission: Some(PendingLuaMission {
                 rhm_basename: "old".into(),
                 requires_spellforge: false,
                 spellforge_package: None,
             }),
             ..Default::default()
-        };
-        previous.replay = Some("old recording".into());
-        previous.custom_mission = Some("old archive".into());
-        previous.start_paused = true;
+        })
+        .with_session_continuation(true);
+        assert!(previous.replay.is_some() && previous.start_paused);
         let next = previous.for_replay(replay_launch_fixture(), false);
         assert!(!next.mission_restart);
         assert!(next.replay.is_none());
-        assert!(next.custom_mission.is_none());
-        assert!(next.pending_distributed_mod.is_none());
-        assert!(next.pending_lua_mission.is_none());
-        assert!(next.resolved_mission_assets.is_none());
+        assert!(next.content.custom_mission.is_none());
+        assert!(next.content.pending_distributed_mod.is_none());
+        assert!(next.content.pending_lua_mission.is_none());
+        assert!(next.content.resolved_mission_assets.is_none());
         assert_eq!(next.replay_data.as_ref().unwrap().header().rng_seed, 0x55aa);
         assert!(next.start_paused);
-        assert!(next.mp_continue_session);
-        assert_eq!(next.mission_start_map_frame, 42);
-        assert_eq!(next.mission_start_legacy_save, Some(vec![1, 2, 3]));
-        assert!(previous.pending_distributed_mod.is_some());
-        previous.start_paused = false;
+        assert!(next.multiplayer.continue_session);
+        assert_eq!(next.config.capture.map_frame, 42);
+        assert_eq!(next.config.capture.legacy_save, Some(vec![1, 2, 3]));
+        assert!(previous.content.pending_distributed_mod.is_some());
+        let previous = previous.with_start_paused(false);
         assert!(
             previous
                 .for_replay(replay_launch_fixture(), true)
@@ -1247,13 +1093,15 @@ mod tests {
     #[test]
     fn decoded_replay_payload_wins_over_the_original_spec() {
         let data = replay_launch_fixture();
-        let args = super::MissionLaunch {
-            config: super::CliArgs {
-                replay: Some("this-path-must-never-be-read".into()),
-                ..Default::default()
-            },
+        let args = MissionRequest {
             replay_data: Some(data),
-            ..Default::default()
+            ..MissionRequest::from(LaunchConfig {
+                cli: super::CliArgs {
+                    replay: Some("this-path-must-never-be-read".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
         };
 
         let selected = requested_replay_data(&args).unwrap().unwrap();
@@ -1263,7 +1111,7 @@ mod tests {
         assert!(serialized.get("mission_restart").is_none());
         assert!(serialized.get("resolved_mission_assets").is_none());
         assert!(serialized.get("simulation_content_export").is_none());
-        let restored: super::MissionLaunch = serde_json::from_value(serialized).unwrap();
+        let restored: MissionRequest = serde_json::from_value(serialized).unwrap();
         assert_eq!(restored.replay, args.replay);
         assert!(restored.replay_data.is_none());
     }

@@ -615,7 +615,7 @@ impl InteractiveFrameSimulation {
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
         // headless auto-dismiss path while retaining normal graphical ticks.
-        let auto_dismiss_modals = args.mission_start_map_output.is_some();
+        let auto_dismiss_modals = args.config.capture.map_output.is_some();
         let InteractiveMission {
             runtime, frontend, ..
         } = mission;

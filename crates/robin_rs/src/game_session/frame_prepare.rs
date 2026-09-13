@@ -116,7 +116,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             services.window,
             services.callbacks,
             services.profiles,
-            services.args,
+            &services.args.config.cli,
             input,
         )
         .await?

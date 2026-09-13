@@ -66,7 +66,7 @@ impl HeadlessMission {
     /// input-device, menu, or native-audio shims.
     pub(super) async fn run(
         &mut self,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
     ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
         loop {
             let frame_result = self.run_frame(args)?;
@@ -100,7 +100,7 @@ impl HeadlessMission {
     /// the outer driver.
     pub(super) fn run_frame(
         &mut self,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
     ) -> Result<HeadlessFrameResult, super::multiplayer::MultiplayerSessionError> {
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
@@ -233,7 +233,7 @@ impl HeadlessMission {
         let outcome = self.runtime.timeline.plan_frame_outcome(
             crate::window::process_uptime_ms(),
             FramePacing {
-                fast_forward_requested: args.fast_forward,
+                fast_forward_requested: args.config.cli.fast_forward,
                 headless: true,
                 engine_fast_forward: world_view.manager.engine.is_fast_forward(),
                 slow_motion: world_view.host.frontend.slow_motion,
@@ -511,7 +511,7 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(
                 mission
-                    .run_frame(&crate::main_entry::MissionLaunch::default())
+                    .run_frame(&crate::main_entry::MissionRequest::default())
                     .expect("network drain succeeds")
                     .exit,
                 None
@@ -519,7 +519,7 @@ mod tests {
         }
         assert_eq!(
             mission
-                .run_frame(&crate::main_entry::MissionLaunch::default())
+                .run_frame(&crate::main_entry::MissionRequest::default())
                 .expect("network drain succeeds")
                 .exit,
             Some(super::HeadlessFrameExit::ReplayComplete)
@@ -585,7 +585,7 @@ mod tests {
         };
 
         mission
-            .run_frame(&crate::main_entry::MissionLaunch::default())
+            .run_frame(&crate::main_entry::MissionRequest::default())
             .expect("network drain succeeds");
         assert!(
             !mission

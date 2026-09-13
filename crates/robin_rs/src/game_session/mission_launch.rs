@@ -7,7 +7,7 @@ use super::*;
 /// custom missions may legitimately produce no session.
 pub(crate) fn install_pending_lua_session(
     host: &mut Host,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
     if let Some(package) = args
         .replay_data
@@ -32,7 +32,7 @@ pub(crate) fn install_pending_lua_session(
         host.scripting.lua_session = Some(session);
         return Ok(());
     }
-    let Some(pending) = args.pending_lua_mission.as_ref() else {
+    let Some(pending) = args.content.pending_lua_mission.as_ref() else {
         return Ok(());
     };
     if pending.requires_spellforge
@@ -76,13 +76,13 @@ pub(crate) fn install_pending_lua_session(
 /// ambient library package is accepted as a substitute.
 pub(crate) fn pending_cold_save_lua_launch(
     callbacks: &RustCallbacks,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> Result<Option<(String, robin_engine::spellforge::SpellforgePackage)>, MissionError> {
     let Some(SaveLoadRequest::ApplyLoad(load)) = callbacks.pending_request() else {
         return Ok(None);
     };
     let save = load.save();
-    let resolved = args.resolved_mission_assets.as_ref().ok_or_else(|| {
+    let resolved = args.content.resolved_mission_assets.as_ref().ok_or_else(|| {
         MissionError::save(
             "preflighted save reached engine construction without a resolved mission asset lifetime",
         )
@@ -102,7 +102,7 @@ pub(crate) fn pending_cold_save_lua_launch(
 
 pub(crate) fn install_cold_save_lua_session(
     host: &mut Host,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     launch: Option<(String, robin_engine::spellforge::SpellforgePackage)>,
 ) -> Result<(), crate::lua_session::SpellforgeSessionError> {
     let Some((mission, package)) = launch else {
@@ -111,8 +111,8 @@ pub(crate) fn install_cold_save_lua_session(
     assert!(
         args.replay_data.is_none()
             && args.replay.is_none()
-            && args.pending_lua_mission.is_none()
-            && args.custom_mission.is_none(),
+            && args.content.pending_lua_mission.is_none()
+            && args.content.custom_mission.is_none(),
         "cold save package must be the sole Lua startup authority"
     );
     let session = LuaSession::start_from_package(mission, package)?;
@@ -182,12 +182,6 @@ pub(super) fn simulation_config_for_level_restart(
         checkpoint.enable_dynamic_ambience = outcome.enable_dynamic_ambience;
     }
     checkpoint
-}
-
-pub(super) fn clear_ambient_custom_launch(args: &mut crate::main_entry::MissionLaunch) {
-    args.custom_mission = None;
-    args.pending_lua_mission = None;
-    args.pending_distributed_mod = None;
 }
 
 /// Resolve and mount a save's exact content before consulting the static
@@ -524,26 +518,37 @@ pub(super) fn prepare_quickload_cross_mission(
 /// Shared cold-restart policy for graphical and headless direct missions.
 /// Replay restarts retain the admitted initial world and configuration; live
 /// restarts restore the campaign checkpoint and carry current gameplay options.
+/// Returns the request for the next attempt.
 pub(super) fn prepare_direct_restart(
     campaign: &mut Campaign,
-    args: &mut crate::main_entry::MissionLaunch,
+    args: crate::main_entry::MissionRequest,
     replay_restart: Option<&(Campaign, u64, engine_api::SimConfig)>,
     outcome_sim_config: engine_api::SimConfig,
-) -> Result<(u64, engine_api::SimConfig), MissionError> {
+) -> Result<
+    (
+        crate::main_entry::MissionRequest,
+        u64,
+        engine_api::SimConfig,
+    ),
+    MissionError,
+> {
     if let Some((replay_campaign, seed, config)) = replay_restart {
         *campaign = replay_campaign.clone();
         return Ok((
+            args,
             *seed,
             simulation_config_for_level_restart(*config, outcome_sim_config, true),
         ));
     }
-    if !restore_direct_restart_boundary(campaign, args) {
+    let (args, restored) = restore_direct_restart_boundary(campaign, args);
+    if !restored {
         return Err(MissionError::launch(
             "direct LevelRestart is missing its preselected mission checkpoint",
         ));
     }
     let (seed, config) = campaign.restart_simulation_checkpoint();
     Ok((
+        args,
         seed,
         simulation_config_for_level_restart(config, outcome_sim_config, false),
     ))
@@ -553,67 +558,88 @@ pub(super) fn prepare_direct_restart(
 /// restart has restored its checkpoint. Failed admission never changes policy.
 pub(super) fn restore_direct_restart_boundary(
     campaign: &mut Campaign,
-    args: &mut crate::main_entry::MissionLaunch,
-) -> bool {
+    args: crate::main_entry::MissionRequest,
+) -> (crate::main_entry::MissionRequest, bool) {
     let restored = campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
-    carry_direct_restart_multiplayer_continuation(args, restored);
-    restored
+    (
+        carry_direct_restart_multiplayer_continuation(args, restored),
+        restored,
+    )
 }
 
+/// Admit the host session continuation for a restored live restart. An
+/// ineligible transition keeps (never revokes) an established continuation.
 pub(super) fn carry_direct_restart_multiplayer_continuation(
-    args: &mut crate::main_entry::MissionLaunch,
+    args: crate::main_entry::MissionRequest,
     restored_checkpoint: bool,
-) {
-    if restored_checkpoint && args.server && args.replay.is_none() && args.replay_data.is_none() {
-        args.mp_continue_session = true;
+) -> crate::main_entry::MissionRequest {
+    if restored_checkpoint
+        && args.multiplayer.server
+        && args.replay.is_none()
+        && args.replay_data.is_none()
+    {
+        args.with_session_continuation(true)
+    } else {
+        args
     }
 }
 
 /// Consume an admitted RPC replay once at a completed mission boundary. The
-/// caller owns its launch args so releasing the old asset lease really unmounts
-/// that overlay before canonical replay resolution installs a replacement.
+/// caller hands over its launch so releasing the old asset lease really
+/// unmounts that overlay before canonical replay resolution installs a
+/// replacement. Returns the launch for the next attempt: the replay's own
+/// request, or the unchanged one when nothing was pending.
 pub(super) async fn prepare_pending_direct_replay(
     pending: &mut Option<crate::replay_service::PendingReplay>,
     application_context: &ApplicationContext,
     profiles: &mut engine_profiles::ProfileManager,
-    args: &mut crate::main_entry::MissionLaunch,
-) -> Result<Option<(Campaign, usize, MissionLocation, u64, engine_api::SimConfig)>, MissionError> {
+    args: crate::main_entry::MissionRequest,
+) -> Result<
+    (
+        crate::main_entry::MissionRequest,
+        Option<(Campaign, usize, MissionLocation, u64, engine_api::SimConfig)>,
+    ),
+    MissionError,
+> {
     let Some(pending) = pending.take() else {
-        return Ok(None);
+        return Ok((args, None));
     };
-    args.resolved_mission_assets = None;
-    clear_ambient_custom_launch(args);
-    // This RPC has an explicit pause policy; do not inherit the previous
-    // replay's pause request when replacing its owned launch arguments.
-    args.start_paused = pending.paused;
+    // Release the superseded content (and its lease) first. This RPC has an
+    // explicit pause policy; do not inherit the previous replay's pause
+    // request when replacing the launch.
+    let superseded = args
+        .with_content(crate::main_entry::MissionContent::default())
+        .with_start_paused(pending.paused);
     let prepared = prepare_replay_launch(
         application_context,
         profiles,
-        args,
+        &superseded,
         pending.data,
         pending.paused,
     )
     .await
     .map_err(|error| error.context("pending direct-mission replay launch failed"))?;
-    *args = prepared.launch;
-    Ok(Some((
-        prepared.campaign,
-        prepared.mission_idx,
-        prepared.location,
-        prepared.rng_seed,
-        prepared.sim_config,
-    )))
+    Ok((
+        prepared.launch,
+        Some((
+            prepared.campaign,
+            prepared.mission_idx,
+            prepared.location,
+            prepared.rng_seed,
+            prepared.sim_config,
+        )),
+    ))
 }
 
 pub(super) fn unprepared_replay_launch_error(
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> Option<MissionError> {
     if args.replay.is_some() {
         return Some(MissionError::launch(
             "replay path/compact input reached mission construction before canonical decode and cold asset resolution",
         ));
     }
-    if args.replay_data.is_some() && args.resolved_mission_assets.is_none() {
+    if args.replay_data.is_some() && args.content.resolved_mission_assets.is_none() {
         return Some(MissionError::launch(
             "decoded replay reached mission construction before exact cold asset resolution",
         ));
@@ -622,7 +648,7 @@ pub(super) fn unprepared_replay_launch_error(
 }
 
 pub(super) async fn ensure_shipping_mission<F>(
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     mission: &str,
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
@@ -633,6 +659,7 @@ where
     F: FnMut(crate::shipping_mission::MissionLoadProgress<'_>),
 {
     let shipping = args
+        .config
         .global_options
         .shipping_arc()
         .map_err(MissionError::application)?;
@@ -651,13 +678,13 @@ where
         return Ok(());
     }
     crate::shipping_mission::ensure_loaded(
-        &args.global_options,
+        &args.config.global_options,
         shipping.as_ref(),
         mission,
         campaign,
         profiles,
         has_decoded_saved_world,
-        args.global_options.sound_enabled,
+        args.config.global_options.sound_enabled,
         progress,
     )
     .await

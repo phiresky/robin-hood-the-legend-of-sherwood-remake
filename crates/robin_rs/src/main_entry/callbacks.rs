@@ -17,7 +17,7 @@ use robin_engine::engine as engine_api;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
-use super::cli::MissionLaunch;
+use super::launch::LaunchConfig;
 use crate::game_session::MissionError;
 
 mod executor;
@@ -1006,13 +1006,14 @@ pub(super) fn force_mission_launch(
     campaign: &mut Campaign,
     profiles: &mut std::sync::Arc<ProfileManager>,
     application_context: &ApplicationContext,
-    args: &MissionLaunch,
+    config: &LaunchConfig,
 ) -> Result<Option<(usize, MissionLocation)>, super::LaunchError> {
     use super::LaunchError;
-    let Some(mission_name) = args.mission.as_deref() else {
+    let Some(mission_name) = config.cli.mission.as_deref() else {
         return Ok(None);
     };
-    let proto_name = args
+    let proto_name = config
+        .cli
         .proto
         .clone()
         .or_else(|| {
@@ -1027,7 +1028,7 @@ pub(super) fn force_mission_launch(
     tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
 
     let profiles_mut = std::sync::Arc::make_mut(profiles);
-    if args.preserve_forced_mission_campaign {
+    if config.capture.preserve_forced_mission_campaign {
         let idx = campaign.current_mission_idx.ok_or_else(|| {
             LaunchError::campaign("preserved capture campaign has no current mission")
         })?;
@@ -1054,7 +1055,7 @@ pub(super) fn force_mission_launch(
             application_context.sim_config().difficulty,
         );
     }
-    if args.mission_start_map_output.is_some() {
+    if config.capture.map_output.is_some() {
         // Use the walkthrough's practical campaign teams where it gives one.
         // For optional missions, derive the recruited heroes from prerequisite
         // history and fill the remaining slots with useful Merry Men. This

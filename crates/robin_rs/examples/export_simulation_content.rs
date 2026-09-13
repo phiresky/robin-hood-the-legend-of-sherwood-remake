@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use clap::{Parser, ValueEnum};
-use robin_rs::main_entry::{CliArgs, MissionLaunch, SimulationContentExportRequest};
+use robin_rs::main_entry::{CliArgs, LaunchConfig, SimulationContentExportRequest};
 use robin_run_protocol::{
     ArtifactRefV1, BuildManifestV2, CanonicalDocument as _, ContentClosureKindV1,
     ContentManifestV1, Digest32, OFFICIAL_PROJECTION_EXPORT_REPORT_SCHEMA_VERSION_V2,
@@ -436,12 +436,20 @@ fn main() -> Result<()> {
     for subject in &subjects {
         let campaign =
             robin_engine::campaign::Campaign::create(&profiles, context.sim_config().difficulty);
-        let mut run = MissionLaunch {
-            config: CliArgs {
+        let (mission, sherwood) = match subject {
+            OfficialContentSubjectV1::FieldMission { mission_id } => {
+                (Some(mission_id.clone()), false)
+            }
+            OfficialContentSubjectV1::Headquarters { .. } => (None, true),
+        };
+        let run = LaunchConfig {
+            cli: CliArgs {
                 no_sound: true,
                 rollback_check: false,
                 headless: true,
                 http_server: 0,
+                mission,
+                sherwood,
                 ..CliArgs::default()
             },
             global_options: context.clone().into(),
@@ -452,12 +460,6 @@ fn main() -> Result<()> {
             ..Default::default()
         };
         robin_engine::engine::GlobalOptions::set_global(context.options().clone());
-        match subject {
-            OfficialContentSubjectV1::FieldMission { mission_id } => {
-                run.mission = Some(mission_id.clone());
-            }
-            OfficialContentSubjectV1::Headquarters { .. } => run.sherwood = true,
-        }
         pollster::block_on(robin_rs::main_entry::run_rust_game_headless(
             campaign,
             profiles.clone(),

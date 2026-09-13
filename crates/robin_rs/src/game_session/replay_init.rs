@@ -175,7 +175,7 @@ pub(super) fn restart_recording(
 pub(super) fn init_recording(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: &LevelAssets,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
     engine_rng_seed: u64,
@@ -188,7 +188,13 @@ pub(super) fn init_recording(
     let replay_path = if is_playing_back {
         None
     } else {
-        Some(args.record.clone().unwrap_or_else(default_replay_path))
+        Some(
+            args.config
+                .cli
+                .record
+                .clone()
+                .unwrap_or_else(default_replay_path),
+        )
     };
     #[cfg(target_arch = "wasm32")]
     let replay_path = if is_playing_back {
@@ -205,12 +211,16 @@ pub(super) fn init_recording(
     };
     // A fresh mission gets a fresh generation of the bounded spool. The
     // returned sole writer publishes only complete recorder flush boundaries.
-    let rpc_spool = args.global_options.replay_recording().begin_recording();
+    let rpc_spool = args
+        .config
+        .global_options
+        .replay_recording()
+        .begin_recording();
     // One-shot mission-map rendering exits before the first simulation
     // frame, so producing an empty replay (and its debug log) would only be
     // an unrelated filesystem side effect of the capture tool.
     let mut recorder =
-        if !should_record_local_replay(is_playing_back, args.mission_start_map_output.is_some()) {
+        if !should_record_local_replay(is_playing_back, args.config.capture.map_output.is_some()) {
             None
         } else {
             let path = replay_path.as_deref().expect("live recording path");
@@ -251,9 +261,12 @@ pub(super) fn init_recording(
                     Ok(rec) => {
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            args.global_options.recording_index().recording_started(
-                                &archive.directory().join(archive.current_chunk()),
-                            );
+                            args.config
+                                .global_options
+                                .recording_index()
+                                .recording_started(
+                                    &archive.directory().join(archive.current_chunk()),
+                                );
                             if let Err(error) = crate::set_replay_log_file(
                                 &archive.directory().join("replay.debug.log"),
                             ) {
@@ -279,14 +292,15 @@ pub(super) fn init_recording(
 
     if let Some(recorder) = recorder.as_mut() {
         for kind in mission_start_input_taints(
-            args.headless,
-            args.mission_start_reveal_all,
+            args.config.cli.headless,
+            args.config.capture.reveal_all,
             args.mission_restart,
         ) {
             recorder.record_input_taint(kind, 0);
         }
     }
-    args.global_options
+    args.config
+        .global_options
         .replay_recording()
         .install_capture_recorder(recorder.clone());
     Ok(recorder)
@@ -349,7 +363,7 @@ fn should_record_local_replay(is_playing_back: bool, mission_start_map: bool) ->
 pub(super) fn init_replay_and_rollback(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     mission_id: &str,
     mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
     engine_rng_seed: u64,
@@ -361,7 +375,8 @@ pub(super) fn init_replay_and_rollback(
     // mission construction. Reseeding an already-built Engine cannot recreate
     // random draws performed during level initialization.
     assert!(
-        args.global_options
+        args.config
+            .global_options
             .replay_launches()
             .pending_mission()
             .is_none(),
@@ -433,15 +448,15 @@ pub(super) fn init_replay_and_rollback(
     // in multiplayer. Multiplayer still logs real host/client desyncs
     // through authoritative state-hash comparison; the local rollback
     // checker is too expensive to run inside the live netcode loop.
-    let rollback_checker = if args.rollback_check
+    let rollback_checker = if args.config.cli.rollback_check
         && player.is_none()
         && !cfg!(target_arch = "wasm32")
         && !is_multiplayer
     {
-        let rollback_replay_path = args.record.clone();
+        let rollback_replay_path = args.config.cli.record.clone();
         Some(RollbackChecker::new(assets, rollback_replay_path))
     } else {
-        if is_multiplayer && args.rollback_check && player.is_none() {
+        if is_multiplayer && args.config.cli.rollback_check && player.is_none() {
             tracing::info!(
                 "multiplayer: rollback checker disabled; using host state-hash desync logs"
             );
@@ -456,7 +471,7 @@ pub(super) fn init_replay_and_rollback(
     let rewind_buffer = RewindBuffer::new();
 
     Ok(ReplayAndRollback {
-        recording_control: args.global_options.replay_recording(),
+        recording_control: args.config.global_options.replay_recording(),
         recorder,
         player,
         rollback_checker,
@@ -491,14 +506,14 @@ mod tests {
         .unwrap();
         let blocker = directory.path().join("not-a-directory");
         std::fs::write(&blocker, b"occupied").unwrap();
-        let args = crate::main_entry::MissionLaunch {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
             global_options: application_context,
-            config: crate::main_entry::CliArgs {
+            cli: crate::main_entry::CliArgs {
                 record: Some(blocker.join("recording").to_string_lossy().into_owned()),
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
         let error = init_recording(
             &Default::default(),
             &LevelAssets::new(),
@@ -546,14 +561,14 @@ mod tests {
             None,
         )
         .unwrap();
-        let args = crate::main_entry::MissionLaunch {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
             global_options: application_context,
-            config: crate::main_entry::CliArgs {
+            cli: crate::main_entry::CliArgs {
                 replay: Some("must-not-be-read.rhrec.jsonl".into()),
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
         init_replay_and_rollback(
             &Default::default(),
             Arc::new(LevelAssets::new()),
@@ -719,19 +734,20 @@ mod tests {
 
     #[test]
     fn restart_evidence_is_local_to_the_run_arguments() {
-        let launch = crate::main_entry::MissionLaunch::default();
-        let mut restarting = launch.clone();
-        restarting.mission_restart = true;
-        assert!(restarting.clone().mission_restart);
+        let launch = crate::main_entry::MissionRequest::default();
+        assert!(!launch.mission_restart);
+        assert!(mission_start_input_taints(false, false, launch.mission_restart).is_empty());
+        let restarting = launch.restarting();
+        assert!(restarting.mission_restart);
         assert_eq!(
             mission_start_input_taints(false, false, restarting.mission_restart),
             BTreeSet::from([InputTaintKind::MissionRestart])
         );
-        assert!(mission_start_input_taints(false, false, launch.mission_restart).is_empty());
-        assert!(!launch.mission_restart);
-        assert!(!crate::main_entry::MissionLaunch::default().mission_restart);
+        // The evidence belongs to one reconstruction only.
+        assert!(!restarting.after_attempt().mission_restart);
+        assert!(!crate::main_entry::MissionRequest::default().mission_restart);
         // Configuration files cannot supply internal restart evidence.
-        let decoded: crate::main_entry::MissionLaunch =
+        let decoded: crate::main_entry::MissionRequest =
             serde_json::from_str(r#"{"mission-restart":true}"#).unwrap();
         assert!(!decoded.mission_restart);
     }

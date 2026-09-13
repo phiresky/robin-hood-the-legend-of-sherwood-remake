@@ -6,8 +6,8 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sbfile::SbFileSystem;
 
 use crate::host::ApplicationContext;
-use crate::main_entry::cli::MissionLaunch;
 use crate::main_entry::init::{InitError, MODS_DIR, resolve_install_resource_dir};
+use crate::main_entry::launch::{MissionContent, MissionRequest};
 
 #[cfg(target_os = "android")]
 mod android;
@@ -58,21 +58,24 @@ fn explicit_datadir_precedes_environment_without_hiding_an_empty_override() {
     );
 }
 
+/// Admit a direct `--custom-mission` archive before profile selection. Returns
+/// the launch unchanged when it names no custom mission.
 pub fn prepare_direct_custom_mission_args(
-    args: &MissionLaunch,
+    request: MissionRequest,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, crate::main_entry::LaunchError> {
+) -> Result<MissionRequest, crate::main_entry::LaunchError> {
     use crate::main_entry::LaunchError;
-    let Some(archive) = args.custom_mission.as_deref() else {
-        return Ok(None);
+    let Some(archive) = request.content.custom_mission.as_deref() else {
+        return Ok(request);
     };
-    let mission = args.mission.as_deref().ok_or_else(|| {
+    let cli = &request.config.cli;
+    let mission = cli.mission.as_deref().ok_or_else(|| {
         LaunchError::arguments(
             "--custom-mission requires --mission even when arguments bypass clap",
         )
     })?;
-    let map = args
+    let map = cli
         .proto
         .clone()
         .or_else(|| {
@@ -89,7 +92,7 @@ pub fn prepare_direct_custom_mission_args(
         archive,
         mission,
         &map,
-        args.custom_mission_entry.as_deref(),
+        cli.custom_mission_entry.as_deref(),
     )
     // TODO(10/F11): leaf returns String (custom-mission archive admission).
     .map_err(|error| LaunchError::content(format!("--custom-mission: {error}")))?;
@@ -99,7 +102,10 @@ pub fn prepare_direct_custom_mission_args(
             "--custom-mission accepts vanilla archives only; launch Spellforge content from the Custom Missions menu",
         ));
     }
-    let mut prepared_args = args.clone();
-    prepared_args.resolved_mission_assets = Some(prepared.resolved);
-    Ok(Some(prepared_args))
+    // The archive path stays part of the launch; the admitted lease joins it.
+    let content = MissionContent {
+        resolved_mission_assets: Some(prepared.resolved),
+        ..request.content
+    };
+    Ok(MissionRequest { content, ..request })
 }

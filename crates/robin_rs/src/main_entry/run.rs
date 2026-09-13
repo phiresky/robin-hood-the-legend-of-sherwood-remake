@@ -10,9 +10,13 @@ use robin_engine::campaign::Campaign;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 
+use std::sync::Arc;
+
 use super::LaunchError;
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
-use super::cli::{MissionLaunch, requested_replay_data};
+use super::launch::{LaunchConfig, MissionRequest, requested_replay_data};
+#[cfg(feature = "multiplayer")]
+use super::launch::{MissionContent, MultiplayerRoute};
 use super::platform::prepare_direct_custom_mission_args;
 
 use crate::game_session::PreparedReplayLaunch;
@@ -53,7 +57,7 @@ fn replay_preparation_mode(value: Option<&str>) -> Result<bool, LaunchError> {
 /// same-package comparison. Interactive and multiplayer ordering is unchanged.
 #[cfg(target_arch = "wasm32")]
 pub fn start_browser_replay_preparation(
-    args: &MissionLaunch,
+    args: &LaunchConfig,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     context: crate::host::ReadyApplicationContext,
 ) -> Result<Option<BrowserReplayPreparation>, LaunchError> {
@@ -66,10 +70,10 @@ pub fn start_browser_replay_preparation(
     let query = web_sys::UrlSearchParams::new_with_str(&query)
         .map_err(|error| LaunchError::browser(format!("parse browser query: {error:?}")))?;
     if !replay_preparation_mode(query.get("replay-preparation").as_deref())?
-        || !args.wait_for_command
+        || !args.cli.wait_for_command
         || query.get("replay").is_none_or(|replay| replay.is_empty())
-        || args.join.is_some()
-        || args.force_main_menu
+        || args.cli.join.is_some()
+        || args.cli.force_main_menu
         || query.has("join")
     {
         return Ok(None);
@@ -77,8 +81,13 @@ pub fn start_browser_replay_preparation(
     let context: ApplicationContext = context
         .with_options(args.global_options.options().clone())
         .into();
-    let mut args = args.clone();
-    args.global_options = context.clone();
+    // The early preparation owns its own binding of the launcher config to
+    // the ready context; the run binds (and join-resolves) it again later.
+    let args = MissionRequest::new(args.bind_run(
+        context.clone(),
+        args.cli.clone(),
+        args.browser_join_redeemed,
+    ));
     let (sender, receiver) = async_channel::bounded(1);
     let (abort, registration) = futures::future::AbortHandle::new_pair();
     wasm_bindgen_futures::spawn_local(async move {
@@ -91,7 +100,7 @@ pub fn start_browser_replay_preparation(
                 context
                     .drain_http_pre_engine()
                     .map_err(LaunchError::application)?;
-                if let Some(pending) = args.global_options.replay_launches().take_pending() {
+                if let Some(pending) = args.config.global_options.replay_launches().take_pending() {
                     let mut prepared_profiles = profiles.clone();
                     let launch = crate::game_session::prepare_replay_launch(
                         &context,
@@ -107,6 +116,7 @@ pub fn start_browser_replay_preparation(
                         .drain_http_pre_engine()
                         .map_err(LaunchError::application)?;
                     if args
+                        .config
                         .global_options
                         .replay_launches()
                         .pending_mission()
@@ -117,6 +127,7 @@ pub fn start_browser_replay_preparation(
                     let shipping = context.shipping_arc().map_err(LaunchError::application)?;
                     let archive = launch
                         .launch
+                        .content
                         .resolved_mission_assets
                         .as_ref()
                         .is_some_and(|resolved| resolved.is_archive());
@@ -160,7 +171,7 @@ pub async fn run_rust_game_with_browser_preparation(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
     preparation: Option<BrowserReplayPreparation>,
 ) -> Result<i32, LaunchError> {
     let owner = (*context).clone();
@@ -199,7 +210,7 @@ pub async fn run_rust_game(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
 ) -> Result<i32, LaunchError> {
     run_rust_game_inner(window, campaign, profiles, application_context, args, None).await
 }
@@ -209,7 +220,7 @@ async fn run_rust_game_inner(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
     prepared_replay: Option<PreparedInitialReplay>,
 ) -> Result<i32, LaunchError> {
     let owner = (*application_context).clone();
@@ -235,19 +246,20 @@ fn finish_application(
 }
 
 /// Resolve the launch route before starting any transport or speculative work.
-/// The returned request owns snapshots, never profile/key lock guards.
+/// Builds the run's shared configuration once; it owns snapshots, never
+/// profile/key lock guards.
 fn prepare_run_args(
     context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
-) -> Result<MissionLaunch, LaunchError> {
+    args: &LaunchConfig,
+) -> Result<Arc<LaunchConfig>, LaunchError> {
     let context = context.with_options(args.global_options.options().clone());
-    let mut args = args.clone();
-    super::cli::resolve_join_ticket(&mut args)?;
-    args.global_options = context.into();
-    Ok(args)
+    let mut cli = args.cli.clone();
+    let mut browser_join_redeemed = args.browser_join_redeemed;
+    super::cli::resolve_join_ticket(&mut cli, &mut browser_join_redeemed)?;
+    Ok(args.bind_run(context.into(), cli, browser_join_redeemed))
 }
 
-fn projection_export_requested(args: &MissionLaunch) -> bool {
+fn projection_export_requested(args: &LaunchConfig) -> bool {
     #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
     {
         args.simulation_content_export.is_some()
@@ -261,7 +273,7 @@ fn projection_export_requested(args: &MissionLaunch) -> bool {
 
 /// Called after transport startup, in both graphical and headless entry paths.
 fn warm_run_assets(
-    args: &MissionLaunch,
+    args: &LaunchConfig,
     profiles: &std::sync::Arc<engine_profiles::ProfileManager>,
 ) -> Result<(), LaunchError> {
     let context = &args.global_options;
@@ -291,26 +303,28 @@ async fn run_rust_game_active(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
     prepared_replay: Option<PreparedInitialReplay>,
 ) -> Result<i32, LaunchError> {
     // Combine parsed launcher options with the services loaded by `rust_init`.
     // Every lock-backed value used below is copied into an owned snapshot
     // before the first `.await`; futures never retain a profile/key guard.
-    let run_args = prepare_run_args(application_context, args)?;
-    let application_context = run_args.global_options.clone();
-    let args = &run_args;
+    let config = prepare_run_args(application_context, args)?;
+    let application_context = config.global_options.clone();
+    // The launch the configuration describes; direct paths move it into
+    // their mission, the menu builds a fresh request per launch.
+    let request = MissionRequest::new(Arc::clone(&config));
 
     // Respect both launch forms before admitting speculative menu audio.
-    let wait_for_command = wait_for_command_requested(args);
+    let wait_for_command = wait_for_command_requested(&config);
 
     // Replay viewers bypass menus. Their mission audio is warmed by the
     // mission loader; prefetching menu music here wastes replay bandwidth.
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     if application_context.options().sound_enabled
         && !wait_for_command
-        && args.replay.is_none()
-        && args.replay_data.is_none()
+        && request.replay.is_none()
+        && request.replay_data.is_none()
     {
         match application_context.browser_audio() {
             Ok(session) => wasm_bindgen_futures::spawn_local(async move {
@@ -330,17 +344,17 @@ async fn run_rust_game_active(
     // process-owned router binds requests to the active mission's ingress;
     // deferred work is retired when that mission ends.
     application_context
-        .start_http_transport(args.http_server)
+        .start_http_transport(config.cli.http_server)
         .map_err(LaunchError::application)?;
 
     // Warm this application's asset cache (sprite bank, sound banks,
     // exclamations) on a background thread while the menu runs, so the
     // first mission load doesn't pay for application-lifetime parsing.
-    warm_run_assets(args, &profiles)?;
+    warm_run_assets(&config, &profiles)?;
 
     // The headless code in `game_session` short-circuits the per-frame render
     // block. Window and GPU initialization still happen before this point.
-    if args.headless {
+    if config.cli.headless {
         tracing::info!("--headless: rendering disabled in game_session");
     }
 
@@ -355,7 +369,7 @@ async fn run_rust_game_active(
     // `run_rust_game`), so we just spin on the pending-replay slot
     // while pumping window events. When a replay lands, its header
     // picks the mission, then we move the decoded replay into
-    // `MissionLaunch::replay_data` before `run_mission` so engine
+    // `MissionRequest::replay_data` before `run_mission` so engine
     // construction can use the recording's RNG seed. Skips every
     // auto-start branch below (demo / sherwood / --replay / menu) by
     // design — the whole point is to let the JS side drive mission
@@ -375,7 +389,7 @@ async fn run_rust_game_active(
             prepared.launch
         } else {
             let pending = take_commanded_replay(
-                &args.global_options,
+                &config.global_options,
                 Some(&mut *window),
                 "--wait-for-command",
             )
@@ -383,7 +397,7 @@ async fn run_rust_game_active(
             crate::game_session::prepare_replay_launch(
                 &application_context,
                 std::sync::Arc::make_mut(&mut profiles),
-                args,
+                &request,
                 pending.data,
                 pending.paused,
             )
@@ -395,12 +409,12 @@ async fn run_rust_game_active(
     // Replay metadata is authoritative for mission selection and frame-0
     // construction, so it must win over direct-mission, demo, and Sherwood
     // auto-detection.
-    let replay_data = requested_replay_data(args)?;
+    let replay_data = requested_replay_data(&request)?;
     if let Some(data) = replay_data {
         let prepared = crate::game_session::prepare_replay_launch(
             &application_context,
             std::sync::Arc::make_mut(&mut profiles),
-            args,
+            &request,
             data,
             false,
         )
@@ -410,25 +424,22 @@ async fn run_rust_game_active(
 
     // Direct custom missions cross the same exact-byte admission boundary as
     // picker launches before profile selection or engine construction.
-    let direct_args = prepare_direct_custom_mission_args(args, &profiles, &application_context)?;
-    let args = direct_args.as_ref().unwrap_or(args);
+    let request = prepare_direct_custom_mission_args(request, &profiles, &application_context)?;
 
     // ── `--mission`: original-launcher style direct mission forcing. ──
     // Mirrors `-MISSION foo [-PROTO bar]`: select an existing profile
     // when present, otherwise append a synthetic profile and launch it.
     if let Some((idx, location)) =
-        force_mission_launch(&mut campaign, &mut profiles, &application_context, args)?
+        force_mission_launch(&mut campaign, &mut profiles, &application_context, &config)?
     {
         let Some(mut callbacks) =
             RustCallbacks::new_for_window(application_context.clone(), window).await?
         else {
             return Ok(0);
         };
-        let mission_args = args.clone();
-        let sim_config = crate::game_session::initial_sim_config(args);
+        let sim_config = crate::game_session::initial_sim_config(&config);
         // Transfer the sole prepared overlay lease into the direct loop. A
         // later RPC replay may replace it before resolving a different archive.
-        drop(direct_args);
         let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
@@ -436,7 +447,7 @@ async fn run_rust_game_active(
             std::sync::Arc::make_mut(&mut profiles),
             idx,
             location,
-            mission_args,
+            request,
             0,
             sim_config,
         ))
@@ -446,7 +457,7 @@ async fn run_rust_game_active(
     }
 
     // Demo detection: check which demo data files exist.
-    let demo_config = if args.force_main_menu {
+    let demo_config = if config.cli.force_main_menu {
         tracing::info!("--force-main-menu: skipping demo auto-start detection");
         None
     } else {
@@ -474,9 +485,9 @@ async fn run_rust_game_active(
             std::sync::Arc::make_mut(&mut profiles),
             1,
             location,
-            args.clone(),
+            request,
             0,
-            crate::game_session::initial_sim_config(args),
+            crate::game_session::initial_sim_config(&config),
         ))
         .await;
         outcome.result?;
@@ -488,7 +499,7 @@ async fn run_rust_game_active(
     // mission slot to Sherwood (idx 0), and runs the mission directly
     // — bypassing the campaign-map overlay that normally sits between
     // menu and Sherwood.
-    if args.sherwood {
+    if config.cli.sherwood {
         tracing::info!("--sherwood: launching directly into the Sherwood HQ mission");
         campaign.reset(&profiles, application_context.sim_config().difficulty);
         campaign.force_next_mission(0);
@@ -505,9 +516,9 @@ async fn run_rust_game_active(
             std::sync::Arc::make_mut(&mut profiles),
             0,
             MissionLocation::Sherwood,
-            args.clone(),
+            request,
             0,
-            crate::game_session::initial_sim_config(args),
+            crate::game_session::initial_sim_config(&config),
         ))
         .await;
         outcome.result?;
@@ -519,14 +530,17 @@ async fn run_rust_game_active(
     // to navigate it.  The demo and `--sherwood` branches above
     // already cover the headless use cases (replay scrubbing,
     // automated tests, CI).
-    if args.headless {
+    if config.cli.headless {
         return Err(LaunchError::arguments(
             "--headless requires --sherwood or a demo data dir; the main \
              menu cannot be navigated without a display.",
         ));
     }
 
-    run_main_menu(window, campaign, profiles, application_context, args).await
+    // A `--custom-mission` request always has `--mission` and launched above,
+    // so every menu launch builds its own request from the shared config.
+    drop(request);
+    run_main_menu(window, campaign, profiles, application_context, config).await
 }
 
 /// Both early/RPC and CLI replays cross this same post-admission boundary.
@@ -562,16 +576,21 @@ struct MainMenuContext<'a> {
     window: &'a mut GameWindow,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: ApplicationContext,
-    args: &'a MissionLaunch,
+    config: Arc<LaunchConfig>,
 }
 
 impl MainMenuContext<'_> {
+    /// The plain launch of the run's configuration, built fresh per launch.
+    fn launch_request(&self) -> MissionRequest {
+        MissionRequest::new(Arc::clone(&self.config))
+    }
+
     /// Run one menu-launched session. `None` means the session requested
     /// application exit; otherwise the campaign comes back for the next menu.
     async fn launch_session(
         &mut self,
         campaign: Campaign,
-        session_args: &MissionLaunch,
+        request: MissionRequest,
         initial_load: Option<(crate::savegame::SlotName, u32)>,
     ) -> Result<Option<Campaign>, LaunchError> {
         let outcome = Box::pin(run_session(
@@ -579,7 +598,7 @@ impl MainMenuContext<'_> {
             campaign,
             std::sync::Arc::make_mut(&mut self.profiles),
             &self.application_context,
-            session_args,
+            request,
             initial_load,
         ))
         .await;
@@ -599,6 +618,7 @@ impl MainMenuContext<'_> {
         location: MissionLocation,
         sim_config: robin_engine::engine::SimConfig,
     ) -> Result<Campaign, LaunchError> {
+        let request = self.launch_request();
         let outcome = Box::pin(run_mission(
             self.window,
             callbacks,
@@ -606,7 +626,7 @@ impl MainMenuContext<'_> {
             std::sync::Arc::make_mut(&mut self.profiles),
             idx,
             location,
-            self.args.clone(),
+            request,
             0,
             sim_config,
         ))
@@ -655,14 +675,9 @@ impl MainMenuContext<'_> {
         &mut self,
         campaign: &mut Campaign,
         launch: crate::main_menu::multiplayer_menu::MultiplayerLaunch,
-    ) -> Result<MissionLaunch, LaunchError> {
-        let mut mp_args = self.args.clone();
-        // A shell-provided join artifact has now been consumed by the
-        // authenticated interactive preflight. The exact connection
-        // address and prepared package below are its sole mission
-        // bootstrap authority.
-        mp_args.join = None;
-        if let Some(encoded) = launch.distributed_mod.as_ref() {
+    ) -> Result<MissionRequest, LaunchError> {
+        let request = self.launch_request();
+        let content = if let Some(encoded) = launch.distributed_mod.as_ref() {
             let validated = crate::distributed_mod::DistributedModPackage::decode(encoded)
                 .map_err(|error| {
                     LaunchError::content(format!(
@@ -728,13 +743,16 @@ impl MainMenuContext<'_> {
                 );
                 campaign.add_all_to_mission_team();
             }
-            mp_args.pending_lua_mission = Some(crate::main_entry::PendingLuaMission {
-                rhm_basename: validated.package.manifest.mission_basename.clone(),
-                requires_spellforge: validated.package.manifest.requires_spellforge,
-                spellforge_package: prepared.spellforge_package,
-            });
-            mp_args.pending_distributed_mod = Some(std::sync::Arc::clone(encoded));
-            mp_args.resolved_mission_assets = Some(prepared.resolved);
+            Some(MissionContent {
+                pending_lua_mission: Some(crate::main_entry::PendingLuaMission {
+                    rhm_basename: validated.package.manifest.mission_basename.clone(),
+                    requires_spellforge: validated.package.manifest.requires_spellforge,
+                    spellforge_package: prepared.spellforge_package,
+                }),
+                pending_distributed_mod: Some(std::sync::Arc::clone(encoded)),
+                resolved_mission_assets: Some(prepared.resolved),
+                custom_mission: None,
+            })
         } else {
             let Some(idx) = campaign
                 .missions
@@ -758,15 +776,15 @@ impl MainMenuContext<'_> {
                 );
             }
             campaign.force_next_mission(idx);
-        }
-        match launch.role {
+            None
+        };
+        let (server, connect) = match launch.role {
             MultiplayerRole::Host => {
                 tracing::info!(
                     mission = %launch.mission_name,
                     "Main menu Multiplayer: hosting selected mission"
                 );
-                mp_args.server = true;
-                mp_args.connect = None;
+                (true, None)
             }
             MultiplayerRole::Client { connect_addr } => {
                 tracing::info!(
@@ -774,14 +792,32 @@ impl MainMenuContext<'_> {
                     connect = %connect_addr,
                     "Main menu Multiplayer: joining selected mission"
                 );
-                mp_args.server = false;
-                mp_args.connect = Some(connect_addr);
+                (false, Some(connect_addr))
             }
-        }
-        mp_args.mp_start_at_epoch_ms = launch.start_at_epoch_ms;
-        mp_args.mp_expected_players = Some(launch.expected_players);
-        mp_args.mp_mission_profile_id = Some(launch.mission_id);
-        Ok(mp_args)
+        };
+        let multiplayer = MultiplayerRoute {
+            // A shell-provided join artifact has now been consumed by the
+            // authenticated interactive preflight. The exact connection
+            // address and prepared package are its sole mission bootstrap
+            // authority.
+            join: None,
+            server,
+            connect,
+            start_at_epoch_ms: launch.start_at_epoch_ms,
+            expected_players: Some(launch.expected_players),
+            mission_profile_id: Some(launch.mission_id),
+            continue_session: request.multiplayer.continue_session,
+        };
+        // A full-mod lobby replaces the launch's content; a campaign mission
+        // keeps the configuration's.
+        let request = match content {
+            Some(content) => request.with_content(content),
+            None => request,
+        };
+        Ok(MissionRequest {
+            multiplayer,
+            ..request
+        })
     }
 
     /// Hackable levels: reset, give the sandbox its Robin-only gang, and
@@ -819,7 +855,7 @@ impl MainMenuContext<'_> {
         &mut self,
         campaign: &mut Campaign,
         launch: crate::main_menu::custom_missions::CustomMissionLaunch,
-    ) -> Result<Option<MissionLaunch>, LaunchError> {
+    ) -> Result<Option<MissionRequest>, LaunchError> {
         tracing::info!(
             "Main menu CustomMission: slug={} rhm={} map={} spellforge={}",
             launch.slug,
@@ -878,14 +914,17 @@ impl MainMenuContext<'_> {
         // Hand the exact admission-produced package to mission
         // startup. Vanilla launches intentionally carry `None`; a
         // Spellforge startup is never allowed to reread local paths.
-        let mut session_args = self.args.clone();
-        session_args.pending_lua_mission = Some(crate::main_entry::PendingLuaMission {
-            rhm_basename: launch.rhm_basename.clone(),
-            requires_spellforge: launch.requires_spellforge,
-            spellforge_package: prepared.spellforge_package,
-        });
-        session_args.resolved_mission_assets = Some(prepared.resolved);
-        Ok(Some(session_args))
+        let request = self.launch_request();
+        let content = super::launch::MissionContent {
+            pending_lua_mission: Some(crate::main_entry::PendingLuaMission {
+                rhm_basename: launch.rhm_basename.clone(),
+                requires_spellforge: launch.requires_spellforge,
+                spellforge_package: prepared.spellforge_package,
+            }),
+            resolved_mission_assets: Some(prepared.resolved),
+            ..request.content
+        };
+        Ok(Some(MissionRequest { content, ..request }))
     }
 }
 
@@ -894,18 +933,20 @@ async fn run_main_menu(
     mut campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: ApplicationContext,
-    args: &MissionLaunch,
+    config: Arc<LaunchConfig>,
 ) -> Result<i32, LaunchError> {
+    #[cfg(target_arch = "wasm32")]
+    let invite_config = Arc::clone(&config);
     // ── Full game: outer main menu loop ──
     let mut menu = MainMenuContext {
         window,
         profiles,
         application_context,
-        args,
+        config,
     };
     let mut reopen_main_options = false;
     #[cfg(target_arch = "wasm32")]
-    let mut pending_direct_browser_invite = args.join.as_deref();
+    let mut pending_direct_browser_invite = invite_config.cli.join.as_deref();
     #[cfg(not(target_arch = "wasm32"))]
     let mut pending_direct_browser_invite: Option<&str> = None;
     loop {
@@ -949,8 +990,9 @@ async fn run_main_menu(
                         .slot_mission_id(index)
                         .expect("resume slot disappeared from the loaded save index");
                     drop(callbacks);
+                    let request = menu.launch_request();
                     let Some(next) = menu
-                        .launch_session(campaign, args, Some((slot, mission_id)))
+                        .launch_session(campaign, request, Some((slot, mission_id)))
                         .await?
                     else {
                         return Ok(0);
@@ -978,7 +1020,7 @@ async fn run_main_menu(
                         }
                         continue;
                     };
-                    let sim_config = crate::game_session::initial_sim_config(args);
+                    let sim_config = crate::game_session::initial_sim_config(&menu.config);
                     campaign = menu
                         .launch_mission(&mut callbacks, campaign, idx, location, sim_config)
                         .await?;
@@ -987,7 +1029,8 @@ async fn run_main_menu(
                 }
 
                 // Session always returns to menu (window close causes Quit → QuitToMenu)
-                let Some(next) = menu.launch_session(campaign, args, None).await? else {
+                let request = menu.launch_request();
+                let Some(next) = menu.launch_session(campaign, request, None).await? else {
                     return Ok(0);
                 };
                 campaign = next;
@@ -1002,8 +1045,9 @@ async fn run_main_menu(
                     "Main menu Load: slot={}, mission_id={mission_id}",
                     slot.as_str()
                 );
+                let request = menu.launch_request();
                 let Some(next) = menu
-                    .launch_session(campaign, args, Some((slot, mission_id)))
+                    .launch_session(campaign, request, Some((slot, mission_id)))
                     .await?
                 else {
                     return Ok(0);
@@ -1013,8 +1057,8 @@ async fn run_main_menu(
             }
             #[cfg(feature = "multiplayer")]
             MainMenuChoice::Multiplayer(launch) => {
-                let mp_args = menu.prepare_multiplayer_launch(&mut campaign, launch)?;
-                let Some(next) = menu.launch_session(campaign, &mp_args, None).await? else {
+                let request = menu.prepare_multiplayer_launch(&mut campaign, launch)?;
+                let Some(next) = menu.launch_session(campaign, request, None).await? else {
                     return Ok(0);
                 };
                 campaign = next;
@@ -1034,7 +1078,7 @@ async fn run_main_menu(
                     }
                     continue;
                 };
-                let mut sim_config = crate::game_session::initial_sim_config(args);
+                let mut sim_config = crate::game_session::initial_sim_config(&menu.config);
                 // Hackable descriptors carry no SCB StartUp class, so the
                 // script VM must stay off.
                 sim_config.script_enabled = false;
@@ -1046,12 +1090,11 @@ async fn run_main_menu(
             MainMenuChoice::CustomMission(
                 crate::main_menu::custom_missions::CustomMissionChoice::Mod(launch),
             ) => {
-                let Some(session_args) =
-                    menu.prepare_installed_mod_launch(&mut campaign, launch)?
+                let Some(request) = menu.prepare_installed_mod_launch(&mut campaign, launch)?
                 else {
                     continue;
                 };
-                let Some(next) = menu.launch_session(campaign, &session_args, None).await? else {
+                let Some(next) = menu.launch_session(campaign, request, None).await? else {
                     return Ok(0);
                 };
                 campaign = next;
@@ -1069,7 +1112,7 @@ pub async fn run_rust_game_headless(
     campaign: Campaign,
     profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
 ) -> Result<i32, LaunchError> {
     let owner = (*application_context).clone();
     let result = run_rust_game_headless_active(campaign, profiles, application_context, args).await;
@@ -1080,92 +1123,99 @@ async fn run_rust_game_headless_active(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
-    args: &MissionLaunch,
+    args: &LaunchConfig,
 ) -> Result<i32, LaunchError> {
-    let run_args = prepare_run_args(application_context, args)?;
-    let application_context = run_args.global_options.clone();
-    let args = &run_args;
+    let config = prepare_run_args(application_context, args)?;
+    let application_context = config.global_options.clone();
+    let request = MissionRequest::new(Arc::clone(&config));
 
     #[cfg(not(target_arch = "wasm32"))]
     application_context
-        .start_http_transport(args.http_server)
+        .start_http_transport(config.cli.http_server)
         .map_err(LaunchError::application)?;
 
-    warm_run_assets(args, &profiles)?;
+    warm_run_assets(&config, &profiles)?;
 
     tracing::info!("--headless: running without winit, wgpu, renderer, or audio backend");
 
-    let mut prepared_args = None;
-    let pending_replay = if wait_for_command_requested(args) {
+    let pending_replay = if wait_for_command_requested(&config) {
         tracing::info!(
             "--headless --wait-for-command: data loaded, idling until load-replay RPC arrives"
         );
         Some(
-            take_commanded_replay(&args.global_options, None, "--headless --wait-for-command")
-                .await?,
+            take_commanded_replay(
+                &config.global_options,
+                None,
+                "--headless --wait-for-command",
+            )
+            .await?,
         )
     } else {
         None
     };
     let (replay_data, replay_paused) = match pending_replay {
         Some(pending) => (Some(pending.data), pending.paused),
-        None => (requested_replay_data(args)?, false),
+        None => (requested_replay_data(&request)?, false),
     };
-    if replay_data.is_none() {
-        prepared_args = prepare_direct_custom_mission_args(args, &profiles, &application_context)?;
-    }
-    let selection_args = prepared_args.as_ref().unwrap_or(args);
-    let initial_sim_config = crate::game_session::initial_sim_config(selection_args);
-    let launch = if let Some(data) = replay_data {
+    let (request, launch) = if let Some(data) = replay_data {
         let prepared = crate::game_session::prepare_replay_launch(
             &application_context,
             std::sync::Arc::make_mut(&mut profiles),
-            args,
+            &request,
             data,
             replay_paused,
         )
         .await?;
         campaign = prepared.campaign;
-        prepared_args = Some(prepared.launch);
-        Some((
+        let launch = Some((
             prepared.mission_idx,
             prepared.location,
             prepared.rng_seed,
             prepared.sim_config,
-        ))
-    } else if let Some((idx, location)) = force_mission_launch(
-        &mut campaign,
-        &mut profiles,
-        &application_context,
-        selection_args,
-    )? {
-        Some((idx, location, 0, initial_sim_config))
-    } else if let Some((mission_name, _proto_name, pcs, location)) =
-        detect_demo_mode_with_context(&application_context)
-    {
-        campaign.reset(&profiles, application_context.sim_config().difficulty);
-        campaign.create_gang_from_pcs(pcs, &profiles, application_context.sim_config().difficulty);
-        campaign.add_all_to_mission_team();
-        let idx = campaign
-            .missions
-            .iter()
-            .position(|m| m.profile(&profiles).mission_filename == mission_name)
-            .ok_or_else(|| {
-                LaunchError::campaign(format!(
-                    "demo mission `{mission_name}` is present in data but missing from campaign"
-                ))
-            })?;
-        campaign.current_mission_idx = Some(idx);
-        Some((idx, location, 0, initial_sim_config))
-    } else if selection_args.sherwood {
-        campaign.reset(&profiles, application_context.sim_config().difficulty);
-        campaign.force_next_mission(0);
-        campaign.current_mission_idx = Some(0);
-        Some((0, MissionLocation::Sherwood, 0, initial_sim_config))
+        ));
+        (prepared.launch, launch)
     } else {
-        None
+        let request = prepare_direct_custom_mission_args(request, &profiles, &application_context)?;
+        // After admission: a mounted archive can supply a hackable level.
+        let initial_sim_config = crate::game_session::initial_sim_config(&config);
+        let launch = if let Some((idx, location)) = force_mission_launch(
+            &mut campaign,
+            &mut profiles,
+            &application_context,
+            &request.config,
+        )? {
+            Some((idx, location, 0, initial_sim_config))
+        } else if let Some((mission_name, _proto_name, pcs, location)) =
+            detect_demo_mode_with_context(&application_context)
+        {
+            campaign.reset(&profiles, application_context.sim_config().difficulty);
+            campaign.create_gang_from_pcs(
+                pcs,
+                &profiles,
+                application_context.sim_config().difficulty,
+            );
+            campaign.add_all_to_mission_team();
+            let idx = campaign
+                .missions
+                .iter()
+                .position(|m| m.profile(&profiles).mission_filename == mission_name)
+                .ok_or_else(|| {
+                    LaunchError::campaign(format!(
+                        "demo mission `{mission_name}` is present in data but missing from campaign"
+                    ))
+                })?;
+            campaign.current_mission_idx = Some(idx);
+            Some((idx, location, 0, initial_sim_config))
+        } else if config.cli.sherwood {
+            campaign.reset(&profiles, application_context.sim_config().difficulty);
+            campaign.force_next_mission(0);
+            campaign.current_mission_idx = Some(0);
+            Some((0, MissionLocation::Sherwood, 0, initial_sim_config))
+        } else {
+            None
+        };
+        (request, launch)
     };
-    let mission_args = prepared_args.as_ref().unwrap_or(args);
 
     let Some((idx, location, rng_seed, sim_config)) = launch else {
         return Err(LaunchError::arguments(
@@ -1174,15 +1224,9 @@ async fn run_rust_game_headless_active(
     };
 
     #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-    if projection_export_requested(args) {
+    if projection_export_requested(&config) {
         crate::game_session::export_official_mission_headless(
-            campaign,
-            &profiles,
-            idx,
-            location,
-            mission_args,
-            rng_seed,
-            sim_config,
+            campaign, &profiles, idx, location, &request, rng_seed, sim_config,
         )
         .await?;
         return Ok(0);
@@ -1195,7 +1239,7 @@ async fn run_rust_game_headless_active(
         &profiles,
         idx,
         location,
-        mission_args,
+        request,
         rng_seed,
         sim_config,
     )
@@ -1206,8 +1250,8 @@ async fn run_rust_game_headless_active(
 
 /// Both launch forms (`--wait-for-command` and `ROBIN_WAIT_FOR_COMMAND`)
 /// select the RPC-driven replay entry, in graphical and headless runs alike.
-fn wait_for_command_requested(args: &MissionLaunch) -> bool {
-    args.wait_for_command || std::env::var_os("ROBIN_WAIT_FOR_COMMAND").is_some()
+fn wait_for_command_requested(config: &LaunchConfig) -> bool {
+    config.cli.wait_for_command || std::env::var_os("ROBIN_WAIT_FOR_COMMAND").is_some()
 }
 
 /// Block until a `load-replay` RPC queues a pending replay, then take it.

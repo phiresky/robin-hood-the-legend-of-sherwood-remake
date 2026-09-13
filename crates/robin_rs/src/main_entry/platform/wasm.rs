@@ -6,8 +6,8 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::sbfile::SbFileSystem;
 
 use crate::host::ApplicationContext;
-use crate::main_entry::cli::MissionLaunch;
 use crate::main_entry::init::InitError;
+use crate::main_entry::launch::MissionRequest;
 
 /// Wasm version: there is no cwd or directory enumeration.  The Data/
 /// prefix is anchored at `ROBINHOOD_DATA_URL` (default `./data`), which
@@ -26,14 +26,14 @@ pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn prepare_direct_custom_mission_args(
-    args: &MissionLaunch,
+    request: MissionRequest,
     _profiles: &engine_profiles::ProfileManager,
     _application_context: &ApplicationContext,
-) -> Result<Option<MissionLaunch>, crate::main_entry::LaunchError> {
-    if args.custom_mission.is_some() {
+) -> Result<MissionRequest, crate::main_entry::LaunchError> {
+    if request.content.custom_mission.is_some() {
         return Err(crate::main_entry::LaunchError::arguments(
             "--custom-mission filesystem paths are unavailable in browser builds; use canonical host-distributed content",
         ));
     }
-    Ok(None)
+    Ok(request)
 }

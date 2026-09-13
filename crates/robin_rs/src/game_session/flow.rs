@@ -19,7 +19,7 @@ pub(super) struct MissionServices<'a> {
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
-    pub(super) args: &'a crate::main_entry::MissionLaunch,
+    pub(super) args: &'a crate::main_entry::MissionRequest,
 }
 
 /// Control returned by one interactive host-frame iteration.
@@ -82,11 +82,11 @@ impl InteractiveMission {
             match control {
                 FrameControl::Continue | FrameControl::RestartIteration => {}
                 FrameControl::Exit(exit) => {
-                    if let Some(output) = services.args.mission_start_map_output.as_deref() {
+                    if let Some(output) = services.args.config.capture.map_output.as_deref() {
                         return Err(MissionError::render(format!(
                             "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
                             self.runtime.timeline.frame_number(),
-                            services.args.mission_start_map_frame,
+                            services.args.config.capture.map_frame,
                             output.display()
                         )));
                     }
@@ -127,7 +127,7 @@ impl InteractiveMission {
             ..
         } = frontend;
 
-        if timeline_frame < args.mission_start_map_frame {
+        if timeline_frame < args.config.capture.map_frame {
             return Ok(None);
         }
 
@@ -137,8 +137,8 @@ impl InteractiveMission {
         // This matches the original startup boundary in
         // the original game's initialization; the deferred
         // PostInitialize dispatch around lines 1835-1841).
-        if let Some(output_path) = args.mission_start_map_output.as_deref() {
-            if args.mission_start_reveal_all {
+        if let Some(output_path) = args.config.capture.map_output.as_deref() {
+            if args.config.capture.reveal_all {
                 let application_context = host.application_context().clone();
                 crate::sim_timeline::run_engine_frame_core(
                     &mut host.frontend,
@@ -184,7 +184,7 @@ impl InteractiveMission {
             // A full-map export is not an interactive screenshot. Keep the
             // cursor out of its top-left map pixel. Viewport captures retain
             // the ordinary cursor/HUD composition.
-            if !args.mission_start_viewport_capture {
+            if !args.config.capture.viewport_capture {
                 host.frontend.input.feedback.mouse_opacity = 0;
             }
             let display_snapshot = host.frontend.presentation.engine_display.clone();
@@ -203,9 +203,9 @@ impl InteractiveMission {
                     },
                 );
                 let screenshot = crate::http_server::ScreenshotRequest {
-                    frame: Some(args.mission_start_map_frame),
-                    hide_ui: !args.mission_start_viewport_capture,
-                    full_map: !args.mission_start_viewport_capture,
+                    frame: Some(args.config.capture.map_frame),
+                    hide_ui: !args.config.capture.viewport_capture,
+                    full_map: !args.config.capture.viewport_capture,
                     ..Default::default()
                 };
                 capture_screenshot_to_path(
@@ -304,8 +304,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let phase_start = super::frame_perf::start(profiling);
         runtime.begin_presentation();
         runtime.trace(FrameContractStage::Presentation);
-        let warming_up_map_export = args.mission_start_map_output.is_some()
-            && runtime.frame_number() <= args.mission_start_map_frame;
+        let warming_up_map_export = args.config.capture.map_output.is_some()
+            && runtime.frame_number() <= args.config.capture.map_frame;
         let should_draw = !world.view().host.frontend.presentation.skip_render
             && !modal_rendered_this_frame
             && !warming_up_map_export;
@@ -428,7 +428,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.presentation.draw_order.clone();
             let interpolation_enabled = host.frontend.preferences().native_refresh_presentation()
-                && !args.fast_forward
+                && !args.config.cli.fast_forward
                 && !engine.is_fast_forward()
                 && !rewind_active;
             native_refresh_interpolation.prepare_fixed_tick(
@@ -918,7 +918,7 @@ fn plan_interactive_pacing(
     host: &Host,
     engine: &Engine,
     frame: &MissionFrame,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> (u32, u64) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
@@ -932,7 +932,7 @@ fn plan_interactive_pacing(
     let presentation_now_ms = crate::window::process_uptime_us() / 1_000;
     let frame_end_ms = presentation_now_ms as u32;
     let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
-    let target = if args.fast_forward {
+    let target = if args.config.cli.fast_forward {
         0
     } else if engine.is_fast_forward() {
         1
@@ -946,7 +946,7 @@ fn plan_interactive_pacing(
     let normal_sleep_ms = target.saturating_sub(elapsed);
     let host_deadline_ms = if host.transport.net().is_some()
         && host.transport.local_seat() != engine_player_command::PlayerId::HOST
-        && !args.fast_forward
+        && !args.config.cli.fast_forward
     {
         runtime.host_frame_deadline_ms()
     } else {
@@ -955,7 +955,7 @@ fn plan_interactive_pacing(
     let outcome = runtime.plan_frame_outcome(
         frame_end_ms,
         FramePacing {
-            fast_forward_requested: args.fast_forward,
+            fast_forward_requested: args.config.cli.fast_forward,
             headless: false,
             engine_fast_forward: engine.is_fast_forward(),
             slow_motion: host.frontend.slow_motion,

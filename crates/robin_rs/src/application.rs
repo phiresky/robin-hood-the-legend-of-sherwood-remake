@@ -175,7 +175,7 @@ impl Drop for ApplicationServices {
 
 /// Explicit application-owned configuration and persistence context.
 ///
-/// `MissionLaunch` initially carries a bootstrap context containing only parsed
+/// `LaunchConfig` initially carries a bootstrap context containing only parsed
 /// options. `rust_init` supplies the required profile/key/shipping services
 /// before an async game loop begins. Service accessors project the required
 /// owned data while holding a lock, so no lock guard can cross an `.await`.

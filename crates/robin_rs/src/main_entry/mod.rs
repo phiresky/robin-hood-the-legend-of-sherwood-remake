@@ -20,6 +20,7 @@ mod callbacks;
 mod cli;
 mod error;
 mod init;
+mod launch;
 mod platform;
 mod run;
 
@@ -29,9 +30,10 @@ pub use error::LaunchError;
 pub use crate::official_projection_export::SimulationContentExportRequest;
 #[cfg(target_arch = "wasm32")]
 pub use cli::set_pending_browser_join;
-pub use cli::{
-    CliArgs, MissionLaunch, PendingLuaMission, RHREC_EXT, parse_cli, parse_cli_from,
-    try_parse_cli_from,
+pub use cli::{CliArgs, RHREC_EXT, parse_cli, parse_cli_from, try_parse_cli_from};
+pub use launch::{
+    LaunchConfig, MissionContent, MissionRequest, MissionStartCapture, MultiplayerRoute,
+    PendingLuaMission,
 };
 
 #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]

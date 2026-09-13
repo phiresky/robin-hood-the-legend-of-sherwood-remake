@@ -923,13 +923,16 @@ impl MissionLoadError {
     }
 }
 
-pub(crate) fn initial_sim_config(args: &crate::main_entry::MissionLaunch) -> engine_api::SimConfig {
-    let mut sim_config = args.global_options.sim_config();
-    sim_config.golden_eye |= args.goldeneye;
-    if args.mission_start_map_output.is_some() {
-        sim_config.fog_of_war = args.mission_start_fog_of_war;
+pub(crate) fn initial_sim_config(
+    config: &crate::main_entry::LaunchConfig,
+) -> engine_api::SimConfig {
+    let mut sim_config = config.global_options.sim_config();
+    sim_config.golden_eye |= config.cli.goldeneye;
+    if config.capture.map_output.is_some() {
+        sim_config.fog_of_war = config.capture.fog_of_war;
     }
-    if args
+    if config
+        .cli
         .mission
         .as_deref()
         .is_some_and(robin_engine::level_data::hackable_level_exists)
@@ -1051,7 +1054,7 @@ pub(super) fn prepare_mission(
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     interface: MissionInterfaceSetup,
     launch: MissionLaunchSetup,
 ) -> Result<PreparedMission, MissionLoadError> {
@@ -1250,7 +1253,7 @@ pub(super) fn prepare_mission(
         &mut assets,
         mission_name.as_deref(),
         authoritative_sim_config.script_enabled,
-        args.mission_start_legacy_save.is_some(),
+        args.config.capture.legacy_save.is_some(),
     ) {
         Ok(capture) => capture,
         Err(message) => return Err(MissionLoadError::new(campaign, message)),
@@ -1480,7 +1483,7 @@ pub(super) fn prepare_mission(
 impl PreparedMission {
     pub(super) fn construct_engine(
         self,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
         feedback: &mut MissionLoadFeedback<'_>,
     ) -> Result<ConstructedMission, MissionLoadError> {
         let Self {
@@ -1532,7 +1535,8 @@ impl PreparedMission {
                 super::leaderboard_runtime::RankedPreFramePlan::Authority(_)
             );
             #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-            let needs_projection = needs_projection || args.simulation_content_export.is_some();
+            let needs_projection =
+                needs_projection || args.config.simulation_content_export.is_some();
             if !needs_projection {
                 // Ordinary play has no consumer for the verification projection.
                 // Construct the same engine without cloning/serializing its inputs
@@ -1557,7 +1561,7 @@ impl PreparedMission {
                 match Engine::prepare_preserving_campaign(engine_args) {
                     Ok(prepared) => {
                         #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-                        if let Some(request) = args.simulation_content_export.as_ref() {
+                        if let Some(request) = args.config.simulation_content_export.as_ref() {
                             let exact_mission = match mission_name.as_deref() {
                                 Some(mission) => mission,
                                 None => {
@@ -1627,7 +1631,7 @@ impl ConstructedMission {
     pub(super) fn attach_presentation(
         self,
         host: &mut Host,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
         feedback: &mut MissionLoadFeedback<'_>,
         terrain_join: TerrainJoinPoint,
     ) -> Result<LoadedMissionCore, MissionLoadError> {
@@ -1693,7 +1697,7 @@ impl ConstructedMission {
             }
         }
 
-        if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
+        if let Some(save_bytes) = args.config.capture.legacy_save.as_ref() {
             let mission_scb = legacy_capture_scb
                 .as_ref()
                 .expect("legacy frame-zero capture lost its mission script");
@@ -1742,7 +1746,7 @@ impl ConstructedMission {
 
         // GoldenEye is now applied inside `Engine::new` via
         // `EngineArgs::goldeneye` — no post-construction dispatch.
-        dev.debug.all_view_cones = args.view_cones;
+        dev.debug.all_view_cones = args.config.cli.view_cones;
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
         if let Some(ls) = loading_screen.as_mut() {
@@ -1796,15 +1800,15 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
     engine: &mut Engine,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) {
     // Clients adopt the server snapshot (which already includes seat 0) and
     // receive their own ConnectSeat through the server-ordered input stream.
-    if args.connect.is_some() {
+    if args.multiplayer.connect.is_some() {
         return;
     }
 
-    let nickname = args.mp_nickname.clone();
+    let nickname = args.config.cli.mp_nickname.clone();
     engine
         .advance_frame(
             assets,
@@ -1844,7 +1848,7 @@ pub(super) fn setup_input_and_camera(
     engine: &mut Engine,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     window_width: u32,
     window_height: u32,
     mission_idx: usize,
@@ -1862,8 +1866,8 @@ pub(super) fn setup_input_and_camera(
     // and still replay through the deterministic command stream.
     if args.replay_data.is_some()
         || args.replay.is_some()
-        || args.mission_start_legacy_save.is_some()
-        || args.mission_start_viewport_capture
+        || args.config.capture.legacy_save.is_some()
+        || args.config.capture.viewport_capture
     {
         host.frontend.force_planning_off_for_session();
     }
@@ -2122,13 +2126,13 @@ mod tests {
         ] {
             let prepared = prepared_stage_fixture();
             let campaign_before = serde_json::to_value(&prepared.campaign).unwrap();
-            let args = crate::main_entry::MissionLaunch {
-                config: crate::main_entry::CliArgs {
+            let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+                cli: crate::main_entry::CliArgs {
                     view_cones: true,
                     ..Default::default()
                 },
                 ..Default::default()
-            };
+            });
             let mut loading_screen = None;
             let mut feedback = (None, &mut loading_screen);
             let constructed = prepared
@@ -2377,19 +2381,23 @@ mod tests {
 
     #[test]
     fn missions_and_map_exports_default_unfogged_and_allow_explicit_opt_in() {
-        let ordinary = crate::main_entry::MissionLaunch::default();
+        let ordinary = crate::main_entry::LaunchConfig::default();
         assert!(!initial_sim_config(&ordinary).fog_of_war);
 
-        let unfogged_export = crate::main_entry::MissionLaunch {
-            mission_start_map_output: Some("map.png".into()),
+        let unfogged_export = crate::main_entry::MissionStartCapture {
+            map_output: Some("map.png".into()),
             ..Default::default()
         };
+        let fogged_export = crate::main_entry::MissionStartCapture {
+            fog_of_war: true,
+            ..unfogged_export.clone()
+        };
+        let unfogged_export =
+            crate::main_entry::LaunchConfig::default().with_mission_start_capture(unfogged_export);
         assert!(!initial_sim_config(&unfogged_export).fog_of_war);
 
-        let fogged_export = crate::main_entry::MissionLaunch {
-            mission_start_fog_of_war: true,
-            ..unfogged_export
-        };
+        let fogged_export =
+            crate::main_entry::LaunchConfig::default().with_mission_start_capture(fogged_export);
         assert!(initial_sim_config(&fogged_export).fog_of_war);
     }
 }

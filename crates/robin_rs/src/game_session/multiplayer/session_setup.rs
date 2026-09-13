@@ -9,7 +9,7 @@ use crate::host::Host;
 #[cfg_attr(target_arch = "wasm32", allow(unused_variables))]
 pub(super) async fn establish(
     host: &mut Host,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
     authoritative_mission_id: &str,
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
@@ -25,15 +25,15 @@ pub(super) async fn establish(
 
     validate_multiplayer_launch_args(args)?;
 
-    let nickname = if args.mp_nickname.is_empty() {
+    let nickname = if args.config.cli.mp_nickname.is_empty() {
         std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "player".to_string())
     } else {
-        args.mp_nickname.clone()
+        args.config.cli.mp_nickname.clone()
     };
 
-    if args.server {
+    if args.multiplayer.server {
         #[cfg(target_arch = "wasm32")]
         return Err(SessionSetupFailure::Unavailable(
             "multiplayer: browser builds cannot host; connect to a native host",
@@ -41,7 +41,7 @@ pub(super) async fn establish(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if !args.mp_continue_session {
+            if !args.multiplayer.continue_session {
                 campaign.discard_host_continuation()?;
             }
             let publish_browser_links = resolve_browser_join_publication(args)?;
@@ -54,6 +54,7 @@ pub(super) async fn establish(
                 })?;
             let (mut channels, server_channels) = NetChannels::new_server();
             let content = args
+                .content
                 .pending_distributed_mod
                 .as_ref()
                 .map(|encoded| {
@@ -73,7 +74,7 @@ pub(super) async fn establish(
                     mission_seed: authoritative_rng_seed,
                     sim_config: authoritative_sim_config,
                     speech_timing_locale: speech_timing_locale.clone(),
-                    expected_players: args.mp_expected_players.unwrap_or(1),
+                    expected_players: args.multiplayer.expected_players.unwrap_or(1),
                     browser_join_enabled: publish_browser_links,
                 },
                 server_channels,
@@ -86,7 +87,7 @@ pub(super) async fn establish(
                         .map_err(SessionSetupFailure::SessionIdentity)?;
                     if publish_browser_links {
                         let content_edition = if crate::main_entry::detect_demo_mode_with_context(
-                            &args.global_options,
+                            &args.config.global_options,
                         )
                         .is_some()
                         {
@@ -95,6 +96,7 @@ pub(super) async fn establish(
                             crate::multiplayer::join_ticket::BrowserContentEdition::Full
                         };
                         let preparation_files = args
+                            .config
                             .global_options
                             .preparation_files()
                             .map_err(SessionSetupFailure::Preparation)?;
@@ -112,8 +114,8 @@ pub(super) async fn establish(
                             .browser_join_ticket(
                                 content_edition,
                                 content_identity_sha256.clone(),
-                                args.mp_mission_profile_id,
-                                args.mp_expected_players.unwrap_or(1),
+                                args.multiplayer.mission_profile_id,
+                                args.multiplayer.expected_players.unwrap_or(1),
                             )
                             .map_err(|source| SessionSetupFailure::Transport {
                                 context: "browser invitation unavailable",
@@ -177,7 +179,7 @@ pub(super) async fn establish(
                 }
             }
         }
-    } else if let Some(addr) = args.connect.as_deref() {
+    } else if let Some(addr) = args.multiplayer.connect.as_deref() {
         let (mut channels, in_tx, out_rx, _client_frame_cursor, _client_snapshot) =
             NetChannels::new();
         let connection = crate::multiplayer::connect_client_in_campaign(
@@ -208,7 +210,7 @@ pub(super) async fn establish(
                     handle.content_offer()
                 };
                 if let Err(error) = validate_preflighted_content(
-                    args.pending_distributed_mod.as_deref(),
+                    args.content.pending_distributed_mod.as_deref(),
                     offered_content.as_ref(),
                 ) {
                     if let Some(offer) = offered_content.as_ref() {
@@ -361,9 +363,10 @@ pub(super) async fn establish(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn resolve_browser_join_publication(
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> Result<bool, SessionSetupFailure> {
     let saved = args
+        .config
         .global_options
         .with_active_profile(|profile| profile.multiplayer_config.publish_browser_join_links)
         .map_err(|detail| SessionSetupFailure::Local {
@@ -371,7 +374,7 @@ fn resolve_browser_join_publication(
             detail,
         })?;
     Ok(resolve_publication_preference(
-        args.mp_browser_join_links,
+        args.config.cli.mp_browser_join_links,
         saved,
     ))
 }
