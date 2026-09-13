@@ -647,54 +647,10 @@ impl PathGraph {
         grid: &mut FastFindGrid,
         data: &[u8],
     ) -> Result<(), String> {
+        // Truncation converts into this function's `String` error via `?`.
+        use crate::le_bytes::{read_f32, read_i16, read_u8, read_u16, read_u32};
+
         let mut pos = 0usize;
-
-        let read_u16 = |data: &[u8], pos: &mut usize| -> Result<u16, String> {
-            if *pos + 2 > data.len() {
-                return Err("unexpected end of proto stream".into());
-            }
-            let val = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
-            *pos += 2;
-            Ok(val)
-        };
-
-        let read_u8 = |data: &[u8], pos: &mut usize| -> Result<u8, String> {
-            if *pos + 1 > data.len() {
-                return Err("unexpected end of proto stream".into());
-            }
-            let val = data[*pos];
-            *pos += 1;
-            Ok(val)
-        };
-
-        let read_i16 = |data: &[u8], pos: &mut usize| -> Result<i16, String> {
-            if *pos + 2 > data.len() {
-                return Err("unexpected end of proto stream".into());
-            }
-            let val = i16::from_le_bytes([data[*pos], data[*pos + 1]]);
-            *pos += 2;
-            Ok(val)
-        };
-
-        let read_f32 = |data: &[u8], pos: &mut usize| -> Result<f32, String> {
-            if *pos + 4 > data.len() {
-                return Err("unexpected end of proto stream".into());
-            }
-            let val =
-                f32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
-            *pos += 4;
-            Ok(val)
-        };
-
-        let read_u32 = |data: &[u8], pos: &mut usize| -> Result<u32, String> {
-            if *pos + 4 > data.len() {
-                return Err("unexpected end of proto stream".into());
-            }
-            let val =
-                u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
-            *pos += 4;
-            Ok(val)
-        };
 
         // 1. Load half-diagonals (unit sizes).  May already have been
         // pre-populated by `preload_half_diagonals_from_proto` during

@@ -436,19 +436,8 @@ fn right_normal(vector: MapVec) -> MapVec {
     }
 }
 
-fn read_u16(data: &[u8], offset: usize) -> Result<u16, String> {
-    let bytes = data
-        .get(offset..offset + 2)
-        .ok_or_else(|| "truncated mobile macro u16".to_string())?;
-    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
-}
-
-fn read_f32(data: &[u8], offset: usize) -> Result<f32, String> {
-    let bytes = data
-        .get(offset..offset + 4)
-        .ok_or_else(|| "truncated mobile macro f32".to_string())?;
-    Ok(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
+// Offset-addressed macro reads; truncation converts into the `String` error via `?`.
+use crate::le_bytes::{f32_at as read_f32, u16_at as read_u16};
 
 #[cfg(test)]
 mod tests {

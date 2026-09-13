@@ -263,61 +263,63 @@ impl SoundSource {
     pub fn from_proto_stream(data: &[u8], pos: &mut usize, new_levels: bool) -> Self {
         let mut source = SoundSource::new();
 
-        source.id = read_u32_le(data, pos);
-        source.active = read_bool(data, pos);
+        use crate::le_bytes::{read_i16, read_u8, read_u16, read_u32};
 
-        let kind_byte = read_u8(data, pos);
+        source.id = proto(read_u32(data, pos));
+        source.active = proto(read_u8(data, pos)) != 0;
+
+        let kind_byte = proto(read_u8(data, pos));
         source.source_kind = SoundSourceKind::from_u8(kind_byte)
             .unwrap_or_else(|| panic!("Invalid sound source kind: {kind_byte}"));
 
         if source.source_kind == SoundSourceKind::Delayed {
-            source.min_delay = read_u16_le(data, pos);
-            source.max_delay = read_u16_le(data, pos);
-            source.delay_stepping = read_u16_le(data, pos);
+            source.min_delay = proto(read_u16(data, pos));
+            source.max_delay = proto(read_u16(data, pos));
+            source.delay_stepping = proto(read_u16(data, pos));
             // Pre-increment so callers can mod by `delay_stepping` directly.
             source.delay_stepping += 1;
         }
 
-        source.is_global = read_bool(data, pos);
+        source.is_global = proto(read_u8(data, pos)) != 0;
 
         if !source.is_global {
-            source.inner_distance = read_u16_le(data, pos);
-            source.outer_distance = read_u16_le(data, pos);
+            source.inner_distance = proto(read_u16(data, pos));
+            source.outer_distance = proto(read_u16(data, pos));
 
             if new_levels {
-                let _dummy = read_u8(data, pos);
+                let _dummy = proto(read_u8(data, pos));
             }
 
-            let num_points = read_u16_le(data, pos);
+            let num_points = proto(read_u16(data, pos));
             source.shape.reserve(num_points as usize);
             for _ in 0..num_points {
-                let x = read_i16_le(data, pos) as f32;
-                let y = read_i16_le(data, pos) as f32;
+                let x = proto(read_i16(data, pos)) as f32;
+                let y = proto(read_i16(data, pos)) as f32;
                 source.shape.push(MapPoint::new(x, y));
             }
 
             if new_levels {
-                let _dummy = read_u8(data, pos);
+                let _dummy = proto(read_u8(data, pos));
             }
 
             // Inner volume: 0–100 range → 0–255
-            let mut inner_vol = read_u16_le(data, pos);
+            let mut inner_vol = proto(read_u16(data, pos));
             if inner_vol > 100 {
                 inner_vol = 100;
             }
             source.inner_volume = (inner_vol as f32 * 2.55) as u16;
 
             // Outer volume: 0–100 range → 0–255
-            let mut outer_vol = read_u16_le(data, pos);
+            let mut outer_vol = proto(read_u16(data, pos));
             if outer_vol > 100 {
                 outer_vol = 100;
             }
             source.outer_volume = (outer_vol as f32 * 2.55) as u16;
 
-            source.noise_covering_distance = read_u16_le(data, pos);
+            source.noise_covering_distance = proto(read_u16(data, pos));
         }
 
-        let altitude_byte = read_u8(data, pos);
+        let altitude_byte = proto(read_u8(data, pos));
         source.altitude = match altitude_byte {
             0 => SoundSourceAltitude::Ground,
             1 => SoundSourceAltitude::Middle,
@@ -326,7 +328,7 @@ impl SoundSource {
             _ => panic!("Invalid sound source altitude: {altitude_byte}"),
         };
 
-        source.ambiences = read_u32_le(data, pos);
+        source.ambiences = proto(read_u32(data, pos));
 
         source
     }
@@ -466,45 +468,11 @@ impl SoundSourceManager {
 // Binary reading helpers (for proto stream parsing)
 // ---------------------------------------------------------------------------
 
-fn read_u8(data: &[u8], pos: &mut usize) -> u8 {
-    assert!(
-        *pos < data.len(),
-        "Unexpected end of data reading u8 at offset {pos}",
-        pos = *pos
-    );
-    let v = data[*pos];
-    *pos += 1;
-    v
-}
-
-fn read_bool(data: &[u8], pos: &mut usize) -> bool {
-    read_u8(data, pos) != 0
-}
-
-fn read_u16_le(data: &[u8], pos: &mut usize) -> u16 {
-    assert!(
-        *pos + 2 <= data.len(),
-        "Unexpected end of data reading u16 at offset {pos}",
-        pos = *pos
-    );
-    let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
-    *pos += 2;
-    v
-}
-
-fn read_i16_le(data: &[u8], pos: &mut usize) -> i16 {
-    read_u16_le(data, pos) as i16
-}
-
-fn read_u32_le(data: &[u8], pos: &mut usize) -> u32 {
-    assert!(
-        *pos + 4 <= data.len(),
-        "Unexpected end of data reading u32 at offset {pos}",
-        pos = *pos
-    );
-    let v = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
-    *pos += 4;
-    v
+/// Proto streams are authored level data validated upstream; a truncated
+/// sound-source record is an invariant violation, so it panics with context.
+#[track_caller]
+fn proto<T>(read: Result<T, crate::le_bytes::TruncatedRead>) -> T {
+    read.unwrap_or_else(|error| panic!("sound source proto stream: {error}"))
 }
 
 // ---------------------------------------------------------------------------
