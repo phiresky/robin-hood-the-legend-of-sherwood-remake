@@ -12,6 +12,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::replay::ReplayData;
+use robin_run_protocol::DomainSignedClaim as _;
 #[cfg(any(test, feature = "multiplayer"))]
 use robin_run_protocol::NamedSeatJoinClaimV1;
 #[cfg(any(test, feature = "multiplayer", not(target_arch = "wasm32")))]

@@ -9,6 +9,11 @@
 //! results. This separation is deliberate: there is no debug or loopback HTTP
 //! endpoint capable of promoting a submission.
 
+// Every authority path (openat2 confinement, statx mount identity, procfs,
+// systemd readiness) is Linux-specific; nothing builds this crate elsewhere.
+#[cfg(not(target_os = "linux"))]
+compile_error!("robin_highscores is Linux-only (openat2, statx, procfs, systemd)");
+
 mod authentication;
 pub mod backup;
 pub mod campaign_store;

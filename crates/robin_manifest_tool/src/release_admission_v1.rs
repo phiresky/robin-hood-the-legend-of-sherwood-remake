@@ -36,7 +36,7 @@ use crate::{
     MAX_DOCUMENT_BYTES, config_parent, ensure_absent_output, load_canonical_document,
     path_to_manifest, persist_staging, read_regular_file_bounded, resolve_path, staging_directory,
     strict_json_from_slice, validate_complete_ranked_rules_config_v1,
-    validate_current_official_ranked_build_v2, walk_regular_files, write_bytes,
+    validate_current_official_ranked_build_v2, walk_regular_files, write_new_file_bytes,
 };
 
 const RELEASE_ADMISSION_PLAN_SCHEMA_VERSION_V1: u32 = 1;
@@ -941,7 +941,7 @@ fn publish_output_tree(output: &Path, expected: &BTreeMap<String, Vec<u8>>) -> R
     ensure_absent_output(output)?;
     let staging = staging_directory(output)?;
     for (relative, bytes) in expected {
-        write_bytes(&staging.path().join(relative), bytes)?;
+        write_new_file_bytes(&staging.path().join(relative), bytes)?;
     }
     validate_output_tree(staging.path(), expected)?;
     persist_staging(staging, output)

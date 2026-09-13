@@ -535,7 +535,6 @@ pub(super) fn pin_inherited_vps_candidate_root_at_with<V>(
 where
     V: Fn(&Path) -> Result<(Digest32, String)>,
 {
-    use rustix::fs::FileType;
     use std::os::fd::{AsRawFd as _, OwnedFd};
 
     let parents = pin_vps_candidate_parents_at(incoming_root, releases_root)?;
@@ -545,12 +544,12 @@ where
         "inherited VPS candidate descriptor must be at least 3"
     );
     let inherited = fd_policy::stat(candidate_root_fd)?;
-    ensure!(
-        FileType::from_raw_mode(inherited.st_mode).is_dir()
-            && inherited.st_uid == rustix::process::geteuid().as_raw()
-            && inherited.st_mode & 0o777 == 0o550,
-        "inherited VPS candidate descriptor has unsafe type, owner, or mode"
-    );
+    fd_policy::ensure_private_directory(
+        inherited.st_mode,
+        inherited.st_uid,
+        0o550,
+        "inherited VPS candidate descriptor has unsafe type, owner, or mode",
+    )?;
     let descriptor_path = PathBuf::from(format!("/proc/self/fd/{candidate_root_fd}"));
     let fd = OwnedFd::from(File::open(&descriptor_path)?);
     let pinned = rustix::fs::fstat(&fd)?;
@@ -604,10 +603,219 @@ where
     AR: Fn(&Path) -> Result<()>,
     AU: Fn(&Path) -> Result<()>,
 {
-    use rustix::fs::{
-        AtFlags, Mode, OFlags, RenameFlags, ResolveFlags, openat2, renameat_with, statat, unlinkat,
+    use std::os::fd::AsRawFd as _;
+
+    let (parent_fd, parent) = pin_vps_incoming_parent(incoming_parent)?;
+    let names = VpsSourceConsumeNamesV1::new(&plan.source_commit);
+
+    let candidate_fd = &inherited_candidate.fd;
+    let candidate = rustix::fs::fstat(candidate_fd)?;
+    ensure!(
+        candidate.st_uid == rustix::process::geteuid().as_raw()
+            && candidate.st_dev == parent.st_dev
+            && candidate.st_mode & 0o777 == 0o550,
+        "VPS candidate root identity, device, owner, or mode is unsafe"
+    );
+    let candidate_path = PathBuf::from(format!("/proc/self/fd/{}/.", candidate_fd.as_raw_fd()));
+    let (validated_candidate_manifest, candidate_publication_lock) =
+        validate_candidate(&candidate_path)?;
+    ensure!(
+        validated_candidate_manifest == release_manifest_sha256,
+        "pinned VPS candidate differs from the expected release manifest digest"
+    );
+    ensure!(
+        fs::read(candidate_path.join(SOURCE_COMMIT_FILE))?
+            == format!("{}\n", plan.source_commit).as_bytes(),
+        "pinned VPS candidate source commit differs from the plan"
+    );
+    let scope = VpsSourceConsumeScopeV1 {
+        plan,
+        plan_sha256,
+        release_manifest_sha256,
+        incoming_parent,
+        parent_fd,
+        parent,
+        candidate,
+        names,
     };
-    use std::os::fd::{AsFd as _, AsRawFd as _};
+    let parent_fd = &scope.parent_fd;
+    let names = &scope.names;
+    let ensure_authorities = || -> Result<()> {
+        ensure_lock()?;
+        ensure_named_vps_incoming_parent(incoming_parent, &scope.parent)?;
+        inherited_candidate.ensure_canonical()
+    };
+    ensure_authorities()?;
+
+    // Recovery names are transaction evidence. Authenticate the exact
+    // candidate authority before moving any of them back into place.
+    for name in [
+        &names.journal,
+        &names.journal_temporary,
+        &names.terminal_journal,
+        &names.terminal_journal_temporary,
+    ] {
+        restore_vps_source_document_removing(parent_fd, name, &ensure_authorities)?;
+    }
+
+    reconcile_vps_source_journal_temporary(
+        parent_fd,
+        &names.journal,
+        &names.journal_temporary,
+        &names.source,
+        &names.consuming,
+        &plan.source_commit,
+        VpsSourceConsumePhaseV1::Prepared,
+        &ensure_authorities,
+    )?;
+    reconcile_vps_source_journal_temporary(
+        parent_fd,
+        &names.terminal_journal,
+        &names.terminal_journal_temporary,
+        &names.source,
+        &names.consuming,
+        &plan.source_commit,
+        VpsSourceConsumePhaseV1::RootUnlinked,
+        &ensure_authorities,
+    )?;
+    let source_exists = pinned_entry_exists(parent_fd, &names.source)?;
+    let consuming_exists = pinned_entry_exists(parent_fd, &names.consuming)?;
+    ensure!(
+        !(source_exists && consuming_exists),
+        "both VPS source and consuming roots exist; preserve ambiguous evidence"
+    );
+
+    if pinned_entry_exists(parent_fd, &names.terminal_journal)? {
+        return finish_terminal_vps_source_consume(
+            &scope,
+            source_exists,
+            consuming_exists,
+            &ensure_lock,
+            &ensure_authorities,
+        );
+    }
+
+    let mut journal = if pinned_entry_exists(parent_fd, &names.journal)? {
+        load_vps_source_consume_journal(parent_fd, &names.journal)?
+    } else if source_exists {
+        let source = open_vps_source_root(parent_fd, &scope.parent, names.source.clone(), 0o700)?;
+        let journal = build_vps_source_consume_journal(
+            plan,
+            plan_bytes,
+            plan_sha256,
+            release_manifest_sha256,
+            &source,
+            candidate.st_dev,
+            candidate.st_ino,
+            &validate_publication,
+            logical_source,
+            candidate_publication_lock,
+        )?;
+        ensure_authorities()?;
+        publish_vps_source_consume_journal(
+            parent_fd,
+            &names.journal,
+            &names.journal_temporary,
+            &journal,
+            &ensure_authorities,
+        )?;
+        journal
+    } else if consuming_exists {
+        anyhow::bail!("VPS consuming source root exists without its durable inventory journal");
+    } else {
+        // A completed retry is idempotent after the exact candidate is still
+        // authenticated above.
+        rustix::fs::fsync(parent_fd)?;
+        ensure_authorities()?;
+        return Ok(());
+    };
+    validate_vps_source_consume_journal(
+        &journal,
+        plan,
+        plan_sha256,
+        release_manifest_sha256,
+        candidate.st_dev,
+        candidate.st_ino,
+    )?;
+    ensure_authorities()?;
+    ensure!(
+        journal.phase == VpsSourceConsumePhaseV1::Prepared,
+        "the primary VPS source journal is not in prepared phase"
+    );
+    if !source_exists && !consuming_exists {
+        rustix::fs::fsync(parent_fd)?;
+        ensure_authorities()?;
+        return publish_terminal_and_remove_vps_source_journals(
+            &scope,
+            &journal,
+            &ensure_authorities,
+        );
+    }
+
+    let consuming = open_or_rename_vps_consuming_root(
+        &scope,
+        &journal,
+        consuming_exists,
+        source_exists,
+        &ensure_authorities,
+        &after_rename,
+    )?;
+    unlink_consumed_vps_source_root(&scope, &consuming, &journal, &ensure_authorities)?;
+    ensure_authorities()?;
+    after_root_unlink(incoming_parent)?;
+    ensure_authorities()?;
+    publish_terminal_and_remove_vps_source_journals(&scope, &journal, &ensure_authorities)?;
+    journal.entries.clear();
+    Ok(())
+}
+
+/// Commit-derived basenames of every source-consume transaction entry below
+/// the incoming parent.
+// Runtime-only name set; never serialized.
+struct VpsSourceConsumeNamesV1 {
+    source: std::ffi::OsString,
+    consuming: std::ffi::OsString,
+    journal: std::ffi::OsString,
+    journal_temporary: std::ffi::OsString,
+    terminal_journal: std::ffi::OsString,
+    terminal_journal_temporary: std::ffi::OsString,
+}
+
+impl VpsSourceConsumeNamesV1 {
+    fn new(source_commit: &str) -> Self {
+        Self {
+            source: format!(".sources-{source_commit}").into(),
+            consuming: format!(".sources-{source_commit}.consuming").into(),
+            journal: format!(".sources-{source_commit}.consume-v1.json").into(),
+            journal_temporary: format!(".sources-{source_commit}.consume-v1.json.new").into(),
+            terminal_journal: format!(".sources-{source_commit}.consume-v1.complete.json").into(),
+            terminal_journal_temporary: format!(
+                ".sources-{source_commit}.consume-v1.complete.json.new"
+            )
+            .into(),
+        }
+    }
+}
+
+/// Pinned incoming parent, authenticated candidate identity and plan binding
+/// shared by every phase of [`consume_vps_sources_in_with`].
+// Runtime-only descriptor context; never serialized.
+struct VpsSourceConsumeScopeV1<'a> {
+    plan: &'a VpsReleasePlanV2,
+    plan_sha256: Digest32,
+    release_manifest_sha256: Digest32,
+    incoming_parent: &'a Path,
+    parent_fd: std::os::fd::OwnedFd,
+    parent: rustix::fs::Stat,
+    candidate: rustix::fs::Stat,
+    names: VpsSourceConsumeNamesV1,
+}
+
+/// Validate and descriptor-pin the EUID-owned mode-0750 incoming parent.
+fn pin_vps_incoming_parent(
+    incoming_parent: &Path,
+) -> Result<(std::os::fd::OwnedFd, rustix::fs::Stat)> {
+    use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     let expected_incoming = Path::new(INSTALL_ROOT).join("incoming");
@@ -640,202 +848,116 @@ where
             && parent.st_uid == rustix::process::geteuid().as_raw(),
         "VPS incoming parent changed while it was pinned"
     );
+    Ok((parent_fd, parent))
+}
 
-    let source_name = std::ffi::OsString::from(format!(".sources-{}", plan.source_commit));
-    let consuming_name =
-        std::ffi::OsString::from(format!(".sources-{}.consuming", plan.source_commit));
-    let journal_name =
-        std::ffi::OsString::from(format!(".sources-{}.consume-v1.json", plan.source_commit));
-    let journal_temporary_name = std::ffi::OsString::from(format!(
-        ".sources-{}.consume-v1.json.new",
-        plan.source_commit
-    ));
-    let terminal_journal_name = std::ffi::OsString::from(format!(
-        ".sources-{}.consume-v1.complete.json",
-        plan.source_commit
-    ));
-    let terminal_journal_temporary_name = std::ffi::OsString::from(format!(
-        ".sources-{}.consume-v1.complete.json.new",
-        plan.source_commit
-    ));
-
-    let candidate_fd = &inherited_candidate.fd;
-    let candidate = rustix::fs::fstat(candidate_fd)?;
-    ensure!(
-        candidate.st_uid == rustix::process::geteuid().as_raw()
-            && candidate.st_dev == parent.st_dev
-            && candidate.st_mode & 0o777 == 0o550,
-        "VPS candidate root identity, device, owner, or mode is unsafe"
-    );
-    let candidate_path = PathBuf::from(format!("/proc/self/fd/{}/.", candidate_fd.as_raw_fd()));
-    let (validated_candidate_manifest, candidate_publication_lock) =
-        validate_candidate(&candidate_path)?;
-    ensure!(
-        validated_candidate_manifest == release_manifest_sha256,
-        "pinned VPS candidate differs from the expected release manifest digest"
-    );
-    ensure!(
-        fs::read(candidate_path.join(SOURCE_COMMIT_FILE))?
-            == format!("{}\n", plan.source_commit).as_bytes(),
-        "pinned VPS candidate source commit differs from the plan"
-    );
-    let ensure_authorities = || -> Result<()> {
-        ensure_lock()?;
-        ensure_named_vps_incoming_parent(incoming_parent, &parent)?;
-        inherited_candidate.ensure_canonical()
-    };
-    ensure_authorities()?;
-
-    // Recovery names are transaction evidence. Authenticate the exact
-    // candidate authority before moving any of them back into place.
-    for name in [
-        &journal_name,
-        &journal_temporary_name,
-        &terminal_journal_name,
-        &terminal_journal_temporary_name,
-    ] {
-        restore_vps_source_document_removing(&parent_fd, name, &ensure_authorities)?;
-    }
-
-    reconcile_vps_source_journal_temporary(
-        &parent_fd,
-        &journal_name,
-        &journal_temporary_name,
-        &source_name,
-        &consuming_name,
-        &plan.source_commit,
-        VpsSourceConsumePhaseV1::Prepared,
-        &ensure_authorities,
-    )?;
-    reconcile_vps_source_journal_temporary(
-        &parent_fd,
-        &terminal_journal_name,
-        &terminal_journal_temporary_name,
-        &source_name,
-        &consuming_name,
-        &plan.source_commit,
-        VpsSourceConsumePhaseV1::RootUnlinked,
-        &ensure_authorities,
-    )?;
-    let source_exists = pinned_entry_exists(&parent_fd, &source_name)?;
-    let consuming_exists = pinned_entry_exists(&parent_fd, &consuming_name)?;
-    ensure!(
-        !(source_exists && consuming_exists),
-        "both VPS source and consuming roots exist; preserve ambiguous evidence"
-    );
-
-    if pinned_entry_exists(&parent_fd, &terminal_journal_name)? {
-        let terminal = load_vps_source_consume_journal(&parent_fd, &terminal_journal_name)?;
-        validate_vps_source_consume_journal(
-            &terminal,
-            plan,
-            plan_sha256,
-            release_manifest_sha256,
-            candidate.st_dev,
-            candidate.st_ino,
-        )?;
-        ensure!(
-            terminal.phase == VpsSourceConsumePhaseV1::RootUnlinked
-                && !source_exists
-                && !consuming_exists,
-            "terminal VPS source journal coexists with a source root"
-        );
-        rustix::fs::fsync(&parent_fd)?;
-        ensure_authorities()?;
-        ensure_lock()?;
-        ensure_named_vps_incoming_parent(incoming_parent, &parent)?;
-        if pinned_entry_exists(&parent_fd, &journal_name)? {
-            let mut expected_prepared = terminal.clone();
-            expected_prepared.phase = VpsSourceConsumePhaseV1::Prepared;
-            remove_exact_vps_source_journal(
-                &parent_fd,
-                &journal_name,
-                &expected_prepared,
-                &ensure_authorities,
-            )?;
-        }
-        remove_exact_vps_source_journal(
-            &parent_fd,
-            &terminal_journal_name,
-            &terminal,
-            &ensure_authorities,
-        )?;
-        ensure_authorities()?;
-        return Ok(());
-    }
-
-    let mut journal = if pinned_entry_exists(&parent_fd, &journal_name)? {
-        load_vps_source_consume_journal(&parent_fd, &journal_name)?
-    } else if source_exists {
-        let source = open_vps_source_root(&parent_fd, &parent, source_name.clone(), 0o700)?;
-        let journal = build_vps_source_consume_journal(
-            plan,
-            plan_bytes,
-            plan_sha256,
-            release_manifest_sha256,
-            &source,
-            candidate.st_dev,
-            candidate.st_ino,
-            &validate_publication,
-            logical_source,
-            candidate_publication_lock,
-        )?;
-        ensure_authorities()?;
-        publish_vps_source_consume_journal(
-            &parent_fd,
-            &journal_name,
-            &journal_temporary_name,
-            &journal,
-            &ensure_authorities,
-        )?;
-        journal
-    } else if consuming_exists {
-        anyhow::bail!("VPS consuming source root exists without its durable inventory journal");
-    } else {
-        // A completed retry is idempotent after the exact candidate is still
-        // authenticated above.
-        rustix::fs::fsync(&parent_fd)?;
-        ensure_authorities()?;
-        return Ok(());
-    };
+/// Idempotent retry after the root was already unlinked: verify the terminal
+/// journal and remove both durable journals.
+fn finish_terminal_vps_source_consume<EL, EA>(
+    scope: &VpsSourceConsumeScopeV1<'_>,
+    source_exists: bool,
+    consuming_exists: bool,
+    ensure_lock: &EL,
+    ensure_authorities: &EA,
+) -> Result<()>
+where
+    EL: Fn() -> Result<()>,
+    EA: Fn() -> Result<()>,
+{
+    let parent_fd = &scope.parent_fd;
+    let names = &scope.names;
+    let terminal = load_vps_source_consume_journal(parent_fd, &names.terminal_journal)?;
     validate_vps_source_consume_journal(
-        &journal,
-        plan,
-        plan_sha256,
-        release_manifest_sha256,
-        candidate.st_dev,
-        candidate.st_ino,
+        &terminal,
+        scope.plan,
+        scope.plan_sha256,
+        scope.release_manifest_sha256,
+        scope.candidate.st_dev,
+        scope.candidate.st_ino,
+    )?;
+    ensure!(
+        terminal.phase == VpsSourceConsumePhaseV1::RootUnlinked
+            && !source_exists
+            && !consuming_exists,
+        "terminal VPS source journal coexists with a source root"
+    );
+    rustix::fs::fsync(parent_fd)?;
+    ensure_authorities()?;
+    ensure_lock()?;
+    ensure_named_vps_incoming_parent(scope.incoming_parent, &scope.parent)?;
+    if pinned_entry_exists(parent_fd, &names.journal)? {
+        let mut expected_prepared = terminal.clone();
+        expected_prepared.phase = VpsSourceConsumePhaseV1::Prepared;
+        remove_exact_vps_source_journal(
+            parent_fd,
+            &names.journal,
+            &expected_prepared,
+            ensure_authorities,
+        )?;
+    }
+    remove_exact_vps_source_journal(
+        parent_fd,
+        &names.terminal_journal,
+        &terminal,
+        ensure_authorities,
     )?;
     ensure_authorities()?;
-    ensure!(
-        journal.phase == VpsSourceConsumePhaseV1::Prepared,
-        "the primary VPS source journal is not in prepared phase"
-    );
-    if !source_exists && !consuming_exists {
-        rustix::fs::fsync(&parent_fd)?;
-        ensure_authorities()?;
-        let terminal = publish_vps_source_terminal_journal(
-            &parent_fd,
-            &terminal_journal_name,
-            &terminal_journal_temporary_name,
-            &journal,
-            &ensure_authorities,
-        )?;
-        ensure_authorities()?;
-        remove_exact_vps_source_journal(&parent_fd, &journal_name, &journal, &ensure_authorities)?;
-        ensure_authorities()?;
-        remove_exact_vps_source_journal(
-            &parent_fd,
-            &terminal_journal_name,
-            &terminal,
-            &ensure_authorities,
-        )?;
-        ensure_authorities()?;
-        return Ok(());
-    }
+    Ok(())
+}
 
-    let consuming = if consuming_exists {
-        let root = open_vps_source_root(&parent_fd, &parent, consuming_name.clone(), 0o700)?;
+/// Publish the root-unlinked terminal journal, then remove the prepared and
+/// terminal journals in that order.
+fn publish_terminal_and_remove_vps_source_journals<EA>(
+    scope: &VpsSourceConsumeScopeV1<'_>,
+    journal: &VpsSourceConsumeJournalV1,
+    ensure_authorities: &EA,
+) -> Result<()>
+where
+    EA: Fn() -> Result<()>,
+{
+    let parent_fd = &scope.parent_fd;
+    let names = &scope.names;
+    let terminal = publish_vps_source_terminal_journal(
+        parent_fd,
+        &names.terminal_journal,
+        &names.terminal_journal_temporary,
+        journal,
+        ensure_authorities,
+    )?;
+    ensure_authorities()?;
+    remove_exact_vps_source_journal(parent_fd, &names.journal, journal, ensure_authorities)?;
+    ensure_authorities()?;
+    remove_exact_vps_source_journal(
+        parent_fd,
+        &names.terminal_journal,
+        &terminal,
+        ensure_authorities,
+    )?;
+    ensure_authorities()?;
+    Ok(())
+}
+
+/// Adopt the journal-bound consuming root, renaming the source root into the
+/// consuming name first when that has not happened yet.
+fn open_or_rename_vps_consuming_root<EA, AR>(
+    scope: &VpsSourceConsumeScopeV1<'_>,
+    journal: &VpsSourceConsumeJournalV1,
+    consuming_exists: bool,
+    source_exists: bool,
+    ensure_authorities: &EA,
+    after_rename: &AR,
+) -> Result<PinnedVpsSourceRoot>
+where
+    EA: Fn() -> Result<()>,
+    AR: Fn(&Path) -> Result<()>,
+{
+    use rustix::fs::{AtFlags, RenameFlags, renameat_with, statat};
+    use std::os::fd::AsFd as _;
+
+    let parent_fd = &scope.parent_fd;
+    let names = &scope.names;
+    Ok(if consuming_exists {
+        let root = open_vps_source_root(parent_fd, &scope.parent, names.consuming.clone(), 0o700)?;
         ensure!(
             root.device == journal.source_device && root.inode == journal.source_inode,
             "VPS consuming source root differs from its durable journal"
@@ -846,7 +968,7 @@ where
             source_exists,
             "VPS source root disappeared before consumption"
         );
-        let source = open_vps_source_root(&parent_fd, &parent, source_name.clone(), 0o700)?;
+        let source = open_vps_source_root(parent_fd, &scope.parent, names.source.clone(), 0o700)?;
         ensure!(
             source.device == journal.source_device && source.inode == journal.source_inode,
             "VPS source root differs from its durable journal"
@@ -854,20 +976,20 @@ where
         ensure_authorities()?;
         renameat_with(
             parent_fd.as_fd(),
-            &source_name,
+            &names.source,
             parent_fd.as_fd(),
-            &consuming_name,
+            &names.consuming,
             RenameFlags::NOREPLACE,
         )
         .or_else(|rename_error| {
             let observed = statat(
                 parent_fd.as_fd(),
-                &consuming_name,
+                &names.consuming,
                 AtFlags::SYMLINK_NOFOLLOW,
             );
             if observed.as_ref().is_ok_and(|metadata| {
                 metadata.st_dev == source.device && metadata.st_ino == source.inode
-            }) && statat(parent_fd.as_fd(), &source_name, AtFlags::SYMLINK_NOFOLLOW)
+            }) && statat(parent_fd.as_fd(), &names.source, AtFlags::SYMLINK_NOFOLLOW)
                 .is_err_and(|error| error == rustix::io::Errno::NOENT)
             {
                 Ok(())
@@ -875,15 +997,30 @@ where
                 Err(rename_error)
             }
         })?;
-        rustix::fs::fsync(&parent_fd)?;
-        after_rename(&incoming_parent.join(&consuming_name))?;
+        rustix::fs::fsync(parent_fd)?;
+        after_rename(&scope.incoming_parent.join(&names.consuming))?;
         PinnedVpsSourceRoot {
-            name: consuming_name.clone(),
+            name: names.consuming.clone(),
             ..source
         }
-    };
+    })
+}
 
-    validate_vps_source_inventory_subset(&consuming, &journal.entries)?;
+/// Clear the journal-bound consuming tree and unlink its root directory.
+fn unlink_consumed_vps_source_root<EA>(
+    scope: &VpsSourceConsumeScopeV1<'_>,
+    consuming: &PinnedVpsSourceRoot,
+    journal: &VpsSourceConsumeJournalV1,
+    ensure_authorities: &EA,
+) -> Result<()>
+where
+    EA: Fn() -> Result<()>,
+{
+    use rustix::fs::{AtFlags, statat, unlinkat};
+    use std::os::fd::AsFd as _;
+
+    let parent_fd = &scope.parent_fd;
+    validate_vps_source_inventory_subset(consuming, &journal.entries)?;
     ensure_authorities()?;
     let mut seen = 1;
     clear_pinned_vps_directory(
@@ -894,7 +1031,7 @@ where
         0,
         &mut seen,
         &journal.entries,
-        &ensure_authorities,
+        ensure_authorities,
     )?;
     let named = statat(
         parent_fd.as_fd(),
@@ -911,28 +1048,7 @@ where
         rustix::fs::fstat(&consuming.fd)?.st_nlink == 0,
         "VPS consuming source inode remains linked after root unlink"
     );
-    rustix::fs::fsync(&parent_fd)?;
-    ensure_authorities()?;
-    after_root_unlink(incoming_parent)?;
-    ensure_authorities()?;
-    let terminal = publish_vps_source_terminal_journal(
-        &parent_fd,
-        &terminal_journal_name,
-        &terminal_journal_temporary_name,
-        &journal,
-        &ensure_authorities,
-    )?;
-    ensure_authorities()?;
-    remove_exact_vps_source_journal(&parent_fd, &journal_name, &journal, &ensure_authorities)?;
-    ensure_authorities()?;
-    remove_exact_vps_source_journal(
-        &parent_fd,
-        &terminal_journal_name,
-        &terminal,
-        &ensure_authorities,
-    )?;
-    ensure_authorities()?;
-    journal.entries.clear();
+    rustix::fs::fsync(parent_fd)?;
     Ok(())
 }
 
@@ -1424,10 +1540,10 @@ pub(super) fn inventory_pinned_vps_source_directory(
                 entries,
             )?;
         } else if file_type.is_file() {
-            ensure!(
-                metadata.st_nlink == 1,
-                "VPS source contains a hard-linked file"
-            );
+            fd_policy::ensure_single_link(
+                metadata.st_nlink,
+                "VPS source contains a hard-linked file",
+            )?;
             let file_fd = openat2(
                 directory_fd.as_fd(),
                 &name,
@@ -1481,7 +1597,6 @@ where
         AtFlags, FileType, Mode, OFlags, RawDir, ResolveFlags, fchmod, openat2, statat, unlinkat,
     };
     use std::ffi::OsString;
-    use std::io::{Seek as _, SeekFrom};
     use std::os::fd::AsFd as _;
     use std::os::unix::ffi::OsStringExt as _;
 
@@ -1601,107 +1716,142 @@ where
                 "VPS source cleanup directory remains linked after unlink"
             );
         } else if kind.is_file() {
-            ensure!(named.st_nlink == 1, "VPS source cleanup found a hard link");
-            let child = openat2(
-                directory_fd.as_fd(),
+            clear_pinned_vps_source_file(
+                directory_fd,
                 &name,
-                OFlags::RDONLY | OFlags::CLOEXEC,
-                Mode::empty(),
-                ResolveFlags::BENEATH
-                    | ResolveFlags::NO_SYMLINKS
-                    | ResolveFlags::NO_MAGICLINKS
-                    | ResolveFlags::NO_XDEV,
+                &named,
+                expected_entry,
+                ensure_authority,
             )?;
-            let pinned = rustix::fs::fstat(&child)?;
-            ensure!(
-                pinned.st_dev == named.st_dev
-                    && pinned.st_ino == named.st_ino
-                    && pinned.st_uid == named.st_uid
-                    && pinned.st_mode == named.st_mode
-                    && pinned.st_nlink == 1
-                    && pinned.st_size == named.st_size,
-                "VPS source cleanup file changed while it was pinned"
-            );
-            ensure!(
-                expected_entry.kind == VpsSourceEntryKindV1::File
-                    && expected_entry.byte_length == Some(pinned.st_size as u64),
-                "VPS source cleanup file length differs from its durable journal"
-            );
-            let mut child = File::from(child);
-            let first_digest = Digest32::digest_reader(&mut child)?;
-            ensure!(
-                expected_entry.sha256 == Some(first_digest),
-                "VPS source cleanup file bytes differ from its durable journal"
-            );
-            let after_first_hash = rustix::fs::fstat(&child)?;
-            ensure!(
-                after_first_hash.st_dev == pinned.st_dev
-                    && after_first_hash.st_ino == pinned.st_ino
-                    && after_first_hash.st_uid == pinned.st_uid
-                    && after_first_hash.st_mode == pinned.st_mode
-                    && after_first_hash.st_nlink == pinned.st_nlink
-                    && after_first_hash.st_size == pinned.st_size
-                    && after_first_hash.st_mtime == pinned.st_mtime
-                    && after_first_hash.st_mtime_nsec == pinned.st_mtime_nsec
-                    && after_first_hash.st_ctime == pinned.st_ctime
-                    && after_first_hash.st_ctime_nsec == pinned.st_ctime_nsec,
-                "VPS source cleanup file changed while it was hashed"
-            );
-            let rebound = statat(directory_fd.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
-            ensure!(
-                rebound.st_dev == pinned.st_dev
-                    && rebound.st_ino == pinned.st_ino
-                    && rebound.st_uid == pinned.st_uid
-                    && rebound.st_mode == pinned.st_mode
-                    && rebound.st_nlink == 1
-                    && rebound.st_size == pinned.st_size
-                    && rebound.st_mtime == pinned.st_mtime
-                    && rebound.st_mtime_nsec == pinned.st_mtime_nsec
-                    && rebound.st_ctime == pinned.st_ctime
-                    && rebound.st_ctime_nsec == pinned.st_ctime_nsec,
-                "VPS source cleanup file basename was substituted"
-            );
-            ensure_authority()?;
-            child.seek(SeekFrom::Start(0))?;
-            ensure!(
-                Digest32::digest_reader(&mut child)? == first_digest,
-                "VPS source cleanup file changed at its unlink boundary"
-            );
-            let final_pinned = rustix::fs::fstat(&child)?;
-            let final_named = statat(directory_fd.as_fd(), &name, AtFlags::SYMLINK_NOFOLLOW)?;
-            ensure!(
-                final_pinned.st_dev == pinned.st_dev
-                    && final_pinned.st_ino == pinned.st_ino
-                    && final_pinned.st_uid == pinned.st_uid
-                    && final_pinned.st_mode == pinned.st_mode
-                    && final_pinned.st_nlink == 1
-                    && final_pinned.st_size == pinned.st_size
-                    && final_pinned.st_mtime == pinned.st_mtime
-                    && final_pinned.st_mtime_nsec == pinned.st_mtime_nsec
-                    && final_pinned.st_ctime == pinned.st_ctime
-                    && final_pinned.st_ctime_nsec == pinned.st_ctime_nsec
-                    && final_named.st_dev == final_pinned.st_dev
-                    && final_named.st_ino == final_pinned.st_ino
-                    && final_named.st_mode == final_pinned.st_mode
-                    && final_named.st_nlink == final_pinned.st_nlink
-                    && final_named.st_size == final_pinned.st_size
-                    && final_named.st_mtime == final_pinned.st_mtime
-                    && final_named.st_mtime_nsec == final_pinned.st_mtime_nsec
-                    && final_named.st_ctime == final_pinned.st_ctime
-                    && final_named.st_ctime_nsec == final_pinned.st_ctime_nsec,
-                "VPS source cleanup file identity changed at its unlink boundary"
-            );
-            unlinkat(directory_fd.as_fd(), &name, AtFlags::empty())?;
-            ensure!(
-                rustix::fs::fstat(&child)?.st_nlink == 0,
-                "VPS source cleanup file remains linked after unlink"
-            );
         } else {
             anyhow::bail!("VPS source cleanup found a symlink or special node");
         }
         rustix::fs::fsync(directory_fd)?;
         ensure_authority()?;
     }
+    Ok(())
+}
+
+/// Re-authenticate one journaled regular file against its durable digest at
+/// the unlink boundary, then unlink it from `directory_fd`.
+fn clear_pinned_vps_source_file<F>(
+    directory_fd: &std::os::fd::OwnedFd,
+    name: &std::ffi::OsString,
+    named: &rustix::fs::Stat,
+    expected_entry: &VpsSourceConsumeEntryV1,
+    ensure_authority: &F,
+) -> Result<()>
+where
+    F: Fn() -> Result<()>,
+{
+    use rustix::fs::{AtFlags, Mode, OFlags, ResolveFlags, openat2, statat, unlinkat};
+    use std::io::{Seek as _, SeekFrom};
+    use std::os::fd::AsFd as _;
+
+    fd_policy::ensure_single_link(named.st_nlink, "VPS source cleanup found a hard link")?;
+    let child = openat2(
+        directory_fd.as_fd(),
+        name,
+        OFlags::RDONLY | OFlags::CLOEXEC,
+        Mode::empty(),
+        ResolveFlags::BENEATH
+            | ResolveFlags::NO_SYMLINKS
+            | ResolveFlags::NO_MAGICLINKS
+            | ResolveFlags::NO_XDEV,
+    )?;
+    let pinned = rustix::fs::fstat(&child)?;
+    ensure!(
+        pinned.st_dev == named.st_dev
+            && pinned.st_ino == named.st_ino
+            && pinned.st_uid == named.st_uid
+            && pinned.st_mode == named.st_mode
+            && pinned.st_size == named.st_size,
+        "VPS source cleanup file changed while it was pinned"
+    );
+    fd_policy::ensure_single_link(
+        pinned.st_nlink,
+        "VPS source cleanup file links changed while it was pinned",
+    )?;
+    ensure!(
+        expected_entry.kind == VpsSourceEntryKindV1::File
+            && expected_entry.byte_length == Some(pinned.st_size as u64),
+        "VPS source cleanup file length differs from its durable journal"
+    );
+    let mut child = File::from(child);
+    let first_digest = Digest32::digest_reader(&mut child)?;
+    ensure!(
+        expected_entry.sha256 == Some(first_digest),
+        "VPS source cleanup file bytes differ from its durable journal"
+    );
+    let after_first_hash = rustix::fs::fstat(&child)?;
+    ensure!(
+        after_first_hash.st_dev == pinned.st_dev
+            && after_first_hash.st_ino == pinned.st_ino
+            && after_first_hash.st_uid == pinned.st_uid
+            && after_first_hash.st_mode == pinned.st_mode
+            && after_first_hash.st_nlink == pinned.st_nlink
+            && after_first_hash.st_size == pinned.st_size
+            && after_first_hash.st_mtime == pinned.st_mtime
+            && after_first_hash.st_mtime_nsec == pinned.st_mtime_nsec
+            && after_first_hash.st_ctime == pinned.st_ctime
+            && after_first_hash.st_ctime_nsec == pinned.st_ctime_nsec,
+        "VPS source cleanup file changed while it was hashed"
+    );
+    let rebound = statat(directory_fd.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
+    ensure!(
+        rebound.st_dev == pinned.st_dev
+            && rebound.st_ino == pinned.st_ino
+            && rebound.st_uid == pinned.st_uid
+            && rebound.st_mode == pinned.st_mode
+            && rebound.st_size == pinned.st_size
+            && rebound.st_mtime == pinned.st_mtime
+            && rebound.st_mtime_nsec == pinned.st_mtime_nsec
+            && rebound.st_ctime == pinned.st_ctime
+            && rebound.st_ctime_nsec == pinned.st_ctime_nsec,
+        "VPS source cleanup file basename was substituted"
+    );
+    fd_policy::ensure_single_link(
+        rebound.st_nlink,
+        "VPS source cleanup file basename gained a hard link",
+    )?;
+    ensure_authority()?;
+    child.seek(SeekFrom::Start(0))?;
+    ensure!(
+        Digest32::digest_reader(&mut child)? == first_digest,
+        "VPS source cleanup file changed at its unlink boundary"
+    );
+    let final_pinned = rustix::fs::fstat(&child)?;
+    let final_named = statat(directory_fd.as_fd(), name, AtFlags::SYMLINK_NOFOLLOW)?;
+    ensure!(
+        final_pinned.st_dev == pinned.st_dev
+            && final_pinned.st_ino == pinned.st_ino
+            && final_pinned.st_uid == pinned.st_uid
+            && final_pinned.st_mode == pinned.st_mode
+            && final_pinned.st_size == pinned.st_size
+            && final_pinned.st_mtime == pinned.st_mtime
+            && final_pinned.st_mtime_nsec == pinned.st_mtime_nsec
+            && final_pinned.st_ctime == pinned.st_ctime
+            && final_pinned.st_ctime_nsec == pinned.st_ctime_nsec
+            && final_named.st_dev == final_pinned.st_dev
+            && final_named.st_ino == final_pinned.st_ino
+            && final_named.st_mode == final_pinned.st_mode
+            && final_named.st_nlink == final_pinned.st_nlink
+            && final_named.st_size == final_pinned.st_size
+            && final_named.st_mtime == final_pinned.st_mtime
+            && final_named.st_mtime_nsec == final_pinned.st_mtime_nsec
+            && final_named.st_ctime == final_pinned.st_ctime
+            && final_named.st_ctime_nsec == final_pinned.st_ctime_nsec,
+        "VPS source cleanup file identity changed at its unlink boundary"
+    );
+    fd_policy::ensure_single_link(
+        final_pinned.st_nlink,
+        "VPS source cleanup file links changed at its unlink boundary",
+    )?;
+    unlinkat(directory_fd.as_fd(), name, AtFlags::empty())?;
+    ensure!(
+        rustix::fs::fstat(&child)?.st_nlink == 0,
+        "VPS source cleanup file remains linked after unlink"
+    );
     Ok(())
 }
 
@@ -1801,15 +1951,24 @@ pub(super) fn pin_vps_source_document(
         metadata.st_mode,
         metadata.st_uid,
         metadata.st_nlink as u64,
-        &format!("VPS source consume journal metadata is unsafe"),
+        "VPS source consume journal metadata is unsafe",
     )?;
-    ensure!(
-        metadata.st_dev == parent.st_dev
-            && allowed_modes.contains(&(metadata.st_mode & 0o777))
-            && metadata.st_size >= 0
-            && metadata.st_size as u64 <= limit,
-        "VPS source consume journal metadata is unsafe"
-    );
+    fd_policy::ensure_device(
+        metadata.st_dev,
+        parent.st_dev,
+        "VPS source consume journal device is unsafe",
+    )?;
+    fd_policy::ensure_mode(
+        metadata.st_mode,
+        allowed_modes,
+        "VPS source consume journal mode is unsafe",
+    )?;
+    fd_policy::ensure_size(
+        metadata.st_size,
+        0,
+        limit,
+        "VPS source consume journal size is unsafe",
+    )?;
     let mut file = File::from(fd);
     let bytes = crate::fs_util::read_bounded(&mut file, limit, metadata.st_size as u64)?;
     let observed = rustix::fs::fstat(&file)?;
@@ -2021,7 +2180,7 @@ where
         temporary.st_mode,
         temporary.st_uid,
         temporary.st_nlink as u64,
-        &format!("VPS source consume journal temporary is unsafe"),
+        "VPS source consume journal temporary is unsafe",
     )?;
     let temporary_journal = load_vps_source_consume_journal(parent_fd, temporary_name);
     if let Ok(temporary_journal) = temporary_journal {

@@ -24,17 +24,30 @@ pub mod verifier_job;
 #[cfg(test)]
 mod test_fixtures;
 
+// Root re-exports are grouped per submodule below. Downstream crates import
+// almost every document type through the crate root, so the flat surface is
+// kept as-is; new module-scoped items should stay module-scoped unless they
+// are used across several consumers.
+// TODO: shrink the per-module groups to ubiquitous types once callers in
+// robin_rs / robin_engine import module paths (13/F16).
+
+// Ed25519 verification (feature-gated; simulation consumers stay wire-only).
 #[cfg(feature = "authentication")]
 pub use authentication::{SignatureVerificationError, verify_ed25519_strict};
+// Offer/request binding helper.
 pub use offer_binding::validate_offer_binding;
 
+// Canonical JSON documents and the single-domain signing trait.
 pub use canonical::{
-    CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, canonical_json_bytes,
+    CanonicalDocument, CanonicalDocumentError, CanonicalError, CanonicalValue, DomainSignedClaim,
+    canonical_json_bytes,
 };
+// Fixed-width digest, key, nonce and seed newtypes.
 pub use digest::{
     ChallengeNonce32, Digest32, HexError, OpaqueId, PublicKey32, Signature64, SimulationSeed64,
     SimulationSeedError,
 };
+// Signed submission, preflight, grant, session and verification envelopes.
 pub use envelope::{
     CAMPAIGN_CONTINUATION_PREFLIGHT_CONTROLLER_SIGNATURE_DOMAIN_V1,
     CAMPAIGN_CONTINUATION_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1,
@@ -69,6 +82,7 @@ pub use envelope::{
     VerifiedCampaignSessionV1, VerifiedRunV1, VerifierAdmissionFailureCodeV1,
     VerifierWorkerOutputV1, validate_official_ranked_scope_subject_v1,
 };
+// Immutable build, content, ruleset and projection manifests.
 pub use manifest::{
     AchievementPolicyModeV1, AchievementPolicyV1, ActiveTimeDefinitionV1,
     AnonymousParticipantPolicyV1, ArtifactRefV1, BINARYEN_WASM_OPT_VERSION_V1,
@@ -119,11 +133,13 @@ pub use manifest::{
     simulation_content_component_relative_path_v1, validate_official_content_subjects_v1,
     validate_official_projection_receipt_matrix_v2,
 };
+// Abuse reports and signed deletion requests.
 pub use moderation::{
     AbuseReportAcceptedV1, AbuseReportCategoryV1, AbuseReportTargetV1, AbuseReportV1,
     DELETION_REQUEST_SIGNATURE_DOMAIN_V1, DeletionChallengeRequestV1, DeletionChallengeV1,
     DeletionReceiptV1, DeletionRequestEnvelopeV1, DeletionTargetV1,
 };
+// Public leaderboard, run, player and competition query DTOs.
 pub use query::{
     AchievementSummaryV1, AggregatePublicParticipantV1, BoardCategoryV1, BoardMetricV1,
     BoardMetricValueV1, CampaignSessionDetailV1, CompetitionManifestV1,
@@ -144,7 +160,9 @@ pub use query::{
     SubmissionOwnerStatusResponseV1, VerifiedRunCompositionV1, ViewerAvailabilityV1,
     ViewerContentRequirementV1, ViewerLaunchV1,
 };
+// Structural validation contract shared by every document.
 pub use validation::{Validate, ValidationError};
+// Verifier worker job routing and configuration.
 pub use verifier_job::{
     CampaignSessionBindingV1, MAX_VERIFIER_JOB_CONFIG_BYTES_V1, VerifierJobConfigCatalogV1,
     VerifierJobConfigV1, VerifierJobRouteV1, VerifierJobTemplateV1,

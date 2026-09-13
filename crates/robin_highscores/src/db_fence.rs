@@ -23,7 +23,6 @@ struct FileIdentity {
     owner: u32,
 }
 
-#[cfg(unix)]
 fn identity(metadata: &std::fs::Metadata) -> FileIdentity {
     use std::os::unix::fs::MetadataExt as _;
     FileIdentity {
@@ -80,20 +79,8 @@ impl RuntimeDatabaseFence {
             std::fs::canonicalize(directory_path)? == directory_path,
             "runtime fence directory must be its canonical real path"
         );
-        #[cfg(target_os = "linux")]
-        let directory_file = {
-            use rustix::fs::{Mode, OFlags};
-            let descriptor = crate::secure_fs::open_no_symlinks_at(
-                rustix::fs::CWD,
-                directory_path,
-                OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-                Mode::empty(),
-                rustix::fs::ResolveFlags::empty(),
-            )?;
-            std::fs::File::from(descriptor)
-        };
-        #[cfg(not(target_os = "linux"))]
-        anyhow::bail!("the production database fence requires Linux openat2 and flock");
+        let directory_file =
+            std::fs::File::from(crate::secure_fs::open_dir_no_symlinks(directory_path)?);
 
         let directory_metadata = directory_file.metadata()?;
         let directory_mode = if test_fixture {
@@ -130,7 +117,6 @@ impl RuntimeDatabaseFence {
         Ok(fence)
     }
 
-    #[cfg(unix)]
     fn validate_directory_metadata(
         metadata: &std::fs::Metadata,
         expected_mode: u32,
@@ -145,7 +131,6 @@ impl RuntimeDatabaseFence {
         Ok(())
     }
 
-    #[cfg(unix)]
     fn validate_leaf_metadata(
         metadata: &std::fs::Metadata,
         expected_device: u64,
@@ -163,16 +148,11 @@ impl RuntimeDatabaseFence {
         Ok(identity(metadata))
     }
 
-    #[cfg(target_os = "linux")]
     fn open_leaf_from(directory: &cap_std::fs::Dir, name: &str) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let descriptor = crate::secure_fs::open_no_symlinks_at(
-            directory.as_fd(),
+        let descriptor = crate::secure_fs::open_beneath_same_mount_no_symlinks(
+            directory,
             Path::new(name),
-            OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH | rustix::fs::ResolveFlags::NO_XDEV,
+            rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::CLOEXEC,
         )?;
         Ok(std::fs::File::from(descriptor))
     }
@@ -205,17 +185,10 @@ impl RuntimeDatabaseFence {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
     fn open_directory_file(path: &Path) -> anyhow::Result<std::fs::File> {
-        use rustix::fs::{Mode, OFlags};
-        let descriptor = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
+        Ok(std::fs::File::from(crate::secure_fs::open_dir_no_symlinks(
             path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        Ok(std::fs::File::from(descriptor))
+        )?))
     }
 
     fn lock_shared_admission_blocking(&self) -> anyhow::Result<std::fs::File> {
@@ -607,30 +580,25 @@ pub async fn wait_for_pool_idle(pool: &SqlitePool) -> anyhow::Result<()> {
 /// Production configuration loading requires an absolute pre-existing fence
 /// and never calls this mutation helper.
 pub(crate) fn provision_test_runtime_fence(directory: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-        std::fs::create_dir(directory)?;
-        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
-        for name in [DB_ADMISSION_LOCK, DB_QUIESCENCE_LOCK] {
-            let file = std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .mode(RUNTIME_FENCE_FILE_MODE)
-                .open(directory.join(name))?;
-            file.set_permissions(std::fs::Permissions::from_mode(RUNTIME_FENCE_FILE_MODE))?;
-            file.sync_all()?;
-        }
-        // Test fixtures remain owner-writable so tempfile can clean them and
-        // multiple independently opened Database values can share the same
-        // inode safely. Production `open` still accepts exactly 0500 only.
-        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
-        std::fs::File::open(directory)?.sync_all()?;
-        Ok(())
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    std::fs::create_dir(directory)?;
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+    for name in [DB_ADMISSION_LOCK, DB_QUIESCENCE_LOCK] {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(RUNTIME_FENCE_FILE_MODE)
+            .open(directory.join(name))?;
+        file.set_permissions(std::fs::Permissions::from_mode(RUNTIME_FENCE_FILE_MODE))?;
+        file.sync_all()?;
     }
-    #[cfg(not(unix))]
-    anyhow::bail!("runtime database fence provisioning requires Unix metadata")
+    // Test fixtures remain owner-writable so tempfile can clean them and
+    // multiple independently opened Database values can share the same
+    // inode safely. Production `open` still accepts exactly 0500 only.
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
+    std::fs::File::open(directory)?.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]

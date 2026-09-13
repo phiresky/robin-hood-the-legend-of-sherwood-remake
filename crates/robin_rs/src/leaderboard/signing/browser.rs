@@ -13,6 +13,7 @@ use robin_run_protocol::{
     ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1, SubmissionEnvelopeV1, SubmissionOfferV1,
     SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, Validate,
 };
+use robin_run_protocol::DomainSignedClaim as _;
 #[cfg(feature = "multiplayer")]
 use robin_run_protocol::{NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1};
 

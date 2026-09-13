@@ -76,11 +76,11 @@ pub fn assemble_vps_release_v2(plan_path: &Path, output: &Path) -> Result<Digest
             files,
         };
         manifest.validate_current_candidate()?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join(RELEASE_MANIFEST_FILE),
             &canonical_json_bytes(&manifest)?,
         )?;
-        write_bytes(
+        write_new_file_bytes(
             &staging.path().join(SOURCE_COMMIT_FILE),
             format!("{}\n", plan.source_commit).as_bytes(),
         )?;
@@ -376,11 +376,11 @@ pub(super) fn materialize_bundle(
             &file.artifact,
         )?;
     }
-    write_bytes(
+    write_new_file_bytes(
         &root.join(ROOT_ONCE_SHA256SUMS_FILE),
         &expected_root_once_sha256sums(root)?,
     )?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join(DEPLOY_BOOTSTRAP_SHA256SUMS_FILE),
         &expected_deploy_bootstrap_sha256sums(root)?,
     )?;
@@ -437,7 +437,7 @@ pub(super) fn materialize_bundle(
         roots: plan.private_raw_roots.clone(),
     };
     declarations.validate()?;
-    write_bytes(
+    write_new_file_bytes(
         &root.join(RAW_ROOT_DECLARATIONS_FILE),
         &canonical_json_bytes(&declarations)?,
     )?;
@@ -547,7 +547,7 @@ pub(super) fn payload_inventory(root: &Path) -> Result<Vec<VpsReleaseFileV2>> {
 
 pub(super) fn write_mode_inventory(root: &Path) -> Result<()> {
     let bytes = expected_mode_inventory_with_future_metadata(root)?;
-    write_bytes(&root.join(MODE_INVENTORY_FILE), &bytes)
+    write_new_file_bytes(&root.join(MODE_INVENTORY_FILE), &bytes)
 }
 
 pub(super) fn expected_mode_inventory_with_future_metadata(root: &Path) -> Result<Vec<u8>> {
@@ -608,7 +608,7 @@ pub(super) fn mode_inventory_bytes(entries: &BTreeMap<String, (char, u32)>) -> R
 }
 
 pub(super) fn write_sha256sums(root: &Path) -> Result<()> {
-    write_bytes(&root.join(SHA256SUMS_FILE), &expected_sha256sums(root)?)
+    write_new_file_bytes(&root.join(SHA256SUMS_FILE), &expected_sha256sums(root)?)
 }
 
 pub(super) fn expected_sha256sums(root: &Path) -> Result<Vec<u8>> {
@@ -747,7 +747,8 @@ pub(super) fn reject_mounts(root: &Path, reject_root_itself: bool) -> Result<()>
     Ok(())
 }
 
-pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2) -> Result<()> {
+/// Required, forbidden, and out-of-closure path checks over the manifest inventory.
+fn validate_bundle_path_inventory(manifest: &VpsReleaseManifestV2) -> Result<()> {
     let paths = manifest
         .files
         .iter()
@@ -807,6 +808,11 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
         }),
         "VPS release contains public/private static or copyrighted raw files"
     );
+    Ok(())
+}
+
+pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2) -> Result<()> {
+    validate_bundle_path_inventory(manifest)?;
     let declarations: PrivateRawRootDeclarationsV2 =
         load_canonical(&root.join(RAW_ROOT_DECLARATIONS_FILE))?;
     declarations.validate()?;
@@ -870,6 +876,21 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
     )?;
     validate_root_once_sha256sums(root)?;
     validate_deploy_bootstrap_sha256sums(root)?;
+    validate_bundle_host_files(root, &manifest.source_commit)?;
+    validate_backup_sandbox_contract(
+        &root.join("config/highscores-server.toml"),
+        &root.join("systemd/user/robin-highscores-api.service"),
+        &root.join("systemd/user/robin-highscores-worker.service"),
+        &root.join("systemd/user/robin-highscores-backup.service"),
+        &root.join("systemd/user/robin-highscores-backup.timer"),
+        &manifest.source_commit,
+    )?;
+    Ok(())
+}
+
+/// Validate every reviewed host template (systemd units, deploy scripts,
+/// nginx snippets, runbooks) against its role policy.
+fn validate_bundle_host_files(root: &Path, source_commit: &str) -> Result<()> {
     for (role, relative) in [
         (
             VpsHostFileRoleV2::UserTarget,
@@ -939,16 +960,8 @@ pub(super) fn validate_bundle_shape(root: &Path, manifest: &VpsReleaseManifestV2
         ),
         (VpsHostFileRoleV2::BackupRunbook, "deploy/BACKUP_RESTORE.md"),
     ] {
-        validate_final_host_file(role, &root.join(relative), &manifest.source_commit)?;
+        validate_final_host_file(role, &root.join(relative), source_commit)?;
     }
-    validate_backup_sandbox_contract(
-        &root.join("config/highscores-server.toml"),
-        &root.join("systemd/user/robin-highscores-api.service"),
-        &root.join("systemd/user/robin-highscores-worker.service"),
-        &root.join("systemd/user/robin-highscores-backup.service"),
-        &root.join("systemd/user/robin-highscores-backup.timer"),
-        &manifest.source_commit,
-    )?;
     Ok(())
 }
 

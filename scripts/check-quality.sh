@@ -36,7 +36,7 @@ case "$1" in
         python3 scripts/check_asset_boundary.py
         ;;
     protocols)
-        cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_official_content -p robin_ranked_verification -p robin_identity_signer
+        cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_ranked_verification -p robin_identity_signer
         cargo test --locked -p robin_replay_format --features native-admission
         ;;
     services)

@@ -116,6 +116,22 @@ pub(crate) fn valid_relative_path(value: &str) -> bool {
             .all(|part| !part.is_empty() && !matches!(part, "." | ".."))
 }
 
+/// The single relative-path policy for manifest, matrix, mounted-source and
+/// walked-inventory paths: UTF-8 text accepted by [`valid_relative_path`]
+/// (which implies every host component is `Component::Normal`). Returns the
+/// validated text, which is already the canonical `/`-joined manifest form.
+/// `label` names the boundary in the error message.
+pub(crate) fn validate_relative_path<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
+    let text = path
+        .to_str()
+        .with_context(|| format!("{label} is not UTF-8: {}", path.display()))?;
+    ensure!(
+        valid_relative_path(text),
+        "{label} is not a canonical relative path: {text:?}"
+    );
+    Ok(text)
+}
+
 /// Unpinned staging-tree inventory only. Activation/publication authority uses
 /// its descriptor-retaining walker instead; callers must not substitute this
 /// path-based helper at an acceptance or destructive-consumption boundary.
@@ -162,6 +178,37 @@ pub(crate) fn walk_regular_tree(
     Ok((files.into_iter().collect(), directories))
 }
 
+/// Recursively chmod an unpinned staging tree: every regular file to
+/// `file_mode`, then every directory (deepest first, `root` last) to
+/// `directory_mode`. An absent `root` is a no-op; symlinks and special nodes
+/// fail closed through [`walk_regular_tree`]. Like that walker, this is not
+/// for descriptor-pinned acceptance boundaries.
+pub(crate) fn set_tree_modes(root: &Path, file_mode: u32, directory_mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    if !root.exists() {
+        return Ok(());
+    }
+    let mut directories = vec![root.to_path_buf()];
+    for (_, file) in walk_regular_tree(root)?.0 {
+        fs::set_permissions(&file, fs::Permissions::from_mode(file_mode))?;
+    }
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                pending.push(entry.path());
+                directories.push(entry.path());
+            }
+        }
+    }
+    directories.sort_by_key(|directory| std::cmp::Reverse(directory.components().count()));
+    for directory in directories {
+        fs::set_permissions(directory, fs::Permissions::from_mode(directory_mode))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +240,41 @@ mod tests {
             assert!(!valid_relative_path(invalid), "{invalid}");
         }
         assert!(valid_relative_path("catalog/a.json"));
+    }
+
+    /// The former validators differed: `Component`-based ones (campaign matrix,
+    /// verifier inventory) accepted `a//b`, `a/./b`, `a/`, host backslash names
+    /// and (matrix only) the empty path, which host `Path::components`
+    /// normalizes away. Every such input either could not reach them (fixed
+    /// matrix format) or was rejected afterwards by an exact canonical set
+    /// comparison, so the strict text policy is the shared one.
+    #[test]
+    fn relative_path_validator_is_strict_text_policy() {
+        use std::os::unix::ffi::OsStrExt as _;
+        for invalid in [
+            "", ".", "..", "./a", "/a", "a/", "a//b", "a/./b", "a/../b", "a\\b",
+        ] {
+            assert!(
+                validate_relative_path(Path::new(invalid), "test").is_err(),
+                "{invalid:?}"
+            );
+        }
+        let non_utf8 = Path::new(std::ffi::OsStr::from_bytes(b"catalog/\xff.json"));
+        assert!(validate_relative_path(non_utf8, "test").is_err());
+        for valid in [
+            "manifest.json",
+            "catalog/a.json",
+            "templates/0a/demo.bitcode",
+            ".hidden/a",
+        ] {
+            let path = Path::new(valid);
+            assert_eq!(validate_relative_path(path, "test").unwrap(), valid);
+            assert!(
+                path.components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+            );
+        }
+        let error = validate_relative_path(Path::new("a/../b"), "matrix path").unwrap_err();
+        assert!(error.to_string().starts_with("matrix path "), "{error}");
     }
 }

@@ -50,7 +50,7 @@ pub(crate) struct ValidatedPublicationV3 {
 }
 
 impl ValidatedPublicationV3 {
-    #[cfg(all(test, target_os = "linux"))]
+    #[cfg(test)]
     pub(crate) fn synthetic_for_consumer_test(root_path: &Path) -> Result<Self> {
         let root = open_publication_root_v3(root_path)?;
         let (root_parent_path, root_parent, root_name) = pin_publication_root_parent_v3(root_path)?;
@@ -260,7 +260,6 @@ pub(super) fn publication_inventory_matches_after_root_rename_v3(
             })
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn read_inventory_file_v3(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -286,7 +285,6 @@ pub(super) fn read_inventory_file_v3(
     Ok(bytes)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_inventory_canonical_document_v3<T>(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -304,7 +302,6 @@ where
     Ok(document)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn load_inventory_document_v3<T>(
     inventory: &mut PublicationTreeInventoryV3,
     path: &str,
@@ -317,7 +314,6 @@ where
     Ok(document)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn inventory_artifact_v3(
     inventory: &PublicationTreeInventoryV3,
     path: &str,
@@ -355,7 +351,6 @@ pub(super) fn inventory_has_directory_v3(
         .is_ok()
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_node_identity_v3(metadata: &fs::Metadata) -> PublicationNodeIdentityV3 {
     use std::os::unix::fs::MetadataExt as _;
 
@@ -385,7 +380,6 @@ pub(super) fn publication_same_stable_node_v3(
         && left.mode == right.mode
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_root_v3(root: &Path) -> Result<fs::File> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
 
@@ -400,7 +394,6 @@ pub(super) fn open_publication_root_v3(root: &Path) -> Result<fs::File> {
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn pin_publication_root_parent_v3(
     root: &Path,
 ) -> Result<(PathBuf, fs::File, std::ffi::OsString)> {
@@ -417,7 +410,6 @@ pub(super) fn pin_publication_root_parent_v3(
     Ok((parent_path, parent, name))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_child_v3(parent: &fs::File, name: &Path) -> Result<fs::File> {
     use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
     use std::os::fd::AsFd as _;
@@ -435,7 +427,6 @@ pub(super) fn open_publication_child_v3(parent: &fs::File, name: &Path) -> Resul
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_publication_child_identity_v3(
     parent: &fs::File,
     name: &Path,
@@ -456,7 +447,6 @@ pub(super) fn open_publication_child_identity_v3(
     Ok(fs::File::from(descriptor))
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn open_optional_publication_child_identity_v3(
     parent: &fs::File,
     name: &Path,
@@ -480,7 +470,6 @@ pub(super) fn open_optional_publication_child_identity_v3(
     }
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_directory_entries_v3(
     directory: &fs::File,
 ) -> Result<Vec<(std::ffi::OsString, u64, rustix::fs::FileType)>> {
@@ -508,7 +497,6 @@ pub(super) fn publication_directory_entries_v3(
     Ok(entries)
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn validate_publication_node_v3(
     identity: &PublicationNodeIdentityV3,
     expected_uid: u32,
@@ -522,7 +510,6 @@ pub(super) fn validate_publication_node_v3(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn stable_publication_file_artifact_v3(
     file: &mut fs::File,
     expected_identity: &PublicationNodeIdentityV3,
@@ -531,7 +518,6 @@ pub(super) fn stable_publication_file_artifact_v3(
     stable_publication_file_artifact_v3_with(file, expected_identity, path, || {})
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn stable_publication_file_artifact_v3_with<F>(
     file: &mut fs::File,
     expected_identity: &PublicationNodeIdentityV3,
@@ -560,7 +546,6 @@ where
 }
 
 /// Enumerate and hash the complete PublicationV3 tree through pinned dirfds.
-#[cfg(target_os = "linux")]
 pub(super) fn publication_tree_inventory_v3_from_fd(
     root_path: &Path,
     root: &fs::File,
@@ -568,7 +553,6 @@ pub(super) fn publication_tree_inventory_v3_from_fd(
     publication_tree_inventory_v3_from_fd_with(root_path, root, || {})
 }
 
-#[cfg(target_os = "linux")]
 pub(super) fn publication_tree_inventory_v3_from_fd_with<F>(
     root_path: &Path,
     root: &fs::File,
@@ -595,140 +579,6 @@ where
     validate_publication_node_v3(&root_identity, expected_uid, expected_device, ".")?;
     ensure!(expected_device != 0, "PublicationV3 root device is zero");
 
-    struct InventoryBuilder {
-        files: Vec<PublicationFileInventoryV3>,
-        directories: Vec<PublicationDirectoryV3>,
-        directory_identities: Vec<(String, PublicationNodeIdentityV3)>,
-        directory_files: Vec<(String, fs::File)>,
-        seen: usize,
-        expected_uid: u32,
-        expected_device: u64,
-    }
-
-    fn walk(
-        directory: &fs::File,
-        relative: &Path,
-        depth: usize,
-        builder: &mut InventoryBuilder,
-    ) -> Result<()> {
-        use rustix::fs::FileType;
-
-        ensure!(
-            depth <= MAX_PUBLICATION_TREE_DEPTH,
-            "PublicationV3 tree exceeds its depth bound"
-        );
-        let before = publication_node_identity_v3(&directory.metadata()?);
-        let path = if relative.as_os_str().is_empty() {
-            ".".to_owned()
-        } else {
-            path_to_manifest(relative)?
-        };
-        validate_publication_node_v3(
-            &before,
-            builder.expected_uid,
-            builder.expected_device,
-            &path,
-        )?;
-        ensure!(
-            directory.metadata()?.is_dir(),
-            "PublicationV3 node is not a directory"
-        );
-        builder.directories.push(PublicationDirectoryV3 {
-            path: path.clone(),
-            unix_mode: before.mode & 0o7777,
-        });
-        builder
-            .directory_identities
-            .push((path.clone(), before.clone()));
-        builder.directory_files.push((path, directory.try_clone()?));
-
-        let entries = publication_directory_entries_v3(directory)?;
-        for (name, observed_inode, observed_type) in &entries {
-            builder.seen = builder
-                .seen
-                .checked_add(1)
-                .context("PublicationV3 entry count overflow")?;
-            ensure!(
-                builder.seen <= MAX_PUBLICATION_TREE_ENTRIES,
-                "PublicationV3 tree exceeds its entry bound"
-            );
-            let child_relative = relative.join(name);
-            let child_path = path_to_manifest(&child_relative)?;
-            let observed_child = open_publication_child_identity_v3(directory, Path::new(name))
-                .with_context(|| format!("pin PublicationV3 child {child_path}"))?;
-            let child_metadata = observed_child.metadata()?;
-            let identity = publication_node_identity_v3(&child_metadata);
-            validate_publication_node_v3(
-                &identity,
-                builder.expected_uid,
-                builder.expected_device,
-                &child_path,
-            )?;
-            ensure!(
-                *observed_inode == 0 || *observed_inode == identity.inode,
-                "PublicationV3 directory entry inode changed at {child_path}"
-            );
-            let opened_type = if child_metadata.is_dir() {
-                FileType::Directory
-            } else if child_metadata.is_file() {
-                FileType::RegularFile
-            } else {
-                FileType::Unknown
-            };
-            ensure!(
-                *observed_type == FileType::Unknown || *observed_type == opened_type,
-                "PublicationV3 directory entry type changed at {child_path}"
-            );
-            match opened_type {
-                FileType::Directory => {
-                    let child = open_publication_child_v3(directory, Path::new(name))?;
-                    ensure!(
-                        publication_node_identity_v3(&child.metadata()?) == identity,
-                        "PublicationV3 directory was substituted while opened at {child_path}"
-                    );
-                    walk(&child, &child_relative, depth + 1, builder)?;
-                }
-                FileType::RegularFile => {
-                    ensure!(
-                        identity.links == 1,
-                        "PublicationV3 contains hard-linked file {child_path}"
-                    );
-                    let mut child = open_publication_child_v3(directory, Path::new(name))?;
-                    ensure!(
-                        publication_node_identity_v3(&child.metadata()?) == identity,
-                        "PublicationV3 file was substituted while opened at {child_path}"
-                    );
-                    let artifact =
-                        stable_publication_file_artifact_v3(&mut child, &identity, &child_path)?;
-                    let unix_mode = identity.mode & 0o7777;
-                    builder.files.push(PublicationFileInventoryV3 {
-                        path: child_path.clone(),
-                        file: child,
-                        artifact,
-                        unix_mode,
-                        identity: identity.clone(),
-                    });
-                }
-                _ => anyhow::bail!("PublicationV3 contains special node {child_path}"),
-            }
-            let rebound = open_publication_child_v3(directory, Path::new(name))?;
-            ensure!(
-                publication_node_identity_v3(&rebound.metadata()?) == identity,
-                "PublicationV3 child was substituted after use at {child_path}"
-            );
-        }
-        let rebound_entries = publication_directory_entries_v3(directory)?;
-        ensure!(
-            rebound_entries == entries,
-            "PublicationV3 directory entries changed while traversing {relative:?}"
-        );
-        ensure!(
-            publication_node_identity_v3(&directory.metadata()?) == before,
-            "PublicationV3 directory changed while traversing {relative:?}"
-        );
-        Ok(())
-    }
-
     let mut builder = InventoryBuilder {
         files: Vec::new(),
         directories: Vec::new(),
@@ -738,54 +588,216 @@ where
         expected_uid,
         expected_device,
     };
-    walk(root, Path::new(""), 0, &mut builder)?;
+    walk_publication_tree_v3(root, Path::new(""), 0, &mut builder)?;
     after_walk();
-    builder
-        .files
-        .sort_by(|left, right| left.path.cmp(&right.path));
-    builder
-        .directories
-        .sort_by(|left, right| left.path.cmp(&right.path));
+    // Sorting here is load-bearing: `ExpectedPublicationTopologyV3` compares
+    // `files`/`directories` positionally against its `BTreeMap` keys, which
+    // use the same `String` ordering.
+    builder.sort_and_validate_directories()?;
+    rebind_publication_tree_v3(
+        root,
+        &root_parent_path,
+        &root_parent_identity,
+        &root_name,
+        &root_identity,
+        &builder,
+    )?;
+    Ok(PublicationTreeInventoryV3 {
+        files: builder.files,
+        directories: builder.directories,
+        directory_identities: builder.directory_identities,
+        directory_files: builder.directory_files,
+    })
+}
+
+/// Descriptor-pinned walk state, accepted only after sorting and rebinding.
+struct InventoryBuilder {
+    files: Vec<PublicationFileInventoryV3>,
+    directories: Vec<PublicationDirectoryV3>,
+    directory_identities: Vec<(String, PublicationNodeIdentityV3)>,
+    directory_files: Vec<(String, fs::File)>,
+    seen: usize,
+    expected_uid: u32,
+    expected_device: u64,
+}
+
+fn walk_publication_tree_v3(
+    directory: &fs::File,
+    relative: &Path,
+    depth: usize,
+    builder: &mut InventoryBuilder,
+) -> Result<()> {
+    use rustix::fs::FileType;
+
+    ensure!(
+        depth <= MAX_PUBLICATION_TREE_DEPTH,
+        "PublicationV3 tree exceeds its depth bound"
+    );
+    let before = publication_node_identity_v3(&directory.metadata()?);
+    let path = if relative.as_os_str().is_empty() {
+        ".".to_owned()
+    } else {
+        path_to_manifest(relative)?
+    };
+    validate_publication_node_v3(
+        &before,
+        builder.expected_uid,
+        builder.expected_device,
+        &path,
+    )?;
+    ensure!(
+        directory.metadata()?.is_dir(),
+        "PublicationV3 node is not a directory"
+    );
+    builder.directories.push(PublicationDirectoryV3 {
+        path: path.clone(),
+        unix_mode: before.mode & 0o7777,
+    });
     builder
         .directory_identities
-        .sort_by(|left, right| left.0.cmp(&right.0));
-    builder
-        .directory_files
-        .sort_by(|left, right| left.0.cmp(&right.0));
+        .push((path.clone(), before.clone()));
+    builder.directory_files.push((path, directory.try_clone()?));
+
+    let entries = publication_directory_entries_v3(directory)?;
+    for (name, observed_inode, observed_type) in &entries {
+        builder.seen = builder
+            .seen
+            .checked_add(1)
+            .context("PublicationV3 entry count overflow")?;
+        ensure!(
+            builder.seen <= MAX_PUBLICATION_TREE_ENTRIES,
+            "PublicationV3 tree exceeds its entry bound"
+        );
+        let child_relative = relative.join(name);
+        let child_path = path_to_manifest(&child_relative)?;
+        let observed_child = open_publication_child_identity_v3(directory, Path::new(name))
+            .with_context(|| format!("pin PublicationV3 child {child_path}"))?;
+        let child_metadata = observed_child.metadata()?;
+        let identity = publication_node_identity_v3(&child_metadata);
+        validate_publication_node_v3(
+            &identity,
+            builder.expected_uid,
+            builder.expected_device,
+            &child_path,
+        )?;
+        ensure!(
+            *observed_inode == 0 || *observed_inode == identity.inode,
+            "PublicationV3 directory entry inode changed at {child_path}"
+        );
+        let opened_type = if child_metadata.is_dir() {
+            FileType::Directory
+        } else if child_metadata.is_file() {
+            FileType::RegularFile
+        } else {
+            FileType::Unknown
+        };
+        ensure!(
+            *observed_type == FileType::Unknown || *observed_type == opened_type,
+            "PublicationV3 directory entry type changed at {child_path}"
+        );
+        match opened_type {
+            FileType::Directory => {
+                let child = open_publication_child_v3(directory, Path::new(name))?;
+                ensure!(
+                    publication_node_identity_v3(&child.metadata()?) == identity,
+                    "PublicationV3 directory was substituted while opened at {child_path}"
+                );
+                walk_publication_tree_v3(&child, &child_relative, depth + 1, builder)?;
+            }
+            FileType::RegularFile => {
+                ensure!(
+                    identity.links == 1,
+                    "PublicationV3 contains hard-linked file {child_path}"
+                );
+                let mut child = open_publication_child_v3(directory, Path::new(name))?;
+                ensure!(
+                    publication_node_identity_v3(&child.metadata()?) == identity,
+                    "PublicationV3 file was substituted while opened at {child_path}"
+                );
+                let artifact =
+                    stable_publication_file_artifact_v3(&mut child, &identity, &child_path)?;
+                let unix_mode = identity.mode & 0o7777;
+                builder.files.push(PublicationFileInventoryV3 {
+                    path: child_path.clone(),
+                    file: child,
+                    artifact,
+                    unix_mode,
+                    identity: identity.clone(),
+                });
+            }
+            _ => anyhow::bail!("PublicationV3 contains special node {child_path}"),
+        }
+        let rebound = open_publication_child_v3(directory, Path::new(name))?;
+        ensure!(
+            publication_node_identity_v3(&rebound.metadata()?) == identity,
+            "PublicationV3 child was substituted after use at {child_path}"
+        );
+    }
+    let rebound_entries = publication_directory_entries_v3(directory)?;
     ensure!(
-        builder
-            .directories
-            .first()
-            .is_some_and(|entry| entry.path == ".")
-            && builder
-                .directories
-                .iter()
-                .map(|entry| entry.path.as_str())
-                .eq(builder
-                    .directory_identities
-                    .iter()
-                    .map(|(path, _)| path.as_str()))
-            && builder
-                .directories
-                .iter()
-                .map(|entry| entry.path.as_str())
-                .eq(builder
-                    .directory_files
-                    .iter()
-                    .map(|(path, _)| path.as_str())),
-        "PublicationV3 directory inventory is incomplete or misbound"
+        rebound_entries == entries,
+        "PublicationV3 directory entries changed while traversing {relative:?}"
     );
-    let rebound_parent = open_publication_root_v3(&root_parent_path)?;
+    ensure!(
+        publication_node_identity_v3(&directory.metadata()?) == before,
+        "PublicationV3 directory changed while traversing {relative:?}"
+    );
+    Ok(())
+}
+
+impl InventoryBuilder {
+    /// Sort every list by path and prove the three directory views agree.
+    fn sort_and_validate_directories(&mut self) -> Result<()> {
+        self.files.sort_by(|left, right| left.path.cmp(&right.path));
+        self.directories
+            .sort_by(|left, right| left.path.cmp(&right.path));
+        self.directory_identities
+            .sort_by(|left, right| left.0.cmp(&right.0));
+        self.directory_files
+            .sort_by(|left, right| left.0.cmp(&right.0));
+        ensure!(
+            self.directories
+                .first()
+                .is_some_and(|entry| entry.path == ".")
+                && self
+                    .directories
+                    .iter()
+                    .map(|entry| entry.path.as_str())
+                    .eq(self
+                        .directory_identities
+                        .iter()
+                        .map(|(path, _)| path.as_str()))
+                && self
+                    .directories
+                    .iter()
+                    .map(|entry| entry.path.as_str())
+                    .eq(self.directory_files.iter().map(|(path, _)| path.as_str())),
+            "PublicationV3 directory inventory is incomplete or misbound"
+        );
+        Ok(())
+    }
+}
+
+/// Rebind the root parent, root and every walked node by path after the walk.
+fn rebind_publication_tree_v3(
+    root: &fs::File,
+    root_parent_path: &Path,
+    root_parent_identity: &PublicationNodeIdentityV3,
+    root_name: &std::ffi::OsStr,
+    root_identity: &PublicationNodeIdentityV3,
+    builder: &InventoryBuilder,
+) -> Result<()> {
+    let rebound_parent = open_publication_root_v3(root_parent_path)?;
     ensure!(
         publication_same_stable_node_v3(
             &publication_node_identity_v3(&rebound_parent.metadata()?),
-            &root_parent_identity,
+            root_parent_identity,
         ),
         "PublicationV3 root parent path was substituted during traversal"
     );
-    let rebound_root = open_publication_child_v3(&rebound_parent, Path::new(&root_name))?;
+    let rebound_root = open_publication_child_v3(&rebound_parent, Path::new(root_name))?;
     ensure!(
-        publication_node_identity_v3(&rebound_root.metadata()?) == root_identity,
+        publication_node_identity_v3(&rebound_root.metadata()?) == *root_identity,
         "PublicationV3 root path was substituted during traversal"
     );
     for (directory, (_, expected_identity)) in builder
@@ -813,25 +825,12 @@ where
             expected.path
         );
     }
-    Ok(PublicationTreeInventoryV3 {
-        files: builder.files,
-        directories: builder.directories,
-        directory_identities: builder.directory_identities,
-        directory_files: builder.directory_files,
-    })
+    Ok(())
 }
 
 pub(super) fn publication_tree_inventory_v3(root: &Path) -> Result<PublicationTreeInventoryV3> {
-    #[cfg(target_os = "linux")]
-    {
-        let descriptor = open_publication_root_v3(root)?;
-        publication_tree_inventory_v3_from_fd(root, &descriptor)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = root;
-        anyhow::bail!("PublicationV3 requires Linux openat2 filesystem authority")
-    }
+    let descriptor = open_publication_root_v3(root)?;
+    publication_tree_inventory_v3_from_fd(root, &descriptor)
 }
 
 #[cfg(test)]
@@ -839,7 +838,7 @@ pub(super) fn publication_directories(root: &Path) -> Result<Vec<PublicationDire
     Ok(publication_tree_inventory_v3(root)?.directories)
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+#[cfg(test)]
 pub(super) fn reject_publication_mounts_in_v3(
     canonical_root: &Path,
     mountinfo: &[u8],
@@ -885,15 +884,10 @@ pub(super) fn reject_publication_mounts_in_v3(
     Ok(())
 }
 
-#[cfg(all(unix, test))]
+#[cfg(test)]
 pub(super) fn publication_unix_mode(path: &Path) -> Result<u32> {
     use std::os::unix::fs::PermissionsExt as _;
     Ok(fs::symlink_metadata(path)?.permissions().mode() & 0o7777)
-}
-
-#[cfg(all(not(unix), test))]
-pub(super) fn publication_unix_mode(_path: &Path) -> Result<u32> {
-    anyhow::bail!("operator publications require Unix permission semantics")
 }
 
 pub(super) fn file_artifacts(root: &Path) -> Result<BTreeMap<String, ArtifactRefV1>> {

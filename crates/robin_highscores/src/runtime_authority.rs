@@ -173,10 +173,7 @@ pub fn attest_candidate_release_root_v2(
     expected_vps_release_manifest_sha256: &str,
     expected_self_role: CandidateSelfRoleV2,
 ) -> anyhow::Result<(CandidateReleaseAttestationV2, File)> {
-    #[cfg(target_os = "linux")]
     let self_executable = File::open("/proc/self/exe")?;
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("runtime authority attestation requires Linux procfs");
     attest_candidate_release_root_v2_with_self(
         root_guard,
         expected_vps_release_manifest_sha256,
@@ -266,10 +263,7 @@ pub fn probe_runtime_authority_v2(
     expected_vps_release_manifest_sha256: &str,
     backup_authority_state: BackupAuthorityStateV2,
 ) -> anyhow::Result<RuntimeAuthorityProbeV2> {
-    #[cfg(target_os = "linux")]
     let self_executable = File::open("/proc/self/exe")?;
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("runtime authority attestation requires Linux procfs");
     let (attestation, retained_root, candidate) = authenticate_candidate_release_root_v2_with_self(
         root_guard,
         expected_vps_release_manifest_sha256,
@@ -511,7 +505,6 @@ fn validate_self_role(
         .files
         .get(relative)
         .ok_or_else(|| anyhow::anyhow!("authenticated candidate omits executing role"))?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         let right = self_executable.metadata()?;
@@ -1114,7 +1107,6 @@ fn validate_raw_tree(root: &Path, manifest: &OfficialSourceTreeManifestV2) -> an
     let tree = scan_read_only_raw_tree(&root_dir, &expected_tree)?;
     let rebound_file = open_ambient_directory(root)?;
     let rebound_metadata = rebound_file.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         anyhow::ensure!(
@@ -1168,7 +1160,6 @@ fn validate_raw_tree(root: &Path, manifest: &OfficialSourceTreeManifestV2) -> an
 
 fn validate_candidate_root_metadata(root: &File) -> anyhow::Result<()> {
     let metadata = root.metadata()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -1312,7 +1303,6 @@ fn scan_tree(
     allow_root_mount: bool,
     expected: &ExpectedTreeV2,
 ) -> anyhow::Result<ScannedTreeV2> {
-    #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt as _;
         let root_metadata = root.dir_metadata()?;
@@ -1349,11 +1339,8 @@ fn scan_tree(
         );
         Ok(scanned)
     }
-    #[cfg(not(unix))]
-    anyhow::bail!("authority tree scanning requires Unix metadata")
 }
 
-#[cfg(unix)]
 fn scan_directories_iterative(
     root: Dir,
     root_device: u64,
@@ -1499,12 +1486,10 @@ fn scan_directories_iterative(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 fn authority_mount_id(directory: &Dir) -> anyhow::Result<u64> {
     authority_mount_id_with_policy(directory, false)
 }
 
-#[cfg(target_os = "linux")]
 fn authority_mount_id_with_policy(directory: &Dir, allow_mount_root: bool) -> anyhow::Result<u64> {
     use rustix::fs::{AtFlags, StatxAttributes, StatxFlags, statx};
     use std::os::fd::AsFd as _;
@@ -1530,7 +1515,6 @@ fn authority_mount_id_with_policy(directory: &Dir, allow_mount_root: bool) -> an
     Ok(stat.stx_mnt_id)
 }
 
-#[cfg(target_os = "linux")]
 fn authority_file_mount_id(file: &File) -> anyhow::Result<u64> {
     use rustix::fs::{AtFlags, StatxFlags, statx};
     let stat = statx(
@@ -1594,14 +1578,11 @@ fn hash_file_bounded(
         byte_length == initial_length && exact.is_none_or(|expected| byte_length == expected),
         "authority file changed length or differs from its exact byte length"
     );
-    #[cfg(unix)]
     let (device, inode) = {
         use std::os::unix::fs::MetadataExt as _;
         let metadata = file.metadata()?;
         (metadata.dev(), metadata.ino())
     };
-    #[cfg(not(unix))]
-    let (device, inode) = (0, 0);
     Ok((
         ScannedFileV2 {
             sha256: Digest32::from_bytes(hasher.finalize().into()),
@@ -1615,49 +1596,33 @@ fn hash_file_bounded(
 }
 
 fn open_candidate_file(root: &Dir, relative: &Path) -> anyhow::Result<File> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let descriptor = crate::secure_fs::open_no_symlinks_at(
-            root.as_fd(),
-            relative,
-            OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
-        )?;
-        let file = File::from(descriptor);
-        anyhow::ensure!(
-            file.metadata()?.is_file(),
-            "candidate path is not a regular file"
-        );
-        Ok(file)
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("candidate authority reads require Linux openat2")
+    use rustix::fs::OFlags;
+    let descriptor = crate::secure_fs::open_beneath_no_symlinks(
+        root,
+        relative,
+        OFlags::RDONLY | OFlags::CLOEXEC,
+    )?;
+    let file = File::from(descriptor);
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "candidate path is not a regular file"
+    );
+    Ok(file)
 }
 
 fn open_candidate_directory(root: &Dir, relative: &Path) -> anyhow::Result<Dir> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let descriptor = crate::secure_fs::open_no_symlinks_at(
-            root.as_fd(),
-            relative,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
-        )?;
-        let file = File::from(descriptor);
-        anyhow::ensure!(
-            file.metadata()?.is_dir(),
-            "candidate path is not a directory"
-        );
-        Ok(Dir::from_std_file(file))
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("candidate authority reads require Linux openat2")
+    use rustix::fs::OFlags;
+    let descriptor = crate::secure_fs::open_beneath_no_symlinks(
+        root,
+        relative,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
+    )?;
+    let file = File::from(descriptor);
+    anyhow::ensure!(
+        file.metadata()?.is_dir(),
+        "candidate path is not a directory"
+    );
+    Ok(Dir::from_std_file(file))
 }
 
 fn read_candidate_file(root: &Dir, relative: &Path, maximum: u64) -> anyhow::Result<Vec<u8>> {
@@ -1750,19 +1715,12 @@ fn is_candidate_semantic_path(path: &str) -> bool {
 }
 
 fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<u8>> {
-    #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags};
+        use rustix::fs::OFlags;
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let parent = path.parent().context("secret has no parent")?;
         let name = path.file_name().context("secret has no filename")?;
-        let parent_fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            parent,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
+        let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent)?;
         let parent_file = File::from(parent_fd);
         let parent_metadata = parent_file.metadata()?;
         anyhow::ensure!(
@@ -1771,12 +1729,10 @@ fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<
                 && parent_metadata.permissions().mode() & 0o7777 == 0o700,
             "secret parent must be effective-user-owned mode 0700"
         );
-        let fd = crate::secure_fs::open_no_symlinks_at(
+        let fd = crate::secure_fs::open_beneath_no_symlinks(
             &parent_file,
             name,
             OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
         )?;
         let mut file = File::from(fd);
         let metadata = file.metadata()?;
@@ -1796,24 +1752,15 @@ fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<
         );
         Ok(bytes)
     }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("runtime secret validation requires Linux openat2")
 }
 
 fn validate_secret_absent(path: &Path) -> anyhow::Result<()> {
-    #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{AtFlags, Mode, OFlags, statat};
+        use rustix::fs::{AtFlags, statat};
         use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         let parent = path.parent().context("secret has no parent")?;
         let name = path.file_name().context("secret has no filename")?;
-        let parent_fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            parent,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
+        let parent_fd = crate::secure_fs::open_dir_no_symlinks(parent)?;
         let parent_metadata = File::from(parent_fd.try_clone()?).metadata()?;
         anyhow::ensure!(
             parent_metadata.is_dir()
@@ -1827,25 +1774,10 @@ fn validate_secret_absent(path: &Path) -> anyhow::Result<()> {
             Err(error) => Err(error.into()),
         }
     }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("runtime secret validation requires Linux openat2")
 }
 
 fn open_ambient_directory(path: &Path) -> anyhow::Result<File> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )?;
-        Ok(File::from(fd))
-    }
-    #[cfg(not(target_os = "linux"))]
-    anyhow::bail!("raw authority validation requires Linux openat2")
+    Ok(File::from(crate::secure_fs::open_dir_no_symlinks(path)?))
 }
 
 fn canonical_file_mode(path: &str) -> u32 {
@@ -1934,7 +1866,7 @@ fn validate_authority_relative_path(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
@@ -2143,7 +2075,6 @@ mod tests {
         assert!(guard.metadata().unwrap().is_dir());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn authority_scans_allow_exact_root_binds_but_reject_descendant_mounts() {
         use std::os::fd::AsRawFd as _;
@@ -2191,15 +2122,10 @@ mod tests {
         let executable = File::open(std::env::current_exe().unwrap()).unwrap();
         let candidate = File::open(candidate_root.path()).unwrap();
         let nested_mount = File::open(nested_source.path()).unwrap();
-        for fd in [
-            executable.as_raw_fd(),
-            candidate.as_raw_fd(),
-            nested_mount.as_raw_fd(),
-        ] {
-            let flags = nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_GETFD).unwrap();
-            let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-            flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-            nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_SETFD(flags)).unwrap();
+        for file in [&executable, &candidate, &nested_mount] {
+            let mut flags = rustix::io::fcntl_getfd(file).unwrap();
+            flags.remove(rustix::io::FdFlags::CLOEXEC);
+            rustix::io::fcntl_setfd(file, flags).unwrap();
         }
 
         for with_nested_mount in [false, true] {

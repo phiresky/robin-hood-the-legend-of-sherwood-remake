@@ -25,7 +25,6 @@ use robin_run_protocol::canonical_json_bytes;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::io::Write as _;
-#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -529,7 +528,6 @@ pub(super) async fn run() -> anyhow::Result<()> {
 fn load_secret_bootstrap_config(path: &Path, field: &str) -> anyhow::Result<ServerConfig> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
-    #[cfg(unix)]
     options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     let file = options.open(path)?;
     let metadata = file.metadata()?;

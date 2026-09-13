@@ -206,6 +206,7 @@ impl Database {
         for row in rows {
             let run_id: String = row.try_get("id")?;
             let metric_value: i64 = row.try_get("value")?;
+            let counts = ParticipantCounts::decode(&row)?;
             output.push(BoardRow {
                 rank: *ranks.get(&metric_value).ok_or_else(|| {
                     DbError::Corrupt("batch mission rank omitted a requested value".to_owned())
@@ -218,26 +219,10 @@ impl Database {
                     replay_sha256: fixed_32(row.try_get("replay_sha256")?)?,
                 },
                 metric_value,
-                max_concurrent_players: checked_count(
-                    &row,
-                    "max_concurrent_players",
-                    "player count out of range",
-                )?,
-                participant_instance_count: checked_count(
-                    &row,
-                    "participant_instance_count",
-                    "participant instance count out of range",
-                )?,
-                named_participant_instance_count: checked_count(
-                    &row,
-                    "named_participant_instance_count",
-                    "named participant count out of range",
-                )?,
-                anonymous_participant_instance_count: checked_count(
-                    &row,
-                    "anonymous_participant_instance_count",
-                    "anonymous participant count out of range",
-                )?,
+                max_concurrent_players: counts.max_concurrent_players,
+                participant_instance_count: counts.participant_instance_count,
+                named_participant_instance_count: counts.named_participant_instance_count,
+                anonymous_participant_instance_count: counts.anonymous_participant_instance_count,
                 accepted_sequence: nonnegative_u64(
                     row.try_get("accepted_sequence")?,
                     "accepted_sequence",
@@ -397,6 +382,7 @@ impl Database {
         for row in rows {
             let run_id: String = row.try_get("id")?;
             let metric_value: i64 = row.try_get("value")?;
+            let counts = ParticipantCounts::decode(&row)?;
             output.push(BoardRow {
                 rank: *ranks.get(&metric_value).ok_or_else(|| {
                     DbError::Corrupt("batch campaign rank omitted a requested value".to_owned())
@@ -408,26 +394,10 @@ impl Database {
                     ordered_session_run_ids: session_map.remove(&run_id).unwrap_or_default(),
                 },
                 metric_value,
-                max_concurrent_players: checked_count(
-                    &row,
-                    "max_concurrent_players",
-                    "player count out of range",
-                )?,
-                participant_instance_count: checked_count(
-                    &row,
-                    "participant_instance_count",
-                    "participant instance count out of range",
-                )?,
-                named_participant_instance_count: checked_count(
-                    &row,
-                    "named_participant_instance_count",
-                    "named participant count out of range",
-                )?,
-                anonymous_participant_instance_count: checked_count(
-                    &row,
-                    "anonymous_participant_instance_count",
-                    "anonymous participant count out of range",
-                )?,
+                max_concurrent_players: counts.max_concurrent_players,
+                participant_instance_count: counts.participant_instance_count,
+                named_participant_instance_count: counts.named_participant_instance_count,
+                anonymous_participant_instance_count: counts.anonymous_participant_instance_count,
                 accepted_sequence: nonnegative_u64(
                     row.try_get("accepted_sequence")?,
                     "accepted_sequence",
@@ -779,7 +749,7 @@ impl Database {
                     )?,
                     content_manifest_id: fixed_32(row.try_get("content_manifest_id")?)?,
                     config_id: fixed_32(row.try_get("config_id")?)?,
-                    ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+                    ruleset_id: decode_ruleset_id(&row)?,
                     competition_manifest_id: row
                         .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                         .map(fixed_32)
@@ -874,7 +844,7 @@ impl Database {
                     value: row.try_get("value")?,
                     content_manifest_id: fixed_32(row.try_get("content_manifest_id")?)?,
                     config_id: fixed_32(row.try_get("config_id")?)?,
-                    ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+                    ruleset_id: decode_ruleset_id(&row)?,
                     competition_manifest_id: row
                         .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                         .map(fixed_32)
@@ -945,6 +915,7 @@ impl Database {
             }
         }
         let verification_proof = stored_public_verification_proof(&row)?;
+        let counts = ParticipantCounts::decode(&row)?;
         let record = PublicRunRecord {
             run_id: row.try_get("id")?,
             replay_sha256: fixed_32(row.try_get("replay_sha256")?)?,
@@ -956,7 +927,7 @@ impl Database {
                 .map(fixed_32)
                 .transpose()?,
             config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             mission_id: row.try_get("mission_id")?,
             scope_kind,
             competition_manifest_id: row
@@ -1001,26 +972,10 @@ impl Database {
             campaign_session_kind: row.try_get("campaign_session_kind")?,
             campaign_session_ordinal: optional_u32(&row, "campaign_session_ordinal")?,
             campaign_hq_sequence: optional_u32(&row, "campaign_hq_sequence")?,
-            max_concurrent_players: checked_count(
-                &row,
-                "max_concurrent_players",
-                "player count out of range",
-            )?,
-            participant_instance_count: checked_count(
-                &row,
-                "participant_instance_count",
-                "participant instance count out of range",
-            )?,
-            named_participant_instance_count: checked_count(
-                &row,
-                "named_participant_instance_count",
-                "named participant count out of range",
-            )?,
-            anonymous_participant_instance_count: checked_count(
-                &row,
-                "anonymous_participant_instance_count",
-                "anonymous participant count out of range",
-            )?,
+            max_concurrent_players: counts.max_concurrent_players,
+            participant_instance_count: counts.participant_instance_count,
+            named_participant_instance_count: counts.named_participant_instance_count,
+            anonymous_participant_instance_count: counts.anonymous_participant_instance_count,
             verified_at_ms: nonnegative_u64(row.try_get("verified_at_ms")?, "verified_at_ms")?,
             public_metadata_json: row.try_get("public_metadata_json")?,
             named_participants: self.public_participants_for_run(run_id).await?,
@@ -1140,7 +1095,7 @@ impl Database {
             aggregate_proof,
             campaign_content_manifest_id: fixed_32(row.try_get("campaign_content_manifest_id")?)?,
             config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             competition_manifest_id: row
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
@@ -1412,7 +1367,7 @@ impl Database {
                 "replay index differs from the stored verification proof".to_owned(),
             ));
         }
-        Ok((digest, byte_length, fixed_32(row.try_get("ruleset_id")?)?))
+        Ok((digest, byte_length, decode_ruleset_id(&row)?))
     }
 
     pub async fn replay_for_campaign_session(
@@ -1455,7 +1410,7 @@ impl Database {
                 "campaign session replay index differs from its public proof".to_owned(),
             ));
         }
-        Ok((digest, byte_length, fixed_32(row.try_get("ruleset_id")?)?))
+        Ok((digest, byte_length, decode_ruleset_id(&row)?))
     }
 
     /// Resolve only a campaign link cross-bound to a verified redacted public
@@ -1526,7 +1481,7 @@ impl Database {
             byte_length: nonnegative_u64(rows[0].try_get("byte_length")?, "byte_length")?,
             media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
         };
-        let ruleset_id = fixed_32(rows[0].try_get("ruleset_id")?)?;
+        let ruleset_id = decode_ruleset_id(&rows[0])?;
         let expected = match rows[0].try_get::<String, _>("source_kind")?.as_str() {
             "mission" => {
                 let run = self.public_run(run_id).await?;
@@ -1613,7 +1568,7 @@ impl Database {
             byte_length: nonnegative_u64(row.try_get("byte_length")?, "byte_length")?,
             media_type: robin_run_protocol::RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
         };
-        let ruleset_id = fixed_32(row.try_get("ruleset_id")?)?;
+        let ruleset_id = decode_ruleset_id(&row)?;
         let aggregate = self.public_full_campaign(aggregate_run_id).await?;
         let session_id = aggregate
             .ordered_session_run_ids

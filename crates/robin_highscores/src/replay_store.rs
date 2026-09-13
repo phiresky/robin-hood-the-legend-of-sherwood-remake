@@ -216,7 +216,6 @@ impl ReplayStore {
             if actual_digest != expected_digest {
                 return Err(StoreError::DigestMismatch);
             }
-            #[cfg(unix)]
             temp.set_permissions(std::fs::Permissions::from_mode(
                 crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
             ))
@@ -289,7 +288,6 @@ impl ReplayStore {
                 "opened replay metadata does not match the database",
             )));
         }
-        #[cfg(unix)]
         if opened.permissions().mode() & 0o222 != 0 {
             return Err(StoreError::Io(std::io::Error::other(
                 "stored replay must be read-only",
@@ -548,43 +546,22 @@ impl ReplayStore {
     }
 }
 
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 
 async fn set_private_directory_permissions(path: &Path) -> Result<(), StoreError> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )
-        .map_err(std::io::Error::from)?;
-        let directory = std::fs::File::from(fd);
-        if !directory.metadata()?.is_dir() {
-            return Err(StoreError::Io(std::io::Error::other(
-                "replay path is not a directory",
-            )));
-        }
-        if directory.metadata()?.permissions().mode() & 0o7777
-            != crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
-        {
-            directory.set_permissions(std::fs::Permissions::from_mode(
-                crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE,
-            ))?;
-        }
+    let fd = crate::secure_fs::open_dir_no_symlinks(path).map_err(std::io::Error::from)?;
+    let directory = std::fs::File::from(fd);
+    if !directory.metadata()?.is_dir() {
+        return Err(StoreError::Io(std::io::Error::other(
+            "replay path is not a directory",
+        )));
     }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    if std::fs::metadata(path)?.permissions().mode() & 0o7777
+    if directory.metadata()?.permissions().mode() & 0o7777
         != crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
     {
-        std::fs::set_permissions(
-            path,
-            std::fs::Permissions::from_mode(crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE),
-        )?;
+        directory.set_permissions(std::fs::Permissions::from_mode(
+            crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE,
+        ))?;
     }
     Ok(())
 }
@@ -615,25 +592,22 @@ mod tests {
                 .unwrap(),
             bytes
         );
-        #[cfg(unix)]
-        {
-            assert_eq!(
-                std::fs::metadata(temp.path().join("replays"))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o7777,
-                crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
-            );
-            assert_eq!(
-                std::fs::metadata(store.path_for_digest(&digest))
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE
-            );
-        }
+        assert_eq!(
+            std::fs::metadata(temp.path().join("replays"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
+        );
+        assert_eq!(
+            std::fs::metadata(store.path_for_digest(&digest))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE
+        );
     }
 
     #[tokio::test]
@@ -711,7 +685,6 @@ mod tests {
             .store_stream(stream::iter([Ok::<_, &str>(bytes)]), digest, 4)
             .await
             .unwrap();
-        #[cfg(unix)]
         tokio::fs::set_permissions(
             store.path_for_digest(&digest),
             std::fs::Permissions::from_mode(0o600),
@@ -724,7 +697,6 @@ mod tests {
         assert!(store.open_verified(&digest, 4).await.is_err());
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn symlink_object_is_never_opened() {
         let temp = tempfile::tempdir().unwrap();
@@ -774,7 +746,6 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn replay_root_rejects_a_symlinked_ancestor() {
         let temp = tempfile::tempdir().unwrap();
@@ -789,7 +760,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_replay_root_survives_ancestor_swap_without_touching_replacement() {
         let temp = tempfile::tempdir().unwrap();

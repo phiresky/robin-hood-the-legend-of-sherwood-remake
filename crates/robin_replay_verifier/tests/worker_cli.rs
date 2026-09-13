@@ -4,6 +4,7 @@ use std::process::{Command, Output};
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use robin_replay_verifier::worker::{MAX_WORKER_REQUEST_BYTES, MAX_WORKER_RESULT_BYTES};
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     ArtifactRefV1, BoardMetricV1, CampaignAggregationConsentV1, CanonicalDocument as _,
     ChallengeNonce32, Digest32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,

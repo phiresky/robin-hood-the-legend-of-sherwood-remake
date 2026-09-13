@@ -1,7 +1,32 @@
+use super::closure::{
+    PublicJsonSchema, TransitionRule, compare_transition, file_contains_bytes,
+    load_addressed_documents, public_json_schema, publication_lock_from_actual_for_test,
+    reject_private_json_keys, scan_public_tree, validate_deployment_exposure,
+    validate_deployment_metadata_inventory, validate_official_campaign_offer_fields,
+    validate_publication_inventory_against_lock_v3, validate_transition_with,
+};
+use super::cloudflare::{
+    CloudflareMaterializationProvenanceV1, derive_cloudflare_origin_inventories_v1,
+    expected_topology_from_materialized_inventory_v1, persist_cloudflare_materialization_v1,
+    populate_cloudflare_materialization_staging_v1,
+    resolve_cloudflare_materialization_git_authority_v1,
+};
+use super::inventory::{
+    publication_directories, publication_tree_inventory_v3,
+    publication_tree_inventory_v3_from_fd_with, publication_unix_mode,
+    reject_publication_mounts_in_v3, stable_publication_file_artifact_v3_with,
+};
+use super::persistence::{
+    discard_failed_publication_staging_with, persist_publication_staging_with,
+};
+use super::plan::validate_campaign_state_source;
+use super::staging::{
+    copy_directory_exact_preserving_modes, copy_directory_exact_preserving_modes_with,
+    create_private_publication_root,
+};
 use super::*;
 use crate::test_fixtures::fact;
 
-#[cfg(target_os = "linux")]
 fn synthetic_validated_staging_v3(
     staging: &PinnedPublicationStagingV3,
 ) -> Result<ValidatedPublicationV3> {
@@ -17,7 +42,6 @@ fn synthetic_validated_staging_v3(
     })
 }
 
-#[cfg(target_os = "linux")]
 fn synthetic_cloudflare_materialization_authority_v1(
     source: &Path,
 ) -> Result<(
@@ -280,27 +304,8 @@ fn synthetic_cloudflare_materialization_authority_v1(
     ))
 }
 
-#[cfg(target_os = "linux")]
 fn make_test_tree_writable(root: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let inventory = publication_tree_inventory_v3(root)?;
-    for file in inventory.files {
-        fs::set_permissions(root.join(file.path), fs::Permissions::from_mode(0o600))?;
-    }
-    let mut directories = inventory.directories;
-    directories.sort_by_key(|directory| {
-        std::cmp::Reverse(Path::new(&directory.path).components().count())
-    });
-    for directory in directories {
-        let path = if directory.path == "." {
-            root.to_path_buf()
-        } else {
-            root.join(directory.path)
-        };
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
+    crate::fs_util::set_tree_modes(root, 0o600, 0o700)
 }
 
 fn pinned_json(label: &[u8]) -> PinnedArtifactSourceV3 {
@@ -804,7 +809,6 @@ fn public_static_paths_reject_reserved_and_ambiguous_forms() {
     ));
 }
 
-#[cfg(unix)]
 #[test]
 fn nested_private_authority_materialization_creates_only_the_exact_parent() -> Result<()> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
@@ -901,7 +905,6 @@ fn nested_private_authority_materialization_creates_only_the_exact_parent() -> R
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn mode_preserving_copy_rejects_late_source_and_destination_substitution() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1149,7 +1152,6 @@ fn public_tree_scanner_rejects_private_paths_and_concrete_values() -> Result<()>
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn failed_read_only_staging_cleanup_is_bounded_and_never_follows_symlinks() -> Result<()> {
     use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -1201,7 +1203,6 @@ fn failed_read_only_staging_cleanup_is_bounded_and_never_follows_symlinks() -> R
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn failed_staging_cleanup_preserves_authentic_tree_on_root_substitution() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1228,7 +1229,6 @@ fn failed_staging_cleanup_preserves_authentic_tree_on_root_substitution() -> Res
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn failed_staging_cleanup_rejects_mid_operation_swap_and_hardlinks() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1269,7 +1269,6 @@ fn failed_staging_cleanup_rejects_mid_operation_swap_and_hardlinks() -> Result<(
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn publication_persistence_noreplace_race_cleans_staging_without_overwrite() -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1309,7 +1308,6 @@ fn publication_persistence_noreplace_race_cleans_staging_without_overwrite() -> 
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
 #[test]
 fn post_rename_sync_failure_reports_published_outcome_without_staging() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1360,7 +1358,6 @@ fn post_rename_sync_failure_reports_published_outcome_without_staging() -> Resul
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_persistence_rejects_identical_stage_and_parent_substitution() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1429,7 +1426,6 @@ fn publication_persistence_rejects_identical_stage_and_parent_substitution() -> 
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_persistence_reconciles_rename_side_effect_then_error() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -1472,7 +1468,6 @@ fn publication_persistence_reconciles_rename_side_effect_then_error() -> Result<
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_persistence_classifies_parent_swap_after_install() -> Result<()> {
     let outer = tempfile::tempdir()?;
@@ -1520,7 +1515,6 @@ fn publication_persistence_classifies_parent_swap_after_install() -> Result<()> 
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_persistence_rejects_output_loss_or_substitution_after_rename() -> Result<()> {
     for substitute in [false, true] {
@@ -1640,7 +1634,6 @@ fn transition_rejects_mode_and_empty_directory_substitution() -> Result<()> {
         fs::write(root.join("backend/manifests/builds/a.json"), b"same")?;
     }
 
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(
@@ -1667,7 +1660,6 @@ fn transition_rejects_mode_and_empty_directory_substitution() -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 #[test]
 fn publication_inventory_rejects_symlink_and_special_node() -> Result<()> {
     use std::os::unix::fs::symlink;
@@ -1682,7 +1674,6 @@ fn publication_inventory_rejects_symlink_and_special_node() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_lock_binds_complete_directory_set_and_modes() -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1782,7 +1773,6 @@ fn publication_lock_binds_complete_directory_set_and_modes() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn expected_publication_topology_rejects_prelock_extras_everywhere() -> Result<()> {
     fn fixture() -> Result<(tempfile::TempDir, ExpectedPublicationTopologyV3)> {
@@ -1883,7 +1873,74 @@ fn expected_publication_topology_rejects_prelock_extras_everywhere() -> Result<(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[test]
+fn expected_topology_positional_inventory_rejects_reordered_missing_duplicate_and_extra()
+-> Result<()> {
+    // `validate_inventory` compares the acquisition-sorted inventory to the
+    // `BTreeMap` topology positionally. Pin that it keeps the single original
+    // error for every mismatch shape and never accepts a non-canonical order.
+    const DIFFERS: &str = "PublicationV3 file/directory topology differs from its independently derived typed closure";
+    let root = tempfile::tempdir()?;
+    let mut expected = ExpectedPublicationTopologyV3::new();
+    for (path, bytes) in [
+        ("a/one", b"one".as_slice()),
+        ("a/two", b"two".as_slice()),
+        ("b", b"three".as_slice()),
+    ] {
+        expected.register_bytes(path.to_owned(), bytes)?;
+        let absolute = root.path().join(path);
+        fs::create_dir_all(absolute.parent().context("fixture file has no parent")?)?;
+        fs::write(absolute, bytes)?;
+    }
+    expected.seal_and_validate(root.path(), &open_publication_root_v3(root.path())?)?;
+    expected.validate_inventory(&publication_tree_inventory_v3(root.path())?)?;
+
+    let rejects = |inventory: PublicationTreeInventoryV3, label: &str| -> Result<()> {
+        let error = expected
+            .validate_inventory(&inventory)
+            .err()
+            .with_context(|| format!("positional topology accepted {label}"))?;
+        ensure!(
+            error.to_string() == DIFFERS,
+            "{label} produced unexpected error: {error}"
+        );
+        Ok(())
+    };
+    use super::inventory::PublicationFileInventoryV3;
+    let copy_file = |file: &PublicationFileInventoryV3, path: &str| -> Result<_> {
+        Ok(PublicationFileInventoryV3 {
+            path: path.to_owned(),
+            file: file.file.try_clone()?,
+            artifact: file.artifact.clone(),
+            unix_mode: file.unix_mode,
+            identity: file.identity.clone(),
+        })
+    };
+
+    let mut reordered = publication_tree_inventory_v3(root.path())?;
+    reordered.files.swap(0, 1);
+    rejects(reordered, "out-of-order files")?;
+    let mut reordered = publication_tree_inventory_v3(root.path())?;
+    reordered.directories.reverse();
+    rejects(reordered, "out-of-order directories")?;
+    let mut missing = publication_tree_inventory_v3(root.path())?;
+    missing.files.pop();
+    rejects(missing, "missing file")?;
+    let mut missing = publication_tree_inventory_v3(root.path())?;
+    missing.directories.pop();
+    rejects(missing, "missing directory")?;
+    let mut duplicate = publication_tree_inventory_v3(root.path())?;
+    duplicate.files[2] = copy_file(&duplicate.files[1], "a/two")?;
+    rejects(duplicate, "duplicate file in place of another")?;
+    let mut extra = publication_tree_inventory_v3(root.path())?;
+    let appended = copy_file(&extra.files[2], "c")?;
+    extra.files.push(appended);
+    rejects(extra, "extra file")?;
+
+    make_test_tree_writable(root.path())?;
+    Ok(())
+}
+
 #[test]
 fn publication_inventory_rejects_hardlinks_and_nested_mount_inventory() -> Result<()> {
     let root = tempfile::tempdir()?;
@@ -1897,7 +1954,6 @@ fn publication_inventory_rejects_hardlinks_and_nested_mount_inventory() -> Resul
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_inventory_rejects_late_file_and_directory_substitution() -> Result<()> {
     use std::os::unix::fs::{PermissionsExt as _, symlink};
@@ -1987,7 +2043,6 @@ fn publication_inventory_rejects_late_file_and_directory_substitution() -> Resul
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn retained_authority_rejects_root_substitution_after_validation() -> Result<()> {
     use std::os::unix::fs::symlink;
@@ -2011,7 +2066,6 @@ fn retained_authority_rejects_root_substitution_after_validation() -> Result<()>
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn publication_file_hash_rejects_content_mutation_between_passes() -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -2209,7 +2263,6 @@ fn addressed_document_loader_rejects_extra_and_substitution() -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_copies_one_retained_authority_and_validates_exactly() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -2255,7 +2308,6 @@ fn cloudflare_materialization_copies_one_retained_authority_and_validates_exactl
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_resolves_one_exact_git_commit_and_tree_from_pinned_root() -> Result<()>
 {
@@ -2272,7 +2324,6 @@ fn cloudflare_materialization_resolves_one_exact_git_commit_and_tree_from_pinned
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_git_tree_ignores_replacement_objects() -> Result<()> {
     let sandbox = tempfile::tempdir()?;
@@ -2334,7 +2385,6 @@ fn cloudflare_materialization_git_tree_ignores_replacement_objects() -> Result<(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_rejects_late_source_file_directory_and_root_swaps() -> Result<()> {
     for attack in ["file", "directory", "root"] {
@@ -2383,7 +2433,6 @@ fn cloudflare_materialization_rejects_late_source_file_directory_and_root_swaps(
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_rejects_receipt_mismatch_extras_missing_and_private_leakage()
 -> Result<()> {
@@ -2458,7 +2507,6 @@ fn cloudflare_materialization_rejects_receipt_mismatch_extras_missing_and_privat
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_rejects_self_consistent_untyped_origin_authority() -> Result<()> {
     for attack in ["private", "empty", "protocol"] {
@@ -2687,7 +2735,6 @@ fn cloudflare_materialization_rejects_self_consistent_untyped_origin_authority()
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_rejects_late_identical_output_inode_swaps() -> Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -2755,7 +2802,6 @@ fn cloudflare_materialization_rejects_late_identical_output_inode_swaps() -> Res
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_pre_persist_failures_cleanup_or_preserve_exact_evidence() -> Result<()>
 {
@@ -2821,7 +2867,6 @@ fn cloudflare_materialization_pre_persist_failures_cleanup_or_preserve_exact_evi
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn cloudflare_materialization_noreplace_and_sync_outcomes_reuse_exact_candidate() -> Result<()> {
     for sync_failure in [false, true] {

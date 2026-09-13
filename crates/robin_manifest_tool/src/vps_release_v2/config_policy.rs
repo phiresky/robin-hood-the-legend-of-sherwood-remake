@@ -19,225 +19,243 @@ pub(super) fn validate_final_config(
             );
         }
         VpsConfigRoleV2::Server => {
-            let value: toml::Value = toml::from_str(std::str::from_utf8(&bytes)?)?;
-            reject_obsolete_toml(&value)?;
-            for (field, expected) in [
-                ("bind", "127.0.0.1:8787"),
-                (
-                    "database_path",
-                    "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3",
-                ),
-                (
-                    "replay_directory",
-                    "/home/robinhood/.local/share/robin-highscores/replays",
-                ),
-                (
-                    "campaign_state_directory",
-                    "/home/robinhood/.local/share/robin-highscores/campaign-states",
-                ),
-                (
-                    "cursor_secret_path",
-                    "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key",
-                ),
-                (
-                    "competition_run_grant_secret_path",
-                    "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key",
-                ),
-                (
-                    "run_preflight_grant_secret_path",
-                    "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key",
-                ),
-                (
-                    "moderation_bearer_token_path",
-                    "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token",
-                ),
-                ("backup_manifest_path", BACKUP_STATUS_PATH),
-            ] {
-                ensure!(
-                    value.get(field).and_then(toml::Value::as_str) == Some(expected),
-                    "server config {field} is not the final private path"
-                );
-            }
-            let expected_release_manifest =
-                format!("{INSTALL_ROOT}/releases/{source_commit}/{RELEASE_MANIFEST_FILE}");
-            ensure!(
-                value
-                    .get("release_manifest_path")
-                    .and_then(toml::Value::as_str)
-                    == Some(expected_release_manifest.as_str()),
-                "server config must bind the exact installed VPS release manifest"
-            );
-            ensure!(
-                value
-                    .get("allowed_origins")
-                    .and_then(toml::Value::as_array)
-                    .is_some_and(Vec::is_empty),
-                "production server config must not enable CORS origins"
-            );
-            ensure!(
-                value
-                    .get("maximum_backup_age_hours")
-                    .and_then(toml::Value::as_integer)
-                    == Some(32),
-                "server config maximum backup age must cover daily schedule, jitter, timeout, and margin"
-            );
-            ensure!(
-                toml_integer_at_least(&value, "minimum_storage_free_bytes", 1 << 30),
-                "server config must reserve at least 1 GiB of storage"
-            );
-            for field in [
-                "max_replay_bytes",
-                "max_campaign_bytes",
-                "max_metadata_bytes",
-                "max_concurrent_uploads",
-            ] {
-                ensure!(
-                    positive_toml_integer(&value, field),
-                    "server config {field} must be positive"
-                );
-            }
-            let expected_manifest_root =
-                format!("{INSTALL_ROOT}/releases/{source_commit}/config/manifests");
-            ensure!(
-                value
-                    .get("manifest_directory")
-                    .and_then(toml::Value::as_str)
-                    == Some(expected_manifest_root.as_str()),
-                "server config must use the installed immutable manifest root"
-            );
-            let profiles = value
-                .get("admission_profiles")
-                .and_then(toml::Value::as_array)
-                .filter(|profiles| !profiles.is_empty())
-                .context("server config has no final admission profiles")?;
-            let expected_campaign_root =
-                format!("{INSTALL_ROOT}/releases/{source_commit}/private/campaign-states");
-            let referenced_campaigns = profiles
-                .iter()
-                .map(|profile| {
-                    let path = profile
-                        .get("canonical_campaign_state_path")
-                        .and_then(toml::Value::as_str)
-                        .context("admission profile omits canonical campaign state path")?;
-                    let path = Path::new(path);
-                    ensure!(
-                        path.parent() == Some(Path::new(&expected_campaign_root)),
-                        "admission profile campaign template escapes the immutable release"
-                    );
-                    let digest = path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .context("admission profile campaign template has no digest filename")?
-                        .parse::<Digest32>()?;
-                    Ok(digest)
-                })
-                .collect::<Result<BTreeSet<_>>>()?;
-            ensure!(
-                referenced_campaigns == *campaign_states,
-                "server profiles do not bind the exact publication campaign templates"
-            );
+            validate_final_server_config(&bytes, source_commit, campaign_states)?;
         }
         VpsConfigRoleV2::Worker => {
-            let value: toml::Value = toml::from_str(std::str::from_utf8(&bytes)?)?;
-            reject_obsolete_toml(&value)?;
-            let release_root = format!("{INSTALL_ROOT}/releases/{source_commit}");
-            let expected_server_config = format!("{release_root}/config/highscores-server.toml");
-            ensure!(
-                value.get("server_config").and_then(toml::Value::as_str)
-                    == Some(expected_server_config.as_str()),
-                "worker config does not use the exact commit-named server config"
-            );
-            ensure!(
-                value
-                    .get("campaign_state_directory")
-                    .and_then(toml::Value::as_str)
-                    == Some("/home/robinhood/.local/share/robin-highscores/campaign-states"),
-                "worker config does not use the persistent campaign store"
-            );
-            let expected_catalog_path = format!(
-                "{release_root}/private/verifier/operator-config/{}",
-                job_catalog.sha256,
-            );
-            let expected_catalog_sha256 = job_catalog.sha256.to_string();
-            ensure!(
-                value
-                    .get("verifier_job_config_catalog")
-                    .and_then(toml::Value::as_str)
-                    == Some(expected_catalog_path.as_str())
-                    && value
-                        .get("verifier_job_config_catalog_sha256")
-                        .and_then(toml::Value::as_str)
-                        == Some(expected_catalog_sha256.as_str()),
-                "worker config does not bind the publication job catalog"
-            );
-            let launcher = value
-                .get("verifier_launcher")
-                .and_then(toml::Value::as_table)
-                .context("worker config omits [verifier_launcher]")?;
-            let expected_verifier_path = format!("{release_root}/bin/robin-replay-verifier");
-            let expected_verifier_sha256 = verifier_sha256.to_string();
-            ensure!(
-                launcher.get("bwrap_program").and_then(toml::Value::as_str)
-                    == Some("/usr/bin/bwrap")
-                    && launcher
-                        .get("prlimit_program")
-                        .and_then(toml::Value::as_str)
-                        == Some("/usr/bin/prlimit")
-                    && launcher
-                        .get("verifier_program")
-                        .and_then(toml::Value::as_str)
-                        == Some(expected_verifier_path.as_str()),
-                "worker verifier launcher does not use the fixed host tools and exact release verifier"
-            );
-            ensure!(
-                nonzero_lower_hex_table(launcher, "bwrap_sha256")
-                    && nonzero_lower_hex_table(launcher, "prlimit_sha256")
-                    && launcher
-                        .get("verifier_sha256")
-                        .and_then(toml::Value::as_str)
-                        == Some(expected_verifier_sha256.as_str()),
-                "worker verifier launcher has an absent, zero, or substituted digest"
-            );
-            for (field, expected) in [
-                ("wall_timeout_seconds", 120),
-                ("cpu_limit_seconds", 120),
-                ("address_space_limit_bytes", 1_073_741_824),
-                ("process_limit", 32),
-                ("open_files_limit", 128),
-                ("file_size_limit_bytes", 134_217_728),
-                ("max_request_bytes", 1_048_576),
-            ] {
-                ensure!(
-                    launcher.get(field).and_then(toml::Value::as_integer) == Some(expected),
-                    "worker verifier launcher {field} differs from the canonical resource envelope"
-                );
-            }
-            let limits = value
-                .get("limits")
-                .and_then(toml::Value::as_table)
-                .context("worker config omits [limits]")?;
-            let max_campaign_bytes = limits
-                .get("max_campaign_bytes")
-                .and_then(toml::Value::as_integer)
-                .context("worker limits omit max_campaign_bytes")?;
-            ensure!(
-                max_campaign_bytes > 0 && max_campaign_bytes <= 134_217_728,
-                "worker campaign limit exceeds the direct launch file-size limit"
-            );
-            let _ = worker_source_manifest_selections(&value, source_commit)?;
-            for forbidden in [
-                "broker_socket",
-                "broker_response_timeout_seconds",
-                "verifier_sha256",
-                "sandbox_launcher",
-                "sandbox_launcher_sha256",
-            ] {
-                ensure!(
-                    value.get(forbidden).is_none(),
-                    "worker config retains obsolete root-level field {forbidden}"
-                );
-            }
+            validate_final_worker_config(&bytes, verifier_sha256, job_catalog, source_commit)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_final_server_config(
+    bytes: &[u8],
+    source_commit: &str,
+    campaign_states: &BTreeSet<Digest32>,
+) -> Result<()> {
+    let value: toml::Value = toml::from_str(std::str::from_utf8(bytes)?)?;
+    reject_obsolete_toml(&value)?;
+    for (field, expected) in [
+        ("bind", "127.0.0.1:8787"),
+        (
+            "database_path",
+            "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3",
+        ),
+        (
+            "replay_directory",
+            "/home/robinhood/.local/share/robin-highscores/replays",
+        ),
+        (
+            "campaign_state_directory",
+            "/home/robinhood/.local/share/robin-highscores/campaign-states",
+        ),
+        (
+            "cursor_secret_path",
+            "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key",
+        ),
+        (
+            "competition_run_grant_secret_path",
+            "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key",
+        ),
+        (
+            "run_preflight_grant_secret_path",
+            "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key",
+        ),
+        (
+            "moderation_bearer_token_path",
+            "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token",
+        ),
+        ("backup_manifest_path", BACKUP_STATUS_PATH),
+    ] {
+        ensure!(
+            value.get(field).and_then(toml::Value::as_str) == Some(expected),
+            "server config {field} is not the final private path"
+        );
+    }
+    let expected_release_manifest =
+        format!("{INSTALL_ROOT}/releases/{source_commit}/{RELEASE_MANIFEST_FILE}");
+    ensure!(
+        value
+            .get("release_manifest_path")
+            .and_then(toml::Value::as_str)
+            == Some(expected_release_manifest.as_str()),
+        "server config must bind the exact installed VPS release manifest"
+    );
+    ensure!(
+        value
+            .get("allowed_origins")
+            .and_then(toml::Value::as_array)
+            .is_some_and(Vec::is_empty),
+        "production server config must not enable CORS origins"
+    );
+    ensure!(
+        value
+            .get("maximum_backup_age_hours")
+            .and_then(toml::Value::as_integer)
+            == Some(32),
+        "server config maximum backup age must cover daily schedule, jitter, timeout, and margin"
+    );
+    ensure!(
+        toml_integer_at_least(&value, "minimum_storage_free_bytes", 1 << 30),
+        "server config must reserve at least 1 GiB of storage"
+    );
+    for field in [
+        "max_replay_bytes",
+        "max_campaign_bytes",
+        "max_metadata_bytes",
+        "max_concurrent_uploads",
+    ] {
+        ensure!(
+            positive_toml_integer(&value, field),
+            "server config {field} must be positive"
+        );
+    }
+    let expected_manifest_root =
+        format!("{INSTALL_ROOT}/releases/{source_commit}/config/manifests");
+    ensure!(
+        value
+            .get("manifest_directory")
+            .and_then(toml::Value::as_str)
+            == Some(expected_manifest_root.as_str()),
+        "server config must use the installed immutable manifest root"
+    );
+    let profiles = value
+        .get("admission_profiles")
+        .and_then(toml::Value::as_array)
+        .filter(|profiles| !profiles.is_empty())
+        .context("server config has no final admission profiles")?;
+    let expected_campaign_root =
+        format!("{INSTALL_ROOT}/releases/{source_commit}/private/campaign-states");
+    let referenced_campaigns = profiles
+        .iter()
+        .map(|profile| {
+            let path = profile
+                .get("canonical_campaign_state_path")
+                .and_then(toml::Value::as_str)
+                .context("admission profile omits canonical campaign state path")?;
+            let path = Path::new(path);
+            ensure!(
+                path.parent() == Some(Path::new(&expected_campaign_root)),
+                "admission profile campaign template escapes the immutable release"
+            );
+            let digest = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("admission profile campaign template has no digest filename")?
+                .parse::<Digest32>()?;
+            Ok(digest)
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    ensure!(
+        referenced_campaigns == *campaign_states,
+        "server profiles do not bind the exact publication campaign templates"
+    );
+    Ok(())
+}
+
+fn validate_final_worker_config(
+    bytes: &[u8],
+    verifier_sha256: Digest32,
+    job_catalog: &ArtifactRefV1,
+    source_commit: &str,
+) -> Result<()> {
+    let value: toml::Value = toml::from_str(std::str::from_utf8(bytes)?)?;
+    reject_obsolete_toml(&value)?;
+    let release_root = format!("{INSTALL_ROOT}/releases/{source_commit}");
+    let expected_server_config = format!("{release_root}/config/highscores-server.toml");
+    ensure!(
+        value.get("server_config").and_then(toml::Value::as_str)
+            == Some(expected_server_config.as_str()),
+        "worker config does not use the exact commit-named server config"
+    );
+    ensure!(
+        value
+            .get("campaign_state_directory")
+            .and_then(toml::Value::as_str)
+            == Some("/home/robinhood/.local/share/robin-highscores/campaign-states"),
+        "worker config does not use the persistent campaign store"
+    );
+    let expected_catalog_path = format!(
+        "{release_root}/private/verifier/operator-config/{}",
+        job_catalog.sha256,
+    );
+    let expected_catalog_sha256 = job_catalog.sha256.to_string();
+    ensure!(
+        value
+            .get("verifier_job_config_catalog")
+            .and_then(toml::Value::as_str)
+            == Some(expected_catalog_path.as_str())
+            && value
+                .get("verifier_job_config_catalog_sha256")
+                .and_then(toml::Value::as_str)
+                == Some(expected_catalog_sha256.as_str()),
+        "worker config does not bind the publication job catalog"
+    );
+    let launcher = value
+        .get("verifier_launcher")
+        .and_then(toml::Value::as_table)
+        .context("worker config omits [verifier_launcher]")?;
+    let expected_verifier_path = format!("{release_root}/bin/robin-replay-verifier");
+    let expected_verifier_sha256 = verifier_sha256.to_string();
+    ensure!(
+        launcher.get("bwrap_program").and_then(toml::Value::as_str) == Some("/usr/bin/bwrap")
+            && launcher
+                .get("prlimit_program")
+                .and_then(toml::Value::as_str)
+                == Some("/usr/bin/prlimit")
+            && launcher
+                .get("verifier_program")
+                .and_then(toml::Value::as_str)
+                == Some(expected_verifier_path.as_str()),
+        "worker verifier launcher does not use the fixed host tools and exact release verifier"
+    );
+    ensure!(
+        nonzero_lower_hex_table(launcher, "bwrap_sha256")
+            && nonzero_lower_hex_table(launcher, "prlimit_sha256")
+            && launcher
+                .get("verifier_sha256")
+                .and_then(toml::Value::as_str)
+                == Some(expected_verifier_sha256.as_str()),
+        "worker verifier launcher has an absent, zero, or substituted digest"
+    );
+    for (field, expected) in [
+        ("wall_timeout_seconds", 120),
+        ("cpu_limit_seconds", 120),
+        ("address_space_limit_bytes", 1_073_741_824),
+        ("process_limit", 32),
+        ("open_files_limit", 128),
+        ("file_size_limit_bytes", 134_217_728),
+        ("max_request_bytes", 1_048_576),
+    ] {
+        ensure!(
+            launcher.get(field).and_then(toml::Value::as_integer) == Some(expected),
+            "worker verifier launcher {field} differs from the canonical resource envelope"
+        );
+    }
+    let limits = value
+        .get("limits")
+        .and_then(toml::Value::as_table)
+        .context("worker config omits [limits]")?;
+    let max_campaign_bytes = limits
+        .get("max_campaign_bytes")
+        .and_then(toml::Value::as_integer)
+        .context("worker limits omit max_campaign_bytes")?;
+    ensure!(
+        max_campaign_bytes > 0 && max_campaign_bytes <= 134_217_728,
+        "worker campaign limit exceeds the direct launch file-size limit"
+    );
+    let _ = worker_source_manifest_selections(&value, source_commit)?;
+    for forbidden in [
+        "broker_socket",
+        "broker_response_timeout_seconds",
+        "verifier_sha256",
+        "sandbox_launcher",
+        "sandbox_launcher_sha256",
+    ] {
+        ensure!(
+            value.get(forbidden).is_none(),
+            "worker config retains obsolete root-level field {forbidden}"
+        );
     }
     Ok(())
 }

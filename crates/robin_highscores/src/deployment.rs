@@ -462,7 +462,6 @@ fn ensure_normalized_absolute(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn current_authority_owner_uid() -> anyhow::Result<u32> {
     let owner_uid = rustix::process::geteuid().as_raw();
     anyhow::ensure!(
@@ -472,12 +471,6 @@ fn current_authority_owner_uid() -> anyhow::Result<u32> {
     Ok(owner_uid)
 }
 
-#[cfg(not(unix))]
-fn current_authority_owner_uid() -> anyhow::Result<u32> {
-    anyhow::bail!("production authority layout validation requires Unix credentials")
-}
-
-#[cfg(unix)]
 fn validate_immutable_file(path: &Path, owner_uid: u32) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt as _;
     validate_path_components_no_symlinks(path)?;
@@ -498,7 +491,6 @@ fn validate_immutable_file(path: &Path, owner_uid: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn validate_immutable_directory(path: &Path, owner_uid: u32, mode: u32) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt as _;
     validate_path_components_no_symlinks(path)?;
@@ -518,17 +510,6 @@ fn validate_immutable_directory(path: &Path, owner_uid: u32, mode: u32) -> anyho
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn validate_immutable_directory(_path: &Path, _owner_uid: u32, _mode: u32) -> anyhow::Result<()> {
-    anyhow::bail!("production authority layout validation requires Unix metadata")
-}
-
-#[cfg(not(unix))]
-fn validate_immutable_file(_path: &Path, _owner_uid: u32) -> anyhow::Result<()> {
-    anyhow::bail!("production authority layout validation requires Unix metadata")
-}
-
-#[cfg(unix)]
 fn validate_immutable_tree(root: &Path, owner_uid: u32) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt as _;
     validate_path_components_no_symlinks(root)?;
@@ -568,11 +549,6 @@ fn validate_immutable_tree(root: &Path, owner_uid: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn validate_immutable_tree(_root: &Path, _owner_uid: u32) -> anyhow::Result<()> {
-    anyhow::bail!("production authority layout validation requires Unix metadata")
-}
-
 fn validate_path_components_no_symlinks(path: &Path) -> anyhow::Result<()> {
     ensure_normalized_absolute(path)?;
     let mut current = PathBuf::from("/");
@@ -589,7 +565,7 @@ fn validate_path_components_no_symlinks(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use robin_run_protocol::{

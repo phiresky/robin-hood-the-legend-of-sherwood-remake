@@ -6,6 +6,7 @@ use crate::leaderboard_ranked_session::{
     self as ranked, OfficialRankedSessionSetupV1, RankedSessionHost,
 };
 use ed25519_dalek::SigningKey;
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
     CampaignContinuationPreflightRequestClaimV1, FreshRunPreflightRequestClaimV1,

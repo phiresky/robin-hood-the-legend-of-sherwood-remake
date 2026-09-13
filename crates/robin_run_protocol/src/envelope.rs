@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AnonymousParticipantPolicyV1, ArtifactRefV1, BoardMetricV1, CampaignContentManifestV1,
     CampaignRosterContinuityV1, CanonicalDocument as _, CanonicalValue, ChallengeNonce32, Digest32,
-    OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublicKey32, PublishedRulesetV1,
-    ResourceLocaleRootV1, RulesetBoardScopeV1, RunMetricsV1, Signature64, SimulationSeed64,
-    Validate, ValidationError,
+    DomainSignedClaim, OfficialContentEditionV1, OfficialContentSubjectV1, OpaqueId, PublicKey32,
+    PublishedRulesetV1, ResourceLocaleRootV1, RulesetBoardScopeV1, RunMetricsV1, Signature64,
+    SimulationSeed64, Validate, ValidationError,
 };
 #[cfg(test)]
 use crate::{ContentManifestV1, SimulationSpeechTimingSourceV1};
@@ -172,13 +172,7 @@ pub struct CompetitionRunGrantRequestClaimV1 {
     pub ranked_session: RankedSessionConfigV1,
 }
 
-impl CompetitionRunGrantRequestClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for CompetitionRunGrantRequestClaimV1 {
+impl DomainSignedClaim for CompetitionRunGrantRequestClaimV1 {
     const DOMAIN: &'static [u8] = COMPETITION_RUN_GRANT_REQUEST_SIGNATURE_DOMAIN_V1;
 }
 
@@ -252,13 +246,7 @@ pub struct CompetitionRunGrantClaimV1 {
     pub expires_at_unix_ms: u64,
 }
 
-impl CompetitionRunGrantClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for CompetitionRunGrantClaimV1 {
+impl DomainSignedClaim for CompetitionRunGrantClaimV1 {
     const DOMAIN: &'static [u8] = COMPETITION_RUN_GRANT_SIGNATURE_DOMAIN_V1;
 }
 
@@ -377,13 +365,7 @@ pub struct FreshRunPreflightRequestClaimV1 {
     pub ranked_session: RankedSessionConfigV1,
 }
 
-impl FreshRunPreflightRequestClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for FreshRunPreflightRequestClaimV1 {
+impl DomainSignedClaim for FreshRunPreflightRequestClaimV1 {
     const DOMAIN: &'static [u8] = FRESH_RUN_PREFLIGHT_REQUEST_SIGNATURE_DOMAIN_V1;
 }
 
@@ -462,13 +444,7 @@ pub struct FreshRunPreflightGrantClaimV1 {
     pub expires_at_unix_ms: u64,
 }
 
-impl FreshRunPreflightGrantClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for FreshRunPreflightGrantClaimV1 {
+impl DomainSignedClaim for FreshRunPreflightGrantClaimV1 {
     const DOMAIN: &'static [u8] = FRESH_RUN_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1;
 }
 
@@ -703,13 +679,7 @@ pub struct CampaignContinuationPreflightGrantClaimV1 {
     pub expires_at_unix_ms: u64,
 }
 
-impl CampaignContinuationPreflightGrantClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for CampaignContinuationPreflightGrantClaimV1 {
+impl DomainSignedClaim for CampaignContinuationPreflightGrantClaimV1 {
     const DOMAIN: &'static [u8] = CAMPAIGN_CONTINUATION_PREFLIGHT_GRANT_SIGNATURE_DOMAIN_V1;
 }
 

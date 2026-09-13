@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_os = "linux"))]
+compile_error!("robin-highscores-worker is Linux-only");
+
 use clap::Parser;
 use robin_highscores::verifier::{
     DirectVerifierLauncherConfig, ProcessError, VerifierProcessConfig, build_verification_request,
@@ -1452,7 +1455,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_process_validation_failure_exits_without_ready() {
         let (output, messages) = run_systemd_notifier_child("failure");
@@ -1471,7 +1473,6 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn systemd_process_success_sends_ready_before_processing() {
         let (output, messages) = run_systemd_notifier_child("success");
@@ -1492,7 +1493,6 @@ mod tests {
         assert!(ready < processing, "READY=1 must precede processing");
     }
 
-    #[cfg(target_os = "linux")]
     fn run_systemd_notifier_child(mode: &str) -> (std::process::Output, Vec<String>) {
         use std::os::unix::net::UnixDatagram;
 
@@ -1531,7 +1531,6 @@ mod tests {
         (output, messages)
     }
 
-    #[cfg(target_os = "linux")]
     #[ignore = "process helper invoked by the systemd notification integration tests"]
     #[tokio::test]
     async fn systemd_notifier_process_child() {

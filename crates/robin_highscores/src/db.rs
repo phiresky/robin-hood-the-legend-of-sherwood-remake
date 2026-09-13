@@ -861,13 +861,10 @@ impl Database {
             .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
             .map_err(sqlx::Error::Io)?,
         );
-        #[cfg(target_os = "linux")]
         let database_open_path = {
             use std::os::fd::AsRawFd as _;
             PathBuf::from(format!("/proc/self/fd/{}", database_file.as_raw_fd()))
         };
-        #[cfg(not(target_os = "linux"))]
-        let database_open_path = config.database_path.clone();
         let options = SqliteConnectOptions::new()
             .filename(database_open_path)
             .create_if_missing(false)
@@ -2198,6 +2195,8 @@ impl Database {
             ));
         }
         let chain_owner_public_key = fixed_32(owner_rows[0].try_get("host_public_key")?)?;
+        let (max_concurrent_players, participant_instance_count) =
+            decode_player_and_instance_counts(&row)?;
         Ok(CampaignPredecessor {
             run_id: row.try_get("id")?,
             chain_id: row
@@ -2214,7 +2213,7 @@ impl Database {
             content_manifest_id: fixed_32(row.try_get("content_manifest_id")?)?,
             campaign_content_manifest_id: fixed_32(row.try_get("campaign_content_manifest_id")?)?,
             rules_config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             competition_manifest_id: row
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
@@ -2226,16 +2225,8 @@ impl Database {
                     })?,
             )
             .map_err(|_| DbError::Corrupt("campaign session ordinal out of range".to_owned()))?,
-            max_concurrent_players: checked_count(
-                &row,
-                "max_concurrent_players",
-                "player count out of range",
-            )?,
-            participant_instance_count: checked_count(
-                &row,
-                "participant_instance_count",
-                "participant instance count out of range",
-            )?,
+            max_concurrent_players,
+            participant_instance_count,
             chain_owner_public_key,
             participants,
         })
@@ -2569,7 +2560,7 @@ impl Database {
             controller_public_key,
             campaign_content_manifest_id: fixed_32(row.try_get("campaign_content_manifest_id")?)?,
             config_id: fixed_32(row.try_get("config_id")?)?,
-            ruleset_id: fixed_32(row.try_get("ruleset_id")?)?,
+            ruleset_id: decode_ruleset_id(&row)?,
             competition_manifest_id: row
                 .try_get::<Option<Vec<u8>>, _>("competition_manifest_id")?
                 .map(fixed_32)
@@ -2694,44 +2685,25 @@ async fn verify_pinned_database_leaf(
     let opened_parent = Arc::clone(parent);
     let opened_leaf = leaf.to_owned();
     let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
-        #[cfg(target_os = "linux")]
-        {
-            use rustix::fs::{Mode, OFlags};
-            use std::os::fd::AsFd as _;
-
-            // Closing any ordinary descriptor for this inode would discard
-            // SQLite's process-wide POSIX locks, even on another thread. An
-            // O_PATH descriptor can authenticate the leaf without that close
-            // side effect. Keep the same beneath/no-symlink path confinement.
-            let fd = crate::secure_fs::open_no_symlinks_at(
-                opened_parent.as_fd(),
-                std::path::Path::new(&opened_leaf),
-                OFlags::PATH | OFlags::CLOEXEC,
-                Mode::empty(),
-                rustix::fs::ResolveFlags::BENEATH,
-            )
-            .map_err(std::io::Error::from)?;
-            let file = std::fs::File::from(fd);
-            if !file.metadata()?.is_file() {
-                return Err(std::io::Error::other("database is not a regular file"));
-            }
-            Ok(file)
+        // Closing any ordinary descriptor for this inode would discard
+        // SQLite's process-wide POSIX locks, even on another thread. An
+        // O_PATH descriptor can authenticate the leaf without that close
+        // side effect. Keep the same beneath/no-symlink path confinement.
+        let fd = crate::secure_fs::open_beneath_no_symlinks(
+            &*opened_parent,
+            std::path::Path::new(&opened_leaf),
+            rustix::fs::OFlags::PATH | rustix::fs::OFlags::CLOEXEC,
+        )
+        .map_err(std::io::Error::from)?;
+        let file = std::fs::File::from(fd);
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::other("database is not a regular file"));
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // TODO: provide a lock-preserving identity check before supporting
-            // production database operation on other platforms.
-            let _ = (opened_parent, opened_leaf);
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "lock-preserving database identity verification requires Linux O_PATH",
-            ))
-        }
+        Ok(file)
     })
     .await
     .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
     .map_err(sqlx::Error::Io)?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
         let expected = pinned.metadata().map_err(sqlx::Error::Io)?;
@@ -2788,23 +2760,16 @@ async fn ensure_schema_current(pool: &SqlitePool) -> Result<(), DbError> {
 }
 
 async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Result<(), DbError> {
-    #[cfg(target_os = "linux")]
     {
-        use rustix::fs::{Mode, OFlags};
+        use rustix::fs::OFlags;
         use std::os::unix::fs::PermissionsExt as _;
         let mut flags = OFlags::RDONLY | OFlags::CLOEXEC;
         if directory {
             flags |= OFlags::DIRECTORY;
         }
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            flags,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )
-        .map_err(std::io::Error::from)
-        .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
+        let fd = crate::secure_fs::open_ambient_no_symlinks(path, flags)
+            .map_err(std::io::Error::from)
+            .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
         let file = std::fs::File::from(fd);
         let metadata = file
             .metadata()
@@ -2822,27 +2787,6 @@ async fn set_private_permissions(path: &std::path::Path, directory: bool) -> Res
         };
         if metadata.permissions().mode() & 0o7777 != mode {
             file.set_permissions(std::fs::Permissions::from_mode(mode))
-                .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
-        }
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = if directory {
-            crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
-        } else {
-            crate::secure_fs::SHARED_MUTABLE_FILE_MODE
-        };
-        if tokio::fs::metadata(path)
-            .await
-            .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?
-            .permissions()
-            .mode()
-            & 0o7777
-            != mode
-        {
-            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-                .await
                 .map_err(|error| DbError::Sql(sqlx::Error::Io(error)))?;
         }
     }
@@ -2968,6 +2912,57 @@ fn checked_count<T: TryFrom<i64>>(
     corruption: &'static str,
 ) -> Result<T, DbError> {
     T::try_from(row.try_get::<i64, _>(column)?).map_err(|_| DbError::Corrupt(corruption.to_owned()))
+}
+
+/// Decode the 32-byte `ruleset_id` column shared by run, campaign and object rows.
+fn decode_ruleset_id(row: &SqliteRow) -> Result<[u8; 32], DbError> {
+    fixed_32(row.try_get("ruleset_id")?)
+}
+
+/// Decode `max_concurrent_players` and `participant_instance_count` with their
+/// canonical out-of-range corruption messages (checked, never wrapping).
+fn decode_player_and_instance_counts<I: TryFrom<i64>>(
+    row: &SqliteRow,
+) -> Result<(u16, I), DbError> {
+    let max_concurrent_players =
+        checked_count(row, "max_concurrent_players", "player count out of range")?;
+    let participant_instance_count = checked_count(
+        row,
+        "participant_instance_count",
+        "participant instance count out of range",
+    )?;
+    Ok((max_concurrent_players, participant_instance_count))
+}
+
+/// The four public participant-count columns of a verified run or board row.
+struct ParticipantCounts {
+    max_concurrent_players: u16,
+    participant_instance_count: u32,
+    named_participant_instance_count: u32,
+    anonymous_participant_instance_count: u32,
+}
+
+impl ParticipantCounts {
+    /// Columns are read and range-checked in declaration order; each
+    /// out-of-range value yields its canonical `DbError::Corrupt` message.
+    fn decode(row: &SqliteRow) -> Result<Self, DbError> {
+        let (max_concurrent_players, participant_instance_count) =
+            decode_player_and_instance_counts(row)?;
+        Ok(Self {
+            max_concurrent_players,
+            participant_instance_count,
+            named_participant_instance_count: checked_count(
+                row,
+                "named_participant_instance_count",
+                "named participant count out of range",
+            )?,
+            anonymous_participant_instance_count: checked_count(
+                row,
+                "anonymous_participant_instance_count",
+                "anonymous participant count out of range",
+            )?,
+        })
+    }
 }
 
 fn optional_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<Option<u32>, DbError> {
@@ -3269,7 +3264,6 @@ async fn pin_database_sidecars(
         .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
         {
             Ok(file) => {
-                #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt as _;
                     if file
@@ -3362,6 +3356,7 @@ mod tests {
             assert_eq!(actual, expected);
         }
     }
+    use crate::test_support::TestDeployment;
     use robin_run_protocol::{
         ChallengeNonce32, CompetitionRunGrantClaimV1, CompetitionRunGrantRequestClaimV1,
         PublicKey32, RankedSessionConfigV1, ResourceLocaleRootV1, SCHEMA_VERSION_V1, Signature64,
@@ -3370,16 +3365,10 @@ mod tests {
     use sqlx::Connection as _;
 
     async fn test_database() -> (tempfile::TempDir, Database) {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (directory, _config, database) = TestDeployment::new().migrate().await;
         (directory, database)
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     #[ignore = "subprocess helper for the POSIX database lock regression"]
     fn database_posix_lock_probe_child() {
@@ -3398,7 +3387,6 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn database_leaf_identity_check_preserves_posix_locks() {
         use rustix::fs::{FlockOperation, fcntl_lock};
@@ -4496,14 +4484,13 @@ mod tests {
 
     #[tokio::test]
     async fn maintenance_writer_class_limits_match_the_capacity_model() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            max_concurrent_requests: 2,
-            max_concurrent_uploads: 2,
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new()
+            .configure(|_, config| {
+                config.max_concurrent_requests = 2;
+                config.max_concurrent_uploads = 2;
+            })
+            .migrate()
+            .await;
 
         let mut leases = Vec::new();
         for (class, count) in [
@@ -4762,7 +4749,6 @@ mod tests {
             .unwrap(),
             2
         );
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
             assert_eq!(
@@ -4784,7 +4770,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn symlinked_database_path_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
@@ -4800,7 +4785,6 @@ mod tests {
         assert!(matches!(error, DbError::Corrupt(_) | DbError::Sql(_)));
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn symlinked_database_ancestor_is_rejected() {
         let directory = tempfile::tempdir().unwrap();
@@ -4815,7 +4799,6 @@ mod tests {
         assert!(Database::connect(&config).await.is_err());
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_database_and_wal_survive_ancestor_swap_and_reopen() {
         let directory = tempfile::tempdir().unwrap();
@@ -4877,7 +4860,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn pinned_database_and_wal_survive_leaf_replacement_and_reopen() {
         let directory = tempfile::tempdir().unwrap();
@@ -5021,13 +5003,10 @@ mod tests {
 
     #[tokio::test]
     async fn purpose_quotas_reserve_submission_offer_capacity() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            max_pending_submissions: 2,
-            ..Default::default()
-        };
-        let database = Database::migrate(&config).await.unwrap();
+        let (_directory, _config, database) = TestDeployment::new()
+            .configure(|_, config| config.max_pending_submissions = 2)
+            .migrate()
+            .await;
         for key in [[1_u8; 32], [2_u8; 32]] {
             database
                 .issue_challenge(
@@ -5666,12 +5645,7 @@ mod tests {
 
     #[tokio::test]
     async fn concurrent_cross_instance_reservation_has_one_ingestion_lease() {
-        let directory = tempfile::tempdir().unwrap();
-        let config = ServerConfig {
-            database_path: directory.path().join("highscores.sqlite3"),
-            ..Default::default()
-        };
-        let left_db = Database::migrate(&config).await.unwrap();
+        let (_directory, config, left_db) = TestDeployment::new().migrate().await;
         let right_db = Database::connect(&config).await.unwrap();
         let submission = submission_fixture(&left_db).await;
         let left_intent = upload_intent(&submission);

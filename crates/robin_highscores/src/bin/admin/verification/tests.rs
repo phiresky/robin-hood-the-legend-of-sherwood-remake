@@ -1,8 +1,12 @@
+use super::super::cleanup::ResumeCleanupHooks;
+use super::super::cleanup::ResumeCleanupRequest;
+use super::super::cleanup::TombstoneRenameHooks;
+use super::super::cleanup::TombstoneRenameRequest;
 use super::super::cleanup::cleanup_journal_for_verified_tree;
 use super::super::cleanup::publish_cleanup_journal;
 use super::super::cleanup::recover_interrupted_complete_cleanups;
-use super::super::cleanup::rename_verified_entry_to_tombstone_with_hooks;
-use super::super::cleanup::resume_authenticated_cleanup_with_hooks;
+use super::super::cleanup::rename_verified_entry_to_tombstone;
+use super::super::cleanup::resume_authenticated_cleanup;
 use super::super::execution::backup;
 use super::super::filesystem::backup_tree_paths_cap;
 use super::super::filesystem::cleanup_tombstone_relative;
@@ -43,10 +47,22 @@ struct VerificationFixture {
     _campaign_store: CampaignStore,
 }
 
+// Capabilities and the verified tree carried from the tombstone-rename phase
+// into the terminal cleanup-root phase, keeping them alive exactly as long as
+// the original single scenario did. Process-local, not serialized.
+struct CleanupTree {
+    backup_parent: cap_std::fs::Dir,
+    backup_directory: cap_std::fs::Dir,
+    verified_tree: BackupTreePaths,
+}
+
 #[tokio::test]
 async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
     let fixture = VerificationFixture::new().await;
-    fixture.assert_interrupted_cleanup_recovery().await;
+    let cleanup_tree = fixture.assert_interrupted_cleanup_recovery().await;
+    fixture
+        .assert_terminal_cleanup_root_recovery(cleanup_tree)
+        .await;
     fixture.assert_historical_release_authority().await;
     fixture.assert_database_and_object_closure().await;
 }
@@ -57,7 +73,6 @@ impl VerificationFixture {
         use futures_util::stream;
 
         let directory = tempfile::tempdir().unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let release_manifest_path = directory.path().join("vps-release-manifest-v2.json");
         let release_identity = write_test_release_manifest(&release_manifest_path).await;
@@ -90,7 +105,6 @@ impl VerificationFixture {
         )
         .await
         .unwrap();
-        #[cfg(unix)]
         for secret in [
             &config.cursor_secret_path,
             &config.competition_run_grant_secret_path,
@@ -162,7 +176,7 @@ impl VerificationFixture {
             _campaign_store: campaign_store,
         }
     }
-    async fn assert_interrupted_cleanup_recovery(&self) {
+    async fn assert_interrupted_cleanup_recovery(&self) -> CleanupTree {
         let directory = &self.directory;
         let release_identity = self.release_identity.clone();
         let config = self.config.clone();
@@ -199,7 +213,6 @@ impl VerificationFixture {
         assert!(!directory.path().join(&journal_name).exists());
 
         std::fs::write(directory.path().join(&partial_name), []).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&partial_name),
             std::fs::Permissions::from_mode(0o400),
@@ -219,7 +232,6 @@ impl VerificationFixture {
         )
         .unwrap();
         std::fs::write(directory.path().join(&partial_name), &cleanup_journal_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&partial_name),
             std::fs::Permissions::from_mode(0o400),
@@ -249,16 +261,22 @@ impl VerificationFixture {
         .unwrap();
         let interrupted_payload = &manifest.files[0].relative_path;
         assert!(
-            rename_verified_entry_to_tombstone_with_hooks(
-                &backup_directory,
-                interrupted_payload,
-                *verified_tree
-                    .file_identities()
-                    .get(interrupted_payload)
-                    .unwrap(),
-                false,
-                || Ok(()),
-                || anyhow::bail!("injected crash after cleanup tombstone rename"),
+            rename_verified_entry_to_tombstone(
+                TombstoneRenameRequest {
+                    root: &backup_directory,
+                    relative: interrupted_payload,
+                    expected_identity: *verified_tree
+                        .file_identities()
+                        .get(interrupted_payload)
+                        .unwrap(),
+                    is_directory: false,
+                },
+                TombstoneRenameHooks {
+                    before_rename: None,
+                    after_rename: Some(Box::new(|| {
+                        anyhow::bail!("injected crash after cleanup tombstone rename")
+                    })),
+                },
             )
             .is_err()
         );
@@ -296,19 +314,23 @@ impl VerificationFixture {
         let original_payload = destination.join(&substituted_payload);
         let linked_payload = directory.path().join("cleanup-payload-hardlink");
         assert!(
-            rename_verified_entry_to_tombstone_with_hooks(
-                &backup_directory,
-                &substituted_payload,
-                *verified_tree
-                    .file_identities()
-                    .get(&substituted_payload)
-                    .unwrap(),
-                false,
-                || {
-                    std::fs::hard_link(&original_payload, &linked_payload)?;
-                    Ok(())
+            rename_verified_entry_to_tombstone(
+                TombstoneRenameRequest {
+                    root: &backup_directory,
+                    relative: &substituted_payload,
+                    expected_identity: *verified_tree
+                        .file_identities()
+                        .get(&substituted_payload)
+                        .unwrap(),
+                    is_directory: false,
                 },
-                || Ok(()),
+                TombstoneRenameHooks {
+                    before_rename: Some(Box::new(|| {
+                        std::fs::hard_link(&original_payload, &linked_payload)?;
+                        Ok(())
+                    })),
+                    after_rename: None,
+                },
             )
             .is_err(),
             "a newly hard-linked payload must fail the post-rename nlink=1 boundary"
@@ -327,25 +349,28 @@ impl VerificationFixture {
         let displaced_payload = directory.path().join("displaced-cleanup-payload");
         let replacement_bytes = std::fs::read(&original_payload).unwrap();
         assert!(
-            rename_verified_entry_to_tombstone_with_hooks(
-                &backup_directory,
-                &substituted_payload,
-                *verified_tree
-                    .file_identities()
-                    .get(&substituted_payload)
-                    .unwrap(),
-                false,
-                || {
-                    std::fs::rename(&original_payload, &displaced_payload)?;
-                    std::fs::write(&original_payload, &replacement_bytes)?;
-                    #[cfg(unix)]
-                    std::fs::set_permissions(
-                        &original_payload,
-                        std::fs::Permissions::from_mode(0o600),
-                    )?;
-                    Ok(())
+            rename_verified_entry_to_tombstone(
+                TombstoneRenameRequest {
+                    root: &backup_directory,
+                    relative: &substituted_payload,
+                    expected_identity: *verified_tree
+                        .file_identities()
+                        .get(&substituted_payload)
+                        .unwrap(),
+                    is_directory: false,
                 },
-                || Ok(()),
+                TombstoneRenameHooks {
+                    before_rename: Some(Box::new(|| {
+                        std::fs::rename(&original_payload, &displaced_payload)?;
+                        std::fs::write(&original_payload, &replacement_bytes)?;
+                        std::fs::set_permissions(
+                            &original_payload,
+                            std::fs::Permissions::from_mode(0o600),
+                        )?;
+                        Ok(())
+                    })),
+                    after_rename: None,
+                },
             )
             .is_err(),
             "a pathname substitution at the unlink boundary must be moved aside and preserved"
@@ -363,24 +388,27 @@ impl VerificationFixture {
             destination.join(cleanup_tombstone_relative(&substituted_payload).unwrap());
         let displaced_final_tombstone = directory.path().join("displaced-final-tombstone");
         assert!(
-            rename_verified_entry_to_tombstone_with_hooks(
-                &backup_directory,
-                &substituted_payload,
-                *verified_tree
-                    .file_identities()
-                    .get(&substituted_payload)
-                    .unwrap(),
-                false,
-                || Ok(()),
-                || {
-                    std::fs::rename(&final_tombstone, &displaced_final_tombstone)?;
-                    std::fs::write(&final_tombstone, b"replacement-at-final-unlink")?;
-                    #[cfg(unix)]
-                    std::fs::set_permissions(
-                        &final_tombstone,
-                        std::fs::Permissions::from_mode(0o600),
-                    )?;
-                    Ok(())
+            rename_verified_entry_to_tombstone(
+                TombstoneRenameRequest {
+                    root: &backup_directory,
+                    relative: &substituted_payload,
+                    expected_identity: *verified_tree
+                        .file_identities()
+                        .get(&substituted_payload)
+                        .unwrap(),
+                    is_directory: false,
+                },
+                TombstoneRenameHooks {
+                    before_rename: None,
+                    after_rename: Some(Box::new(|| {
+                        std::fs::rename(&final_tombstone, &displaced_final_tombstone)?;
+                        std::fs::write(&final_tombstone, b"replacement-at-final-unlink")?;
+                        std::fs::set_permissions(
+                            &final_tombstone,
+                            std::fs::Permissions::from_mode(0o600),
+                        )?;
+                        Ok(())
+                    })),
                 },
             )
             .is_err(),
@@ -396,6 +424,26 @@ impl VerificationFixture {
             backup_tree_paths_cap(&backup_directory).unwrap(),
             verified_tree
         );
+        CleanupTree {
+            backup_parent,
+            backup_directory,
+            verified_tree,
+        }
+    }
+
+    async fn assert_terminal_cleanup_root_recovery(&self, tree: CleanupTree) {
+        let directory = &self.directory;
+        let release_identity = self.release_identity.clone();
+        let config = self.config.clone();
+        let restore_sources = self.restore_sources.clone();
+        let created_at_unix_ms = self.created_at_unix_ms;
+        let destination = self.destination.clone();
+        let backup_id = destination.file_name().unwrap().to_str().unwrap();
+        let CleanupTree {
+            backup_parent,
+            backup_directory,
+            verified_tree,
+        } = tree;
         let (cleanup_journal, cleanup_journal_bytes, cleanup_name, journal_name, partial_name) =
             cleanup_journal_for_verified_tree(
                 &backup_parent,
@@ -418,7 +466,6 @@ impl VerificationFixture {
             b"preserve",
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(
             directory.path().join(&cleanup_name).join("unexpected"),
             std::fs::Permissions::from_mode(0o600),
@@ -437,12 +484,18 @@ impl VerificationFixture {
         );
         std::fs::remove_file(directory.path().join(&cleanup_name).join("unexpected")).unwrap();
         assert!(
-            resume_authenticated_cleanup_with_hooks(
-                &backup_parent,
-                &cleanup_journal,
-                &[0x31; 32],
-                || anyhow::bail!("injected crash after terminal cleanup-root rename"),
-                || Ok(()),
+            resume_authenticated_cleanup(
+                ResumeCleanupRequest {
+                    backup_root: &backup_parent,
+                    journal: &cleanup_journal,
+                    backup_authority_key: &[0x31; 32],
+                },
+                ResumeCleanupHooks {
+                    after_terminal_rename: Some(Box::new(|| {
+                        anyhow::bail!("injected crash after terminal cleanup-root rename")
+                    })),
+                    after_terminal_root_remove: None,
+                },
             )
             .is_err()
         );
@@ -489,12 +542,18 @@ impl VerificationFixture {
         .unwrap();
         std::fs::rename(&destination, directory.path().join(&cleanup_name)).unwrap();
         assert!(
-            resume_authenticated_cleanup_with_hooks(
-                &backup_parent,
-                &cleanup_journal,
-                &[0x31; 32],
-                || Ok(()),
-                || anyhow::bail!("injected crash after terminal cleanup-root removal"),
+            resume_authenticated_cleanup(
+                ResumeCleanupRequest {
+                    backup_root: &backup_parent,
+                    journal: &cleanup_journal,
+                    backup_authority_key: &[0x31; 32],
+                },
+                ResumeCleanupHooks {
+                    after_terminal_rename: None,
+                    after_terminal_root_remove: Some(Box::new(|| {
+                        anyhow::bail!("injected crash after terminal cleanup-root removal")
+                    })),
+                },
             )
             .is_err()
         );
@@ -579,7 +638,6 @@ impl VerificationFixture {
         let displaced_authority = authority_store.join("displaced-authority");
         std::fs::rename(&authority_file, &displaced_authority).unwrap();
         std::fs::write(&authority_file, b"{}").unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&authority_file, std::fs::Permissions::from_mode(0o400)).unwrap();
         assert!(
             verify_historical_backup_chain_with_compiled_schema(
@@ -615,14 +673,12 @@ impl VerificationFixture {
             &[0x31; 32],
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::write(
             &envelope_path,
             canonical_json_bytes(&mismatched_envelope).unwrap(),
         )
         .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).unwrap();
         assert!(
             verify_historical_backup_chain_with_compiled_schema(
@@ -636,10 +692,8 @@ impl VerificationFixture {
             "a re-signed backup identity without its exact independently preserved authority must fail"
         );
         std::fs::write(&manifest_path, &original_manifest_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::write(&envelope_path, &original_envelope_bytes).unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).unwrap();
         let backup_root = pin_directory_capability(&destination).unwrap();
         assert!(

@@ -6014,7 +6014,6 @@ dependencies = [
  "clap",
  "command-fds",
  "ed25519-dalek",
- "fs2",
  "futures-util",
  "hex",
  "hmac",
@@ -6088,11 +6087,12 @@ dependencies = [
  "nix 0.29.0",
  "robin_assets",
  "robin_engine",
- "robin_official_content",
  "robin_run_protocol",
+ "robin_util",
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
@@ -6116,19 +6116,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "robin_official_content"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "robin_assets",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
 ]
 
 [[package]]
@@ -6283,8 +6270,8 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
+ "robin_manifest_tool",
  "robin_modding_tools",
- "robin_official_content",
  "robin_replay_format",
  "robin_run_protocol",
  "robin_spellforge",
@@ -6332,6 +6319,7 @@ dependencies = [
  "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
  "ed25519-dalek",
  "hex",
+ "robin_util",
  "semver",
  "serde",
  "serde_json",

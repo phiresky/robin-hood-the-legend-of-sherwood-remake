@@ -11,6 +11,7 @@ use crate::leaderboard_ranked_session::{
     OfficialRankedSessionSetupV1, RankedRunPreflightAdmissionV1, public_key, signature,
 };
 use ed25519_dalek::SigningKey;
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     ArtifactRefV1, CampaignChainReceiptV1, CampaignChainStateV1, CanonicalDocument as _,
     ChallengeNonce32, Digest32, FreshRunPreflightGrantClaimV1, FreshRunPreflightGrantV1,

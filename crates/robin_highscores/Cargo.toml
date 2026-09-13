@@ -10,6 +10,7 @@ test-support = []
 
 [[test]]
 name = "router_e2e"
+path = "tests/router_e2e/main.rs"
 required-features = ["test-support"]
 
 [lib]
@@ -68,10 +69,6 @@ uuid = { version = "1", features = ["serde", "v7"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 nix_legacy = { package = "nix", version = "0.29", features = ["fs"] }
 sd-notify = "0.5"
-
-[target.'cfg(not(unix))'.dependencies]
-# Unix authority uses rustix; retain the existing Windows capacity/lock backend.
-fs2.workspace = true
 
 [dev-dependencies]
 # Independent compatibility oracle for persisted HMAC authorities and cursors.

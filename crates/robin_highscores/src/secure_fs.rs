@@ -1,65 +1,97 @@
 //! Descriptor-relative filesystem primitives for private object stores.
 //!
 //! The ambient path is used only once, while opening the root. Every later
-//! lookup is relative to that pinned directory capability. Linux additionally
-//! uses `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` for file and directory
-//! opens; mutation uses cap-std's confined `*at` operations.
+//! lookup is relative to that pinned directory capability. File and directory
+//! opens use `openat2(RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS)` (plus
+//! `RESOLVE_BENEATH` for relative lookups); mutation uses cap-std's confined
+//! `*at` operations. The crate is Linux-only (see the `compile_error!` in
+//! `lib.rs`), so no portability fallbacks exist here.
 
 use cap_std::fs::{Dir, OpenOptions};
+use rustix::fs::{CWD, Mode, OFlags, ResolveFlags};
+use rustix::path::Arg;
 use std::io::ErrorKind;
+use std::os::fd::{AsFd, OwnedFd};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 /// Reject symlinks without replacing the caller's descriptor identity checks.
 ///
 /// Access, mode and additional confinement remain explicit: relative callers
-/// specify BENEATH; mount-bound callers additionally specify NO_XDEV.
-#[cfg(target_os = "linux")]
+/// specify BENEATH; mount-bound callers additionally specify NO_XDEV. Prefer
+/// the narrower helpers below; this stays public for irregular combinations.
 pub fn open_no_symlinks_at(
-    directory: impl std::os::fd::AsFd,
-    path: impl rustix::path::Arg,
-    flags: rustix::fs::OFlags,
-    mode: rustix::fs::Mode,
-    additional_resolution: rustix::fs::ResolveFlags,
-) -> rustix::io::Result<std::os::fd::OwnedFd> {
+    directory: impl AsFd,
+    path: impl Arg,
+    flags: OFlags,
+    mode: Mode,
+    additional_resolution: ResolveFlags,
+) -> rustix::io::Result<OwnedFd> {
     rustix::fs::openat2(
         directory,
         path,
         flags,
         mode,
-        additional_resolution
-            | rustix::fs::ResolveFlags::NO_SYMLINKS
-            | rustix::fs::ResolveFlags::NO_MAGICLINKS,
+        additional_resolution | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
     )
 }
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
+/// Ambient (CWD-relative or absolute) open with `flags` and no extra resolution.
+pub fn open_ambient_no_symlinks(path: impl Arg, flags: OFlags) -> rustix::io::Result<OwnedFd> {
+    open_no_symlinks_at(CWD, path, flags, Mode::empty(), ResolveFlags::empty())
+}
+
+/// Ambient `O_RDONLY | O_CLOEXEC | O_DIRECTORY` open.
+pub fn open_dir_no_symlinks(path: impl Arg) -> rustix::io::Result<OwnedFd> {
+    open_ambient_no_symlinks(path, OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY)
+}
+
+/// Ambient `O_RDONLY | O_CLOEXEC` open. Performs no file-type check.
+pub fn open_file_no_symlinks(path: impl Arg) -> rustix::io::Result<OwnedFd> {
+    open_ambient_no_symlinks(path, OFlags::RDONLY | OFlags::CLOEXEC)
+}
+
+/// `RESOLVE_BENEATH` open relative to `directory` with `flags` and no mode.
+pub fn open_beneath_no_symlinks(
+    directory: impl AsFd,
+    path: impl Arg,
+    flags: OFlags,
+) -> rustix::io::Result<OwnedFd> {
+    open_no_symlinks_at(directory, path, flags, Mode::empty(), ResolveFlags::BENEATH)
+}
+
+/// `RESOLVE_BENEATH | RESOLVE_NO_XDEV` open relative to `directory` with no mode.
+pub fn open_beneath_same_mount_no_symlinks(
+    directory: impl AsFd,
+    path: impl Arg,
+    flags: OFlags,
+) -> rustix::io::Result<OwnedFd> {
+    open_no_symlinks_at(
+        directory,
+        path,
+        flags,
+        Mode::empty(),
+        ResolveFlags::BENEATH | ResolveFlags::NO_XDEV,
+    )
+}
+
+/// `RESOLVE_BENEATH` open relative to `directory` with an explicit creation mode.
+pub fn create_beneath_no_symlinks(
+    directory: impl AsFd,
+    path: impl Arg,
+    flags: OFlags,
+    mode: Mode,
+) -> rustix::io::Result<OwnedFd> {
+    open_no_symlinks_at(directory, path, flags, mode, ResolveFlags::BENEATH)
+}
 
 /// Open a regular ambient file without following any symlink component.
 pub fn open_regular_no_symlinks(path: &Path) -> std::io::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{CWD, Mode, OFlags, ResolveFlags};
-        let file = std::fs::File::from(open_no_symlinks_at(
-            CWD,
-            path,
-            OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::empty(),
-        )?);
-        if !file.metadata()?.is_file() {
-            return Err(std::io::Error::other("path is not a regular file"));
-        }
-        Ok(file)
+    let file = std::fs::File::from(open_file_no_symlinks(path)?);
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("path is not a regular file"));
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = path;
-        Err(std::io::Error::new(
-            ErrorKind::Unsupported,
-            "no-symlink authority requires Linux openat2",
-        ))
-    }
+    Ok(file)
 }
 
 /// Bound both the initial metadata and a file that grows while being read.
@@ -93,43 +125,25 @@ pub mod file_lock {
     use std::io;
 
     macro_rules! operation {
-        ($name:ident, $unix:ident, $portable:ident) => {
+        ($name:ident, $operation:ident) => {
             pub fn $name(file: &File) -> io::Result<()> {
-                #[cfg(unix)]
-                {
-                    rustix::fs::flock(file, rustix::fs::FlockOperation::$unix)
-                        .map_err(io::Error::from)
-                }
-                #[cfg(not(unix))]
-                {
-                    fs2::FileExt::$portable(file)
-                }
+                rustix::fs::flock(file, rustix::fs::FlockOperation::$operation)
+                    .map_err(io::Error::from)
             }
         };
     }
-    operation!(lock_shared, LockShared, lock_shared);
-    operation!(try_lock_shared, NonBlockingLockShared, try_lock_shared);
-    operation!(
-        try_lock_exclusive,
-        NonBlockingLockExclusive,
-        try_lock_exclusive
-    );
-    operation!(unlock, Unlock, unlock);
+    operation!(lock_shared, LockShared);
+    operation!(try_lock_shared, NonBlockingLockShared);
+    operation!(try_lock_exclusive, NonBlockingLockExclusive);
+    operation!(unlock, Unlock);
 }
 
 pub fn available_space(path: &Path) -> std::io::Result<u64> {
-    #[cfg(unix)]
-    {
-        let filesystem = rustix::fs::statvfs(path)?;
-        filesystem
-            .f_frsize
-            .checked_mul(filesystem.f_bavail)
-            .ok_or_else(|| std::io::Error::other("available filesystem space overflows"))
-    }
-    #[cfg(not(unix))]
-    {
-        fs2::available_space(path)
-    }
+    let filesystem = rustix::fs::statvfs(path)?;
+    filesystem
+        .f_frsize
+        .checked_mul(filesystem.f_bavail)
+        .ok_or_else(|| std::io::Error::other("available filesystem space overflows"))
 }
 
 /// Shared API/worker state is private to the deployment's dedicated data
@@ -140,26 +154,10 @@ pub(crate) const SHARED_MUTABLE_FILE_MODE: u32 = 0o660;
 pub(crate) const SHARED_IMMUTABLE_FILE_MODE: u32 = 0o440;
 
 pub(crate) fn pin_private_root(path: &Path) -> std::io::Result<Dir> {
-    #[cfg(target_os = "linux")]
-    let file = {
-        use rustix::fs::{Mode, OFlags};
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            rustix::fs::CWD,
-            path,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::empty(),
-        )
-        .map_err(std::io::Error::from)?;
-        std::fs::File::from(fd)
-    };
-    #[cfg(not(target_os = "linux"))]
-    let file =
-        cap_std::fs::Dir::open_ambient_dir(path, cap_std::ambient_authority())?.into_std_file();
+    let file = std::fs::File::from(open_dir_no_symlinks(path).map_err(std::io::Error::from)?);
     if !file.metadata()?.is_dir() {
         return Err(std::io::Error::other("storage root is not a directory"));
     }
-    #[cfg(unix)]
     if file.metadata()?.permissions().mode() & 0o7777 != SHARED_PRIVATE_DIRECTORY_MODE {
         file.set_permissions(std::fs::Permissions::from_mode(
             SHARED_PRIVATE_DIRECTORY_MODE,
@@ -169,26 +167,17 @@ pub(crate) fn pin_private_root(path: &Path) -> std::io::Result<Dir> {
 }
 
 pub(crate) fn open_private_dir(parent: &Dir, relative: &Path) -> std::io::Result<Dir> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            parent.as_fd(),
-            relative,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
-        )
-        .map_err(std::io::Error::from)?;
-        let file = std::fs::File::from(fd);
-        if !file.metadata()?.is_dir() {
-            return Err(std::io::Error::other("storage shard is not a directory"));
-        }
-        Ok(Dir::from_std_file(file))
+    let fd = open_beneath_no_symlinks(
+        parent,
+        relative,
+        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
+    )
+    .map_err(std::io::Error::from)?;
+    let file = std::fs::File::from(fd);
+    if !file.metadata()?.is_dir() {
+        return Err(std::io::Error::other("storage shard is not a directory"));
     }
-    #[cfg(not(target_os = "linux"))]
-    parent.open_dir(relative)
+    Ok(Dir::from_std_file(file))
 }
 
 pub(crate) fn ensure_private_dir(parent: &Dir, name: &Path) -> std::io::Result<Dir> {
@@ -199,14 +188,11 @@ pub(crate) fn ensure_private_dir(parent: &Dir, name: &Path) -> std::io::Result<D
     }
     let directory = open_private_dir(parent, name)?;
     // Apply the mode through the already-open directory inode.
-    #[cfg(unix)]
-    {
-        let file = directory.try_clone()?.into_std_file();
-        if file.metadata()?.permissions().mode() & 0o7777 != SHARED_PRIVATE_DIRECTORY_MODE {
-            file.set_permissions(std::fs::Permissions::from_mode(
-                SHARED_PRIVATE_DIRECTORY_MODE,
-            ))?;
-        }
+    let file = directory.try_clone()?.into_std_file();
+    if file.metadata()?.permissions().mode() & 0o7777 != SHARED_PRIVATE_DIRECTORY_MODE {
+        file.set_permissions(std::fs::Permissions::from_mode(
+            SHARED_PRIVATE_DIRECTORY_MODE,
+        ))?;
     }
     Ok(directory)
 }
@@ -215,38 +201,18 @@ pub(crate) fn create_private_file(parent: &Dir, name: &Path) -> std::io::Result<
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     let file = parent.open_with(name, &options)?.into_std();
-    #[cfg(unix)]
     file.set_permissions(std::fs::Permissions::from_mode(SHARED_MUTABLE_FILE_MODE))?;
     Ok(file)
 }
 
 pub(crate) fn open_regular_file(parent: &Dir, name: &Path) -> std::io::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            parent.as_fd(),
-            name,
-            OFlags::RDONLY | OFlags::CLOEXEC,
-            Mode::empty(),
-            rustix::fs::ResolveFlags::BENEATH,
-        )
+    let fd = open_beneath_no_symlinks(parent, name, OFlags::RDONLY | OFlags::CLOEXEC)
         .map_err(std::io::Error::from)?;
-        let file = std::fs::File::from(fd);
-        if !file.metadata()?.is_file() {
-            return Err(std::io::Error::other("stored object is not a regular file"));
-        }
-        Ok(file)
+    let file = std::fs::File::from(fd);
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("stored object is not a regular file"));
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let file = parent.open(name)?.into_std();
-        if !file.metadata()?.is_file() {
-            return Err(std::io::Error::other("stored object is not a regular file"));
-        }
-        Ok(file)
-    }
+    Ok(file)
 }
 
 pub(crate) fn open_private_database_file(
@@ -254,50 +220,24 @@ pub(crate) fn open_private_database_file(
     name: &Path,
     create: bool,
 ) -> std::io::Result<std::fs::File> {
-    #[cfg(target_os = "linux")]
-    {
-        use rustix::fs::{Mode, OFlags};
-        use std::os::fd::AsFd as _;
-        let mut flags = OFlags::RDWR | OFlags::CLOEXEC;
-        if create {
-            flags |= OFlags::CREATE;
-        }
-        let mode = if create {
-            Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::WGRP
-        } else {
-            Mode::empty()
-        };
-        let fd = crate::secure_fs::open_no_symlinks_at(
-            parent.as_fd(),
-            name,
-            flags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
-        .map_err(std::io::Error::from)?;
-        let file = std::fs::File::from(fd);
-        if !file.metadata()?.is_file() {
-            return Err(std::io::Error::other("database is not a regular file"));
-        }
-        if file.metadata()?.permissions().mode() & 0o777 != SHARED_MUTABLE_FILE_MODE {
-            file.set_permissions(std::fs::Permissions::from_mode(SHARED_MUTABLE_FILE_MODE))?;
-        }
-        Ok(file)
+    let mut flags = OFlags::RDWR | OFlags::CLOEXEC;
+    if create {
+        flags |= OFlags::CREATE;
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(create);
-        let file = parent.open_with(name, &options)?.into_std();
-        if !file.metadata()?.is_file() {
-            return Err(std::io::Error::other("database is not a regular file"));
-        }
-        #[cfg(unix)]
-        if file.metadata()?.permissions().mode() & 0o777 != SHARED_MUTABLE_FILE_MODE {
-            file.set_permissions(std::fs::Permissions::from_mode(SHARED_MUTABLE_FILE_MODE))?;
-        }
-        Ok(file)
+    let mode = if create {
+        Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::WGRP
+    } else {
+        Mode::empty()
+    };
+    let fd = create_beneath_no_symlinks(parent, name, flags, mode).map_err(std::io::Error::from)?;
+    let file = std::fs::File::from(fd);
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other("database is not a regular file"));
     }
+    if file.metadata()?.permissions().mode() & 0o777 != SHARED_MUTABLE_FILE_MODE {
+        file.set_permissions(std::fs::Permissions::from_mode(SHARED_MUTABLE_FILE_MODE))?;
+    }
+    Ok(file)
 }
 
 pub(crate) fn sync_private_dir(directory: &Dir) -> std::io::Result<()> {
@@ -355,7 +295,6 @@ pub(crate) async fn remove_temporary_and_sync(
 mod object_tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn bounded_authority_rejects_links_directories_and_oversized_files() {
         let root = tempfile::tempdir().unwrap();
@@ -372,10 +311,8 @@ mod object_tests {
         assert!(read_bounded_no_symlinks(&parent_alias.join("authority"), 5).is_err());
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
     fn relative_authority_retains_beneath_and_pinned_directory_semantics() {
-        use rustix::fs::{Mode, OFlags, ResolveFlags};
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("pinned");
         std::fs::create_dir(&directory).unwrap();

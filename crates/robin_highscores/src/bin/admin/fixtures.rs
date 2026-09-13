@@ -16,7 +16,6 @@ use robin_run_protocol::ArtifactRefV1;
 use robin_run_protocol::Digest32;
 use robin_run_protocol::canonical_json_bytes;
 use std::collections::BTreeMap;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -90,7 +89,6 @@ pub(super) async fn write_test_release_manifest(path: &Path) -> BackupReleaseIde
     )
     .await
     .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o440)).unwrap();
     load_backup_release_identity_oob(path).await.unwrap()
 }
@@ -106,7 +104,6 @@ pub(super) async fn test_restore_sources(
         &config.run_preflight_grant_secret_path,
         config.moderation_bearer_token_path.as_ref().unwrap(),
     ] {
-        #[cfg(unix)]
         std::fs::set_permissions(secret, std::fs::Permissions::from_mode(0o400)).unwrap();
         sources.insert(secret.clone(), secret.clone());
     }
@@ -117,7 +114,6 @@ pub(super) async fn test_restore_sources(
         write_private_file(&source, format!("fixture {unit}\n").as_bytes())
             .await
             .unwrap();
-        #[cfg(unix)]
         std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o440)).unwrap();
         sources.insert(Path::new(SYSTEMD_USER_ROOT).join(unit), source);
     }
@@ -143,12 +139,10 @@ pub(super) async fn refresh_database_manifest_entry(directory: &Path) {
     let envelope =
         BackupVerificationEnvelopeV2::new_authenticated(backup_id, &manifest, &[0x31; 32]).unwrap();
     let envelope_path = directory.join("backup-verification-envelope.json");
-    #[cfg(unix)]
     std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o600)).unwrap();
     tokio::fs::write(&envelope_path, canonical_json_bytes(&envelope).unwrap())
         .await
         .unwrap();
-    #[cfg(unix)]
     std::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).unwrap();
 }
 

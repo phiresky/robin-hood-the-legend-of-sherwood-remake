@@ -56,7 +56,6 @@ where
     F: FnOnce(&Path) -> Result<()>,
 {
     crate::sync_directory_tree(staging.path())?;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         staging.path(),
@@ -71,11 +70,6 @@ where
             output.display()
         )
     })?;
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        let _ = (staging, output);
-        anyhow::bail!("VPS release installation requires atomic rename NOREPLACE support");
-    }
     let parent = output.parent().context("VPS output has no parent")?;
     Ok(match sync_parent(parent) {
         Ok(()) => VpsPersistenceOutcome::Installed,

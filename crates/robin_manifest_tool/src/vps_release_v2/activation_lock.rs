@@ -93,18 +93,29 @@ impl PinnedVpsActivationLockV2 {
             current_lock_metadata.st_mode,
             current_lock_metadata.st_uid,
             current_lock_metadata.st_nlink as u64,
-            &format!("canonical activation lock changed while its descriptor was held"),
+            "canonical activation lock changed while its descriptor was held",
+        )?;
+        fd_policy::ensure_mode(
+            current_lock_metadata.st_mode,
+            &[0o600],
+            "canonical activation lock mode changed while its descriptor was held",
         )?;
         ensure!(
-            current_lock_metadata.st_mode & 0o777 == 0o600
-                && current_lock_metadata.st_dev == self.lock_device
+            current_lock_metadata.st_dev == self.lock_device
                 && current_lock_metadata.st_ino == self.lock_inode
                 && held_lock_metadata.st_dev == self.lock_device
-                && held_lock_metadata.st_ino == self.lock_inode
-                && held_lock_metadata.st_nlink == 1
-                && held_lock_metadata.st_mode & 0o777 == 0o600,
+                && held_lock_metadata.st_ino == self.lock_inode,
             "canonical activation lock changed while its descriptor was held"
         );
+        fd_policy::ensure_single_link(
+            held_lock_metadata.st_nlink,
+            "held activation lock links changed while its descriptor was held",
+        )?;
+        fd_policy::ensure_mode(
+            held_lock_metadata.st_mode,
+            &[0o600],
+            "held activation lock mode changed while its descriptor was held",
+        )?;
         Ok(())
     }
 }
@@ -168,12 +179,20 @@ pub(super) fn pin_inherited_vps_activation_lock_at(
         inherited_metadata.st_mode,
         inherited_metadata.st_uid,
         inherited_metadata.st_nlink as u64,
-        &format!("inherited activation lock is not the canonical owner-only lock inode"),
+        "inherited activation lock is not the canonical owner-only lock inode",
+    )?;
+    fd_policy::ensure_mode(
+        inherited_metadata.st_mode,
+        &[0o600],
+        "inherited activation lock is not owner-only mode 0600",
+    )?;
+    fd_policy::ensure_device(
+        inherited_metadata.st_dev,
+        pinned_opt.st_dev,
+        "inherited activation lock is not on the activation opt root device",
     )?;
     ensure!(
-        inherited_metadata.st_mode & 0o777 == 0o600
-            && inherited_metadata.st_dev == pinned_opt.st_dev
-            && inherited_metadata.st_dev == canonical_metadata.st_dev
+        inherited_metadata.st_dev == canonical_metadata.st_dev
             && inherited_metadata.st_ino == canonical_metadata.st_ino,
         "inherited activation lock is not the canonical owner-only lock inode"
     );

@@ -7,7 +7,7 @@ use super::{
 };
 use crate::CanonicalDocument as _;
 use crate::{
-    ChallengeNonce32, ContentManifestV1, Digest32, OfficialContentEditionV1,
+    ChallengeNonce32, ContentManifestV1, Digest32, DomainSignedClaim, OfficialContentEditionV1,
     OfficialContentSubjectV1, PublicKey32, ResourceLocaleRootV1, Signature64, SimulationSeed64,
     SimulationSpeechTimingSourceV1, Validate, ValidationError,
 };
@@ -283,13 +283,7 @@ pub struct ReplaySessionGenesisClaimV1 {
     pub competition_run_grant: Option<CompetitionRunGrantV1>,
 }
 
-impl ReplaySessionGenesisClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for ReplaySessionGenesisClaimV1 {
+impl DomainSignedClaim for ReplaySessionGenesisClaimV1 {
     const DOMAIN: &'static [u8] = REPLAY_SESSION_GENESIS_SIGNATURE_DOMAIN_V1;
 }
 
@@ -446,13 +440,7 @@ pub struct NamedSeatJoinClaimV1 {
     pub host_nonce: ChallengeNonce32,
 }
 
-impl NamedSeatJoinClaimV1 {
-    pub fn signing_bytes(&self) -> Result<Vec<u8>, crate::canonical::CanonicalError> {
-        <Self as crate::canonical::DomainSignedClaim>::signing_bytes(self)
-    }
-}
-
-impl crate::canonical::DomainSignedClaim for NamedSeatJoinClaimV1 {
+impl DomainSignedClaim for NamedSeatJoinClaimV1 {
     const DOMAIN: &'static [u8] = NAMED_SEAT_JOIN_SIGNATURE_DOMAIN_V1;
 }
 

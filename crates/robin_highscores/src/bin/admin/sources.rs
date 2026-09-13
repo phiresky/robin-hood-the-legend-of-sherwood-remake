@@ -1,6 +1,9 @@
 //! Pinned restore sources and preserved immutable release authority.
 
+use super::filesystem::BoundaryHook;
 use super::filesystem::FileIdentity;
+use super::filesystem::UnlinkPinnedRegularHooks;
+use super::filesystem::UnlinkPinnedRegularRequest;
 use super::filesystem::cap_entry_exists;
 use super::filesystem::copy_open_file;
 use super::filesystem::duplicate_pinned_file;
@@ -16,6 +19,7 @@ use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::remove_pinned_regular_via_tombstone;
 use super::filesystem::revalidate_pinned_regular_path;
 use super::filesystem::revalidate_pinned_root_directory;
+use super::filesystem::run_boundary_hook;
 use super::filesystem::sync_cap_directory;
 use super::filesystem::unlink_pinned_regular;
 use super::filesystem::validate_managed_metadata;
@@ -31,7 +35,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
-#[cfg(all(test, unix))]
+#[cfg(test)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -45,7 +49,6 @@ pub(super) fn pin_preserved_release_authority_from_root(
     let root_metadata = root.dir_metadata()?;
     let store = open_cap_directory_nofollow(&root, Path::new(RELEASE_AUTHORITY_STORE))?;
     let store_metadata = store.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -129,7 +132,6 @@ pub(super) async fn preserve_release_authority(
     let root_guard = root.try_clone()?.into_std_file();
     revalidate_pinned_root_directory(&root_guard, backup_root, "backup root")?;
     let mut directory_builder = cap_std::fs::DirBuilder::new();
-    #[cfg(unix)]
     {
         use cap_std::fs::DirBuilderExt as _;
         directory_builder.mode(0o700);
@@ -149,7 +151,6 @@ pub(super) async fn preserve_release_authority(
     revalidate_pinned_root_directory(&authority_guard, &authority_path, "release-authority store")?;
     let root_metadata = root.dir_metadata()?;
     let authority_metadata = authority.dir_metadata()?;
-    #[cfg(unix)]
     {
         use cap_std::fs::{MetadataExt as _, PermissionsExt as _};
         anyhow::ensure!(
@@ -174,19 +175,21 @@ pub(super) async fn preserve_release_authority(
             "discarded release-authority partial was substituted before recovery"
         );
         unlink_pinned_regular(
-            &authority,
-            &discarded_partial_name,
-            &discarded,
-            discarded_identity,
-            0o400,
-            "discarded release-authority partial",
+            UnlinkPinnedRegularRequest {
+                parent: &authority,
+                name: &discarded_partial_name,
+                pinned: &discarded,
+                expected_identity: discarded_identity,
+                expected_mode: 0o400,
+                label: "discarded release-authority partial",
+            },
+            UnlinkPinnedRegularHooks::default(),
         )?;
         drop(discarded_bytes);
     }
     match authority.symlink_metadata(&partial_name) {
         Ok(metadata) => {
             validate_managed_metadata(&metadata, &root_metadata, false)?;
-            #[cfg(unix)]
             {
                 use cap_std::fs::PermissionsExt as _;
                 anyhow::ensure!(
@@ -223,7 +226,6 @@ pub(super) async fn preserve_release_authority(
     {
         let mut options = cap_std::fs::OpenOptions::new();
         options.write(true).create_new(true);
-        #[cfg(unix)]
         {
             use cap_std::fs::OpenOptionsExt as _;
             options.mode(0o400);
@@ -235,7 +237,6 @@ pub(super) async fn preserve_release_authority(
         sync_cap_directory(&authority)?;
     }
     if !cap_entry_exists(&authority, Path::new(&name))? {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -246,8 +247,6 @@ pub(super) async fn preserve_release_authority(
                 rustix::fs::RenameFlags::NOREPLACE,
             )?;
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        anyhow::bail!("release-authority NOREPLACE publication requires Linux renameat2");
         sync_cap_directory(&authority)?;
     } else if cap_entry_exists(&authority, Path::new(&partial_name))? {
         let partial = open_cap_regular_nofollow(&authority, Path::new(&partial_name))?;
@@ -275,7 +274,6 @@ pub(super) async fn preserve_release_authority(
     }
     let file = open_cap_regular_nofollow(&authority, Path::new(&name))?;
     validate_private_pinned_file(&file, 0o400, "preserved release authority")?;
-    #[cfg(unix)]
     {
         anyhow::ensure!(
             metadata_identity_std(&file.metadata()?).device()
@@ -526,28 +524,33 @@ pub(super) fn pin_backup_restore_sources(
     Ok(pinned)
 }
 
-pub(super) async fn copy_pinned_restore_source(
-    source: &PinnedRestoreSource,
-    destination: &Path,
-) -> anyhow::Result<()> {
-    copy_pinned_restore_source_with_hook(source, destination, || Ok(())).await
+#[derive(Clone, Copy)]
+pub(super) struct RestoreSourceCopyRequest<'a> {
+    pub source: &'a PinnedRestoreSource,
+    pub destination: &'a Path,
 }
 
-async fn copy_pinned_restore_source_with_hook<F>(
-    source: &PinnedRestoreSource,
-    destination: &Path,
-    after_copy: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-{
+#[derive(Default)]
+pub(super) struct RestoreSourceCopyHooks<'a> {
+    pub after_copy: BoundaryHook<'a>,
+}
+
+pub(super) async fn copy_pinned_restore_source(
+    request: RestoreSourceCopyRequest<'_>,
+    hooks: RestoreSourceCopyHooks<'_>,
+) -> anyhow::Result<()> {
     use std::io::{Seek as _, SeekFrom};
 
+    let RestoreSourceCopyRequest {
+        source,
+        destination,
+    } = request;
+    let RestoreSourceCopyHooks { after_copy } = hooks;
     source.revalidate("backup restore source before copy")?;
     let mut duplicate = duplicate_pinned_file(&source.file, false)?;
     duplicate.seek(SeekFrom::Start(0))?;
     copy_open_file(tokio::fs::File::from_std(duplicate), destination).await?;
-    after_copy()?;
+    run_boundary_hook(after_copy)?;
     source.revalidate("backup restore source after copy")?;
     let target =
         read_bounded_regular_nofollow(destination, u64::try_from(source.bytes.len())?).await?;
