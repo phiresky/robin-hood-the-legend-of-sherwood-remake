@@ -1,5 +1,6 @@
 use super::scenarios::bind_walking_sprite;
 use super::*;
+use crate::engine::test_support::actors::for_both_creation_orders;
 
 use crate::element_kinds::Command;
 
@@ -3804,7 +3805,7 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
     }
 
     assert_eq!(
-        [observe(true), observe(false)],
+        for_both_creation_orders(observe),
         [
             Observation {
                 frame: 73,
@@ -4017,7 +4018,7 @@ fn seek_tolerance_observes_target_position_at_its_creation_order_boundary() {
     }
 
     assert_eq!(
-        [observe(true), observe(false)],
+        for_both_creation_orders(observe),
         [
             Observation {
                 seeker_slot: 0,
