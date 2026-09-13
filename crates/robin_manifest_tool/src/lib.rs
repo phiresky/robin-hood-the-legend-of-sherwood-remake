@@ -13,6 +13,9 @@ mod fs_util;
 mod test_fixtures;
 use fs_util::{read_regular_file_bounded, validate_regular_file};
 pub mod campaign_template_v1;
+/// Shared fail-closed selector and exact materializer used by both the
+/// projection exporter and operator verification tooling.
+pub mod official_content_source;
 pub mod plan_v3;
 pub mod publication_v3;
 pub mod release_admission_v1;
@@ -55,9 +58,6 @@ use crate::typed_js_authority::{
     JavaScriptBuildToolAuthorityDocumentV1, JavaScriptBuildToolRoleV1,
 };
 
-/// Shared fail-closed selector and exact materializer used by both the
-/// projection exporter and operator verification tooling.
-pub use robin_official_content as official_content_source;
 const MAX_DOCUMENT_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_PROJECTION_EXPORTER_BYTES: u64 = 512 * 1024 * 1024;
 const OFFICIAL_DEMO_RESOURCE_LOCALE_ROOT_V1: &str = "1033";

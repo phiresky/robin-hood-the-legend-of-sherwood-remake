@@ -29,7 +29,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `scripting-llvm` | `robin_spellforge`, `robin_lua` | Explicit poison recovery and native-session unwind tests with LLVM package overrides |
 | `engine` | `robin_engine` | Deterministic simulation tests |
 | `assets` | `robin_content`, `robin_assets`, `robin_data_io` | Content with/without simulation codecs; assets with/without engine adapters; fixture resolver tests; resolved pure-content dependency boundary |
-| `protocols` | `robin_run_protocol`, `robin_replay_format`, `robin_official_content`, `robin_ranked_verification`, `robin_identity_signer` | Wire, content, native helper discovery/containment/protocol, admission and isolated signer tests |
+| `protocols` | `robin_run_protocol`, `robin_replay_format`, `robin_ranked_verification`, `robin_identity_signer` | Wire, native helper discovery/containment/protocol, admission and isolated signer tests |
 | `services` | `robin_highscores`, `robin_manifest_tool`, `robin_replay_verifier` | Server, manifest and verifier tests |
 | `parity` | `robin_parity` | Runner unit/contract tests; does not replay licensed corpora |
 | `client` | `robin_rs`, default features | Build native admission helper, client tests, then a separate `robin` binary build |

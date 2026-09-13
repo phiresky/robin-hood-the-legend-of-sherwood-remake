@@ -22,12 +22,13 @@ goblin = "0.10"
 memchr = "2"
 nix_legacy = { package = "nix", version = "0.29", features = ["fs"] }
 robin_assets.workspace = true
-robin_official_content.workspace = true
 robin_engine.workspace = true
 robin_run_protocol.workspace = true
+robin_util.workspace = true
 rustix = { workspace = true, features = ["fs", "process"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 wait-timeout = "0.2"

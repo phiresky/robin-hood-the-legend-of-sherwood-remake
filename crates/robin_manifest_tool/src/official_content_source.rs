@@ -13,8 +13,6 @@
 //! overlays, user profile/localization state, and the persistent sound-duration
 //! cache. Those inputs are deliberately not laundered into this content proof.
 
-#![forbid(unsafe_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};

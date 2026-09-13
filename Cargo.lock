@@ -6088,11 +6088,12 @@ dependencies = [
  "nix 0.29.0",
  "robin_assets",
  "robin_engine",
- "robin_official_content",
  "robin_run_protocol",
+ "robin_util",
  "rustix 1.1.4",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
@@ -6116,19 +6117,6 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "robin_official_content"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "robin_assets",
- "robin_util",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
 ]
 
 [[package]]
@@ -6282,8 +6270,8 @@ dependencies = [
  "robin_assets",
  "robin_engine",
  "robin_lua",
+ "robin_manifest_tool",
  "robin_modding_tools",
- "robin_official_content",
  "robin_replay_format",
  "robin_run_protocol",
  "robin_spellforge",

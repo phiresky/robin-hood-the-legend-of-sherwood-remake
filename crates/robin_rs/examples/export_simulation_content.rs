@@ -180,7 +180,7 @@ fn hash_file(path: &Path) -> Result<(Digest32, u64)> {
 }
 
 fn protocol_files(
-    files: &[robin_official_content::SourceClosureFile],
+    files: &[robin_manifest_tool::official_content_source::SourceClosureFile],
 ) -> Vec<OfficialSourceFileV1> {
     files
         .iter()
@@ -233,9 +233,9 @@ fn validate_source_closure(
     let selected = match manifest.source_format {
         OfficialProjectionSourceFormatV1::LooseNativeV1 => {
             let inventory =
-                robin_official_content::inventory_loose_source_closure(root, locale.as_str())?;
+                robin_manifest_tool::official_content_source::inventory_loose_source_closure(root, locale.as_str())?;
             ensure!(
-                inventory.policy == robin_official_content::LOOSE_NATIVE_SOURCE_CLOSURE_V2
+                inventory.policy == robin_manifest_tool::official_content_source::LOOSE_NATIVE_SOURCE_CLOSURE_V2
                     && inventory.resource_locale_root == locale.as_str(),
                 "loose source selector returned the wrong policy"
             );
@@ -248,21 +248,21 @@ fn validate_source_closure(
             let before =
                 robin_assets::shipping_datadir::ShippingDatadir::load_from_file(&datadir_path)?;
             let references =
-                robin_official_content::shipping_projection_external_file_paths_v2(&before)?;
+                robin_manifest_tool::official_content_source::shipping_projection_external_file_paths_v2(&before)?;
             let inventory =
-                robin_official_content::inventory_shipping_source_closure(root, &references)?;
+                robin_manifest_tool::official_content_source::inventory_shipping_source_closure(root, &references)?;
             let paths = inventory
                 .files
                 .iter()
                 .map(|file| file.path.clone())
                 .collect::<Vec<_>>();
-            robin_official_content::validate_shipping_projection_source_relative_paths_v2(
+            robin_manifest_tool::official_content_source::validate_shipping_projection_source_relative_paths_v2(
                 &before, &paths,
             )?;
             let after =
                 robin_assets::shipping_datadir::ShippingDatadir::load_from_file(&datadir_path)?;
             ensure!(
-                robin_official_content::shipping_projection_external_file_paths_v2(&after)?
+                robin_manifest_tool::official_content_source::shipping_projection_external_file_paths_v2(&after)?
                     == references,
                 "shipping reference closure changed while hashing"
             );

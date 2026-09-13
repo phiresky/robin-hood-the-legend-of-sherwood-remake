@@ -8,7 +8,6 @@ members = [
     "crates/robin_data_io",
     "crates/robin_highscores",
     "crates/robin_manifest_tool",
-    "crates/robin_official_content",
     "crates/robin_parity",
     "crates/robin_replay_format",
     "crates/robin_replay_admission_wasm",
@@ -61,7 +60,7 @@ robin_data_io = { path = "crates/robin_data_io" }
 robin_assets = { path = "crates/robin_assets" }
 robin_engine = { path = "crates/robin_engine" }
 robin_lua = { path = "crates/robin_lua" }
-robin_official_content = { path = "crates/robin_official_content" }
+robin_manifest_tool = { path = "crates/robin_manifest_tool" }
 robin_replay_format = { path = "crates/robin_replay_format" }
 robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # Simulation consumers need wire types, not Ed25519. Authentication callers
