@@ -64,7 +64,11 @@ function requireImmutableApiResponse(response, label) {
         || expected.some(directive => !directives.includes(directive))) {
         throw new Error(`${label} must set Cache-Control: public, max-age=31536000, immutable`);
     }
-    if ((response.headers.get('x-content-type-options') ?? '').trim().toLowerCase() !== 'nosniff') {
+    // The API and nginx both emit nosniff; Fetch combines repeated fields.
+    // Require every value to agree, including rejecting empty list members.
+    const contentTypeOptions = (response.headers.get('x-content-type-options') ?? '')
+        .split(',').map(value => value.trim().toLowerCase());
+    if (contentTypeOptions.some(value => value !== 'nosniff')) {
         throw new Error(`${label} must set X-Content-Type-Options: nosniff`);
     }
     requireNoCors(response, label);

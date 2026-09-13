@@ -314,6 +314,17 @@ test('deployment smoke rejects an immutable API document without nosniff', async
     );
 });
 
+test('deployment smoke accepts combined repeated nosniff fields but rejects any other member', async () => {
+    // The API and nginx both emit the header; Fetch joins repeated fields.
+    await smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: 'nosniff, nosniff' }).fetchImpl);
+    for (const value of ['nosniff, ', 'nosniff, sniff']) {
+        await assert.rejects(
+            smokeCloudflareDeployment(fixtureFetch({ immutableContentTypeOptions: value }).fetchImpl),
+            /X-Content-Type-Options: nosniff/u,
+        );
+    }
+});
+
 test('deployment smoke rejects CORS on immutable API documents', async () => {
     const fixture = fixtureFetch({ immutableAllowOrigin: DEPLOYMENT.publicOrigin });
     await assert.rejects(
