@@ -9,6 +9,14 @@ export type RobinRpc = <T = unknown>(method: string, params?: unknown) => Promis
 export type ReplayQuery = { readonly content: string; readonly paused: boolean };
 export type PreparedReplay = ReplayQuery & { readonly buildBase: string };
 
+/** Only an explicit runtime hash overrides latest; a recording's hash is provenance. */
+export function replayRuntimeOverride(replay: string | null): string | undefined {
+    if (replay === null || replay.length === 0) return undefined;
+    if (/^[0-9a-f]{7,40}$/i.test(replay)) return replay;
+    if (/^rhrec-[0-9a-f]{7,40}-/i.test(replay)) return undefined;
+    throw new Error('replay= must be an rhrec compact replay or a git hash');
+}
+
 export function replayFromQuery(params = new URLSearchParams(window.location.search)): ReplayQuery | null {
     const content = params.get(REPLAY_QUERY_KEY);
     if (content === null || content.length === 0) {

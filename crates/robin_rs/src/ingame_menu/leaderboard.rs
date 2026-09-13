@@ -15,7 +15,7 @@ use crate::widget::FrameWnd;
 use robin_run_protocol::BoardMetricValueV1;
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, VAlign, draw_screen_background,
+    MENU_W, MenuRect, MenuTransform, TextAlign, VAlign, draw_screen_background,
     render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::IngameMenuResources;
@@ -296,10 +296,12 @@ impl MissionEndLeaderboardScreen {
                 font,
                 transform,
                 status,
-                TABLE_X,
-                365,
-                TABLE_W,
-                45,
+                MenuRect {
+                    x: TABLE_X,
+                    y: 365,
+                    w: TABLE_W,
+                    h: 45,
+                },
                 TextAlign::Center,
                 VAlign::Top,
             );
@@ -330,10 +332,12 @@ impl MissionEndLeaderboardScreen {
                     font,
                     transform,
                     &format!("Leaderboard unavailable: {error}"),
-                    TABLE_X + 10,
-                    TABLE_Y + 20,
-                    TABLE_W - 20,
-                    TABLE_H - 40,
+                    MenuRect {
+                        x: TABLE_X + 10,
+                        y: TABLE_Y + 20,
+                        w: TABLE_W - 20,
+                        h: TABLE_H - 40,
+                    },
                     TextAlign::Center,
                     VAlign::Top,
                 );

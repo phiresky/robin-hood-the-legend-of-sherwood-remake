@@ -570,7 +570,7 @@ impl From<SimEvents> for SideEffects {
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub struct SimulationFrameOutput {
+pub struct SimulationFrameOutput<Hash: robin_util::state_hash::StateHash = u64> {
     /// Engine frame counter on entry.
     pub frame_before: u32,
     /// Engine frame counter after the hourglass. A presentation-only freeze
@@ -590,15 +590,15 @@ pub struct SimulationFrameOutput {
     /// Results for pre- then post-hourglass external actions, in order.
     pub external_action_results: Vec<ExternalActionResult>,
     /// Canonical deterministic engine-state hash after the full modeled
-    /// transaction.
-    pub state_hash: u64,
+    /// transaction, or `()` when the caller explicitly did not request hashing.
+    pub state_hash: Hash,
     /// Structured terminal guest failure. The accompanying event code is
     /// `LevelInterrupted`, allowing live play and peers to exit cleanly.
     #[serde(default)]
     pub spellforge_abort: Option<crate::spellforge::SpellforgeGuestError>,
 }
 
-impl SimulationFrameOutput {
+impl<Hash: robin_util::state_hash::StateHash> SimulationFrameOutput<Hash> {
     pub fn game_code(&self) -> GameCode {
         self.events.game_code()
     }

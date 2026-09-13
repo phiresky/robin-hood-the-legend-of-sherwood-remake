@@ -17,7 +17,7 @@ use robin_engine::campaign as engine_campaign;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite as engine_sprite;
 
-use super::layout::MenuTransform;
+use super::layout::{MenuRect, MenuTransform};
 use super::resources::{
     IngameMenuResources, MT_INFOBULLE_BLAZON_TO_WIN, MT_INFOBULLE_BLAZON_TO_WIN_IN_ATTACK,
     MT_INFOBULLE_BLAZON_WON, MenuSurface,
@@ -104,14 +104,18 @@ pub fn render(
                     renderer,
                     transform,
                     surface.id,
-                    vx,
-                    vy,
-                    state.slot_w as i32,
-                    state.slot_h as i32,
-                    0,
-                    0,
-                    surface.width,
-                    surface.height,
+                    MenuRect {
+                        x: vx,
+                        y: vy,
+                        w: state.slot_w as i32,
+                        h: state.slot_h as i32,
+                    },
+                    MenuRect {
+                        x: 0,
+                        y: 0,
+                        w: surface.width,
+                        h: surface.height,
+                    },
                     true,
                 );
             }

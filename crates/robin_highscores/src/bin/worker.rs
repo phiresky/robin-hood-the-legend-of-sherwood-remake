@@ -910,11 +910,13 @@ async fn process_job(
                         verifier_digest,
                         output.job_config_artifact_sha256,
                         result,
-                        build_manifest,
-                        content_manifest,
-                        campaign_content_manifest,
-                        published_ruleset,
-                        competition_manifest,
+                        robin_highscores::db::AcceptanceManifests {
+                            build_manifest,
+                            content_manifest,
+                            campaign_content_manifest,
+                            published_ruleset,
+                            competition_manifest,
+                        },
                     )
                     .await
                 {

@@ -4,6 +4,13 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Replay compatibility across commits.** Ranked admission selects an approved
+  verifier using replay and network versions, without matching client source
+  commits or save-format versions. Upload, verification, download, and playback
+  preserve the recording's source metadata without requiring it to match the
+  verifier. Compact replay links use the current browser runtime. Content,
+  signatures, resource bounds, and deterministic replay checks remain enforced.
+
 - **Campaign leaderboard and replay submission links.** Campaign Manager and
   Hall of Deeds open the selected mission's campaign board or the full-campaign
   board in the browser. Previous Plays shows submission information and offers
@@ -1175,3 +1182,17 @@ protocol 42; ranked admission and browser invitations require matching versions.
 Rust saves/replays and peers are rejected by the existing strict version gates,
 not silently migrated. Original-game save import and original parity trace
 formats remain separate and unchanged.
+
+### One-command production release
+
+`scripts/release.sh` releases the leaderboard service (a Debian 12 container
+build, then `ops/deploy.sh` on the VPS) and the web game (runtime staging,
+full-corpus assembly, and `deploy-cloudflare.sh`) with one command. It supports
+`--server-only`, `--web-only`, `--rebuild-datadir`, `--dry-run` and
+`--ssh-config`. It refuses dirty trees and commits that are not the tip of
+`main`. It rebuilds the Demo datadir only when the live datadir header differs
+from `SHIPPING_DATADIR_VERSION`, logs every run, and prints the stage's
+rollback commands on failure. `deploy-cloudflare.sh` gained `--datadir-only`
+and `ROBINHOOD_PUBLIC_RETAIN`, so a public deploy keeps previously published
+public objects. `scripts/test_release.sh` (tooling suite) checks the script
+with stub tools.

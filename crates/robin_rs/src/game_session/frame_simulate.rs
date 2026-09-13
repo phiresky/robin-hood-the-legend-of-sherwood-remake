@@ -1729,9 +1729,18 @@ impl InteractiveFrameSimulation {
                 auto_dismiss: false,
                 ..Default::default()
             };
-            if let Err(error) =
-                run_forward_ticks(manager, host, assets, dev, game, runtime, 1, &mut policy)
-            {
+            if let Err(error) = run_forward_ticks(
+                super::tick::StepWorld {
+                    manager,
+                    host,
+                    assets,
+                    dev,
+                    game,
+                },
+                runtime,
+                1,
+                &mut policy,
+            ) {
                 tracing::warn!(%error, "keyboard step-forward stopped");
             }
         } else if keyboard_step == KeyboardStep::Back {

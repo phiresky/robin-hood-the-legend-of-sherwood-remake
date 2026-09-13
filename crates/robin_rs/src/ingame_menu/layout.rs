@@ -832,24 +832,10 @@ pub fn render_text_in_box_font(
     font: &Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
+    rect: MenuRect,
     align: TextAlign,
 ) -> String {
-    render_text_in_box_aligned_font(
-        renderer,
-        font,
-        transform,
-        text,
-        box_x,
-        box_y,
-        box_w,
-        box_h,
-        align,
-        VAlign::Top,
-    )
+    render_text_in_box_aligned_font(renderer, font, transform, text, rect, align, VAlign::Top)
 }
 
 /// Render text into a single fixed box and deliberately drop whatever does not
@@ -861,16 +847,12 @@ pub fn render_clipped_text_in_box_font(
     font: &Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
+    rect: MenuRect,
     align: TextAlign,
     valign: VAlign,
 ) {
-    let _clipped = render_text_in_box_aligned_font(
-        renderer, font, transform, text, box_x, box_y, box_w, box_h, align, valign,
-    );
+    let _clipped =
+        render_text_in_box_aligned_font(renderer, font, transform, text, rect, align, valign);
 }
 
 /// Drop-cap counterpart of [`render_clipped_text_in_box_font`]: overflow past
@@ -880,16 +862,12 @@ pub fn render_clipped_text_in_box_with_drop_cap_font(
     font: &Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
-    drop_cap_w: i32,
-    drop_cap_h: i32,
+    rect: MenuRect,
+    drop_cap: (i32, i32),
     align: TextAlign,
 ) {
     let _clipped = render_text_in_box_with_drop_cap_font(
-        renderer, font, transform, text, box_x, box_y, box_w, box_h, drop_cap_w, drop_cap_h, align,
+        renderer, font, transform, text, rect, drop_cap, align,
     );
 }
 
@@ -900,18 +878,18 @@ pub fn render_text_in_box_with_drop_cap_font(
     font: &Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
-    drop_cap_w: i32,
-    drop_cap_h: i32,
+    rect: MenuRect,
+    (drop_cap_w, drop_cap_h): (i32, i32),
     align: TextAlign,
 ) -> String {
+    let MenuRect {
+        x: box_x,
+        y: box_y,
+        w: box_w,
+        h: box_h,
+    } = rect;
     if drop_cap_w <= 0 || drop_cap_h <= 0 {
-        return render_text_in_box_font(
-            renderer, font, transform, text, box_x, box_y, box_w, box_h, align,
-        );
+        return render_text_in_box_font(renderer, font, transform, text, rect, align);
     }
 
     let line_h = font.height() as i32;
@@ -923,7 +901,17 @@ pub fn render_text_in_box_with_drop_cap_font(
     let narrow_w = (box_w - drop_cap_w).max(0);
     let remainder = if narrow_w > 0 && carveout_h > 0 {
         render_text_in_box_font(
-            renderer, font, transform, text, box_x, box_y, narrow_w, carveout_h, align,
+            renderer,
+            font,
+            transform,
+            text,
+            MenuRect {
+                x: box_x,
+                y: box_y,
+                w: narrow_w,
+                h: carveout_h,
+            },
+            align,
         )
     } else {
         text.to_string()
@@ -937,7 +925,17 @@ pub fn render_text_in_box_with_drop_cap_font(
         return remainder;
     }
     render_text_in_box_font(
-        renderer, font, transform, &remainder, box_x, below_y, box_w, below_h, align,
+        renderer,
+        font,
+        transform,
+        &remainder,
+        MenuRect {
+            x: box_x,
+            y: below_y,
+            w: box_w,
+            h: below_h,
+        },
+        align,
     )
 }
 
@@ -947,16 +945,13 @@ pub fn render_text_in_box_aligned_font(
     font: &Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
+    rect: MenuRect,
     align: TextAlign,
     valign: VAlign,
 ) -> String {
     render_text_in_box_by(
         text,
-        [box_x, box_y, box_w, box_h],
+        [rect.x, rect.y, rect.w, rect.h],
         (font.height() as i32, font.baseline() as i32),
         align,
         valign,

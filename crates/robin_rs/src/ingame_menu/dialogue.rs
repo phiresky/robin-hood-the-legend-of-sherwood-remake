@@ -32,7 +32,9 @@ use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
-use super::layout::{MENU_H, MENU_W, MenuTransform, TextAlign, TooltipState, draw_background};
+use super::layout::{
+    MENU_H, MENU_W, MenuRect, MenuTransform, TextAlign, TooltipState, draw_background,
+};
 use super::resources::{
     IngameMenuResources, MT_INFOBULLE_BUTTON_DIALOG_ABANDON, MT_INFOBULLE_BUTTON_DIALOG_CONTINUE,
 };
@@ -875,10 +877,12 @@ fn draw_dialogue_body(
             renderer,
             transform,
             &p,
-            virt_x + PORTRAIT_X,
-            virt_y + PORTRAIT_Y,
-            PORTRAIT_W,
-            PORTRAIT_H,
+            MenuRect {
+                x: virt_x + PORTRAIT_X,
+                y: virt_y + PORTRAIT_Y,
+                w: PORTRAIT_W,
+                h: PORTRAIT_H,
+            },
             100,
         );
     }
@@ -892,10 +896,12 @@ fn draw_dialogue_body(
             renderer,
             transform,
             &p,
-            virt_x + PORTRAIT_X,
-            virt_y + PORTRAIT_Y,
-            PORTRAIT_W,
-            PORTRAIT_H,
+            MenuRect {
+                x: virt_x + PORTRAIT_X,
+                y: virt_y + PORTRAIT_Y,
+                w: PORTRAIT_W,
+                h: PORTRAIT_H,
+            },
             alpha,
         );
     }
@@ -907,10 +913,12 @@ fn draw_dialogue_body(
             font,
             transform,
             text,
-            virt_x + TEXT_X,
-            virt_y + TEXT_Y,
-            TEXT_W,
-            TEXT_H,
+            MenuRect {
+                x: virt_x + TEXT_X,
+                y: virt_y + TEXT_Y,
+                w: TEXT_W,
+                h: TEXT_H,
+            },
         );
     }
 }
@@ -993,11 +1001,14 @@ fn render_dropped_initial_text(
     font: &crate::native_font::Font,
     transform: MenuTransform,
     text: &str,
-    box_x: i32,
-    box_y: i32,
-    box_w: i32,
-    box_h: i32,
+    rect: MenuRect,
 ) {
+    let MenuRect {
+        x: box_x,
+        y: box_y,
+        w: box_w,
+        h: box_h,
+    } = rect;
     if text.is_empty() {
         return;
     }
@@ -1023,10 +1034,12 @@ fn render_dropped_initial_text(
         font,
         transform,
         text,
-        box_x,
-        box_y,
-        beside_w,
-        beside_h,
+        MenuRect {
+            x: box_x,
+            y: box_y,
+            w: beside_w,
+            h: beside_h,
+        },
         TextAlign::Justified,
     );
 
@@ -1042,10 +1055,12 @@ fn render_dropped_initial_text(
                 font,
                 transform,
                 &remainder,
-                box_x,
-                below_y,
-                box_w,
-                below_h,
+                MenuRect {
+                    x: box_x,
+                    y: below_y,
+                    w: box_w,
+                    h: below_h,
+                },
                 TextAlign::Justified,
                 super::layout::VAlign::Top,
             );
@@ -1063,15 +1078,18 @@ pub(super) fn draw_portrait_frame_alpha(
     renderer: &mut Renderer,
     transform: MenuTransform,
     portrait: &super::resources::MenuSurface,
-    vx: i32,
-    vy: i32,
-    vw: i32,
-    vh: i32,
+    rect: MenuRect,
     alpha_percent: u16,
 ) {
     if alpha_percent == 0 {
         return;
     }
+    let MenuRect {
+        x: vx,
+        y: vy,
+        w: vw,
+        h: vh,
+    } = rect;
 
     let (sx, sy) = transform.to_screen(vx, vy);
     // Each resource sub-picture is a whole face, not a horizontal frame strip.

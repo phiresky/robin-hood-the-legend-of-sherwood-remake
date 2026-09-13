@@ -646,6 +646,20 @@ vhost, then run `certbot certonly --webroot --webroot-path /var/lib/letsencrypt`
 Keep the Cloudflare ranges and the firewall allowlist in sync. Licensed Demo
 and Full trees are installed by hand, read-only, under `raw-content/`.
 
+### Routine release
+
+`scripts/release.sh` (root `README.md`, "Releasing") runs the steps below and
+the Cloudflare frontend release as one command. Use `--server-only` for just
+the service. It builds `ops/build-release.sh` inside the Debian 12 image from
+`ops/release-image/Dockerfile`, in the detached worktree
+`.worktrees/release-build` at `HEAD`, because the host's glibc 2.36 is older
+than the development machine's. It copies the tarball to
+`~/releases-incoming/`, checks its sha256, runs the tarball's own
+`ops/deploy.sh`, and verifies `readyz` on the host and
+`/api/v1/leaderboard-metadata` publicly. If a check fails it prints the
+`rollback.sh` command for the previously live release. The sections below
+document the individual steps.
+
 ### Build and deploy a service release
 
 ```sh

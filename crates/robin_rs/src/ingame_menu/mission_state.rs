@@ -9,7 +9,7 @@ use crate::ingame_menu::widget_bridge::{ModalScreenIo, ScreenFrame};
 use crate::renderer::Renderer;
 
 use super::layout::{
-    MENU_H, MENU_W, MenuTransform, TextAlign, VAlign, draw_background,
+    MENU_H, MENU_W, MenuRect, MenuTransform, TextAlign, VAlign, draw_background,
     render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_TTL_MISSION_LOST, MT_TTL_MISSION_WON};
@@ -256,10 +256,12 @@ impl MissionStateTransition {
                 font,
                 self.transform,
                 &self.message,
-                tl_x + (TEXT_X as f32 * scale_x) as i32,
-                tl_y + (TEXT_Y as f32 * scale_y) as i32,
-                (TEXT_W as f32 * scale_x) as i32,
-                (TEXT_H as f32 * scale_y) as i32,
+                MenuRect {
+                    x: tl_x + (TEXT_X as f32 * scale_x) as i32,
+                    y: tl_y + (TEXT_Y as f32 * scale_y) as i32,
+                    w: (TEXT_W as f32 * scale_x) as i32,
+                    h: (TEXT_H as f32 * scale_y) as i32,
+                },
                 TextAlign::Center,
                 VAlign::Top,
             );

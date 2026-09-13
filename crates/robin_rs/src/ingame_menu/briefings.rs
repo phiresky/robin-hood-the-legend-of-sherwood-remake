@@ -124,10 +124,12 @@ fn draw_section(
             font,
             transform,
             &text,
-            text_x,
-            y,
-            text_w,
-            remaining_h,
+            MenuRect {
+                x: text_x,
+                y,
+                w: text_w,
+                h: remaining_h,
+            },
             TextAlign::Justified,
             VAlign::Top,
         );

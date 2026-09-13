@@ -15,7 +15,6 @@ pub struct HostFrameOutcome {
     pub post_initialized: bool,
     pub game_code: GameCode,
     pub external_action_results: Vec<robin_engine::engine::ExternalActionResult>,
-    pub state_hash: u64,
     pub spellforge_abort: Option<robin_engine::spellforge::SpellforgeGuestError>,
 }
 
@@ -68,7 +67,7 @@ fn apply_frame_effects(
     application_context: &ApplicationContext,
     local_seat: robin_engine::player_command::PlayerId,
     dev: &mut DevState,
-    output: robin_engine::engine::SimulationFrameOutput,
+    output: robin_engine::engine::SimulationFrameOutput<()>,
 ) -> HostFrameOutcome {
     let robin_engine::engine::SimulationFrameOutput {
         frame_before,
@@ -78,7 +77,7 @@ fn apply_frame_effects(
         post_boundary_events,
         post_initialize_events,
         external_action_results,
-        state_hash,
+        state_hash: (),
         spellforge_abort,
     } = output;
     let outcome = HostFrameOutcome {
@@ -88,7 +87,6 @@ fn apply_frame_effects(
         post_initialized: post_initialize_events.is_some(),
         game_code: events.game_code(),
         external_action_results,
-        state_hash,
         spellforge_abort,
     };
     // Even empty batches advance display lifetimes. Preserve pre-hourglass,
@@ -124,9 +122,9 @@ fn execute_frame(
     engine: &mut Engine,
     assets: &LevelAssets,
     frame: robin_engine::engine::SimulationFrameInput,
-) -> robin_engine::engine::SimulationFrameOutput {
+) -> robin_engine::engine::SimulationFrameOutput<()> {
     let output = engine
-        .advance_frame(assets, frame)
+        .advance_frame_without_hash(assets, frame)
         .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
     if let Some(failure) = &output.spellforge_abort {
         tracing::error!(
@@ -404,7 +402,7 @@ mod tests {
                 post_boundary_events: noise_batch(2, GameCode::LevelInProgress),
                 post_initialize_events: Some(noise_batch(3, GameCode::LevelInProgress)),
                 external_action_results: results,
-                state_hash: 1234,
+                state_hash: (),
                 spellforge_abort: None,
             },
         );
@@ -422,7 +420,6 @@ mod tests {
         assert!(outcome.hourglass_ran);
         assert!(outcome.post_initialized);
         assert_eq!(outcome.game_code, GameCode::LevelFailed);
-        assert_eq!(outcome.state_hash, 1234);
         assert!(outcome.spellforge_abort.is_none());
         assert_eq!(outcome.external_action_results.as_ptr(), results_allocation);
         assert!(matches!(
@@ -452,7 +449,7 @@ mod tests {
                     post_boundary_events: Default::default(),
                     post_initialize_events: post_initialized.then(Default::default),
                     external_action_results: Vec::new(),
-                    state_hash: 0,
+                    state_hash: (),
                     spellforge_abort: None,
                 },
             );
@@ -470,7 +467,7 @@ mod tests {
             &mut Engine,
             &LevelAssets,
             robin_engine::engine::SimulationFrameInput,
-        ) -> robin_engine::engine::SimulationFrameOutput = execute_frame;
+        ) -> robin_engine::engine::SimulationFrameOutput<()> = execute_frame;
     }
 
     #[test]

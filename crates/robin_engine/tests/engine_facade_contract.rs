@@ -198,6 +198,8 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
 
     let mut allowed = vec![
         "advance_frame",
+        // Same transaction and capability; only the unused hash is omitted.
+        "advance_frame_without_hash",
         "host_console",
         "finish_mission_bootstrap",
         "parity_replay_setup",

@@ -26,8 +26,8 @@ use crate::widget::FrameWnd;
 use robin_engine::resource_ids;
 
 use super::layout::{
-    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, FOCUS_OUTLINE, MENU_H, MENU_W, TextAlign, VAlign,
-    draw_background, render_clipped_text_in_box_font,
+    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, FOCUS_OUTLINE, MENU_H, MENU_W, MenuRect, TextAlign,
+    VAlign, draw_background, render_clipped_text_in_box_font,
 };
 use super::resources::{
     IngameMenuResources, MT_MSG_BUY_BLAZON, MT_STR_BLAZON_PRICE, MT_STR_RANSOM,
@@ -216,10 +216,12 @@ impl BuyBlazonsModalState {
                 font,
                 transform,
                 &self.message,
-                win_x + MSG_X,
-                win_y + MSG_Y,
-                MSG_W,
-                MSG_H,
+                MenuRect {
+                    x: win_x + MSG_X,
+                    y: win_y + MSG_Y,
+                    w: MSG_W,
+                    h: MSG_H,
+                },
                 TextAlign::Center,
                 VAlign::Top,
             );

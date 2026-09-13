@@ -151,13 +151,13 @@ pub(crate) fn render_combat_status_bars(
         if max_life > 0 {
             // Clamp the ratio of current to maximum life points at one.
             let frac = (life as f32 / max_life as f32).clamp(0.0, 1.0);
-            draw_status_bar(host, renderer, pos.x, pos.y, 8.0, frac, 255, 0, 0);
+            draw_status_bar(host, renderer, pos.x, pos.y, 8.0, frac, (255, 0, 0));
         }
         if !is_civilian {
             // max(0, 0.01 * (100 - tiredness))
             let t = tiredness.min(100) as f32;
             let frac = ((100.0 - t) * 0.01).max(0.0);
-            draw_status_bar(host, renderer, pos.x, pos.y, 12.0, frac, 3, 205, 255);
+            draw_status_bar(host, renderer, pos.x, pos.y, 12.0, frac, (3, 205, 255));
         }
     }
 }
@@ -176,9 +176,7 @@ fn draw_status_bar(
     y_world: f32,
     offset_y: f32,
     frac: f32,
-    r: u8,
-    g: u8,
-    b: u8,
+    (r, g, b): (u8, u8, u8),
 ) {
     let view = host.viewport().view_position;
     let zoom = host.viewport().zoom_factor;

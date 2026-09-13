@@ -517,7 +517,12 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
     rig.rename(&owner, "Compact Robin", Ipv4Addr::new(127, 0, 2, 0))
         .await;
 
-    let valid_replay = compact_replay_fixture("run-72");
+    // The compact source prefix is provenance: a recording from another
+    // commit is admitted when replay and network versions match.
+    let valid_replay = String::from_utf8(compact_replay_fixture("run-72"))
+        .unwrap()
+        .replacen(robin_replay_format::ENGINE_VERSION_HASH, "0123456789ab", 1)
+        .into_bytes();
     let valid_offer = rig
         .issue_offer(&owner, rig.offer_request(&owner, 72), 72)
         .await;
@@ -581,8 +586,8 @@ async fn submission_ingress_accepts_only_the_exact_compact_transport_before_rese
         ),
         (
             78,
-            "wrong build prefix",
-            b"rhrec-000000000000-YWJj".to_vec(),
+            "malformed source prefix",
+            b"rhrec-not-a-commit-YWJj".to_vec(),
         ),
         (
             79,
@@ -994,4 +999,106 @@ async fn public_submission_progress_is_minimal_and_disappears_when_deleted() {
         deleted.into_body().collect().await.unwrap().to_bytes(),
         missing.into_body().collect().await.unwrap().to_bytes()
     );
+}
+
+async fn bad_request_message(response: axum::response::Response) -> String {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = json_body(response).await;
+    assert_eq!(body["error"]["code"], "bad_request");
+    body["error"]["message"].as_str().unwrap().to_owned()
+}
+
+async fn upload_reservation_count(rig: &TestRig) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM submission_upload_reservations")
+        .fetch_one(rig.database.fixture_pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn ranked_submission_rejects_session_network_protocol_mismatch_before_reservation() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[96; 32]);
+    rig.rename(&owner, "Network Robin", Ipv4Addr::new(127, 0, 9, 6))
+        .await;
+
+    // The host signs a genesis claiming a different network protocol than the
+    // verifier build manifest. Offer issuance does not pin this field, so the
+    // server issues a fully authentic offer that only submit can reject.
+    let mismatched_network = NETWORK_PROTOCOL_VERSION + 1;
+    assert_ne!(
+        rig.loaded_build.semantics().network_protocol_version,
+        mismatched_network
+    );
+    let mut request = rig.offer_request(&owner, 96);
+    request.session_genesis.claim.network_protocol_version = mismatched_network;
+    request.session_genesis.host_signature =
+        sign(&owner, &request.session_genesis.signing_bytes().unwrap());
+    let offer = rig.issue_offer(&owner, request, 96).await;
+    assert_eq!(
+        offer.session_genesis.claim.network_protocol_version,
+        mismatched_network
+    );
+    let replay = compact_replay_fixture("network-96");
+    let signed = signed_submission(&owner, offer, &replay, &rig.starting_campaign);
+
+    for request in [
+        metadata_only_multipart_request(&signed),
+        multipart_request(&signed, &replay, &rig.starting_campaign),
+    ] {
+        let response = rig.app.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            bad_request_message(response).await,
+            "ranked replay and network versions do not match the signed build manifest"
+        );
+    }
+    assert_eq!(upload_reservation_count(&rig).await, 0);
+
+    // The matching-version path through the same rig keeps accepting.
+    let accepted = rig.submit(&owner, 97).await;
+    assert_eq!(accepted.state, SubmissionLifecycleV1::Queued);
+}
+
+#[tokio::test]
+async fn ranked_submission_rejects_signed_replay_schema_mismatch_before_reservation() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[98; 32]);
+    rig.rename(&owner, "Schema Robin", Ipv4Addr::new(127, 0, 9, 8))
+        .await;
+    let offer = rig
+        .issue_offer(&owner, rig.offer_request(&owner, 98), 98)
+        .await;
+    let replay = compact_replay_fixture("schema-98");
+
+    // A replay artifact claiming a replay schema other than the build
+    // manifest's. The protocol refuses to produce signing bytes for such an
+    // envelope (`signing_bytes` validates, and `ReplayArtifactV1::validate`
+    // pins the claim to the current ranked schema), so no participant can sign
+    // it: sign the matching envelope and then change only the schema claim.
+    // `submit` validates document shape before any signature check, so the
+    // rejection below is caused by the schema claim alone. The server build
+    // and rules config are likewise pinned to the current schema at load,
+    // which is why this mismatch never reaches the manifest comparison.
+    let mismatched_schema = REPLAY_SCHEMA_VERSION + 1;
+    assert_ne!(
+        rig.loaded_build.semantics().replay_schema_version,
+        mismatched_schema
+    );
+    let mut signed = signed_submission(&owner, offer, &replay, &rig.starting_campaign);
+    signed.submission.artifacts.replay.replay_schema_version = mismatched_schema;
+    assert!(signed.submission.signing_bytes().is_err());
+    assert!(signed.validate().is_err());
+
+    for request in [
+        metadata_only_multipart_request(&signed),
+        multipart_request(&signed, &replay, &rig.starting_campaign),
+    ] {
+        let response = rig.app.clone().oneshot(request).await.unwrap();
+        let message = bad_request_message(response).await;
+        assert!(
+            message.contains("replay.replay_schema_version"),
+            "unexpected rejection: {message}"
+        );
+    }
+    assert_eq!(upload_reservation_count(&rig).await, 0);
 }

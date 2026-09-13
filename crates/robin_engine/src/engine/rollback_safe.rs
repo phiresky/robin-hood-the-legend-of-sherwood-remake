@@ -1427,22 +1427,40 @@ impl Engine {
             assets,
             frame,
             SelectionCommandBatchMode::InferNestedSelection,
+            crate::replay::state_hash,
         )
     }
 
-    fn advance_frame_with_command_batch_mode(
+    /// Run the identical transaction without computing an unused output hash.
+    /// Recording, multiplayer, and verification code must still sample hashes
+    /// at their required boundaries; this method changes no simulation work.
+    pub fn advance_frame_without_hash(
+        &mut self,
+        assets: &LevelAssets,
+        frame: SimulationFrameInput,
+    ) -> Result<SimulationFrameOutput<()>, FrameAdvanceError> {
+        self.advance_frame_with_command_batch_mode(
+            assets,
+            frame,
+            SelectionCommandBatchMode::InferNestedSelection,
+            |_| (),
+        )
+    }
+
+    fn advance_frame_with_command_batch_mode<Hash: robin_util::state_hash::StateHash>(
         &mut self,
         assets: &LevelAssets,
         frame: SimulationFrameInput,
         command_batch_mode: SelectionCommandBatchMode,
-    ) -> Result<SimulationFrameOutput, FrameAdvanceError> {
+        hash: impl FnOnce(&EngineInner) -> Hash,
+    ) -> Result<SimulationFrameOutput<Hash>, FrameAdvanceError> {
         if frame.run_hourglass {
             self.bootstrap_open = false;
         }
 
         if let Some(failure) = self.inner.scripts.spellforge.failure.clone() {
             let frame_counter = self.inner.control.frame_counter;
-            let state_hash = crate::replay::state_hash(&self.inner);
+            let state_hash = hash(&self.inner);
             return Ok(SimulationFrameOutput {
                 frame_before: frame_counter,
                 frame_after: frame_counter,
@@ -1555,7 +1573,7 @@ impl Engine {
             Self::validate_ranked_simulation_config(policy, self.inner.control.sim_config)?;
         }
         let frame_after = self.inner.control.frame_counter;
-        let state_hash = crate::replay::state_hash(&self.inner);
+        let state_hash = hash(&self.inner);
 
         let spellforge_abort = self.inner.scripts.spellforge.failure.clone();
         if spellforge_abort.is_some() {
