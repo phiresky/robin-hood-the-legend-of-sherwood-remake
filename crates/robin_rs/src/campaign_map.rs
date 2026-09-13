@@ -4046,20 +4046,21 @@ mod capture_tests {
     #[test]
     #[ignore = "requires game data and an offscreen wgpu adapter; see docs/CAMPAIGN_HISTORY.md"]
     fn capture_campaign_ui() {
-        // Run this opt-in capture alone: the real resource loader uses the install root.
+        // The workspace root is the install root holding assets/core-datadir.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap();
-        std::env::set_current_dir(root).unwrap();
         let data = robin_test_support::original_data::data_directory("");
-        let output =
-            std::env::var("ROBIN_UI_CAPTURE_DIR").unwrap_or_else(|_| "target/campaign-ui".into());
-        let output = std::path::Path::new(&output);
+        // Relative capture directories resolve against the workspace root.
+        let output = root.join(
+            std::env::var_os("ROBIN_UI_CAPTURE_DIR").unwrap_or_else(|| "target/campaign-ui".into()),
+        );
+        let output = output.as_path();
         std::fs::create_dir_all(output).unwrap();
         let (campaign, profiles, context) =
-            crate::main_entry::rust_init_with_data_dir(Some(std::path::Path::new(&data)))
+            crate::main_entry::rust_init_with_roots(Some(&data), Some(root))
                 .expect("initialize capture content");
         let gpu = offscreen_gpu();
         for (width, height) in [(1024, 768)] {

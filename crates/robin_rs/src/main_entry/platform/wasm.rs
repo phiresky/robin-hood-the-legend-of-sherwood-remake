@@ -15,6 +15,7 @@ use crate::main_entry::launch::MissionRequest;
 /// bootstrap language-folder detection.
 pub fn setup_data_dir(
     _data_dir_override: Option<&Path>,
+    _install_root: Option<&Path>,
     _files: &SbFileSystem,
 ) -> Result<(), InitError> {
     Ok(())

@@ -24,7 +24,7 @@ pub use desktop::setup_data_dir;
 /// ships no such directory.  Also scanned by the Custom Missions picker
 /// so overlay-shipped mods (hackable levels) can carry a `details.json`.
 pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
-    resolve_install_resource_dir(MODS_DIR)
+    resolve_install_resource_dir(None, MODS_DIR)
 }
 
 fn configured_data_dir(explicit: Option<&Path>, environment: Option<String>) -> Option<String> {

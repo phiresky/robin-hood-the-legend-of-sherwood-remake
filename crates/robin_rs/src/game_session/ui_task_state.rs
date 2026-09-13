@@ -2417,17 +2417,15 @@ mod tests {
     #[test]
     #[ignore = "requires game data and an offscreen wgpu adapter"]
     fn capture_save_scroll_view() {
-        // Run this opt-in capture alone: resource initialization uses the install root.
+        // The workspace root is the install root holding assets/core-datadir.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap();
-        std::env::set_current_dir(root).unwrap();
         let data = robin_test_support::original_data::data_directory("");
-        let (_, _, context) =
-            crate::main_entry::rust_init_with_data_dir(Some(std::path::Path::new(&data)))
-                .expect("capture content");
+        let (_, _, context) = crate::main_entry::rust_init_with_roots(Some(&data), Some(root))
+            .expect("capture content");
         let gpu = pollster::block_on(async {
             let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
             descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::VULKAN);
