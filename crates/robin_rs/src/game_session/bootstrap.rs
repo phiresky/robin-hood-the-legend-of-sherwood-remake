@@ -1053,7 +1053,11 @@ impl LoadedInteractiveStage<AudioPreparedBootstrap> {
         let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref())?;
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-        let (renderer_config, prepared_renderer) = loading.close_before_renderer();
+        let (mut renderer_config, prepared_renderer) = loading.close_before_renderer();
+        renderer_config.native_refresh_presentation = args
+            .config
+            .cli
+            .native_refresh_presentation(renderer_config.native_refresh_presentation);
         let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
             window,
             renderer_config,

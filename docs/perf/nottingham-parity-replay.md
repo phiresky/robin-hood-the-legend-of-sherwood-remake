@@ -131,3 +131,23 @@ matched all 61 recorded checkpoints (frames 0 through 1,500 at a cadence of 25).
 Their checkpoint/hash pairs were also compared directly and are identical.
 No desync was reported. `cargo fmt --all`, `git diff --check`, and the separate
 `cargo build -p robin_rs --profile parity --bin robin` completed successfully.
+
+## Uncapped fast-forward presentation
+
+The earlier graphical runs retained FIFO presentation despite `--fast-forward`.
+The flag now disables VSync during gameplay as well as the pacing sleep, including
+after accepting in-game options, without changing the saved graphics preference.
+
+Rebuilt with the same parity profile and repeated the graphical Linux `perf`
+capture with a 35-second timeout and `robin_rs::window=info` added to logging.
+`target/nottingham-parity-uncapped.log` confirms `present_mode=AutoNoVsync`.
+Over the same first 1,440 frames, total frame time averaged 10.231 ms (97.7 FPS),
+versus the previous optimized FIFO run's 16.679 ms (60.0 FPS).
+Rendering/presentation averaged 1.495 ms instead of 8.392 ms. Shared-machine
+load still varies; these measurements demonstrate removal of the display cap.
+
+All 61 checkpoint/hash pairs matched the previous optimized run exactly.
+`target/nottingham-parity-uncapped.data` contains approximately 5,000 samples
+with none lost; its whole-capture sample shares also include idle frames after
+replay EOF. The timeout ended the graphical process after playback completed.
+The client library suite passed 2,196 tests, with 17 existing ignored tests.
