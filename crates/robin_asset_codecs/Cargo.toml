@@ -11,5 +11,8 @@ bytemuck = { workspace = true, features = ["derive"] }
 foldhash = "0.2"
 smallvec = { workspace = true, features = ["union"] }
 
+[dev-dependencies]
+sha2.workspace = true
+
 [lints]
 workspace = true
