@@ -257,6 +257,38 @@ use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefender
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};
 use crate::weapons::SwordStrike;
 
+/// Validated strike produced by [`EngineInner::sword_damage_prelude`] and
+/// read by every later phase of [`EngineInner::apply_sword_damage`].
+/// Transient per-call state, never persisted.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SwordDamageStrike {
+    victim_id: EntityId,
+    attacker_id: Option<EntityId>,
+    damage_element: (crate::sequence::SequenceId, usize),
+    strike: SwordStrike,
+    gesture_quality: crate::player_command::GestureQuality,
+    attacker_profile: crate::profiles::HtHWeaponProfile,
+}
+
+/// Outcome of [`EngineInner::sword_damage_receive`] consumed by the later
+/// translation phases of [`EngineInner::apply_sword_damage`]. No serde:
+/// `SwordAttackerContext` has no serde derive, and this is transient
+/// per-call state that is never persisted.
+struct SwordDamageReception {
+    attacker_ctx: SwordAttackerContext,
+    defender_action: ActionState,
+    victim_was_unconscious: bool,
+    life_points_before: i16,
+    unconscious_before: bool,
+    result: combat::SwordDamageResult,
+    cutting_inflicted: u16,
+    coma_saved: bool,
+    life_points_after: i16,
+    push_strike: bool,
+    fresh_lethal_ordinary: bool,
+    victim_went_unconscious: bool,
+}
+
 /// The original game's receive-damage path sends the hit event only through the NPC
 /// override. PCs share the human concussion and translation work but have no
 /// AI controller to notify.
@@ -500,6 +532,51 @@ impl EngineInner {
         attacker_profile_idx: Option<u32>,
         damage_element: (crate::sequence::SequenceId, usize),
     ) {
+        let Some(strike) = self.sword_damage_prelude(
+            assets,
+            victim_id,
+            attacker_id,
+            sword_strike,
+            attacker_profile_idx,
+            damage_element,
+        ) else {
+            return;
+        };
+        let reception = self.sword_damage_receive(sim, assets, &strike);
+        if self
+            .sword_damage_learning_and_impact(assets, &strike, &reception)
+            .is_break()
+        {
+            return;
+        }
+        let (pushed, grounded_translation_terminates) =
+            self.sword_damage_push_and_grounded(sim, assets, &strike, &reception);
+        let victim_died = self.sword_damage_xp_and_speech(sim, assets, &strike, &reception, pushed);
+        self.sword_damage_hit_reaction(sim, assets, &strike, &reception, pushed);
+        self.sword_damage_inform_attacker(sim, assets, &strike, &reception, pushed, victim_died);
+        self.sword_damage_death_transitions(
+            sim,
+            assets,
+            &strike,
+            &reception,
+            pushed,
+            grounded_translation_terminates,
+            victim_died,
+        );
+    }
+
+    /// Strike/gesture validation, diplomacy gate, debug trace and attacker
+    /// weapon profile. `None` means the damage is dropped (missing strike
+    /// type, or diplomacy forbids it after terminating the element).
+    fn sword_damage_prelude(
+        &mut self,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        sword_strike: Option<SwordStrike>,
+        attacker_profile_idx: Option<u32>,
+        damage_element: (crate::sequence::SequenceId, usize),
+    ) -> Option<SwordDamageStrike> {
         // A scroll-carrying civilian is not short-circuited here: the
         // immunity lives in the wounding/concussion primitives
         // (`ConcussionContext::scroll_attached`), so the protection
@@ -508,7 +585,7 @@ impl EngineInner {
             Some(s) => s,
             None => {
                 tracing::warn!(?victim_id, "apply_sword_damage: no strike type");
-                return;
+                return None;
             }
         };
         let gesture_quality = self
@@ -538,7 +615,7 @@ impl EngineInner {
                 self.orders
                     .sequence_manager
                     .element_terminated(damage_element.0, damage_element.1);
-                return;
+                return None;
             }
         }
 
@@ -571,6 +648,33 @@ impl EngineInner {
                 default_profile
             }
         };
+        Some(SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            gesture_quality,
+            attacker_profile,
+        })
+    }
+
+    /// Attacker/defender contexts, `combat::receive_sword_damage`, the PC
+    /// coma boundary, synchronous ordinary-lethal and knockout cascades, PC
+    /// life-point speech and the damage number.
+    fn sword_damage_receive(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+    ) -> SwordDamageReception {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            gesture_quality,
+            ref attacker_profile,
+        } = *strike_app;
 
         // Read attacker context — real fighting_ability from profile,
         // is_rank_soldier checks the RANK_SOLDIER flag from soldier
@@ -756,6 +860,43 @@ impl EngineInner {
             life_points_after,
             "Sword damage applied"
         );
+        SwordDamageReception {
+            attacker_ctx,
+            defender_action,
+            victim_was_unconscious,
+            life_points_before,
+            unconscious_before,
+            result,
+            cutting_inflicted,
+            coma_saved,
+            life_points_after,
+            push_strike,
+            fresh_lethal_ordinary,
+            victim_went_unconscious,
+        }
+    }
+
+    /// Soldier strike-memory learning and the impact/parry sound. `Break`
+    /// means an ordinary (non-push) parried strike ended the application.
+    fn sword_damage_learning_and_impact(
+        &mut self,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+    ) -> std::ops::ControlFlow<()> {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            defender_action,
+            result,
+            ..
+        } = *reception;
 
         // Soldier learning reads the attacker's *live* command, not the
         // strike stored in this damage payload. ReceiveSwordDamage can be
@@ -858,7 +999,7 @@ impl EngineInner {
                         Some(damage_element),
                         Some(result),
                     );
-                    return;
+                    return std::ops::ControlFlow::Break(());
                 }
             } else {
                 self.feedback
@@ -872,6 +1013,35 @@ impl EngineInner {
                     });
             }
         }
+        std::ops::ControlFlow::Continue(())
+    }
+
+    /// Carried-corpse drop, synchronous lethal-push cascade, push effect and
+    /// the grounded-posture termination. Returns
+    /// `(pushed, grounded_translation_terminates)`.
+    fn sword_damage_push_and_grounded(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+    ) -> (bool, bool) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            life_points_before,
+            result,
+            coma_saved,
+            life_points_after,
+            push_strike,
+            ..
+        } = *reception;
 
         // Player sword/push damage translation tests the *live*
         // posture after wound handling and the impact-sound prefix have
@@ -1020,6 +1190,33 @@ impl EngineInner {
             // the victim with no selected recovery order.
             self.dispatch_condolations_for_owner_boundary(sim, victim_id, assets);
         }
+        (pushed, grounded_translation_terminates)
+    }
+
+    /// Kill XP, victim pain speech, attacker Provoke roll and PC attacker
+    /// hero speech. Returns `victim_died`.
+    fn sword_damage_xp_and_speech(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+    ) -> bool {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            ref attacker_ctx,
+            result,
+            cutting_inflicted,
+            coma_saved,
+            ..
+        } = *reception;
 
         // Award XP if the victim died
         let victim_died =
@@ -1117,6 +1314,29 @@ impl EngineInner {
                 }
             }
         }
+        victim_died
+    }
+
+    /// Posture-based hit reaction: shoulder / ladder-wall translation or the
+    /// alive-and-conscious hit animation chain.
+    fn sword_damage_hit_reaction(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            damage_element,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            result,
+            life_points_after,
+            ..
+        } = *reception;
 
         // Play posture-based hit reaction animation for non-lethal hits
         // (BeingHitSword / FallingBackBow / etc.) when there IS damage
@@ -1192,6 +1412,25 @@ impl EngineInner {
                 }
             }
         }
+    }
+
+    /// Soldier-attacker combat stimuli (EventLethalStrike /
+    /// EventGoodStrike) and the victim's synchronous swordfight exits.
+    fn sword_damage_inform_attacker(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+        victim_died: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            ..
+        } = *strike_app;
+        let SwordDamageReception { result, .. } = *reception;
 
         // Sword-damage translation dispatches combat stimuli to a soldier
         // attacker's AI: EventLethalStrike if the victim died, or
@@ -1305,6 +1544,37 @@ impl EngineInner {
                 self.quit_swordfight(sim, assets, victim_id);
             }
         }
+    }
+
+    /// Death animation selector, repeated dying order for an already-dead
+    /// victim, post-damage state transitions and the final lifecycle trace.
+    fn sword_damage_death_transitions(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        strike_app: &SwordDamageStrike,
+        reception: &SwordDamageReception,
+        pushed: bool,
+        grounded_translation_terminates: bool,
+        victim_died: bool,
+    ) {
+        let SwordDamageStrike {
+            victim_id,
+            attacker_id,
+            damage_element,
+            strike,
+            ref attacker_profile,
+            ..
+        } = *strike_app;
+        let SwordDamageReception {
+            victim_was_unconscious,
+            life_points_before,
+            unconscious_before,
+            result,
+            fresh_lethal_ordinary,
+            victim_went_unconscious,
+            ..
+        } = *reception;
 
         // Death push-vs-drop selector: a non-rider killed by a strike
         // with positive stunning effect falls on his back rather than
