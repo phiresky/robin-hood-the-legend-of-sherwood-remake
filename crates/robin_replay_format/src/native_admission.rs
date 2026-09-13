@@ -1,9 +1,6 @@
 //! Native replay admission process protocol and operating-system containment.
 
-use crate::{
-    ENGINE_VERSION_HASH, LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS, ReplayLimitKind,
-    preflight_compact_transport,
-};
+use crate::{LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS, ReplayLimitKind, preflight_compact_transport};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AdmissionError {
@@ -20,11 +17,9 @@ pub enum AdmissionError {
 }
 
 fn decode_compact_for_local_playback(text: &str) -> Result<(), crate::FormatError> {
-    let (_, data) = crate::decode_compact_for_build(
-        text,
-        &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-        ENGINE_VERSION_HASH,
-    )?;
+    // The recorded source hash is provenance; the helper's own build identity
+    // is still checked through the `engine` field of its reply.
+    let (_, data) = crate::decode_compact_bounded(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)?;
     if let Some(package) = &data.header().spellforge_package {
         robin_spellforge::validate_package(package).map_err(|error| {
             crate::FormatError::InvalidLayout(format!("invalid replay Spellforge package: {error}"))

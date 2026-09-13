@@ -224,8 +224,22 @@ verification rejects a missing, substituted, tampered, orphaned, or vault
 module. The shell can expand deterministic `.gz` wasm objects with the browser's
 `DecompressionStream` when the static response has no `Content-Encoding`. It
 falls back to the ordinary files for old browsers and local development. With
-`?replay=rhrec-<hash>-...`, it extracts `<hash>` and loads that exact
-artifact directory. The game data is not rebuilt by CI because the source game
+`?replay=rhrec-<hash>-...`, it loads the current runtime and checks the
+replay schema during bounded admission; the recorded commit is provenance.
+An explicit `?replay=<hash>` still selects an archived runtime.
+
+Ranked runs select an approved verifier by **replay schema and network protocol
+version**, without requiring the recording client's Git commit or save-format
+version to match. Build manifests still identify exact deployed verifier/viewer
+artifacts. The server binds the signed replay schema and session network
+protocol to the offer's verifier build manifest. Signed replay bytes retain
+their original source prefix, and the server still verifies the approved
+content, rules, session, and simulated state hashes. Bump the replay/network
+compatibility versions when engine changes make existing recordings
+incompatible; matching schema numbers alone cannot repair a simulation
+divergence.
+
+The game data is not rebuilt by CI because the source game
 data cannot be stored in this repository. Build the production web artifact
 with the canonical wrapper (which always selects JXL q80 maps, Opus audio, and
 the wasm-safe zstd window):

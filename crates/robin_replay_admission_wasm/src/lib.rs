@@ -7,10 +7,10 @@
 
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn validate_compact_replay(compact: &str) -> Result<(), wasm_bindgen::JsValue> {
-    robin_replay_format::decode_compact_for_build(
+    // The recorded source hash is provenance; this validates schema and limits.
+    robin_replay_format::decode_compact_bounded(
         compact,
         &robin_replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-        robin_replay_format::ENGINE_VERSION_HASH,
     )
     .map(|_| ())
     .map_err(|error| wasm_bindgen::JsValue::from_str(&error.to_string()))

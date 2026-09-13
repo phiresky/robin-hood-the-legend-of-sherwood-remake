@@ -365,7 +365,7 @@ fn admit_authenticated_job(
             ),
         );
     };
-    let replay_data = match decode_replay(&replay_bytes, request, replay_claim) {
+    let (recorded_hash, replay_data) = match decode_replay(&replay_bytes, request, replay_claim) {
         Ok(replay) => replay,
         Err(failure) => {
             return authenticated_output(
@@ -375,7 +375,7 @@ fn admit_authenticated_job(
             );
         }
     };
-    let canonical_replay = match canonical_replay_artifact_bytes(&replay_data) {
+    let canonical_replay = match canonical_replay_artifact_bytes(&replay_data, &recorded_hash) {
         Ok(bytes) => bytes,
         Err(_) => {
             return authenticated_output(
@@ -1011,9 +1011,12 @@ fn campaign_artifact(bytes: &[u8]) -> ArtifactRefV1 {
 
 fn canonical_replay_artifact_bytes(
     replay: &robin_engine::replay::ReplayData,
+    recorded_hash: &str,
 ) -> Result<Vec<u8>, String> {
     replay.validate_ranked_hash_coverage()?;
-    robin_replay_format::encode_compact(replay, robin_replay_format::ENGINE_VERSION_HASH)
+    // Re-encode with the recording's own source hash: it is signed
+    // provenance, not a verifier compatibility gate.
+    robin_replay_format::encode_compact(replay, recorded_hash)
         .map(String::into_bytes)
         .map_err(|error| error.to_string())
 }
@@ -1028,7 +1031,7 @@ fn decode_replay(
     bytes: &[u8],
     request: &VerificationRequestV1,
     artifact: &robin_run_protocol::ReplayArtifactV1,
-) -> Result<robin_engine::replay::ReplayData, ReplayRejection> {
+) -> Result<(String, robin_engine::replay::ReplayData), ReplayRejection> {
     let limits = replay_admission_limits(request);
     decode_replay_bounded(bytes, artifact, &limits)
 }
@@ -1037,17 +1040,13 @@ fn decode_replay_bounded(
     bytes: &[u8],
     artifact: &robin_run_protocol::ReplayArtifactV1,
     limits: &robin_replay_format::ReplayAdmissionLimits,
-) -> Result<robin_engine::replay::ReplayData, ReplayRejection> {
+) -> Result<(String, robin_engine::replay::ReplayData), ReplayRejection> {
     let text = std::str::from_utf8(bytes).map_err(|_| ReplayRejection {
         code: VerificationRejectionCodeV1::MalformedReplay,
         detail: "compact_replay_not_utf8",
     })?;
-    let (_engine_hash, replay) = robin_replay_format::decode_compact_for_build(
-        text,
-        limits,
-        robin_replay_format::ENGINE_VERSION_HASH,
-    )
-    .map_err(compact_replay_rejection)?;
+    let (recorded_hash, replay) = robin_replay_format::decode_compact_bounded(text, limits)
+        .map_err(compact_replay_rejection)?;
     // Ranked boards currently admit only shipping SCB content. Custom mission
     // archives and embedded Spellforge executables remain valid for the
     // contained local-playback lane, but are an explicit content-policy
@@ -1075,7 +1074,7 @@ fn decode_replay_bounded(
             detail: "replay_header_schema_mismatch",
         });
     }
-    Ok(replay)
+    Ok((recorded_hash, replay))
 }
 
 fn validate_approved_mission_assets(
@@ -1107,10 +1106,6 @@ fn compact_replay_rejection(error: robin_replay_format::FormatError) -> ReplayRe
         FormatError::UnsupportedVersion { .. } => ReplayRejection {
             code: VerificationRejectionCodeV1::UnsupportedSchema,
             detail: "compact_replay_unsupported_schema",
-        },
-        FormatError::EngineVersionMismatch { .. } => ReplayRejection {
-            code: VerificationRejectionCodeV1::BuildNotAllowed,
-            detail: "compact_engine_version_mismatch",
         },
         _ => ReplayRejection {
             code: VerificationRejectionCodeV1::MalformedReplay,
@@ -1657,27 +1652,25 @@ mod tests {
     }
 
     #[test]
-    fn selected_build_is_rejected_before_base64_or_zstd_decode() {
-        let wrong_hash = if robin_replay_format::ENGINE_VERSION_HASH == "000000000000" {
-            "111111111111"
-        } else {
-            "000000000000"
-        };
-        // `AAAA` is valid canonical base64url text but is neither a complete
-        // zstd frame nor a replay. A build-first decoder must still classify
-        // this solely as the typed build-policy rejection.
-        let compact = format!("rhrec-{wrong_hash}-AAAA").into_bytes();
-        let failure = decode_replay_bounded(
-            &compact,
-            &replay_artifact(&compact),
-            &robin_replay_format::ReplayAdmissionLimits {
-                max_input_bytes: compact.len(),
-                ..robin_replay_format::ReplayAdmissionLimits::default()
-            },
-        )
-        .expect_err("the selected verifier build must reject another build envelope");
-        assert_eq!(failure.code, VerificationRejectionCodeV1::BuildNotAllowed);
-        assert_eq!(failure.detail, "compact_engine_version_mismatch");
+    fn worker_accepts_another_commit_and_preserves_signed_replay_bytes() {
+        let replay = single_frame_replay_with_commands(0);
+        let recorded_hash = "0123456789ab";
+        assert_ne!(recorded_hash, robin_replay_format::ENGINE_VERSION_HASH);
+        let compact = robin_replay_format::encode_compact(&replay, recorded_hash)
+            .unwrap()
+            .into_bytes();
+        let (hash, decoded) =
+            decode_replay_bounded(&compact, &replay_artifact(&compact), &Default::default())
+                .unwrap();
+        assert_eq!(hash, recorded_hash);
+        assert_eq!(
+            canonical_replay_artifact_bytes(&decoded, &hash).unwrap(),
+            compact
+        );
+        let mut artifact = replay_artifact(&compact);
+        artifact.replay_schema_version += 1;
+        let failure = decode_replay_bounded(&compact, &artifact, &Default::default()).unwrap_err();
+        assert_eq!(failure.code, VerificationRejectionCodeV1::UnsupportedSchema);
     }
 
     #[test]
