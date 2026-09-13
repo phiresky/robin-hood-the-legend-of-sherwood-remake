@@ -1047,17 +1047,30 @@ diagnostic_stage_serde!(
     ConstructedMission
 );
 
+/// Profile, text and launch inputs [`prepare_mission`] reads beside the host
+/// and game it mutates.
+///
+/// Not serde: a call-scoped bundle of borrowed resources.
+pub(super) struct MissionPreparationSources<'a> {
+    pub(super) profiles: &'a engine_profiles::ProfileManager,
+    pub(super) text_res: &'a mut ResourceManager,
+    pub(super) args: &'a crate::main_entry::MissionRequest,
+}
+
 pub(super) fn prepare_mission(
     feedback: &mut MissionLoadFeedback<'_>,
     host: &mut Host,
     game: &mut Game,
     campaign: Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    text_res: &mut ResourceManager,
-    args: &crate::main_entry::MissionRequest,
+    sources: MissionPreparationSources<'_>,
     interface: MissionInterfaceSetup,
     launch: MissionLaunchSetup,
 ) -> Result<PreparedMission, MissionLoadError> {
+    let MissionPreparationSources {
+        profiles,
+        text_res,
+        args,
+    } = sources;
     let MissionInterfaceSetup {
         ground_mark: ground_mark_sprite,
         titbit_rows: titbit_row_frame_counts,
@@ -1157,24 +1170,11 @@ pub(super) fn prepare_mission(
     // remaining occlusion/minimap reads retain this preparation snapshot.
     // Resource environments clone/validate mission RHS and scripts. Start the
     // independent terrain job first so this work overlaps pixel decoding.
-    let resources = match host.frontend.resources.shipping.as_ref() {
-        Some(shipping) => match mission_name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
-            .and_then(|name| shipping.mission_resource_environment(name))
-        {
+    let resources =
+        match preparation::mission_resource_environment(host, mission_name.as_deref(), &files) {
             Ok(resources) => resources,
-            Err(error) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    MissionError::asset(format!("prepare shipping mission resources: {error:#}")),
-                ));
-            }
-        },
-        None => std::sync::Arc::new(
-            engine_sprite_script::MissionResourceEnvironment::from_files(&files),
-        ),
-    };
+            Err(message) => return Err(MissionLoadError::new(campaign, message)),
+        };
     assets.sprite_scriptor = std::sync::Arc::new(
         engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
     );
@@ -1186,52 +1186,17 @@ pub(super) fn prepare_mission(
     // startup); the mission gets a clone so its runtime overlay sprites
     // don't leak into later missions. Bank sprites carry mmap spans,
     // not pixel data, so the clone is cheap.
-    if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status("Loading sprite bank...", 0.56);
-    }
-    {
-        let cache_owner = match host.application_context().asset_cache() {
-            Ok(cache) => cache,
-            Err(message) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    MissionError::application(message),
-                ));
-            }
-        };
-        let asset_cache = cache_owner.get_or_build(
-            host.frontend.resources.shipping.as_deref(),
-            profiles,
-            files.clone(),
-        );
-        match asset_cache.sprite_bank.as_ref() {
-            Some(bank) => host
-                .frontend
-                .resources
-                .install_frame_holder_before_publication(bank.clone()),
-            None => tracing::warn!("Sprite bank unavailable in application asset cache"),
-        }
-        tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
-    }
-    timer.step("sprite bank from application asset cache");
-    let custom_sprites =
-        match prepare_custom_character_dirs(&campaign, &assets.profile_manager, &files) {
-            Ok(prepared) => prepared,
-            Err(error) => return Err(MissionLoadError::new(campaign, error)),
-        };
-    if let Err(error) = custom_sprites.install(
-        host.frontend
-            .resources
-            .frame_holder_before_publication_mut(),
-        assets.sprite_scriptor_mut(),
+    if let Err(message) = preparation::install_mission_sprites(
+        host,
+        &campaign,
+        profiles,
+        &mut assets,
+        &files,
+        &mut (event_pump.as_deref_mut(), &mut **loading_screen),
+        &mut timer,
     ) {
-        return Err(MissionLoadError::new(campaign, error));
+        return Err(MissionLoadError::new(campaign, message));
     }
-    timer.step("hackable character preload");
-    // Publish the sprite-bank signature into LevelAssets so engine-side
-    // sprite-script loaders can detect bank changes.
-    assets.bank_signature = host.frontend.resources.frame_holder().signature();
-    tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
         ls.set_status("Initializing level...", 0.73);
@@ -1274,92 +1239,32 @@ pub(super) fn prepare_mission(
         return Err(MissionLoadError::new(campaign, message));
     }
 
-    // Run the single-threaded wasm fallback decode here — the exact point
-    // the old synchronous branch used — so the loading bar behaves the same
-    // when no worker pool exists. Threaded decodes pass through untouched.
-    let pending_terrain = {
-        let mut sync_progress = |u: assets_frame_holder::ProgressUpdate| match u {
-            assets_frame_holder::ProgressUpdate::Tick(d) => {
-                tick_progress(loading_screen, event_pump.as_deref_mut(), d);
-            }
-            assets_frame_holder::ProgressUpdate::Phase(text, _local) => {
-                if let Some(ls) = loading_screen.as_mut() {
-                    ls.set_status(text, LOADING_MAP_DECODE_PROGRESS);
-                }
-            }
+    // Run the single-threaded wasm fallback decode, then size the fast-find
+    // grid from the background's pixel dimensions (see the stage function).
+    let (bg_pixel_dims, pre_decoded_bg, pre_decoded_mm, bg_pending) =
+        match preparation::resolve_background_dims(
+            host,
+            pending_terrain,
+            &map_name,
+            &ambiance_dir,
+            &level_directory,
+            &files,
+            &mut (event_pump.as_deref_mut(), &mut **loading_screen),
+        ) {
+            Ok(resolved) => resolved,
+            Err(message) => return Err(MissionLoadError::new(campaign, message)),
         };
-        pending_terrain.decode_inline_if_pending(&mut sync_progress)
-    };
-
-    // `Engine::new` needs the background bitmap's pixel dimensions to size
-    // the fast-find grid. They are probed cheaply from the map header while
-    // the decode keeps running; when the probe cannot say (missing/corrupt
-    // map, or no map at all) the decode outcome is resolved right here so
-    // the existing pre-engine error path reports it.
-    let mut pre_decoded_bg: Option<engine_api::level_loading::PreDecodedBackground> = None;
-    let mut pre_decoded_mm: Option<engine_api::level_loading::PreDecodedMinimap> = None;
-    let install_decoded_terrain =
-        |decoded: crate::level_loading_host::DecodedTerrainBitmaps,
-         bg: &mut Option<engine_api::level_loading::PreDecodedBackground>,
-         mm: &mut Option<engine_api::level_loading::PreDecodedMinimap>|
-         -> Result<(f32, f32), MissionError> {
-            // TODO(10/F11): leaf returns String (terrain decode worker).
-            let background = decoded.background.map_err(MissionError::asset)?;
-            let dims = background
-                .as_ref()
-                .map(|b| (b.width as f32, b.height as f32))
-                .unwrap_or((0.0, 0.0));
-            *bg = background;
-            *mm = decoded.minimap;
-            Ok(dims)
-        };
-    let (bg_pixel_dims, bg_pending) = match pending_terrain.try_take_ready() {
-        Ok(decoded) => {
-            match install_decoded_terrain(decoded, &mut pre_decoded_bg, &mut pre_decoded_mm) {
-                Ok(dims) => (dims, None),
-                Err(message) => return Err(MissionLoadError::new(campaign, message)),
-            }
-        }
-        Err(pending) => match pending.known_dimensions().or_else(|| {
-            crate::level_loading_host::probe_background_map_dims_with_files(
-                &map_name,
-                &ambiance_dir,
-                &level_directory,
-                host.frontend.resources.shipping.as_deref(),
-                &files,
-            )
-        }) {
-            Some((w, h)) => ((w as f32, h as f32), Some(pending)),
-            None => {
-                let decoded = pending.join_now_or_redecode(&mut |_| {});
-                match install_decoded_terrain(decoded, &mut pre_decoded_bg, &mut pre_decoded_mm) {
-                    Ok(dims) => (dims, None),
-                    Err(message) => return Err(MissionLoadError::new(campaign, message)),
-                }
-            }
-        },
-    };
     timer.step("background map dims");
 
     // Populate every simulation-visible audio dependency before preparing
     // the engine. PreparedMissionInputs seals LevelAssets immediately, so a
     // post-construction host reread would leave replay identity incomplete.
-    let dynamic_ambience_enabled = if host.transport.net().is_some() {
-        host.transport
-            .mission_sim_config()
-            .unwrap_or_else(|| {
-                panic!("active multiplayer transport is missing its Welcome SimConfig")
-            })
-            .enable_dynamic_ambience
-    } else {
-        authoritative_sim_config.enable_dynamic_ambience
-    };
-    let mut ambiance_mask = effective_initial_ambiance.to_bitmask();
-    if dynamic_ambience_enabled {
-        for cue in &loaded.mission.ambience_schedule {
-            ambiance_mask |= cue.ambiance.to_bitmask();
-        }
-    }
+    let ambiance_mask = preparation::mission_ambiance_mask(
+        host,
+        &loaded,
+        effective_initial_ambiance,
+        authoritative_sim_config,
+    );
     if let Err(message) = preparation::prepare_deterministic_audio(
         host,
         &mut assets,
@@ -1397,59 +1302,25 @@ pub(super) fn prepare_mission(
     // setup. Campaign selection has already advanced the single-player /
     // replay sequence. A negotiated multiplayer mission seed remains the
     // authority for a network mission.
-    if let Some(mm) = minimap_widget {
-        host.frontend
-            .presentation
-            .engine_display
-            .setup_minimap_widget(
-                engine_coordinates::ScreenPoint::new(screen_width - 83.0, 38.0),
-                mm.corner_size,
-                mm.button_hit_mask,
-                screen_width,
-                screen_height,
-            );
-    }
+    preparation::setup_minimap_widget(host, minimap_widget, screen_width, screen_height);
 
-    let (rng_seed, sim_config) = if host.transport.net().is_some() {
-        let rng_seed = host.transport.mission_seed().unwrap_or_else(|| {
-            panic!("active multiplayer transport is missing its Welcome mission seed")
-        });
-        let sim_config = host.transport.mission_sim_config().unwrap_or_else(|| {
-            panic!("active multiplayer transport is missing its Welcome SimConfig")
-        });
-        (rng_seed, sim_config)
-    } else {
-        (authoritative_rng_seed, authoritative_sim_config)
-    };
+    let (rng_seed, sim_config) = preparation::session_simulation_start(
+        host,
+        authoritative_rng_seed,
+        authoritative_sim_config,
+    );
 
     // Generate sprite variants once through the same helper ordinary runtime
     // rebinding uses, then publish the immutable hit-testing generation before
     // mission inputs are sealed.
-    let dynamic_visuals = host
-        .application_context()
-        .with_active_profile(|profile| profile.graphic_config.dynamic_ambience_visuals)
-        .unwrap_or_else(|error| {
-            panic!("mission presentation preparation requires an active profile: {error}")
-        });
-    let presentation_initial_ambiance = if dynamic_visuals {
-        effective_initial_ambiance
-    } else {
-        authored_initial_ambiance
-    };
-    crate::level_loading_host::initialize_sprite_variants_for_ambiance(
+    let (dynamic_visuals, initial_shadow_key) = preparation::publish_initial_sprite_variants(
         host,
-        presentation_initial_ambiance,
+        &mut assets,
+        effective_initial_ambiance,
+        authored_initial_ambiance,
         sim_config.bypass_fog_sprites_crash,
+        &mut timer,
     );
-    timer.step("initial sprite variants");
-    let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();
-    let initial_shadow_key = robin_util::color::rgb565(night_r, night_g, night_b);
-    host.frontend
-        .resources
-        .frame_holder_before_publication_mut()
-        .apply_arno_law(initial_shadow_key);
-    assets.attachments.pixel_opacity = Some(host.frontend.resources.publish_frame_holder_opacity());
-    timer.step("initial sprite shadow and opacity publication");
 
     Ok(PreparedMission {
         campaign,

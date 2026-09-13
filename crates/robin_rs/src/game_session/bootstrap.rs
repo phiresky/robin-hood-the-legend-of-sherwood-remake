@@ -905,9 +905,11 @@ impl InteractiveLoadStage {
             &mut self.host,
             &mut self.game,
             campaign,
-            profiles,
-            &mut process.text,
-            args,
+            super::setup::MissionPreparationSources {
+                profiles,
+                text_res: &mut process.text,
+                args,
+            },
             MissionInterfaceSetup {
                 ground_mark,
                 titbit_rows,
@@ -1257,9 +1259,11 @@ impl HeadlessLoadStage {
             &mut self.host,
             &mut self.game,
             campaign,
-            profiles,
-            &mut self.resources.text,
-            args,
+            super::setup::MissionPreparationSources {
+                profiles,
+                text_res: &mut self.resources.text,
+                args,
+            },
             MissionInterfaceSetup {
                 ground_mark,
                 titbit_rows,
