@@ -3784,6 +3784,7 @@ mod browser_tests {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             application: ApplicationContext::default(),
             mission_basenames: Default::default(),
             recording_index,
