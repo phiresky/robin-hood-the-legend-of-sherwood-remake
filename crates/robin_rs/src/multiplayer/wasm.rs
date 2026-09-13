@@ -1073,7 +1073,7 @@ async fn answer_ranked_join_challenge(
         .send(NetEvent::RankedJoinChallenge(released))
         .map_err(|_| "browser ranked challenge channel is closed".to_string())?;
     let attestation =
-        match crate::leaderboard_signing::browser_game_sign_named_seat_join(&claim).await {
+        match crate::leaderboard_signing::PlatformSigner::sign_named_seat_join(&claim).await {
             Ok(attestation) => attestation,
             Err(error) => {
                 tracing::warn!(%error, "isolated browser ranked admission signer unavailable");

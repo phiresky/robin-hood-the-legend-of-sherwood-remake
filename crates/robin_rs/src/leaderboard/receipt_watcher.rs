@@ -7,12 +7,14 @@
 //! Campaign-chain receipts are persisted only from an exact, authenticated
 //! terminal `Accepted` response.
 
+use crate::leaderboard::task::{PollTask, TryTake};
 use crate::leaderboard_http::HttpTransportError;
 use crate::leaderboard_preferences::LeaderboardPreferences;
 use crate::leaderboard_service::{
     LeaderboardApi, LeaderboardServiceError, decode_submission_owner_status,
     decode_submission_owner_status_challenge,
 };
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 use robin_run_protocol::{
     CampaignChainReceiptV1, OpaqueId, PublicKey32, SCHEMA_VERSION_V1, SubmissionAcceptedV1,
     SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
@@ -247,21 +249,12 @@ pub enum ReceiptWatcherOperationError {
     Permanent(String),
 }
 
-trait ReceiptWatcherTask<T>: Send {
-    fn try_take(&mut self) -> Option<Result<T, ReceiptWatcherOperationError>>;
-}
-
-impl<T, F> ReceiptWatcherTask<T> for F
-where
-    F: FnMut() -> Option<Result<T, ReceiptWatcherOperationError>> + Send,
-{
-    fn try_take(&mut self) -> Option<Result<T, ReceiptWatcherOperationError>> {
-        self()
-    }
-}
+/// Frame-polled watcher work. `Send` because the watcher is owned by the
+/// application services, not the render thread.
+type ReceiptWatcherTask<T> = dyn TryTake<T, ReceiptWatcherOperationError> + Send;
 
 fn poll_validated<T>(
-    task: &mut dyn ReceiptWatcherTask<T>,
+    task: &mut ReceiptWatcherTask<T>,
     validate: impl FnOnce(&T) -> Result<(), String>,
 ) -> Option<Result<T, ReceiptWatcherOperationError>> {
     task.try_take().map(|result| {
@@ -277,7 +270,7 @@ trait ReceiptWatcherBackend: Send {
         &mut self,
         request: SubmissionOwnerStatusChallengeRequestV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
         ReceiptWatcherOperationError,
     >;
 
@@ -285,7 +278,7 @@ trait ReceiptWatcherBackend: Send {
         &mut self,
         challenge: SubmissionOwnerStatusChallengeV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
         ReceiptWatcherOperationError,
     >;
 
@@ -293,7 +286,7 @@ trait ReceiptWatcherBackend: Send {
         &mut self,
         envelope: SubmissionOwnerStatusEnvelopeV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
         ReceiptWatcherOperationError,
     >;
 }
@@ -314,17 +307,17 @@ enum ActiveReceiptWatcherTask {
     Challenge {
         key: SubmissionReceiptWatchKey,
         request: SubmissionOwnerStatusChallengeRequestV1,
-        task: Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
+        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
     },
     Sign {
         key: SubmissionReceiptWatchKey,
         challenge: SubmissionOwnerStatusChallengeV1,
-        task: Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
     },
     Status {
         key: SubmissionReceiptWatchKey,
         envelope: SubmissionOwnerStatusEnvelopeV1,
-        task: Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        task: Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
     },
 }
 
@@ -981,34 +974,12 @@ struct HttpReceiptWatcherBackend {
     api: LeaderboardApi,
 }
 
-struct SigningTask {
-    receiver: async_channel::Receiver<
-        Result<SubmissionOwnerStatusEnvelopeV1, ReceiptWatcherOperationError>,
-    >,
-}
-
-impl ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1> for SigningTask {
-    fn try_take(
-        &mut self,
-    ) -> Option<Result<SubmissionOwnerStatusEnvelopeV1, ReceiptWatcherOperationError>> {
-        match self.receiver.try_recv() {
-            Ok(result) => Some(result),
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => {
-                Some(Err(ReceiptWatcherOperationError::Transient(
-                    "identity signing worker closed without a result".to_owned(),
-                )))
-            }
-        }
-    }
-}
-
 impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
     fn challenge(
         &mut self,
         request: SubmissionOwnerStatusChallengeRequestV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
         ReceiptWatcherOperationError,
     > {
         let task = self
@@ -1025,19 +996,32 @@ impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
         &mut self,
         challenge: SubmissionOwnerStatusChallengeV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
         ReceiptWatcherOperationError,
     > {
-        let (sender, receiver) = async_channel::bounded(1);
-        spawn_signing(challenge, sender)?;
-        Ok(Box::new(SigningTask { receiver }))
+        let task =
+            PollTask::spawn_background("leaderboard-owner-status-sign", move || async move {
+                PlatformSigner::sign_submission_owner_status(challenge)
+                    .await
+                    .map_err(classify_signing_error)
+            })
+            .map_err(|error| {
+                ReceiptWatcherOperationError::Transient(format!(
+                    "failed to start identity signing worker: {error}"
+                ))
+            })?;
+        Ok(Box::new(task.into_try_take(|| {
+            ReceiptWatcherOperationError::Transient(
+                "identity signing worker closed without a result".to_owned(),
+            )
+        })))
     }
 
     fn status(
         &mut self,
         envelope: SubmissionOwnerStatusEnvelopeV1,
     ) -> Result<
-        Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+        Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
         ReceiptWatcherOperationError,
     > {
         let task = self
@@ -1050,59 +1034,13 @@ impl ReceiptWatcherBackend for HttpReceiptWatcherBackend {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn spawn_signing(
-    challenge: SubmissionOwnerStatusChallengeV1,
-    sender: async_channel::Sender<
-        Result<SubmissionOwnerStatusEnvelopeV1, ReceiptWatcherOperationError>,
-    >,
-) -> Result<(), ReceiptWatcherOperationError> {
-    std::thread::Builder::new()
-        .name("leaderboard-owner-status-sign".to_owned())
-        .spawn(move || {
-            let result = crate::leaderboard_signing::sign_submission_owner_status(challenge)
-                .map_err(classify_signing_error);
-            let _ = sender.send_blocking(result);
-        })
-        .map(|_| ())
-        .map_err(|error| {
-            ReceiptWatcherOperationError::Transient(format!(
-                "failed to start identity signing worker: {error}"
-            ))
-        })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn spawn_signing(
-    challenge: SubmissionOwnerStatusChallengeV1,
-    sender: async_channel::Sender<
-        Result<SubmissionOwnerStatusEnvelopeV1, ReceiptWatcherOperationError>,
-    >,
-) -> Result<(), ReceiptWatcherOperationError> {
-    wasm_bindgen_futures::spawn_local(async move {
-        let result =
-            crate::leaderboard_signing::browser_game_sign_submission_owner_status(&challenge)
-                .await
-                .map_err(classify_signing_error);
-        let _ = sender.send(result).await;
-    });
-    Ok(())
-}
-
 fn classify_signing_error(
     error: crate::leaderboard_signing::LeaderboardSigningError,
 ) -> ReceiptWatcherOperationError {
-    use crate::leaderboard_signing::LeaderboardSigningError as Error;
-    match error {
-        Error::Identity(_) => ReceiptWatcherOperationError::Transient(error.to_string()),
-        Error::WrongIdentity
-        | Error::IdentityNotClaimed
-        | Error::InvalidClaim(_)
-        | Error::Canonical(_) => ReceiptWatcherOperationError::Permanent(error.to_string()),
-        #[cfg(target_arch = "wasm32")]
-        Error::DocumentTooLarge { .. } | Error::InvalidJson(_) => {
-            ReceiptWatcherOperationError::Permanent(error.to_string())
-        }
+    if error.is_transient() {
+        ReceiptWatcherOperationError::Transient(error.to_string())
+    } else {
+        ReceiptWatcherOperationError::Permanent(error.to_string())
     }
 }
 
@@ -1236,7 +1174,7 @@ mod tests {
 
     struct ReadyTask<T>(Option<Result<T, ReceiptWatcherOperationError>>);
 
-    impl<T: Send> ReceiptWatcherTask<T> for ReadyTask<T> {
+    impl<T: Send> TryTake<T, ReceiptWatcherOperationError> for ReadyTask<T> {
         fn try_take(&mut self) -> Option<Result<T, ReceiptWatcherOperationError>> {
             self.0.take()
         }
@@ -1266,7 +1204,7 @@ mod tests {
             &mut self,
             _request: SubmissionOwnerStatusChallengeRequestV1,
         ) -> Result<
-            Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
+            Box<ReceiptWatcherTask<SubmissionOwnerStatusChallengeV1>>,
             ReceiptWatcherOperationError,
         > {
             match self.next() {
@@ -1280,7 +1218,7 @@ mod tests {
             &mut self,
             _challenge: SubmissionOwnerStatusChallengeV1,
         ) -> Result<
-            Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
+            Box<ReceiptWatcherTask<SubmissionOwnerStatusEnvelopeV1>>,
             ReceiptWatcherOperationError,
         > {
             match self.next() {
@@ -1294,7 +1232,7 @@ mod tests {
             &mut self,
             _envelope: SubmissionOwnerStatusEnvelopeV1,
         ) -> Result<
-            Box<dyn ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
+            Box<ReceiptWatcherTask<SubmissionOwnerStatusResponseV1>>,
             ReceiptWatcherOperationError,
         > {
             match self.next() {

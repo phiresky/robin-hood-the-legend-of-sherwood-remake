@@ -236,17 +236,10 @@ fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
     values.windows(2).all(|pair| pair[0] < pair[1])
 }
 
-pub trait MissionEndTask<T> {
-    /// Return `None` while work remains pending. Implementations must never
-    /// block the calling render frame.
-    fn try_take(&mut self) -> Option<Result<T, String>>;
-}
-
-impl<T, F: FnMut() -> Option<Result<T, String>>> MissionEndTask<T> for F {
-    fn try_take(&mut self) -> Option<Result<T, String>> {
-        self()
-    }
-}
+use crate::leaderboard::task::PollTask;
+/// Mission-end work reports failures as display strings.
+pub use crate::leaderboard::task::TryTake as MissionEndTask;
+use crate::leaderboard_signing::{GameIdentitySigner as _, PlatformSigner};
 
 pub trait SubmissionAuthorizationTask: MissionEndTask<SignedSubmissionV1> {
     fn progress(&self) -> ParticipantSigningProgress;
@@ -1452,6 +1445,9 @@ impl ActiveMissionReplayExporter {
     }
 }
 
+// TODO: `replay_service::ExportResult` is still a raw capacity-one receiver;
+// returning `leaderboard::task::PollTask` from `ReplayExports::export_snapshot`
+// would remove this last hand-written `TryRecvError` poll.
 struct ReplayExportTask(crate::replay_service::ExportResult);
 
 impl Serialize for ReplayExportTask {
@@ -1494,158 +1490,88 @@ impl MissionEndReplayExporter for ActiveMissionReplayExporter {
 /// request type through an authenticated co-sign transport adapter.
 pub struct LocalMissionEndSubmissionAuthorizer;
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
-struct ImmediateAuthorizationTask {
-    result: Option<Result<SignedSubmissionV1, String>>,
+/// Local single-participant authorization. The signer future starts in
+/// `begin`; native signers complete before `begin` returns, so `progress`
+/// already reports the signature before the first poll, exactly as a browser
+/// task does once its signer origin answers.
+struct LocalAuthorizationTask {
+    task: PollTask<Result<SignedSubmissionV1, String>>,
+    completed: Option<Result<SignedSubmissionV1, String>>,
     progress: ParticipantSigningProgress,
 }
 
-#[cfg(any(test, not(target_arch = "wasm32")))]
-impl MissionEndTask<SignedSubmissionV1> for ImmediateAuthorizationTask {
-    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        self.result.take()
-    }
-}
-
-#[cfg(any(test, not(target_arch = "wasm32")))]
-impl SubmissionAuthorizationTask for ImmediateAuthorizationTask {
-    fn progress(&self) -> ParticipantSigningProgress {
-        self.progress.clone()
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let expected = request.expected_participants();
-        if expected.len() != 1 {
-            return Err(
-                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
-            );
-        }
-        let result = authorize_local_native(&request).map_err(|error| error.to_string());
-        let signed = result
-            .as_ref()
-            .ok()
-            .map(|signed| {
-                signed
-                    .participant_signatures
-                    .iter()
-                    .map(|signature| signature.public_key)
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(Box::new(ImmediateAuthorizationTask {
-            result: Some(result),
-            progress: ParticipantSigningProgress { expected, signed },
-        }))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn authorize_local_native(
-    request: &SubmissionAuthorizationRequest,
-) -> Result<SignedSubmissionV1, MissionEndLeaderboardError> {
-    let continuation = request
-        .continuation_claim()?
-        .map(|claim| crate::leaderboard_signing::sign_campaign_continuation(&request.offer, claim))
-        .transpose()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let envelope = request.envelope(continuation);
-    envelope
-        .validate()
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signature = crate::leaderboard_signing::sign_submission_claim(&envelope)
-        .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signed = SignedSubmissionV1 {
-        schema_version: SCHEMA_VERSION_V1,
-        submission: envelope,
-        algorithm: SignatureAlgorithmV1::Ed25519,
-        participant_signatures: vec![signature],
-    };
-    validate_authorized_submission(request, &signed)?;
-    Ok(signed)
-}
-
-#[cfg(target_arch = "wasm32")]
-struct BrowserAuthorizationTask {
-    receiver: async_channel::Receiver<Result<SignedSubmissionV1, String>>,
-    progress: ParticipantSigningProgress,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndTask<SignedSubmissionV1> for BrowserAuthorizationTask {
-    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
-        match self.receiver.try_recv() {
-            Ok(result) => {
-                if let Ok(signed) = &result {
-                    self.progress.signed = signed
-                        .participant_signatures
-                        .iter()
-                        .map(|signature| signature.public_key)
-                        .collect();
-                }
-                Some(result)
-            }
-            Err(async_channel::TryRecvError::Empty) => None,
-            Err(async_channel::TryRecvError::Closed) => Some(Err(
-                "browser submission signer stopped unexpectedly".to_owned(),
-            )),
-        }
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl SubmissionAuthorizationTask for BrowserAuthorizationTask {
-    fn progress(&self) -> ParticipantSigningProgress {
-        self.progress.clone()
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
-    fn begin(
-        &mut self,
-        request: SubmissionAuthorizationRequest,
-    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
-        let expected = request.expected_participants();
-        if expected.len() != 1 {
-            return Err(
-                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
-            );
-        }
-        let (sender, receiver) = async_channel::bounded(1);
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = authorize_local_browser(&request)
-                .await
-                .map_err(|error| error.to_string());
-            let _ = sender.send(result).await;
-        });
-        Ok(Box::new(BrowserAuthorizationTask {
-            receiver,
+impl LocalAuthorizationTask {
+    fn new(
+        task: PollTask<Result<SignedSubmissionV1, String>>,
+        expected: Vec<robin_run_protocol::PublicKey32>,
+    ) -> Self {
+        let mut this = Self {
+            task,
+            completed: None,
             progress: ParticipantSigningProgress {
                 expected,
                 signed: Vec::new(),
             },
-        }))
+        };
+        this.completed = this.poll_signer();
+        this
+    }
+
+    fn poll_signer(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
+        let result = self
+            .task
+            .poll(|| "browser submission signer stopped unexpectedly".to_owned())?;
+        if let Ok(signed) = &result {
+            self.progress.signed = signed
+                .participant_signatures
+                .iter()
+                .map(|signature| signature.public_key)
+                .collect();
+        }
+        Some(result)
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-async fn authorize_local_browser(
+impl MissionEndTask<SignedSubmissionV1> for LocalAuthorizationTask {
+    fn try_take(&mut self) -> Option<Result<SignedSubmissionV1, String>> {
+        self.completed.take().or_else(|| self.poll_signer())
+    }
+}
+
+impl SubmissionAuthorizationTask for LocalAuthorizationTask {
+    fn progress(&self) -> ParticipantSigningProgress {
+        self.progress.clone()
+    }
+}
+
+impl MissionEndSubmissionAuthorizer for LocalMissionEndSubmissionAuthorizer {
+    fn begin(
+        &mut self,
+        request: SubmissionAuthorizationRequest,
+    ) -> Result<Box<dyn SubmissionAuthorizationTask>, String> {
+        let expected = request.expected_participants();
+        if expected.len() != 1 {
+            return Err(
+                "multiplayer submission requires the authenticated co-sign transport".to_owned(),
+            );
+        }
+        let task = PollTask::start(async move {
+            authorize_local(&request)
+                .await
+                .map_err(|error| error.to_string())
+        });
+        Ok(Box::new(LocalAuthorizationTask::new(task, expected)))
+    }
+}
+
+async fn authorize_local(
     request: &SubmissionAuthorizationRequest,
 ) -> Result<SignedSubmissionV1, MissionEndLeaderboardError> {
     let continuation = match request.continuation_claim()? {
         Some(claim) => Some(
-            crate::leaderboard_signing::browser_game_sign_campaign_continuation(
-                &request.offer,
-                &claim,
-            )
-            .await
-            .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
+            PlatformSigner::sign_campaign_continuation(&request.offer, claim)
+                .await
+                .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?,
         ),
         None => None,
     };
@@ -1653,7 +1579,7 @@ async fn authorize_local_browser(
     envelope
         .validate()
         .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
-    let signature = crate::leaderboard_signing::browser_game_sign_submission_claim(&envelope)
+    let signature = PlatformSigner::sign_submission_claim(&envelope)
         .await
         .map_err(|error| MissionEndLeaderboardError::Authorization(error.to_string()))?;
     let signed = SignedSubmissionV1 {
@@ -1859,13 +1785,10 @@ mod tests {
                     signature: Signature64::from_bytes(signature.to_bytes()),
                 }],
             };
-            Ok(Box::new(ImmediateAuthorizationTask {
-                result: Some(Ok(signed)),
-                progress: ParticipantSigningProgress {
-                    expected: vec![public_key],
-                    signed: vec![public_key],
-                },
-            }))
+            Ok(Box::new(LocalAuthorizationTask::new(
+                PollTask::ready(Ok(signed)),
+                vec![public_key],
+            )))
         }
     }
 
