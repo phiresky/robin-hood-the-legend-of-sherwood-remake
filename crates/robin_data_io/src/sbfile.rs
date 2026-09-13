@@ -30,16 +30,16 @@ use platform::{
 
 /// Errors from the read-only game-data filesystem. Missing data is distinct
 /// from a failed read, failed seek, invalid mount, or sealed configuration.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error,
-)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum SbFileError {
     #[error("file not found")]
     NotFound,
     #[error("not a usable file or directory")]
     NoFile,
+    /// The underlying I/O error when one exists; `None` for policy
+    /// rejections (confinement, invalid paths, VFS failures already logged).
     #[error("file read or path resolution failed")]
-    Read,
+    Read(#[source] Option<Arc<std::io::Error>>),
     #[error("file seek failed")]
     Seek,
     #[error("mount path is already present")]
@@ -53,19 +53,22 @@ pub enum SbFileError {
 }
 
 impl SbFileError {
-    /// Original compatibility codes for diagnostics, not Rust control flow.
-    pub const fn legacy_code(self) -> i32 {
-        match self {
-            Self::NotFound => -1,
-            Self::NoFile => -4,
-            Self::Read | Self::Sealed => -5,
-            Self::Seek => -7,
-            Self::PathAlreadyPresent => -10,
-            Self::PathNotInSet => -11,
-            Self::BadArchive => -20,
-        }
+    /// A failed read carrying its I/O cause.
+    pub fn read_io(error: std::io::Error) -> Self {
+        Self::Read(Some(Arc::new(error)))
     }
 }
+
+/// Equality compares the error kind only: an attached I/O source is
+/// diagnostic detail, so `Read(Some(..)) == Read(None)`. Use `Read(_)` when
+/// pattern matching.
+impl PartialEq for SbFileError {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+impl Eq for SbFileError {}
 
 /// Instance-owned game-file lookup state.
 ///
@@ -468,7 +471,7 @@ impl ZipOverlay {
             .read_entry(idx)
             .inspect_err(|error| tracing::warn!("ZipOverlay::try_read: {error}"))
             .map(Some)
-            .map_err(|_| SbFileError::Read)
+            .map_err(|_| SbFileError::Read(None))
     }
 
     fn exists(&self, path: &str) -> bool {
@@ -685,17 +688,17 @@ impl SbFileSystem {
                 let Some(resolved) = try_resolve_case_insensitive(&directory.join(&path))? else {
                     return Ok(Vec::new());
                 };
-                let resolved = fs::canonicalize(resolved).map_err(|_| SbFileError::Read)?;
+                let resolved = fs::canonicalize(resolved).map_err(SbFileError::read_io)?;
                 if !resolved.starts_with(directory) {
-                    return Err(SbFileError::Read);
+                    return Err(SbFileError::Read(None));
                 }
-                for entry in fs::read_dir(resolved).map_err(|_| SbFileError::Read)? {
-                    let entry = entry.map_err(|_| SbFileError::Read)?;
+                for entry in fs::read_dir(resolved).map_err(SbFileError::read_io)? {
+                    let entry = entry.map_err(SbFileError::read_io)?;
                     let name = entry
                         .file_name()
                         .into_string()
-                        .map_err(|_| SbFileError::Read)?;
-                    let metadata = entry.metadata().map_err(|_| SbFileError::Read)?;
+                        .map_err(|_| SbFileError::Read(None))?;
+                    let metadata = entry.metadata().map_err(SbFileError::read_io)?;
                     entries.insert(
                         name.to_ascii_lowercase(),
                         OverlayEntry {
@@ -949,7 +952,7 @@ fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<AssetBytes>
         Err(robin_util::asset_fs::AssetError::InvalidPath(_)) if Path::new(path).is_absolute() => {}
         Err(e) => {
             tracing::warn!("asset read failed for {path}: {e}");
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -968,7 +971,7 @@ fn try_read(file_system: &SbFileSystem, path: &str) -> Result<Option<AssetBytes>
                     "asset read failed for {} (case-resolved from {path}): {e}",
                     resolved.display()
                 );
-                return Err(SbFileError::Read);
+                return Err(SbFileError::read_io(e));
             }
         }
     }
@@ -992,7 +995,7 @@ impl SbFileSystem {
                     .components()
                     .any(|component| !matches!(component, std::path::Component::Normal(_)))
             {
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
             let mut resolved = None;
             for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
@@ -1007,7 +1010,7 @@ impl SbFileSystem {
                     "ranked verifier asset {} cannot be read: {error}",
                     resolved.display()
                 );
-                SbFileError::Read
+                SbFileError::read_io(error)
             })?;
             return Ok(SbFile::from_bytes(bytes, normalised));
         }
@@ -1015,7 +1018,7 @@ impl SbFileSystem {
         if requested.is_absolute() {
             if official_strict {
                 tracing::warn!("official projection rejected absolute open path {normalised:?}");
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
             return try_read(self, &normalised)?
                 .map(|bytes| SbFile::from_bytes(bytes, normalised.clone()))
@@ -1026,7 +1029,7 @@ impl SbFileSystem {
             .any(|component| matches!(component, std::path::Component::ParentDir))
         {
             tracing::warn!("SbFile::open: rejected escaping path {normalised}");
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
         let overlay_paths = &mounts.overlay_paths;
         for overlay in overlay_paths.iter().rev() {
@@ -1079,7 +1082,7 @@ impl SbFileSystem {
                 Err(robin_util::asset_fs::AssetError::NotFound(_)) => {}
                 Err(error) => {
                     tracing::warn!("official asset read failed for {normalised}: {error}");
-                    return Err(SbFileError::Read);
+                    return Err(SbFileError::Read(None));
                 }
             }
             tracing::warn!(
@@ -1126,7 +1129,7 @@ impl SbFileSystem {
                 .components()
                 .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
         let base = self.snapshot();
         let mounts = base.mount_state();
@@ -1190,7 +1193,7 @@ impl SbFile {
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<(), SbFileError> {
-        self.file.read_exact(buf).map_err(|_| SbFileError::Read)
+        self.file.read_exact(buf).map_err(SbFileError::read_io)
     }
 
     pub fn skip(&mut self, distance: i64, mode: u32) -> Result<(), SbFileError> {
@@ -1451,7 +1454,7 @@ impl SbFileSystem {
                         "instance asset existence failed for {}: {error}",
                         path.display()
                     );
-                    Err(SbFileError::Read)
+                    Err(SbFileError::Read(None))
                 }
             }
         }
@@ -1467,7 +1470,7 @@ impl SbFileSystem {
                     .components()
                     .any(|component| !matches!(component, std::path::Component::Normal(_)))
             {
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
             for candidate in mounts.ranked_confined_candidates(&root, &normalised) {
                 if path_exists_contained(&root, &candidate)? {
@@ -1479,14 +1482,14 @@ impl SbFileSystem {
         let official_strict = mounts.official_projection_strict;
         if official_strict && requested.is_absolute() {
             tracing::warn!("official projection rejected absolute existence path {normalised:?}");
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
         if !requested.is_absolute()
             && requested
                 .components()
                 .any(|component| matches!(component, std::path::Component::ParentDir))
         {
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
 
         if !requested.is_absolute() {
@@ -1540,7 +1543,7 @@ impl SbFileSystem {
             Ok(false) | Err(robin_util::asset_fs::AssetError::InvalidPath(_)) => {}
             Err(error) => {
                 tracing::warn!("SbFileSystem::try_exists({normalised}): {error}");
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
         }
         if !official_strict && self.resolve_instance_path(requested)?.is_some() {
@@ -1837,7 +1840,7 @@ impl SbFileSystem {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit())
         {
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
         self.lock_ranked_verifier_primary_path_inner(path, Some(resource_locale_root))
     }
@@ -1864,7 +1867,7 @@ impl SbFileSystem {
                 || metadata.file_type().is_symlink()
                 || ranked_locale_tree_is_ambiguous_or_unsafe(&locale_path)
             {
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
         }
         let locked = &mut mounts.ranked_verifier_primary_path;
@@ -1876,7 +1879,7 @@ impl SbFileSystem {
             {
                 Ok(())
             } else {
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(None))
             };
         }
         let locale_is_empty = {
@@ -1890,7 +1893,7 @@ impl SbFileSystem {
             tracing::warn!(
                 "SbFileSystem::lock_ranked_verifier_primary_path: ambient lookup paths already exist"
             );
-            return Err(SbFileError::Read);
+            return Err(SbFileError::Read(None));
         }
         mounts.primary_path = Some(canonical.clone());
         mounts.locale_paths = LocaleLookup {
@@ -1953,7 +1956,7 @@ fn normalise_locale_root(root: &str) -> Result<String, SbFileError> {
             .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         tracing::warn!("SbFileSystem::set_locale_paths: invalid locale root {root:?}");
-        return Err(SbFileError::Read);
+        return Err(SbFileError::Read(None));
     }
     Ok(normalised.to_string())
 }
@@ -2017,7 +2020,7 @@ fn read_from_overlay(
                     "overlay asset {} cannot be opened: {error}",
                     resolved.display()
                 );
-                SbFileError::Read
+                SbFileError::read_io(error)
             })?;
             if !resolved.starts_with(dir) {
                 tracing::warn!(
@@ -2025,7 +2028,7 @@ fn read_from_overlay(
                     resolved.display(),
                     dir.display()
                 );
-                return Err(SbFileError::Read);
+                return Err(SbFileError::Read(None));
             }
             try_read(file_system, &resolved.to_string_lossy())
         }
@@ -2044,7 +2047,7 @@ fn checked_overlay_relative(path: &str) -> Result<String, SbFileError> {
             .any(|part| part == ".." || part.contains(':'))
     {
         tracing::warn!("invalid relative overlay path {path:?}");
-        return Err(SbFileError::Read);
+        return Err(SbFileError::Read(None));
     }
     Ok(path
         .split('/')
@@ -2092,7 +2095,7 @@ mod tests {
                         assert!(state.alternate_paths.is_empty());
                         assert!(state.ranked_verifier_primary_path.is_some());
                     }
-                    (Err(SbFileError::Read), Ok(())) => {
+                    (Err(SbFileError::Read(_)), Ok(())) => {
                         let state = files.mount_snapshot();
                         assert_eq!(state.alternate_paths, ["ambient"]);
                         assert!(state.ranked_verifier_primary_path.is_none());
@@ -2114,7 +2117,7 @@ mod tests {
         let denied = || Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
         assert_eq!(
             first_case_folded_entry(directory, "asset", [denied(), Ok(directory.join("Asset"))]),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
         assert_eq!(
             first_case_folded_entry(directory, "asset", [Ok(directory.join("Asset")), denied()]),
@@ -2159,15 +2162,18 @@ mod tests {
         let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
         for name in ["Loop", "loop"] {
             let path = root.path().join("Data").join(name);
-            assert_eq!(try_resolve_case_insensitive(&path), Err(SbFileError::Read));
+            assert_eq!(
+                try_resolve_case_insensitive(&path),
+                Err(SbFileError::Read(None))
+            );
             assert!(resolve_case_insensitive(&path).is_none());
             assert_eq!(
                 files.try_exists(path.to_str().unwrap()),
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(None))
             );
             assert!(matches!(
                 files.open(path.to_str().unwrap()),
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(_))
             ));
         }
     }
@@ -2187,15 +2193,15 @@ mod tests {
         for root in [lower.path(), higher.path()] {
             assert_eq!(files.add_overlay_path(root.to_str().unwrap()), Ok(()));
         }
-        assert_eq!(files.read_all("loop"), Err(SbFileError::Read));
-        assert_eq!(files.try_exists("loop"), Err(SbFileError::Read));
+        assert_eq!(files.read_all("loop"), Err(SbFileError::Read(None)));
+        assert_eq!(files.try_exists("loop"), Err(SbFileError::Read(None)));
         assert_eq!(
             files.read_overlay(higher.path().to_str().unwrap(), "loop"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
         assert!(matches!(
             files.list_overlay_dir(higher.path().to_str().unwrap(), "loop"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(_))
         ));
         assert_eq!(files.read_all("missing").unwrap(), b"lower missing");
         assert_eq!(files.read_all("Blocker/child").unwrap(), b"lower child");
@@ -2208,7 +2214,7 @@ mod tests {
         );
         assert!(matches!(
             files.list_overlay_dir(higher.path().to_str().unwrap(), "Blocker"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(_))
         ));
     }
 
@@ -2225,15 +2231,15 @@ mod tests {
             assert_eq!(files.add_overlay_path(root.to_str().unwrap()), Ok(()));
         }
         for path in ["Asset", "asset"] {
-            assert_eq!(files.read_all(path), Err(SbFileError::Read));
-            assert_eq!(files.try_exists(path), Err(SbFileError::Read));
+            assert_eq!(files.read_all(path), Err(SbFileError::Read(None)));
+            assert_eq!(files.try_exists(path), Err(SbFileError::Read(None)));
             assert_eq!(
                 files.read_overlay(higher.path().to_str().unwrap(), path),
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(None))
             );
             assert!(matches!(
                 files.list_overlay_dir(higher.path().to_str().unwrap(), path),
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(_))
             ));
         }
         let confined = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
@@ -2241,8 +2247,8 @@ mod tests {
             confined.lock_ranked_verifier_primary_path(higher.path()),
             Ok(())
         );
-        assert!(matches!(confined.open("asset"), Err(SbFileError::Read)));
-        assert_eq!(confined.try_exists("asset"), Err(SbFileError::Read));
+        assert!(matches!(confined.open("asset"), Err(SbFileError::Read(_))));
+        assert_eq!(confined.try_exists("asset"), Err(SbFileError::Read(None)));
     }
 
     #[cfg(unix)]
@@ -2257,8 +2263,8 @@ mod tests {
         let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
         assert_eq!(files.lock_ranked_verifier_primary_path(root.path()), Ok(()));
         for path in ["loop", "escape/secret"] {
-            assert!(matches!(files.open(path), Err(SbFileError::Read)));
-            assert_eq!(files.try_exists(path), Err(SbFileError::Read));
+            assert!(matches!(files.open(path), Err(SbFileError::Read(_))));
+            assert_eq!(files.try_exists(path), Err(SbFileError::Read(None)));
             assert!(files.resolve_data_path(path).is_none());
         }
         assert!(matches!(files.open("absent"), Err(SbFileError::NotFound)));
@@ -2457,7 +2463,7 @@ mod tests {
         assert_eq!(file_system.read_all("Data/core.bin").unwrap(), b"core");
         assert!(matches!(
             file_system.open(source.join("Data/source.bin").to_str().unwrap()),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(_))
         ));
         assert_eq!(
             file_system.add_alternate_path("host-fallback"),
@@ -2501,7 +2507,7 @@ mod tests {
             let expected_code = if expected.read_exact(&mut expected_bytes).is_ok() {
                 Ok(())
             } else {
-                Err(SbFileError::Read)
+                Err(SbFileError::Read(None))
             };
             assert_eq!(file.read(&mut actual_bytes), expected_code);
 
@@ -2532,7 +2538,7 @@ mod tests {
         let mut actual_bytes = [0; 1];
         let mut expected_bytes = actual_bytes;
         assert!(expected.read_exact(&mut expected_bytes).is_err());
-        assert_eq!(file.read(&mut actual_bytes), Err(SbFileError::Read));
+        assert_eq!(file.read(&mut actual_bytes), Err(SbFileError::Read(None)));
         assert_eq!(actual_bytes, expected_bytes);
         // A failed read past EOF can clamp the cursor to the backing length.
         // Both the old fallible accessor and the direct accessor report it.
@@ -2709,7 +2715,7 @@ mod tests {
         );
         assert_eq!(
             file_system.lock_ranked_verifier_primary_path(sibling.path()),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
         assert_eq!(
             file_system.set_primary_path(sibling.path().to_str().unwrap()),
@@ -2846,7 +2852,7 @@ mod tests {
         let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
         assert_eq!(
             file_system.lock_ranked_verifier_primary_path_with_locale(ambiguous.path(), "1033"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
     }
 
@@ -2859,14 +2865,14 @@ mod tests {
         assert_eq!(alternate.add_alternate_path("ambient"), Ok(()));
         assert_eq!(
             alternate.lock_ranked_verifier_primary_path_with_locale(root.path(), "1033"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
 
         let locale = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
         assert_eq!(locale.set_locale_paths(Some("ambient"), None), Ok(()));
         assert_eq!(
             locale.lock_ranked_verifier_primary_path_with_locale(root.path(), "1033"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
 
         let overlay_root = tempfile::tempdir().unwrap();
@@ -2877,7 +2883,7 @@ mod tests {
         );
         assert_eq!(
             overlay.lock_ranked_verifier_primary_path_with_locale(root.path(), "1033"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
     }
 
@@ -2890,7 +2896,7 @@ mod tests {
             let file_system = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
             assert_eq!(
                 file_system.lock_ranked_verifier_primary_path_with_locale(root.path(), invalid),
-                Err(SbFileError::Read),
+                Err(SbFileError::Read(None)),
                 "locale {invalid:?} must be rejected"
             );
         }
@@ -2939,7 +2945,10 @@ mod tests {
             Ok(())
         );
         assert!(file_system.resolve_data_dir_layers("Data/Text").is_empty());
-        assert_eq!(file_system.try_exists("Data/Text"), Err(SbFileError::Read));
+        assert_eq!(
+            file_system.try_exists("Data/Text"),
+            Err(SbFileError::Read(None))
+        );
     }
 
     fn write_layer_file(root: &Path, relative: &str, contents: &[u8]) -> PathBuf {
@@ -3132,7 +3141,7 @@ mod tests {
 
         assert_eq!(
             file_system.set_locale_paths(Some("fr-FR"), Some("../escape")),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
         assert_eq!(
             file_system.locale_paths(),
@@ -3310,7 +3319,7 @@ mod tests {
         expected.seek(SeekFrom::Start(100)).unwrap();
         let mut expected_prefix = prefix;
         assert!(expected.read_exact(&mut expected_prefix).is_err());
-        assert_eq!(stream.read(&mut prefix), Err(SbFileError::Read));
+        assert_eq!(stream.read(&mut prefix), Err(SbFileError::Read(None)));
         assert_eq!(prefix, expected_prefix);
         assert_eq!(expected.stream_position().unwrap(), expected.position());
         assert_eq!(stream.tell(), expected.position());
@@ -3363,7 +3372,7 @@ mod tests {
         );
         assert!(matches!(
             file_system.open("escape/secret.dat"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(_))
         ));
     }
 
@@ -3466,7 +3475,7 @@ mod tests {
         );
         assert_eq!(
             files.read_overlay("corrupt", "Data/Characters/bank"),
-            Err(SbFileError::Read)
+            Err(SbFileError::Read(None))
         );
         assert!(files.read_all("Data/Characters/bank").is_err());
     }

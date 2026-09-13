@@ -547,7 +547,7 @@ mod tests {
         assert_eq!(error.field, "characters[3].shooting");
         assert!(matches!(
             error.kind,
-            LegacyIoErrorKind::SbFile(SbFileError::Read)
+            LegacyIoErrorKind::SbFile(SbFileError::Read(_))
         ));
     }
 

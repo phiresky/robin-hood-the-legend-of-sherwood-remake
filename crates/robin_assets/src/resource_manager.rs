@@ -1408,18 +1408,22 @@ mod tests {
 
     #[test]
     fn archive_acquisition_classifies_the_single_read_without_reprobing() {
-        for status in [SbFileError::NotFound, SbFileError::Read] {
+        for status in [SbFileError::NotFound, SbFileError::Read(None)] {
             let calls = std::cell::Cell::new(0);
             let result = acquire_resource_bytes("fixture.res", || {
                 calls.set(calls.get() + 1);
-                Err(status)
+                Err(status.clone())
             });
             assert_eq!(calls.get(), 1);
             match (status, result) {
                 (SbFileError::NotFound, Ok(None)) => {}
-                (SbFileError::Read, Err(ResourceAttachmentError::Unavailable(error))) => {
+                (SbFileError::Read(_), Err(ResourceAttachmentError::Unavailable(error))) => {
                     assert!(error.to_string().contains("fixture.res"));
-                    assert!(error.to_string().contains(&SbFileError::Read.to_string()));
+                    assert!(
+                        error
+                            .to_string()
+                            .contains(&SbFileError::Read(None).to_string())
+                    );
                 }
                 (_, result) => panic!("wrong acquisition classification: {result:?}"),
             }
