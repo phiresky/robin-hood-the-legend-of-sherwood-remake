@@ -209,9 +209,11 @@ impl MainMenuAudio {
             events,
             frame,
             widget_bridge::WIDGET_NOISY_BUTTON,
-            &mut self.sound,
-            Some(&mut self.backend),
-            &*self.sample_loader,
+            widget_bridge::ScreenAudio {
+                sound: Some(&mut self.sound),
+                backend: Some(&mut self.backend),
+                sample_loader: Some(&*self.sample_loader),
+            },
             &mut self.noisy_tracker,
         );
     }

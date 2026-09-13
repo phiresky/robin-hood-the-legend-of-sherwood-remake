@@ -299,19 +299,13 @@ impl PopupScrollModalState {
         } else {
             ScreenFrame::dispatch(&mut self.input_state, &mut self.frame)
         };
-        if let ScreenAudio {
-            sound: Some(sound),
-            backend: Some(backend),
-            sample_loader: Some(sample_loader),
-        } = audio
-        {
+        // Popups observe the noise tracker only with a live backend.
+        if audio.backend.is_some() {
             widget_bridge::play_frame_widget_noise(
                 &events,
                 &self.frame,
                 widget_bridge::WIDGET_NOISY_BUTTON,
-                sound,
-                Some(backend),
-                sample_loader,
+                audio,
                 &mut self.noise_tracker,
             );
         }

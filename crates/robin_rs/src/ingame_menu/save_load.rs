@@ -196,22 +196,13 @@ impl LoadPickerModalState {
         let widget_input = self.controller.input.as_widget_input();
         let mouse_virt = widget_input.mouse_position;
         self.controller.input.end_frame();
-        if let ScreenAudio {
-            sound: Some(sound),
-            backend,
-            sample_loader: Some(loader),
-        } = audio
-        {
-            widget_bridge::play_frame_widget_noise(
-                &widget_events,
-                self.controller.frame(),
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                sound,
-                backend,
-                loader,
-                &mut self.noise_tracker,
-            );
-        }
+        widget_bridge::play_frame_widget_noise(
+            &widget_events,
+            self.controller.frame(),
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            audio,
+            &mut self.noise_tracker,
+        );
         match self.controller.take_action() {
             Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
             Some(PickerAction::Accept(PickerTarget::Existing(name))) => {

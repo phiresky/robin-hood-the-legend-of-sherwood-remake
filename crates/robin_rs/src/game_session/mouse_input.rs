@@ -1512,19 +1512,19 @@ pub(super) fn handle_pause_menu_events(
         let authoritative_transition_enabled =
             host.transport.authoritative_transition_actions_enabled();
         menu.set_authoritative_transition_actions_enabled(authoritative_transition_enabled);
-        let screen_w = renderer.screen_width() as i32;
-        let screen_h = renderer.screen_height() as i32;
+        let transform = crate::ingame_menu::layout::MenuTransform::for_renderer(renderer);
         for event in events {
             let backend = audio_backend
                 .as_mut()
                 .map(|b| b as &mut dyn crate::sound::AudioBackend);
             match menu.handle_event_with_audio(
                 event,
-                screen_w,
-                screen_h,
-                Some(&mut host.audio.sound),
-                backend,
-                Some(sample_loader),
+                transform,
+                crate::ingame_menu::widget_bridge::ScreenAudio {
+                    sound: Some(&mut host.audio.sound),
+                    backend,
+                    sample_loader: Some(sample_loader),
+                },
             ) {
                 PauseMenuOutcome::Pending => {}
                 other => {

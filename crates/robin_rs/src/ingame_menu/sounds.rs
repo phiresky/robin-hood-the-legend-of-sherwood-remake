@@ -10,10 +10,9 @@
 //! `UiMsg::WidgetSliderTrack` on tick transitions.
 
 use robin_engine::coordinates::ScreenBBox;
-use robin_engine::sound_cache::SampleLoader;
 
 use crate::options_model::SoundSetting;
-use crate::sound::{AudioBackend, SoundManager};
+use crate::sound::SoundManager;
 use crate::ui::{UiEvent, UiMsg, UiState};
 use crate::widget::{FrameWnd, Widget, WidgetSlider};
 use robin_engine::sound_config::SoundConfig;
@@ -305,37 +304,26 @@ impl SoundsScreen {
         partition_widget_events(events, &mut self.slider_events, &mut self.button_events);
 
         // Observe buttons even on silent mouse-leave frames to rearm hover.
-        if let ScreenAudio {
-            sound: Some(snd),
-            backend,
-            sample_loader: Some(loader),
-        } = audio.reborrow()
-        {
-            widget_bridge::play_frame_widget_noise(
-                &self.button_events,
-                &self.frame,
-                widget_bridge::WIDGET_NOISY_BUTTON,
-                snd,
-                backend,
-                loader,
-                &mut self.noisy_tracker,
-            );
-        }
+        widget_bridge::play_frame_widget_noise(
+            &self.button_events,
+            &self.frame,
+            widget_bridge::WIDGET_NOISY_BUTTON,
+            audio.reborrow(),
+            &mut self.noisy_tracker,
+        );
         for e in &self.slider_events {
             let state = self
                 .frame
                 .widget(e.origin_widget_id)
                 .map(|w| w.base().state)
                 .unwrap_or(UiState::Default);
-            let slider_audio = audio.reborrow();
-            dispatch_noise(
+            widget_bridge::play_widget_noise_tracked(
                 std::slice::from_ref(e),
                 widget_bridge::WIDGET_NOISY_SLIDER,
-                slider_audio.sound,
-                slider_audio.backend,
-                slider_audio.sample_loader,
+                audio.reborrow(),
                 Some(&mut self.noisy_tracker),
                 state,
+                false,
             );
         }
 
@@ -519,36 +507,6 @@ mod screen_state_tests {
 
 fn is_slider_id(id: u32) -> bool {
     (ID_SLIDER_BASE..ID_SLIDER_BASE + SOUND_SLIDERS.len() as u32).contains(&id)
-}
-
-/// Forward to [`widget_bridge::play_widget_noise_tracked`] only when
-/// the caller supplied a live `SoundManager` + `SampleLoader`.
-/// Extracted so that each call inside the main loop fully releases
-/// its borrow of the `sound` / `audio_backend` slots at the
-/// `}`-boundary, which lets the borrow-checker accept multiple
-/// back-to-back dispatches (buttons + sliders) within the same
-/// iteration.
-fn dispatch_noise(
-    events: &[UiEvent],
-    noisy_id: u32,
-    sound: Option<&mut SoundManager>,
-    audio_backend: Option<&mut dyn AudioBackend>,
-    sample_loader: Option<&SampleLoader>,
-    tracker: Option<&mut widget_bridge::NoisyTracker>,
-    current_state: crate::ui::UiState,
-) {
-    if let (Some(snd), Some(loader)) = (sound, sample_loader) {
-        widget_bridge::play_widget_noise_tracked(
-            events,
-            noisy_id,
-            snd,
-            audio_backend,
-            loader,
-            tracker,
-            current_state,
-            false,
-        );
-    }
 }
 
 fn slider_value(config: &SoundConfig, idx: usize) -> u16 {

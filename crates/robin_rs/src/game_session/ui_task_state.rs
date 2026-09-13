@@ -1983,17 +1983,18 @@ fn play_button_noise(
     audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) {
-    if let (Some(sound_manager), Some(sample_loader)) = (sound_manager, sample_loader) {
-        widget_bridge::play_frame_widget_noise(
-            events,
-            frame,
-            widget_bridge::WIDGET_NOISY_BUTTON,
-            sound_manager,
-            audio_backend,
+    widget_bridge::play_frame_widget_noise(
+        events,
+        frame,
+        widget_bridge::WIDGET_NOISY_BUTTON,
+        widget_bridge::ScreenAudio {
+            sound: sound_manager,
+            // Re-coerce the trait object to the bundle's shorter lifetime.
+            backend: audio_backend.map(|backend| &mut *backend as &mut dyn AudioBackend),
             sample_loader,
-            tracker,
-        );
-    }
+        },
+        tracker,
+    );
 }
 
 use crate::options_model::{

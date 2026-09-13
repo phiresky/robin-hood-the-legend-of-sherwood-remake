@@ -1334,9 +1334,12 @@ pub fn play_widget_noise(
     play_widget_noise_tracked(
         events,
         noisy_id,
-        sound,
-        backend,
-        loader,
+        ScreenAudio {
+            sound: Some(sound),
+            // Re-coerce the trait object to the bundle's shorter lifetime.
+            backend: backend.map(|backend| &mut *backend as &mut dyn AudioBackend),
+            sample_loader: Some(loader),
+        },
         None,
         UiState::Default,
         false,
@@ -1387,17 +1390,21 @@ impl NoisyTracker {
 /// `tracker` / `current_state` are `Option`/ignored when you don't
 /// need gating (see the thin [`play_widget_noise`] wrapper).
 /// `force_play` fires a sound even if nothing about the state changed.
+/// Silent unless `audio` carries all three services.
 pub fn play_widget_noise_tracked(
     events: &[UiEvent],
     noisy_id: u32,
-    sound: &mut SoundManager,
-    backend: Option<&mut dyn AudioBackend>,
-    loader: &SampleLoader,
+    audio: ScreenAudio<'_>,
     tracker: Option<&mut NoisyTracker>,
     current_state: UiState,
     force_play: bool,
 ) {
-    let Some(backend) = backend else {
+    let ScreenAudio {
+        sound: Some(sound),
+        backend: Some(backend),
+        sample_loader: Some(loader),
+    } = audio
+    else {
         return;
     };
     for event in events {
@@ -1439,15 +1446,24 @@ pub fn play_widget_noise_tracked(
 /// This mirrors the original game's noisy-widget behavior: state changes
 /// reset the per-widget "already played" flag, and at most one matching
 /// sound is emitted per call.
+///
+/// Without a sound manager or sample loader in `audio` nothing happens, not
+/// even tracker observation; without a backend only the tracker is updated.
 pub fn play_frame_widget_noise(
     events: &[UiEvent],
     frame: &FrameWnd,
     noisy_id: u32,
-    sound: &mut SoundManager,
-    backend: Option<&mut dyn AudioBackend>,
-    loader: &SampleLoader,
+    audio: ScreenAudio<'_>,
     tracker: &mut NoisyTracker,
 ) {
+    let ScreenAudio {
+        sound: Some(sound),
+        backend,
+        sample_loader: Some(loader),
+    } = audio
+    else {
+        return;
+    };
     // Leaving a menu button (and pressing it) changes state silently.
     // Observe every widget each frame, including frames without sound events,
     // so returning to Focused can play again. Drop removed widgets as well.
@@ -1548,9 +1564,11 @@ mod noisy_tracker_tests {
                 &events,
                 &frame,
                 WIDGET_NOISY_BUTTON,
-                &mut sound,
-                None,
-                &|_| panic!("no audio backend should load samples"),
+                ScreenAudio {
+                    sound: Some(&mut sound),
+                    backend: None,
+                    sample_loader: Some(&|_| panic!("no audio backend should load samples")),
+                },
                 &mut tracker,
             );
             assert_eq!(tracker.entries.get(&key), Some(&(UiState::Focused, true)));
@@ -1570,9 +1588,11 @@ mod noisy_tracker_tests {
                 &events,
                 &frame,
                 WIDGET_NOISY_BUTTON,
-                &mut sound,
-                None,
-                &|_| panic!("no audio backend should load samples"),
+                ScreenAudio {
+                    sound: Some(&mut sound),
+                    backend: None,
+                    sample_loader: Some(&|_| panic!("no audio backend should load samples")),
+                },
                 &mut tracker,
             );
             assert!(!tracker.entries.contains_key(&key));

@@ -155,11 +155,7 @@ impl UiTaskOutcomeTarget<'_> {
                 } = self;
                 if let Some(menu) = ui.pause_menu.as_mut() {
                     menu.reset_after_side_menu();
-                    menu.seed_mouse_from_window(
-                        window,
-                        presentation.renderer.screen_width() as i32,
-                        presentation.renderer.screen_height() as i32,
-                    );
+                    menu.seed_mouse_from_window(window, &presentation.renderer);
                 }
                 input.reset_after_modal(host);
             }
@@ -347,11 +343,7 @@ impl UiTaskOutcomeTarget<'_> {
         }
         if let Some(menu) = ui.pause_menu.as_mut() {
             menu.reset_after_side_menu();
-            menu.seed_mouse_from_window(
-                window,
-                presentation.renderer.screen_width() as i32,
-                presentation.renderer.screen_height() as i32,
-            );
+            menu.seed_mouse_from_window(window, &presentation.renderer);
         }
         input.reset_after_modal(host);
     }
@@ -1679,11 +1671,7 @@ impl InteractiveFrameSimulation {
                 ));
                 if let Some(menu) = pause_menu.as_mut() {
                     menu.reset_after_side_menu();
-                    menu.seed_mouse_from_window(
-                        window,
-                        presentation.renderer.screen_width() as i32,
-                        presentation.renderer.screen_height() as i32,
-                    );
+                    menu.seed_mouse_from_window(window, &presentation.renderer);
                 }
                 dismissed_ui_task = true;
                 tracing::debug!(?kind, "HTTP step: auto-dismissed cooperative UI task");

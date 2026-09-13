@@ -5,7 +5,7 @@ use super::{ListRow, PickerModel};
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{MenuRect, MenuTransform};
-use crate::ingame_menu::widget_bridge::{self, ModalInputState};
+use crate::ingame_menu::widget_bridge::{self, ModalInputState, ScreenKey};
 use crate::savegame::SlotName;
 use crate::scroll_view::ScrollView;
 use crate::ui::{MouseButtons, UiEvent};
@@ -129,12 +129,8 @@ impl PickerController {
     ) -> bool {
         self.input.update_from_event(event, transform);
         if matches!(
-            event,
-            GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                }
+            ScreenKey::from_event(event),
+            Some(ScreenKey::Quit | ScreenKey::Cancel)
         ) {
             self.pending = Some(PickerAction::Cancel);
             return false;
