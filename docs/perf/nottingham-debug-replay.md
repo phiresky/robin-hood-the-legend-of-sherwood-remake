@@ -112,3 +112,52 @@ exact-ray repetition and potential saved time before implementing it; verify
 same-midpoint rays, mask changes, within-tick obstacle toggles, collisions, and
 cached/uncached replay equivalence. The removal commit contains no measured
 speedup or specific failing replay, so neither is inferred here.
+
+## Owner-only ambush inputs
+
+The per-soldier ambush refresh was constructing a full `AiContext`, including
+all entity views, even when the ambush state machine immediately returned.
+It only consumes the owner's AI position, facing, frame, and effective IQ.
+The optimized path constructs an `AmbushPointContext` with those values and
+borrows the current obstacle list directly. It preserves the committed gate
+side for door-passing owners and reads current diplomacy/difficulty for IQ.
+Actual Think callbacks still receive fresh full observations. No lossy cache,
+tick-start snapshot reuse, simulation configuration, or wire format is added.
+
+The follow-up used the same 45-second `perf` command and detailed timing targets,
+writing `target/nottingham-ai-owner-after.data` (6,799 samples; no lost samples).
+It ran after compilation completed. First 100-tick engine and 120-frame host
+aggregates, compared with the earlier detailed capture:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Entity-view builds/tick | 105.29 | 17.29 |
+| Entity-view construction, ms/tick | 81.29 | 18.33 |
+| Detection refresh including NPC tail, ms/tick | 123.66 | 47.43 |
+| Entity systems, ms/tick | 164.97 | 98.61 |
+| Engine hourglass, ms/tick | 166.50 | 100.59 |
+| Host simulation, ms/frame | 181.15 | 129.26 |
+| Host total, ms/frame | 216.91 | 177.60 |
+
+This removes exactly 88 view builds/tick in the measured window (84% fewer),
+reduces measured view-construction time by 77%, and reduces measured total
+frame time by 18%. This remains a development-build measurement. Other buckets
+varied between runs (render 6.29 → 8.73 ms, PostInitialize 21.83 → 29.83 ms);
+the build-count reduction is a stronger repeatable invariant than wall time.
+The second optimized 100-tick window measured 17.92 builds/tick and 19.71 ms
+construction time. TODO: profile the remaining genuine Think observations and
+state-hashing/PostInitialize work separately; this does not establish smooth
+release-build performance.
+
+Validation: the engine library suite passed (4,743 tests, 14 ignored), then all
+eight ambush-related tests passed after adding the new equivalence cases. They
+compare the narrow inputs to fresh full contexts across difficulty/diplomacy
+changes and both door directions, preserve the low-IQ/idle reset ordering, and
+verify that the sideways-look action is drained before the next owner phase.
+`cargo fmt --all`, `git diff --check`, and the separate `robin` build passed.
+
+A separate headless replay check with recorded hash validation enabled and
+`--rollback-check=false` reached matching checkpoints at frames 0, 1025, 1050,
+and 1075 without a reported desync. Its 300-second process limit expired before
+the 1,503-frame recording completed (exit 124); this is partial replay coverage,
+not an end-to-end determinism result.

@@ -222,6 +222,190 @@ fn think_with_drain_rejects_a_soldier_missing_its_required_ai() {
 }
 
 #[test]
+fn ambush_owner_inputs_match_fresh_context_after_diplomacy_and_difficulty_changes() {
+    use crate::diplomacy::Relationship;
+    use crate::element::Camp;
+    use crate::player_profile::DifficultyLevel;
+
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.mission_domain.diplomacy.set_enabled(true);
+    engine.control.frame_counter = 123;
+    let soldier = engine.get_entity_mut(npc_id).unwrap();
+    soldier
+        .element_data_mut()
+        .set_position_map(MapPoint::new(17.0, 29.0));
+    soldier.element_data_mut().set_direction_instantly(5);
+    soldier.enemy_ai_mut().unwrap().soldier_profile_iq = 40;
+
+    for difficulty in [
+        DifficultyLevel::Easy,
+        DifficultyLevel::Medium,
+        DifficultyLevel::Hard,
+    ] {
+        engine.control.sim_config.difficulty = difficulty;
+        for relationship in [
+            Relationship::Hostile,
+            Relationship::Neutral,
+            Relationship::Allied,
+        ] {
+            engine
+                .mission_domain
+                .diplomacy
+                .set_relationship(Camp::Lacklandists, Camp::Royalists, relationship)
+                .unwrap();
+            let scratch = engine.build_sim_scratch(&assets);
+            let full =
+                engine.ai_context_for(npc_id, engine.control.frame_counter, &scratch, &assets);
+            let narrow = engine.ambush_point_context(npc_id);
+            assert_eq!(narrow.position, full.position);
+            assert_eq!(narrow.direction, full.direction);
+            assert_eq!(narrow.frame, full.frame);
+            assert_eq!(
+                narrow.intelligence,
+                engine
+                    .get_entity(npc_id)
+                    .unwrap()
+                    .enemy_ai()
+                    .unwrap()
+                    .get_iq(&full)
+            );
+        }
+    }
+}
+
+#[test]
+fn ambush_owner_inputs_preserve_committed_door_side() {
+    use crate::element::{ActiveDoorPass, Camp, Command};
+    use crate::gate::{Door, DoorIndex, DoorType};
+    use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
+    use crate::sector::SectorNumber;
+
+    for direction in [0, 1] {
+        let mut engine = EngineInner::new();
+        let npc_id = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.scripts.mission = Some(
+            MissionScript::from_scb(ScbFile {
+                version: SCB_VERSION,
+                classes: vec![ClassEntry {
+                    source_file: "ambush_position.scs".into(),
+                    class_name: "StartUp".into(),
+                    size_of_member_variables: 0,
+                    member_variables: Vec::new(),
+                    functions: Vec::new(),
+                    quads: Vec::new(),
+                }],
+            })
+            .unwrap(),
+        );
+        engine.script_domains.interactables.doors = vec![Door {
+            door_type: DoorType::LiftLow,
+            sector_out: SectorNumber::new(7),
+            sector_in: SectorNumber::new(8),
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(0),
+            sector_in_index: crate::fast_find_grid::SectorIndex::new(1),
+            point_out: MapPoint::new(10.0, 20.0),
+            point_in: MapPoint::new(30.0, 40.0),
+            layer_out: 2,
+            layer_in: 3,
+            ..Door::default()
+        }];
+        let owner = engine.get_entity_mut(npc_id).unwrap();
+        owner
+            .element_data_mut()
+            .set_position_map(MapPoint::new(21.0, 31.0));
+        owner.actor_data_mut().unwrap().active_door_pass = Some(ActiveDoorPass {
+            door_index: DoorIndex::new(0).unwrap(),
+            direct: direction != 0,
+            position_direct: direction != 0,
+            steps: Default::default(),
+            preallocated_order_ids: Default::default(),
+            triggers_fired: 0,
+            current_action: Default::default(),
+            current_reverse: false,
+            saved_action_state: None,
+        });
+        let mut pass = crate::sequence::SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(npc_id),
+            crate::order::OrderType::WalkingStairs,
+        );
+        let crate::sequence::SequenceElementData::Movement {
+            gate_id,
+            direction: pass_direction,
+            ..
+        } = &mut pass.data
+        else {
+            unreachable!()
+        };
+        *gate_id = Some(DoorIndex::new(0).unwrap());
+        *pass_direction = direction;
+        let sequence = engine.orders.sequence_manager.launch_element(pass);
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(sequence, 0);
+
+        let scratch = engine.build_sim_scratch(&assets);
+        let full = engine.ai_context_for(npc_id, 0, &scratch, &assets);
+        let narrow = engine.ambush_point_context(npc_id);
+        assert_eq!(narrow.position, full.position);
+        assert_eq!(
+            (narrow.position.x, narrow.position.y, narrow.position.level),
+            if direction == 0 {
+                (10.0, 20.0, 2)
+            } else {
+                (30.0, 40.0, 3)
+            }
+        );
+    }
+}
+
+#[test]
+fn ambush_idle_reset_preserves_the_low_intelligence_gate() {
+    use crate::ai::{AmbushPoint, Substate};
+    use crate::ai_enemy::AmbushPointStatus;
+    let sim = crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Royalists));
+    let mut assets = LevelAssets::new();
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.ai.global.ambush_points = vec![AmbushPoint {
+        position: Default::default(),
+        direction: 0,
+        position_3d: Default::default(),
+        id: 0,
+    }];
+    for iq in [30, 100] {
+        let enemy = engine
+            .get_entity_mut(npc_id)
+            .unwrap()
+            .enemy_ai_mut()
+            .unwrap();
+        enemy.soldier_profile_iq = iq;
+        enemy.base.current_substate = Substate::DefaultInMacro;
+        enemy.ambush_point_array_reset = false;
+        enemy.ambush_point_status = vec![AmbushPointStatus::Near];
+        engine.tick_refresh_ambush_points_for_npc(&sim, npc_id, &assets);
+        let enemy = engine.get_entity(npc_id).unwrap().enemy_ai().unwrap();
+        assert_eq!(enemy.ambush_point_array_reset, iq > 30);
+        assert_eq!(
+            enemy.ambush_point_status,
+            vec![if iq > 30 {
+                AmbushPointStatus::Far
+            } else {
+                AmbushPointStatus::Near
+            }]
+        );
+    }
+}
+
+#[test]
 fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
     use crate::ai::{AiState, AmbushPoint, Position, Substate};
     use crate::ai_enemy::AmbushPointStatus;

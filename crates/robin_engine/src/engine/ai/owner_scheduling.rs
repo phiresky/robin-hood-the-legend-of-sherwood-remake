@@ -1436,6 +1436,74 @@ impl EngineInner {
     // slot status vector and may transition the AI substate via
     // `check_ambush_point`.
 
+    pub(in crate::engine) fn ambush_point_context(
+        &self,
+        npc_id: EntityId,
+    ) -> crate::ai_enemy::AmbushPointContext {
+        let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
+        let enemy = owner.enemy_ai().unwrap_or_else(|| {
+            panic!(
+                "soldier {} has no enemy AI for ambush refresh",
+                npc_id.index()
+            )
+        });
+        let element = owner.element_data();
+        // Match AiContext's owner position: ordinary actors use their literal
+        // position; a door-passing actor uses its committed AI gate side.
+        let position = if owner
+            .actor_data()
+            .is_some_and(|actor| actor.active_door_pass.is_some())
+        {
+            assert!(
+                entity_has_ai_view(owner),
+                "door-passing ambush owner lacks an AI position"
+            );
+            let doors = self
+                .scripts
+                .mission
+                .as_ref()
+                .map(|_| self.script_domains.interactables.doors.as_slice())
+                .unwrap_or(&[]);
+            resolve_ai_position_with(
+                &self.world.entities,
+                doors,
+                &self.orders.sequence_manager,
+                npc_id,
+                |id| {
+                    let element = self
+                        .expect_entity(id, "ambush AI position owner")
+                        .element_data();
+                    crate::ai::Position {
+                        x: element.position_map().x,
+                        y: element.position_map().y,
+                        sector: ai_view_position_sector(self, element),
+                        level: element.layer(),
+                    }
+                },
+            )
+            .effective
+        } else {
+            crate::ai::Position {
+                x: element.position_map().x,
+                y: element.position_map().y,
+                sector: element.sector(),
+                level: element.layer(),
+            }
+        };
+        crate::ai_enemy::AmbushPointContext {
+            frame: self.control.frame_counter,
+            position,
+            direction: element.direction() as u16,
+            intelligence: enemy.iq_for_difficulty(
+                self.control.sim_config.difficulty,
+                self.mission_domain
+                    .diplomacy
+                    .relationship_to_player(owner.camp())
+                    == crate::diplomacy::Relationship::Hostile,
+            ),
+        }
+    }
+
     pub(in crate::engine) fn tick_refresh_ambush_points_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -1449,9 +1517,7 @@ impl EngineInner {
             return;
         }
 
-        // Civilian ambush-point refresh is a no-op in the original game. Check
-        // that before scratch construction, which can draw BuildingExitGate
-        // RNG while forecasting unrelated door-passing actors.
+        // Civilian ambush-point refresh is a no-op in the original game.
         let owner = self.expect_entity(npc_id, "ambush-refresh NPC");
         if matches!(owner, Entity::Civilian(_)) {
             return;
@@ -1461,27 +1527,13 @@ impl EngineInner {
             "soldier {} has no enemy AI for ambush refresh",
             npc_id.index()
         );
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
-
-        let frame = self.control.frame_counter;
-        // Phase 1: read-only — gather context + eyes point + LOS scope.
-        let (ctx, eyes) = {
-            let entity = self.expect_entity(npc_id, "ambush-refresh NPC");
-            assert!(
-                entity.enemy_ai().is_some(),
-                "soldier {} has no enemy AI for ambush refresh",
+        let eyes = owner.compute_eyes_point(None).unwrap_or_else(|| {
+            panic!(
+                "soldier {} has no eye point for ambush refresh",
                 npc_id.index()
-            );
-            let eyes = entity.compute_eyes_point(None).unwrap_or_else(|| {
-                panic!(
-                    "soldier {} has no eye point for ambush refresh",
-                    npc_id.index()
-                )
-            });
-            let building_sector = self.entity_building_sector(entity.element_data().sector());
-            let ctx = self.ai_context_from_entity(entity, frame, building_sector, &scratch, assets);
-            (ctx, eyes)
-        };
+            )
+        });
+        let ctx = self.ambush_point_context(npc_id);
 
         // Build the obstacle view from individual disjoint fields
         // so the borrow checker can split it from the mut borrow
