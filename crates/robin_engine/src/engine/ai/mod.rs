@@ -23,7 +23,6 @@ pub(crate) use detection::debug_detectable_mutation_load_snapshot;
 mod post_detection;
 mod snapshots;
 mod tick_data;
-pub(in crate::engine) use tick_data::OwnerActorPhase;
 mod tick_scheduling;
 
 #[cfg(test)]
@@ -40,7 +39,7 @@ use crate::element::{
     Camp, Detectable, DetectableType, Entity, EntityId, Human as _, PcId, SoldierId,
 };
 use crate::engine::SimScratch;
-use crate::entities::{Entities, EntitySlots};
+use crate::entities::Entities;
 use serde::{Deserialize, Serialize};
 
 fn beam_door_waypoints_into_houses(
@@ -630,13 +629,12 @@ pub(super) struct PreparedAiEntityViewCache {
 
 /// Immutable, RNG-free inputs prepared lazily at the first NPC owner slot.
 ///
-/// The tactical snapshot is a per-tick view. Volatile optical and detectable
-/// target geometry is still rebuilt at each NPC slot from live entities; doing
-/// the full all-soldier tactical extraction for every owner made large maps
-/// quadratic without providing fresher optical inputs.
+/// Retains detection capture timing and the reusable entity-view cache.
+/// Volatile optical geometry and tactical data are read at their owner/Think
+/// boundaries; there is no second all-soldier tactical world projection here.
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct PreparedNpcOwnerPass {
-    world: Option<snapshots::AiWorldView>,
+    detection: Option<snapshots::DetectionFrameState>,
     /// Derived AI views reused across consecutive creation-order owners.
     /// Mutable entity borrows and the small set of non-entity view inputs
     /// invalidate individual entries before the next synchronous Think.
@@ -647,10 +645,10 @@ pub(super) struct PreparedNpcOwnerPass {
 
 impl PreparedNpcOwnerPass {
     /// A player's human-update tail refreshes its produced-noise record in
-    /// creation order. Later NPC slots must not retain the earlier tactical
-    /// snapshot: the original game reads that live record directly during detection refresh.
+    /// creation order. Later NPC slots must not retain the earlier detection
+    /// capture: the original game reads that live record directly during detection refresh.
     pub(super) fn invalidate_after_pc_noise_refresh(&mut self) {
-        self.world = None;
+        self.detection = None;
     }
 }
 

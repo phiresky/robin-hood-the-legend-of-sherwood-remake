@@ -409,8 +409,7 @@ fn chained_straight_strike_target_life(interrupter_first: bool) -> i16 {
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xA_B_C, |sim| {
-        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-        engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+        engine.tick_actor_owner_envelopes(sim, &assets);
         assert_strike_damage_deferred_then_drain(
             &mut engine,
             sim,
@@ -651,14 +650,13 @@ fn chained_nonstraight_strike_lives(
         ..LevelAssets::new()
     };
     crate::sim_rng::with_seed(0xD_E_F, |sim| {
-        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
         // A lateral sweep only reaches its victim's sector after several
         // rotation steps, so keep running envelope passes until both damage
         // elements are registered. No HP may mutate before the manager
         // phase drains them.
         let mut registered = Vec::new();
         for _ in 0..32 {
-            engine.tick_actor_owner_envelopes(sim, &assets, &positions);
+            engine.tick_actor_owner_envelopes(sim, &assets);
             assert_eq!(
                 strike_life_points(&engine, chained_attacker_id, final_target_id),
                 (1, 50),

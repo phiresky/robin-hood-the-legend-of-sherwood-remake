@@ -846,43 +846,6 @@ impl AiController {
         self.current_state = state;
     }
 
-    /// Model an enemy/friendly state change made by common
-    /// original-game AI behavior.
-    ///
-    /// The original game filters the AI event before assigning the
-    /// incoming pair. Rust cannot re-enter the script VM while this controller
-    /// is borrowed, so preserve the actor-effect prefix and queue an
-    /// owner-local barrier. Effects issued by statements after this call stay
-    /// in the live outbox and are hidden until the callback returns.
-    fn suspend_goto_route_reach_point_for_set_state(
-        &mut self,
-        state: AiState,
-        substate: Substate,
-        ctx: &AiContext,
-    ) {
-        if self.current_substate != substate {
-            let actor_effects_before_callback = std::mem::take(&mut self.outbox.actor);
-            self.queue_state_change(
-                state,
-                substate,
-                AiStateChangeSource::SelfActor,
-                Some(actor_effects_before_callback),
-            );
-        }
-        self.set_ai_state(state);
-        self.current_substate = substate;
-        self.outbox
-            .reentrant
-            .owner_work
-            .push(AiOwnerWork::ResumeGotoRouteReachPoint {
-                owner_boundary_positions: ctx
-                    .entity_views
-                    .iter()
-                    .map(|(&handle, view)| (handle, view.position))
-                    .collect(),
-            });
-    }
-
     // -- Locks --
 
     pub fn non_script_lock(&mut self, flags: AiLockFlags) {
@@ -4069,19 +4032,6 @@ impl AiController {
             .push(AiOrderIntent::face_direction(direction as i16));
     }
 
-    fn launch_turn_direction_deferred(&mut self, direction: u16) {
-        let mut intent = AiOrderIntent::face_direction(direction as i16);
-        // This models launching a turn sequence element directly.
-        // The latter halts the actor before registering its sequence, while
-        // the route-arrival handler deliberately leaves any earlier
-        // same-frame deferred element in the manager FIFO. Priority
-        // arbitration at the later instruction boundary decides which turn
-        // survives.
-        intent.no_halt = true;
-        intent.defer_instruction = true;
-        self.outbox.actor.orders.push(intent);
-    }
-
     fn face_to_same_direction_can_short_circuit(ctx: &AiContext) -> bool {
         matches!(
             ctx.self_action_state,
@@ -4862,16 +4812,12 @@ impl AiController {
                 }
             }
 
-            // ─── Return to route (has patrol path) ──────────────────
             Substate::DefaultGotoRoute => {
-                if stimulus_type == StimulusType::EventReachPoint {
-                    self.suspend_goto_route_reach_point_for_set_state(
-                        AiState::Default,
-                        Substate::DefaultGotoRouteTurn,
-                        ctx,
-                    );
-                    return false;
-                }
+                assert_ne!(
+                    stimulus_type,
+                    StimulusType::EventReachPoint,
+                    "patrol arrival must execute through the engine-owned Think boundary"
+                );
             }
 
             // ─── Walking along route ────────────────────────────────
@@ -4936,55 +4882,29 @@ impl AiController {
         false
     }
 
-    /// Resume the portion of the original game's default route-following state
-    /// reach-point event handler that follows its state change.
-    ///
-    /// The engine calls this only after `FilterAIEvent` and the incoming
-    /// `DefaultGotoRouteTurn` commit have completed. Keeping this as a
-    /// continuation is necessary because the no-turn arm recursively invokes
-    /// `Think(EVENT_DONE)` and must not observe the pre-callback Rust state.
-    pub(crate) fn resume_goto_route_reach_point(
+    /// Resolve the turn authored by route arrival using the post-callback path.
+    /// The live --path/++path pair must retain its endpoint direction change.
+    pub(crate) fn route_arrival_turn_direction(
         &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-    ) {
-        self.needs_patrol_reinit = true;
-        let hiking_paths = &ctx.hiking_paths;
-
-        if let Some(ref mut path) = self.patrol_path {
-            let current_has_command = path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
-                !matches!(waypoint.command, crate::level_data::WaypointCommand::None)
-            });
-            if path.size > 1 && current_has_command {
-                // Original performs `--path`, reads the previous waypoint,
-                // then advances the live path. Preserve the iterator's
-                // endpoint direction side effect.
-                path.retreat();
-                let previous_waypoint = path.current_waypoint(hiking_paths).map(|wp| (wp.x, wp.y));
-                path.advance();
-                if let Some((prev_x, prev_y)) = previous_waypoint {
-                    let dx = ctx.position.x - prev_x as f32;
-                    let dy = ctx.position.y - prev_y as f32;
-                    let sector = crate::position_interface::vector_to_sector_0_to_15(dx, dy);
-                    self.launch_turn_direction_deferred(sector as u16);
-                } else {
-                    self.think_event_done_on_self(sim, ctx);
-                }
-            } else {
-                self.think_event_done_on_self(sim, ctx);
-            }
-        } else {
-            self.think_event_done_on_self(sim, ctx);
+        position: Position,
+        hiking_paths: &[crate::level_data::RawHikingPath],
+    ) -> Option<u16> {
+        let path = self.patrol_path.as_mut()?;
+        let has_command = path.current_waypoint(hiking_paths).is_some_and(|waypoint| {
+            !matches!(waypoint.command, crate::level_data::WaypointCommand::None)
+        });
+        if path.size <= 1 || !has_command {
+            return None;
         }
-
-        // The Enemy/Friendly `Think` which selected this continuation had to
-        // release its borrow before the engine could run the state-change callback,
-        // so that call's ordinary tick completion already ran. A recursively entered
-        // Think can still have a suspended parent (`think_recursion_depth >
-        // 0`) at this point. Close completion flags raised by the resumed tail
-        // at the completed child's logical tick-completion boundary without assuming
-        // the entire owner-local Think stack has unwound.
-        self.finish_suspended_common_handler();
+        path.retreat();
+        let previous = path.current_waypoint(hiking_paths).map(|wp| (wp.x, wp.y));
+        path.advance();
+        previous.map(|(x, y)| {
+            crate::position_interface::vector_to_sector_0_to_15(
+                position.x - x as f32,
+                position.y - y as f32,
+            ) as u16
+        })
     }
 
     pub(crate) fn finish_suspended_common_handler(&mut self) {
@@ -5071,16 +4991,6 @@ impl AiController {
                 self.go_to(dest, walk_flags, ctx);
             }
         }
-    }
-
-    /// Dispatch an EventDone to ourselves (used when skipping a turn).
-    fn think_event_done_on_self(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        ctx: &AiContext,
-    ) {
-        let done_stimulus = Stimulus::new(StimulusType::EventDone);
-        self.think_expected_event_common_stuff(sim, &done_stimulus, ctx);
     }
 }
 

@@ -1090,14 +1090,13 @@ fn production_receive_purse_reveals_before_advancing_waiting_order_identity() {
         .civilians
         .push(Default::default());
     complete_test_runtime_fixture(&mut engine, &mut assets);
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+
     let mut reveals = Vec::new();
     for _ in 0..10 {
         let (_, tick_reveals) = crate::engine::archery::capture_receive_purse_reveals(|| {
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
                 &crate::sim_rng::test_context(),
                 &assets,
-                &positions,
                 |_, _| {},
             );
         });

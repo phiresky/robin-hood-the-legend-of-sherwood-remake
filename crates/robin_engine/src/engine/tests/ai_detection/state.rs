@@ -132,10 +132,9 @@ fn patrol_member_thinks_before_the_chief_applies_its_direction() {
     member_ai.current_state = AiState::Default;
     member_ai.current_substate = Substate::DefaultPatrolEnrouteWaiting;
     engine.control.frame_counter = 0;
-    let positions = engine.boundary_positions_snapshot();
 
     crate::sim_rng::with_seed(0xA013_7A70, |sim| {
-        engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
+        engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
     });
 
     let member_entity = engine.get_entity(member).unwrap();
@@ -180,10 +179,9 @@ fn inactive_dead_patrol_chief_still_records_eligible_history() {
         history: Vec::new(),
     });
     engine.control.frame_counter = 1;
-    let positions = engine.boundary_positions_snapshot();
 
     crate::sim_rng::with_seed(0xA013_DEAD, |sim| {
-        engine.tick_patrol_coordination_for_npc(sim, &assets, chief, &positions)
+        engine.tick_patrol_coordination_for_npc(sim, &assets, chief)
     });
 
     assert_eq!(
@@ -516,14 +514,13 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
                 to_whole_patrol: false,
             });
 
-        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0xA013_1007, |sim| {
             if receiver_before_source {
-                engine.refresh_npc_view_for_npc(receiver_id, &positions);
+                engine.refresh_npc_view_for_npc(receiver_id);
                 engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
             } else {
                 engine.process_synchronous_reentrant_actions_for(sim, source_id, &assets);
-                engine.refresh_npc_view_for_npc(receiver_id, &positions);
+                engine.refresh_npc_view_for_npc(receiver_id);
             }
         });
 
@@ -603,9 +600,9 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     );
 
     engine.set_actors_frozen(true);
-    let positions = engine.boundary_positions_snapshot();
+
     crate::sim_rng::with_seed(0x0A01_3F20, |sim| {
-        engine.tick_actor_owner_envelopes(sim, &assets, &positions)
+        engine.tick_actor_owner_envelopes(sim, &assets)
     });
 
     let npc = engine.get_entity(npc_id).unwrap();
@@ -646,7 +643,7 @@ fn restored_quit_lose_quit_fifo_commits_unconscious_eyes_inline() {
     ];
 
     crate::sim_rng::with_seed(0xA013_105E, |sim| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets, None, None)
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, &assets, None)
     });
 
     let entity = engine.get_entity(npc_id).unwrap();
@@ -756,9 +753,8 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
                 .unconscious
         );
 
-        let positions = engine.boundary_positions_snapshot();
         crate::sim_rng::with_seed(0x0A01_3B12, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
         });
 
         let snapshot = |engine: &EngineInner| {
@@ -770,7 +766,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
         let first_slot = snapshot(&engine);
 
         crate::sim_rng::with_seed(0x0A01_3B13, |sim| {
-            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets, &positions)
+            engine.tick_enemy_ai_with_creation_ordered_prelude(sim, &assets)
         });
         let next_slot = snapshot(&engine);
 

@@ -5967,7 +5967,6 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         .element_data_mut()
         .set_position(WorldPoint3D::new(198.0, 100.0, 0.0));
     let sim = crate::sim_rng::test_context();
-    let positions = engine.boundary_positions_snapshot();
 
     // Scratch construction prepares forecasts without drawing; the control
     // proves the unrelated door actor's alternatives would draw if resolved.
@@ -5985,8 +5984,7 @@ fn fused_owner_walk_does_not_forecast_rng_for_unrelated_actors() {
         control_trace.contains(&RngSite::BuildingExitGate),
         "the fixture must prove that resolving the unrelated door actor's forecast would draw"
     );
-    let (_, fused_trace) =
-        with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets, &positions));
+    let (_, fused_trace) = with_draw_trace(|| engine.tick_actor_owner_envelopes(&sim, &assets));
 
     assert!(engine.get_entity(owner).is_some());
     assert!(
@@ -6050,7 +6048,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
 
     let sim = crate::sim_rng::test_context();
     let (_, trace) = with_draw_trace(|| {
-        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None, None)
+        engine.tick_enemy_ai_drain_pending_stimuli_for_npc(&sim, owner, &assets, None)
     });
     assert!(
         !trace.contains(&RngSite::BuildingExitGate),
@@ -7027,4 +7025,247 @@ fn fit_again_engine_calls_surround_state_callback_in_original_order() {
 
     observe(false);
     observe(true);
+}
+
+#[test]
+fn patrol_arrival_registers_turn_before_returning_without_halting_selected_move() {
+    use crate::ai::{
+        AiContext, AiPerTickData, AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate,
+    };
+    use crate::element::Command;
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+    use crate::sequence::{Field, FieldValue, SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_scripted_soldier(""));
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
+        waypoints: vec![
+            RawWaypoint {
+                x: 0,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::None,
+            },
+            RawWaypoint {
+                x: 10,
+                y: 0,
+                sector: 1,
+                level: 0,
+                command: WaypointCommand::Macro(vec![1]),
+            },
+        ],
+    }]);
+    let mut path =
+        PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths).unwrap();
+    path.advance();
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("arrival fixture"));
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultGotoRoute;
+    ai.patrol_path = Some(path);
+    let selected = engine.launch_element(SequenceElement::new_movement(
+        1,
+        Command::Move,
+        Some(owner),
+        crate::order::OrderType::WalkingUpright,
+    ));
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(selected, 0);
+
+    let ctx = AiContext {
+        hiking_paths: assets.navigation.hiking_paths.clone(),
+        ..AiContext::test_fixture()
+    };
+    let handled = engine.dispatch_filtered_stimulus(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventReachPoint),
+        &ctx,
+        &AiPerTickData::stub(),
+    );
+    assert!(
+        !handled,
+        "Original route arrival leaves Think's return value false"
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("arrived owner"));
+    assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
+    assert_eq!(ai.think_recursion_depth, 0);
+    assert!(
+        ai.outbox.actor.orders.is_empty(),
+        "Turn is registered at its call site"
+    );
+    assert!(
+        ai.outbox.reentrant.owner_work.is_empty(),
+        "arrival has no suspended tail"
+    );
+    let turns: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|seq| seq.elements.iter())
+        .filter(|element| element.owner == Some(owner) && element.command == Command::Turn)
+        .collect();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0].state,
+        SequenceState::Todo,
+        "instruction waits for SequenceManager"
+    );
+    assert!(matches!(
+        turns[0].get_property(Field::Direction),
+        Some(FieldValue::Integer(_))
+    ));
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(selected, 0)
+            .unwrap()
+            .state,
+        SequenceState::InProgress,
+        "arrival does not Halt the selected move"
+    );
+}
+
+#[test]
+fn patrol_arrival_callback_can_lock_owner_before_recursive_done() {
+    use crate::ai::{
+        AiContext, AiPerTickData, AiState, PathId, PatrolPath, Stimulus, StimulusType, Substate,
+    };
+    use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+    use crate::natives::NativeFn;
+    let mut engine = EngineInner::new();
+    let owner = engine.add_test_entity(make_scripted_soldier("Arrival"));
+    let handle = crate::natives::ScriptHandleCodec::actor_handle(owner);
+    let mut assets = LevelAssets::new();
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
+        waypoints: vec![RawWaypoint {
+            x: 0,
+            y: 0,
+            sector: 1,
+            level: 0,
+            command: WaypointCommand::None,
+        }],
+    }]);
+    // Record each callback, and LockAI only inside the state-change callback.
+    // Returning zero must not veto that notification. The following recursive
+    // Done still runs its filter, then observes the lock at Think admission.
+    let mut quads = vec![
+        q_begin_function(0, 3),
+        q_aff1_get_param(TMP0, 4),
+        q_aff0_iconstant(TMP1, 1),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(NativeFn::InitGlobal as u32),
+        q_aff0_iconstant(TMP1, AiState::Default.state_change_event_code()),
+        q_ieq(TMP2, TMP0, TMP1),
+        q_if_not_zero_goto(TMP2, 11),
+        q_aff0_iconstant(TMP0, 1),
+        q_return_val(TMP0),
+        q_aff0_iconstant(TMP0, handle),
+        q_aff0_iconstant(TMP1, 0),
+        q_native_param(TMP0),
+        q_native_param(TMP1),
+        q_native_call(NativeFn::LockAI as u32),
+        q_aff0_iconstant(TMP0, 0),
+        q_return_val(TMP0),
+        q_end_function(),
+    ];
+    engine.scripts.mission = Some(
+        MissionScript::from_scb(ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![
+                ClassEntry {
+                    source_file: "arrival.scs".into(),
+                    class_name: "StartUp".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![],
+                    quads: vec![],
+                },
+                ClassEntry {
+                    source_file: "arrival.scs".into(),
+                    class_name: "Arrival".into(),
+                    size_of_member_variables: 0,
+                    member_variables: vec![],
+                    functions: vec![Function {
+                        name: "FilterAIEvent".into(),
+                        address: 0,
+                        num_parameters: 3,
+                        size_of_return_value: 4,
+                        size_of_parameters: 12,
+                        size_of_volatile: 0,
+                        size_of_temporary: 12,
+                    }],
+                    quads: std::mem::take(&mut quads),
+                },
+            ],
+        })
+        .expect("arrival callback compiles"),
+    );
+    engine.attach_script_bindings(&assets);
+    engine
+        .scripts
+        .mission
+        .as_mut()
+        .unwrap()
+        .bind_actor(handle, "Arrival");
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller_mut(owner, format_args!("arrival fixture"));
+    ai.current_state = AiState::Default;
+    ai.current_substate = Substate::DefaultGotoRoute;
+    ai.patrol_path = PatrolPath::new(PathId::new(0).unwrap(), &assets.navigation.hiking_paths);
+    // This sibling belongs to an enclosing queued completion, after arrival.
+    ai.think_recursion_depth = 3;
+    ai.open_end_think_frames = 3;
+    ai.outbox
+        .reentrant
+        .self_stimuli
+        .push(StimulusType::EventTimer.into());
+    let ctx = AiContext {
+        hiking_paths: assets.navigation.hiking_paths.clone(),
+        ..AiContext::test_fixture()
+    };
+    engine.dispatch_filtered_stimulus(
+        &crate::sim_rng::test_context(),
+        &assets,
+        owner,
+        &Stimulus::new(StimulusType::EventReachPoint),
+        &ctx,
+        &AiPerTickData::stub(),
+    );
+    let ai = engine
+        .world
+        .entities
+        .expect_ai_controller(owner, format_args!("arrival result"));
+    assert!(ai.script_locked);
+    assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
+    assert_eq!(ai.think_recursion_depth, 0);
+    assert_eq!(ai.open_end_think_frames, 0);
+    assert_eq!(
+        ai.outbox.reentrant.self_stimuli.len(),
+        1,
+        "caller sibling ran inside arrival"
+    );
+    assert!(ai.outbox.reentrant.owner_work.is_empty());
+    for code in [3, 5, 101] {
+        assert_eq!(
+            engine.scripts.globals[code], 1,
+            "missing callback code {code}"
+        );
+    }
 }

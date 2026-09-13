@@ -124,8 +124,8 @@ fn first_child_runs_master_once_and_freeze_all_only_suppresses_child_frames() {
         sprite_before["current_frame"].clone(),
         sprite_before["frame_count"].clone(),
     );
-    let positions = EntitySlots::filled(engine.world.entities.len(), None);
-    engine.tick_actor_owner_envelopes(&sim_context, &assets, &positions);
+
+    engine.tick_actor_owner_envelopes(&sim_context, &assets);
     assert_eq!(engine.world.mobile_elements[0].position.x, 2.0);
     assert_eq!(
         engine

@@ -44,8 +44,7 @@ fn tick_production_owner_coordinator(
     sim: &crate::sim_rng::SimulationContext,
     assets: &LevelAssets,
 ) {
-    let positions = engine.boundary_positions_snapshot();
-    engine.tick_actor_owner_envelopes(sim, assets, &positions);
+    engine.tick_actor_owner_envelopes(sim, assets);
 }
 
 /// Run the movement phase and then the sequence-manager drain behind it.
@@ -990,14 +989,13 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
     // Body cadence is `(universal frame + observer creation order) % 8`.
     engine.control.frame_counter = 6;
-    let positions = engine.boundary_positions_snapshot();
+
     let observed_body_position = std::rc::Rc::new(std::cell::Cell::new(MapPoint::ZERO));
     let observed = observed_body_position.clone();
     crate::sight_obstacle::begin_parity_visibility_capture();
     engine.tick_actor_owner_envelopes_with_test_owner_hook(
         &crate::sim_rng::test_context(),
         &assets,
-        &positions,
         move |engine, owner| {
             if owner == observer {
                 observed.set(
@@ -1844,12 +1842,10 @@ fn frozen_galopp_think_closes_before_movement_completion_and_next_owner_slot() {
     let later = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     engine.set_actors_frozen(true);
 
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     let ((), events) = EngineInner::capture_galopp_dispatches(|| {
         engine.tick_actor_owner_envelopes_with_test_owner_hook(
             &crate::sim_rng::test_context(),
             &assets,
-            &positions,
             move |_, owner| {
                 if owner == later {
                     EngineInner::record_galopp_probe_marker(owner);
@@ -3772,17 +3768,6 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
                 observer_before_target,
             );
 
-        let positions_before_movement = engine.boundary_positions_snapshot();
-
-        // This mutation is the smallest deterministic stand-in for the
-        // globally batched tick_entity_movement between the captured input
-        // boundary and refresh_npc_views. The oracle is the position copied
-        // into EYES_FOLLOW's stare point, not movement-distance mechanics.
-        engine
-            .get_entity_mut(target_id)
-            .expect("follow target exists")
-            .element_data_mut()
-            .set_position_map(target_after_movement);
         let Entity::Soldier(observer) = engine
             .get_entity_mut(observer_id)
             .expect("follow observer exists")
@@ -3791,7 +3776,21 @@ fn npc_follow_observes_target_position_at_its_creation_order_boundary() {
         };
         crate::ai_vision::focus_entity(&mut observer.npc, target_id);
 
-        engine.refresh_npc_views(&positions_before_movement);
+        let mut assets = LevelAssets::new();
+        complete_test_runtime_fixture(&mut engine, &mut assets);
+        engine.tick_actor_owner_envelopes_with_test_owner_hook(
+            &crate::sim_rng::test_context(),
+            &assets,
+            |engine, id| {
+                if id == target_id {
+                    engine
+                        .get_entity_mut(target_id)
+                        .expect("follow target exists")
+                        .element_data_mut()
+                        .set_position_map(target_after_movement);
+                }
+            },
+        );
 
         let Entity::Soldier(observer) = engine
             .get_entity(observer_id)

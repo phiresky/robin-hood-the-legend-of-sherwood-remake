@@ -1216,8 +1216,7 @@ fn assert_moved_target_refresh_returns_explicit_in_progress(
         actor.last_seek_target_position = MapPoint::new(60.0, 10.0);
     }
 
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    engine.tick_actor_owner_envelopes(&sim, &assets, &positions);
+    engine.tick_actor_owner_envelopes(&sim, &assets);
 
     let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
     assert_eq!(actor.continuation.motion_state, MotionState::InProgress);

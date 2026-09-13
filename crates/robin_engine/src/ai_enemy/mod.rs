@@ -2164,9 +2164,9 @@ impl EnemyAi {
     // Think — main stimulus dispatcher
     // -----------------------------------------------------------------------
 
-    /// Main entry point for stimulus processing. Routes the stimulus
-    /// to the appropriate Think sub-method based on its type.
-    pub(crate) fn think(
+    /// Admit a Think call without borrowing the actor across its body.
+    /// Rejection completes the call here; an admitted caller must run end_think.
+    pub(crate) fn begin_think(
         &mut self,
         env: ThinkEnv<'_>,
         stimulus: &Stimulus,
@@ -2223,7 +2223,7 @@ impl EnemyAi {
             self.end_think(env);
             self.base
                 .debug_macro_lifecycle(ctx, "think_rejected_return", stimulus_type);
-            return true;
+            return false;
         }
 
         // The script filter gate is applied by the engine *before*
@@ -2236,6 +2236,21 @@ impl EnemyAi {
         // filter (see the cascade-divergence note on those sites).
 
         self.update_new_task_priority(stimulus);
+
+        true
+    }
+
+    pub(crate) fn think(
+        &mut self,
+        env: ThinkEnv<'_>,
+        stimulus: &Stimulus,
+        global: &mut AiGlobalState,
+    ) -> bool {
+        if !self.begin_think(env, stimulus, global) {
+            return true;
+        }
+        let ThinkEnv { ctx, .. } = env;
+        let stimulus_type = stimulus.stimulus_type;
 
         let return_value = match stimulus_type {
             // Expected events — drive state progression

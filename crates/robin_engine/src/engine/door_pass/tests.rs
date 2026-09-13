@@ -1932,12 +1932,10 @@ fn frozen_all_climbs_turn_in_owner_slot_with_real_swapped_owner_visibility() {
                 install_production_climb_fixture(&mut engine, climber, LiftType::Ladder, action);
             engine.set_actors_frozen(true);
 
-            let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
             let mut direction_seen_by_observer = None;
             engine.tick_actor_owner_envelopes_with_test_owner_hook(
                 &crate::sim_rng::test_context(),
                 &LevelAssets::new(),
-                &positions,
                 |engine, completed_owner| {
                     if completed_owner == observer {
                         direction_seen_by_observer = Some(

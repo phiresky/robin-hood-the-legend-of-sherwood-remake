@@ -630,7 +630,7 @@ impl EngineInner {
             );
             ai.outbox.detection.stimuli = prefix_through_wake;
         }
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
 
         let ai = self
             .world
@@ -957,33 +957,9 @@ impl EngineInner {
         }
     }
 
-    /// Per-frame view parameter refresh for every NPC.
-    ///
-    /// This test-facing wrapper preserves the focused EYES_FOLLOW oracle;
-    /// production coordinates the extracted per-NPC helper directly with
-    /// that NPC's detection-refresh slot.
-    #[cfg(test)]
-    pub(in crate::engine) fn refresh_npc_views(
-        &mut self,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-    ) {
-        if self.actors_frozen() {
-            return;
-        }
-
-        let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        for npc_id in npc_ids {
-            self.refresh_npc_view_for_npc(npc_id, positions_before_movement);
-        }
-    }
-
     /// Refresh one NPC's view immediately before its own creation-ordered
     /// detection-refresh pass.
-    pub(in crate::engine) fn refresh_npc_view_for_npc(
-        &mut self,
-        npc_id: EntityId,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
-    ) {
+    pub(in crate::engine) fn refresh_npc_view_for_npc(&mut self, npc_id: EntityId) {
         if self.actors_frozen() {
             return;
         }
@@ -1019,35 +995,10 @@ impl EngineInner {
 
             let follow_target_position = npc.follow_target.and_then(|target_id| {
                 self.world.entities.get(target_id).map(|target| {
-                    // Required ordering:
-                    // - The engine tick walks elements in
-                    //   creation order.
-                    // - The NPC update delegates to the base
-                    //   human ticking before view refresh
-                    //   in the NPC refresh pass.
-                    // - EYES_FOLLOW reads the mobile target's ground position
-                    //   inside view refresh.
-                    // Thus a later-created target has not moved yet, while
-                    // an earlier-created target has. EntityId::index is the
-                    // append-only legacy creation slot in this port.
-                    let boundary = if target_id.index() > npc_id.index() {
-                        positions_before_movement
-                            .get(target_id)
-                            .copied()
-                            .flatten()
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "NPC {npc_id:?} follows later-created target {target_id:?}, \
-                                         but the required pre-movement position snapshot is missing"
-                                )
-                            })
-                    } else {
-                        crate::entities::BoundaryPosition::of(target.element_data())
-                    };
-                    // The recorded boundary carries the target's own 3D
-                    // position, so jump/flying Z survives and nothing has to
-                    // be re-derived from the plane.
-                    crate::coordinates::GroundPoint::new(boundary.world.x, boundary.world.y)
+                    // Earlier actors and their callbacks have run; later
+                    // movement has not. Read the live stored world point.
+                    let stored_world = target.element_data().position();
+                    crate::coordinates::GroundPoint::new(stored_world.x, stored_world.y)
                 })
             });
 

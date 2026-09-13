@@ -47,10 +47,9 @@ fn run_net_owner_path(
     engine: &mut EngineInner,
     assets: &LevelAssets,
 ) -> Vec<(EntityId, crate::sprite::FrameProgression)> {
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
     let (_, trace) = capture_net_sprite_progressions(|| {
         crate::sim_rng::with_seed(0x4E45_5431, |sim| {
-            engine.tick_actor_owner_envelopes(sim, assets, &positions);
+            engine.tick_actor_owner_envelopes(sim, assets);
         });
     });
     trace

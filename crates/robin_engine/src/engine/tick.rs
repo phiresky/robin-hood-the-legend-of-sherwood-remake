@@ -19,7 +19,6 @@ use super::sequence_runtime::{
 use super::*;
 use crate::abilities;
 use crate::element::{Command, Entity, EntityId};
-use crate::entities::EntitySlots;
 use crate::game_operation::GameCode;
 use crate::messenger::{MessageType, SimpleMessage};
 use crate::profiles::MissionType;
@@ -899,20 +898,19 @@ struct HourglassPhaseStats {
 /// Opt-in detail inside the otherwise broad `EntitySystems` phase.
 #[derive(Clone, Copy)]
 pub(super) enum EntitySystemDetail {
-    BoundarySnapshot = 0,
-    PrepareNpc = 1,
-    StaticOwners = 2,
-    OwnerPrelude = 3,
-    OwnerExecute = 4,
-    NpcTail = 5,
-    CorpseUpdates = 6,
-    FrameSounds = 7,
-    BuildEntityViews = 8,
-    BuildWorldView = 9,
-    RefreshDetection = 10,
+    PrepareNpc = 0,
+    StaticOwners = 1,
+    OwnerPrelude = 2,
+    OwnerExecute = 3,
+    NpcTail = 4,
+    CorpseUpdates = 5,
+    FrameSounds = 6,
+    BuildEntityViews = 7,
+    BuildWorldView = 8,
+    RefreshDetection = 9,
 }
 
-const ENTITY_SYSTEM_DETAIL_COUNT: usize = 11;
+const ENTITY_SYSTEM_DETAIL_COUNT: usize = 10;
 
 #[derive(Default)]
 struct EntitySystemDetailStats {
@@ -974,7 +972,6 @@ fn finish_entity_system_detail_frame() {
         tracing::info!(
             target: "robin_engine::engine::tick::entity_system_perf",
             frames = stats.frames,
-            boundary_us = per_frame(EntitySystemDetail::BoundarySnapshot),
             prepare_npc_us = per_frame(EntitySystemDetail::PrepareNpc),
             static_owners_us = per_frame(EntitySystemDetail::StaticOwners),
             owner_prelude_us = per_frame(EntitySystemDetail::OwnerPrelude),
@@ -2482,15 +2479,8 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) -> Vec<super::movement::TerminalMovementOrderPop> {
-        self.tick_actor_owner_envelopes_with_owner_hook(
-            sim,
-            display,
-            assets,
-            positions_before_movement,
-            |_, _| {},
-        )
+        self.tick_actor_owner_envelopes_with_owner_hook(sim, display, assets, |_, _| {})
     }
 
     #[cfg(test)]
@@ -2498,17 +2488,10 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         owner_hook: impl FnMut(&mut Self, EntityId),
     ) {
         let mut display = CameraDisplayState::default();
-        self.tick_actor_owner_envelopes_with_owner_hook(
-            sim,
-            &mut display,
-            assets,
-            positions_before_movement,
-            owner_hook,
-        );
+        self.tick_actor_owner_envelopes_with_owner_hook(sim, &mut display, assets, owner_hook);
     }
 
     fn tick_actor_owner_envelopes_with_owner_hook(
@@ -2516,7 +2499,6 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         mut owner_hook: impl FnMut(&mut Self, EntityId),
     ) -> Vec<super::movement::TerminalMovementOrderPop> {
         let mut terminal_movement_order_pops = Vec::new();
@@ -2585,12 +2567,7 @@ impl EngineInner {
                     && !engine.actors_frozen()
                 {
                     observe_actor_owner_envelope(ActorOwnerEnvelopePhase::Patrol(owner));
-                    engine.tick_patrol_coordination_for_npc(
-                        sim,
-                        assets,
-                        owner,
-                        positions_before_movement,
-                    );
+                    engine.tick_patrol_coordination_for_npc(sim, assets, owner);
                 }
                 if engine
                     .world
@@ -2758,13 +2735,7 @@ impl EngineInner {
                             .get(owner)
                             .is_some_and(|entity| entity.ai_controller().is_some())
                         {
-                            engine.tick_npc_owner_pass(
-                                sim,
-                                assets,
-                                positions_before_movement,
-                                &mut prepared,
-                                owner,
-                            );
+                            engine.tick_npc_owner_pass(sim, assets, &mut prepared, owner);
                         }
                         engine.tick_pc_auto_heal_for(sim, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::PcTail(owner));
@@ -2776,13 +2747,7 @@ impl EngineInner {
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::HumanTiredness(
                             owner,
                         ));
-                        engine.tick_npc_owner_pass(
-                            sim,
-                            assets,
-                            positions_before_movement,
-                            &mut prepared,
-                            owner,
-                        );
+                        engine.tick_npc_owner_pass(sim, assets, &mut prepared, owner);
                         observe_actor_owner_envelope(ActorOwnerEnvelopePhase::NpcTail(owner));
                     }
                     _ => panic!(
@@ -2801,15 +2766,9 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
         let mut display = CameraDisplayState::default();
-        self.tick_actor_owner_envelopes_with_display(
-            sim,
-            &mut display,
-            assets,
-            positions_before_movement,
-        );
+        self.tick_actor_owner_envelopes_with_display(sim, &mut display, assets);
     }
 
     /// Dispatch the exact original-game per-frame update chain for a live

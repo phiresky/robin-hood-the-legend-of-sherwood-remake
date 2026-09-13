@@ -3,19 +3,6 @@
 use super::*;
 
 impl EngineInner {
-    /// Snapshot every occupied slot without resolving or refreshing position
-    /// caches: later owners must retain the exact pre-movement boundary.
-    pub(in crate::engine) fn boundary_positions_snapshot(
-        &self,
-    ) -> EntitySlots<Option<crate::entities::BoundaryPosition>> {
-        let mut positions = EntitySlots::filled(self.world.entities.len(), None);
-        for (entity_id, entity) in self.world.entities.occupied() {
-            positions[entity_id] =
-                Some(crate::entities::BoundaryPosition::of(entity.element_data()));
-        }
-        positions
-    }
-
     /// Consume the host sound-manager update that completed after the
     /// preceding Original engine frame.
     ///
@@ -302,16 +289,6 @@ impl EngineInner {
         display: &mut CameraDisplayState,
         assets: &LevelAssets,
     ) -> Vec<crate::engine::movement::TerminalMovementOrderPop> {
-        // Preserve the position each element exposed before the globally
-        // batched movement pass. The original does not have this batch:
-        // The NPC update calls the human-actor update
-        // (and therefore the observer's own movement) before view refresh,
-        // while actors with a later creation order have not run yet.
-        let positions_before_movement = {
-            let _detail = entity_system_detail_guard(EntitySystemDetail::BoundarySnapshot);
-            self.boundary_positions_snapshot()
-        };
-
         // ── Per-frame movement tick ─────────────────────────────
         // Actor movement runs later, inside the live legacy-slot owner walk.
 
@@ -350,12 +327,8 @@ impl EngineInner {
         // Every supported nonactor update now runs below at its
         // live legacy slot: mobile boundary first, then static owners, then
         // projectile/net dispatch.
-        let terminal_movement_order_pops = self.tick_actor_owner_envelopes_with_display(
-            sim,
-            display,
-            assets,
-            &positions_before_movement,
-        );
+        let terminal_movement_order_pops =
+            self.tick_actor_owner_envelopes_with_display(sim, display, assets);
         // ── Corpse-intersection repulsion hook ────────────────────
         // Scan for lying↔non-lying posture transitions and fire
         // `update_intersecting_corpses` so stacked corpses get the

@@ -2755,12 +2755,8 @@ fn assert_refreshing_seek_owner_envelope_ignores_stale_sprite_motion(
         .element_data_mut()
         .sprite
         .last_motion_state = Some(stale_sprite_motion);
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    engine.tick_actor_owner_envelopes(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
-        &positions,
-    );
+
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::default());
     assert_eq!(
         engine
             .get_entity(owner)
@@ -2961,12 +2957,7 @@ fn point_refreshing_seek_with_successor_projects_back_to_in_progress() {
         .sequence_manager
         .element_in_progress(sequence, 0);
 
-    let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
-    engine.tick_actor_owner_envelopes(
-        &crate::sim_rng::test_context(),
-        &LevelAssets::default(),
-        &positions,
-    );
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &LevelAssets::default());
 
     assert_eq!(
         engine

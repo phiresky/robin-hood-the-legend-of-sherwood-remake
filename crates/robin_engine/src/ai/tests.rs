@@ -1753,22 +1753,12 @@ fn goto_route_arrival_launches_turn_even_when_already_facing_route() {
         ..AiContext::test_fixture()
     };
 
-    let sim = crate::sim_rng::test_context();
-    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
-    assert_eq!(ai.current_substate, Substate::DefaultGotoRouteTurn);
-    // The REACHPOINT handler suspends across the state-change callback barrier;
-    // the engine's owner-work drain runs this continuation. Invoke it
-    // directly for the controller-level check.
-    ai.resume_goto_route_reach_point(&sim, &ctx);
-
-    assert!(
-        ai.outbox.reentrant.self_stimuli.is_empty(),
-        "route arrival uses an explicit turn, not facing's same-direction completion shortcut"
+    let direction = ai.route_arrival_turn_direction(ctx.position, &ctx.hiking_paths);
+    assert_eq!(
+        direction,
+        Some(route_direction),
+        "arrival retains an explicit turn even when already facing its direction"
     );
-    let orders = ai.take_pending_orders();
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].order_type, crate::order::OrderType::Turning);
-    assert_eq!(orders[0].explicit_direction, Some(route_direction as i16));
 }
 
 #[test]
@@ -1813,12 +1803,10 @@ fn goto_route_turn_lookup_preserves_original_endpoint_direction_flip() {
         ..AiContext::test_fixture()
     };
 
-    let sim = crate::sim_rng::test_context();
-    ai.think_expected_event_common_stuff(&sim, &Stimulus::new(StimulusType::EventReachPoint), &ctx);
-    // The REACHPOINT handler suspends across the state-change callback barrier;
-    // run the engine-drained continuation directly to reach the live
-    // --path/++path lookup.
-    ai.resume_goto_route_reach_point(&sim, &ctx);
+    assert!(
+        ai.route_arrival_turn_direction(ctx.position, &ctx.hiking_paths)
+            .is_some()
+    );
 
     let path = ai.patrol_path.as_ref().expect("patrol path");
     assert_eq!(path.current_waypoint_index, 0);

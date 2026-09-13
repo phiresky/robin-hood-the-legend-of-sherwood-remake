@@ -65,7 +65,7 @@ impl EngineInner {
             self.refresh_pc_produced_noise_for(pc_id);
         }
         let run_detection = !self.actors_frozen();
-        self.tick_enemy_ai_inner(sim, assets, None);
+        self.tick_enemy_ai_inner(sim, assets, false);
         // This detection-only test driver explicitly closes its synthetic
         // frame. Production drains belong to each creation-ordered owner.
         if run_detection {
@@ -74,8 +74,7 @@ impl EngineInner {
         }
     }
 
-    /// Production NPC coordinator for the pre-detection portion of
-    /// the original-game NPC update.
+    /// Legacy test coordinator for complete NPC updates without actor movement.
     ///
     /// Each NPC consumes only its own body/recovery work and refreshes its
     /// own view immediately before its creation-ordered detection refresh.
@@ -86,9 +85,8 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
     ) {
-        self.tick_enemy_ai_inner(sim, assets, Some(positions_before_movement));
+        self.tick_enemy_ai_inner(sim, assets, true);
     }
 
     /// Prepare the shared, RNG-free portion of the fused owner pass.
@@ -102,7 +100,7 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
         PreparedNpcOwnerPass {
-            world: None,
+            detection: None,
             entity_views: PreparedAiEntityViewCache::default(),
         }
     }
@@ -113,7 +111,6 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: &EntitySlots<Option<crate::entities::BoundaryPosition>>,
         prepared: &mut PreparedNpcOwnerPass,
         npc_id: EntityId,
     ) {
@@ -132,26 +129,23 @@ impl EngineInner {
             return;
         }
 
-        if prepared.world.is_none() {
-            prepared.world =
-                Some(self.tick_enemy_ai_build_world_view(
-                    assets,
-                    Some((npc_id, positions_before_movement)),
-                ));
+        if prepared.detection.is_none() {
+            prepared.detection = Some(self.capture_detection_frame_state(assets));
         }
         let world = prepared
-            .world
+            .detection
             .as_ref()
-            .expect("prepared NPC owner pass lost its tactical world view");
+            .expect("prepared NPC owner pass lost its detection capture");
+        self.tick_inform_my_friends_for_npc(npc_id);
+        self.refresh_npc_view_for_npc(npc_id);
         self.tick_enemy_ai_refresh_detection(
             sim,
             assets,
             world,
-            Some(positions_before_movement),
-            Some(npc_id),
-            false,
-            Some(&mut prepared.entity_views),
+            npc_id,
+            &mut prepared.entity_views,
         );
+        self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
     }
 
     pub(in crate::engine) fn tick_enemy_ai_blip_detection_for_owner(
@@ -168,13 +162,13 @@ impl EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
+        run_owner_envelope: bool,
     ) {
         if self.actors_frozen() {
             // Frozen-all skips patrol/view/detection/ambush/deafness but the
             // original still enters each NPC's busy/ladder/speech/lock gate,
             // where all three deadlines are extended before returning.
-            if positions_before_movement.is_some() {
+            if run_owner_envelope {
                 let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
                 for npc_id in npc_ids {
                     self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
@@ -187,10 +181,9 @@ impl EngineInner {
             self.ai.global.primary_target_multiplicity_initialized = true;
         }
 
-        // ── 1. Build one immutable per-tick AI world view. ────────
-        // Snapshot construction does not dispatch behavior. The phase calls
-        // below remain in the original game's soldier/NPC update order.
-        let world = self.tick_enemy_ai_build_world_view(assets, None);
+        // Capture detection inputs at the same point as the production owner
+        // pass. Tactical data is built live at each subsequent Think.
+        let world = self.capture_detection_frame_state(assets);
 
         // ── 2a. Listen/object blip work. ────────────────────────
         // NPC-owned SeesBlip remains inside its creation-ordered
@@ -200,21 +193,24 @@ impl EngineInner {
             self.tick_enemy_ai_blip_detection(sim, assets, pc_id);
         }
 
-        // ── 3. Creation-ordered per-NPC prelude + detection refresh. ───
-        // Production first consumes the current NPC's inform/recovery outbox
-        // and refreshes its view. Acoustic detection + synchronous EVENT_HEAR,
-        // Enemy detection, volatile target rebuild, non-Enemy detectable
-        // buckets, and the resulting FIFO Think dispatches then all finish for
-        // that NPC before the next creation slot starts.
-        self.tick_enemy_ai_refresh_detection(
-            sim,
-            assets,
-            &world,
-            positions_before_movement,
-            None,
-            positions_before_movement.is_some(),
-            None,
-        );
+        // Test drivers explicitly choose either a complete NPC envelope or
+        // detection alone. Geometry arguments never select scheduling phases.
+        let owners: Vec<_> = self.world.entities.ai_owner_ids().collect();
+        let mut entity_views = PreparedAiEntityViewCache::default();
+        for npc_id in owners {
+            if run_owner_envelope {
+                if self.dispatch_pending_fit_again_for_npc(sim, npc_id, assets) {
+                    self.tick_ai_pending_resurrection_and_eyes_for_npc(npc_id);
+                    self.apply_wake_redetection_blinks(npc_id);
+                }
+                self.tick_inform_my_friends_for_npc(npc_id);
+                self.refresh_npc_view_for_npc(npc_id);
+            }
+            self.tick_enemy_ai_refresh_detection(sim, assets, &world, npc_id, &mut entity_views);
+            if run_owner_envelope {
+                self.tick_npc_post_detection_tail_for_npc(sim, npc_id, assets);
+            }
+        }
 
         // Sword strikes are launched by `engine::melee::tick_enemy_sword_attacks`.
         // Keep this AI pass to target selection, pursuit, and swordfight

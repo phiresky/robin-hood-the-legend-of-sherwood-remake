@@ -40,21 +40,28 @@ pub(crate) fn capture_npc_post_detection_tail_phases<T>(
     NPC_POST_DETECTION_TAIL_TRACE.with(|trace| trace.capture(f))
 }
 
-/// Final scan aggregate attached to the contiguous Enemy stimulus block queued
-/// by detection refresh. The absolute queue start preserves FIFO order. Live
-/// context and target-dependent combat fields are rebuilt for each Think; only
-/// fields whose value belongs to the completed detection scan are copied from
-/// this aggregate.
-pub(in crate::engine) struct PendingEnemyDetectionTickData {
+/// The only lists retained from detection; all other tactical fields are read
+/// live at delivery. Keeping this type narrow prevents rebuilding and cloning
+/// a whole tactical world merely to discard it at the next Think.
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+pub(in crate::engine) struct EnemyDetectionAggregate {
+    pub(super) nearby_sleeping_enemies: Vec<crate::ai::SleepingEnemyInfo>,
+    pub(super) camp_unconscious_soldiers: Vec<crate::ai_enemy::CampUnconsciousSoldierInfo>,
+}
+
+/// Attach the retained lists to the exact contiguous Enemy stimulus block.
+/// Queue identity remains valid even when an earlier callback deletes a target.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(in crate::engine) struct PendingEnemyDetection {
     pub(super) queue_start: usize,
     pub(super) stimuli: Vec<crate::ai::Stimulus>,
-    pub(super) tick_data: crate::ai::AiPerTickData,
+    pub(super) aggregate: EnemyDetectionAggregate,
     matched: usize,
 }
 
 fn overlay_final_detection_scan(
     live: &mut crate::ai::AiPerTickData,
-    aggregate: &crate::ai::AiPerTickData,
+    aggregate: &EnemyDetectionAggregate,
 ) {
     // Enemy list products are deliberately not copied here. Original
     // Enemy-list rebuilding re-walks the live detectable list during every
@@ -94,26 +101,26 @@ fn enemy_detection_handles(
     (visible, latched)
 }
 
-impl PendingEnemyDetectionTickData {
+impl PendingEnemyDetection {
     pub(super) fn new(
         queue_start: usize,
         stimuli: Vec<crate::ai::Stimulus>,
-        tick_data: crate::ai::AiPerTickData,
+        aggregate: EnemyDetectionAggregate,
     ) -> Self {
         Self {
             queue_start,
             stimuli,
-            tick_data,
+            aggregate,
             matched: 0,
         }
     }
 }
 
-fn take_enemy_detection_tick_data(
+fn take_enemy_detection_aggregate<'a>(
     queue_index: usize,
     stimulus: &crate::ai::Stimulus,
-    pending: &mut Option<PendingEnemyDetectionTickData>,
-) -> Option<crate::ai::AiPerTickData> {
+    pending: &'a mut Option<PendingEnemyDetection>,
+) -> Option<&'a EnemyDetectionAggregate> {
     let override_data = pending.as_mut()?;
     let offset = queue_index.checked_sub(override_data.queue_start)?;
     let expected = override_data.stimuli.get(offset)?;
@@ -134,7 +141,7 @@ fn take_enemy_detection_tick_data(
         "Enemy detection tick-data block no longer points at its queued patrol routing"
     );
     override_data.matched += 1;
-    Some(override_data.tick_data.clone())
+    Some(&override_data.aggregate)
 }
 use crate::element::EntityId;
 
@@ -357,7 +364,7 @@ impl EngineInner {
     ) {
         let npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
         for npc_id in npc_ids {
-            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+            self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
         }
     }
 
@@ -397,7 +404,7 @@ impl EngineInner {
         };
 
         self.dispatch_ai_stimulus(npc_id, stimulus);
-        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
+        self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None);
 
         // This FIFO was detached during the synchronous call, so deletion's
         // owner hooks could not reach it. Do not restore newly stale targets.
@@ -424,8 +431,7 @@ impl EngineInner {
         sim: &crate::sim_rng::SimulationContext,
         npc_id: EntityId,
         assets: &LevelAssets,
-        mut enemy_detection_tick_data: Option<PendingEnemyDetectionTickData>,
-        positions_before_movement: Option<&EntitySlots<Option<crate::entities::BoundaryPosition>>>,
+        mut enemy_detection_tick_data: Option<PendingEnemyDetection>,
     ) {
         let stimuli = {
             let Some(entity) = self.world.entities.get_mut(npc_id) else {
@@ -451,7 +457,7 @@ impl EngineInner {
             // Consume the matching retained scan record even if a preceding
             // synchronous stimulus removed this target and delivery below is
             // consequently skipped.
-            let detection_aggregate = take_enemy_detection_tick_data(
+            let detection_aggregate = take_enemy_detection_aggregate(
                 queue_index,
                 &stimulus,
                 &mut enemy_detection_tick_data,
@@ -471,16 +477,7 @@ impl EngineInner {
             // recursive event it launches) finishes before the next queued
             // stimulus starts, so every entry must observe mutations made by
             // its predecessor rather than the tick-start entity-view map.
-            let scratch = positions_before_movement
-                .map(|positions| {
-                    self.build_owner_context_scratch_at_slot_without_forecast(
-                        assets,
-                        npc_id,
-                        positions,
-                        crate::engine::ai::OwnerActorPhase::AfterActor,
-                    )
-                })
-                .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
             if let crate::ai::StimulusInfo::Human(handle) = stimulus.info
                 && !scratch.ai_entity_views.contains_key(&handle.get())
             {
@@ -561,15 +558,8 @@ impl EngineInner {
                 };
                 let mut live =
                     self.build_npc_tick_data_for_target(sim, npc_id, assets, Some(target_id));
-                overlay_final_detection_scan(&mut live, &aggregate);
-                if let Some(positions) = positions_before_movement {
-                    self.apply_owner_relative_tick_positions(
-                        npc_id,
-                        Some(target_id),
-                        positions,
-                        &mut live,
-                    );
-                }
+                overlay_final_detection_scan(&mut live, aggregate);
+
                 live
             } else {
                 let target_override = match stimulus.info {
@@ -592,18 +582,11 @@ impl EngineInner {
                     }
                     _ => None,
                 };
-                let mut live =
-                    self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override);
-                if let Some(positions) = positions_before_movement {
-                    self.apply_owner_relative_tick_positions(
-                        npc_id,
-                        target_override,
-                        positions,
-                        &mut live,
-                    );
-                }
-                live
+                self.build_npc_tick_data_for_target(sim, npc_id, assets, target_override)
             };
+            // Detection delivery forecasts the actor's actual primary target,
+            // which can differ from this stimulus's tactical target override.
+            self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
             if matches!(
                 stimulus.stimulus_type,
                 crate::ai::StimulusType::EventView | crate::ai::StimulusType::EventOutOfView
@@ -834,7 +817,7 @@ impl EngineInner {
                 // generic tick builder only prepares primary/missed
                 // forecasts, so add the per-detectable ones the handler
                 // indexes by handle.
-                self.prepare_detection_forecasts_for_owner(npc_id, None, &mut tick_data);
+                self.prepare_detection_forecasts_for_owner(npc_id, &mut tick_data);
             }
             self.dispatch_think_with_drain_without_forecast(
                 sim, npc_id, &stimulus, &ctx, &tick_data, assets,
@@ -976,10 +959,7 @@ mod tests {
             is_vip: false,
         }];
 
-        let mut aggregate = crate::ai::AiPerTickData::stub();
-        aggregate.enemy_sq_distances = vec![(4, 16)];
-        aggregate.min_sq_enemy_distance = 16;
-        aggregate.personally_visible_enemies = 8;
+        let mut aggregate = EnemyDetectionAggregate::default();
         aggregate.nearby_sleeping_enemies = vec![crate::ai::SleepingEnemyInfo {
             handle: 3,
             position: crate::ai::Position::default(),
@@ -999,9 +979,19 @@ mod tests {
 
     #[test]
     fn enemy_detection_tick_data_override_matches_the_exact_fifo_block() {
-        let mut full_tick_data = crate::ai::AiPerTickData::stub();
-        full_tick_data.personally_visible_enemies = 7;
-        full_tick_data.min_sq_enemy_distance = 321;
+        let aggregate = EnemyDetectionAggregate {
+            nearby_sleeping_enemies: vec![crate::ai::SleepingEnemyInfo {
+                handle: 7,
+                position: crate::ai::Position::default(),
+                is_pc: true,
+                is_robin: false,
+                is_vip: false,
+            }],
+            camp_unconscious_soldiers: vec![crate::ai_enemy::CampUnconsciousSoldierInfo {
+                handle: 321,
+                knocked_out_in_money_fight: true,
+            }],
+        };
         let shadow = crate::ai::Stimulus::with_position(
             crate::ai::StimulusType::EventSeesShadow,
             crate::ai::Position::default(),
@@ -1009,20 +999,20 @@ mod tests {
         let view = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, 42);
         let out_of_view =
             crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventOutOfView, 77);
-        let mut pending = Some(PendingEnemyDetectionTickData::new(
+        let mut pending = Some(PendingEnemyDetection::new(
             1,
             vec![view, out_of_view],
-            full_tick_data,
+            aggregate,
         ));
 
-        assert!(take_enemy_detection_tick_data(0, &shadow, &mut pending).is_none());
-        let selected = take_enemy_detection_tick_data(1, &view, &mut pending)
+        assert!(take_enemy_detection_aggregate(0, &shadow, &mut pending).is_none());
+        let selected = take_enemy_detection_aggregate(1, &view, &mut pending)
             .expect("exact EVENT_VIEW queue entry keeps detection-built input");
-        assert_eq!(selected.personally_visible_enemies, 7);
-        assert_eq!(selected.min_sq_enemy_distance, 321);
-        let selected = take_enemy_detection_tick_data(2, &out_of_view, &mut pending)
+        assert_eq!(selected.nearby_sleeping_enemies[0].handle, 7);
+        assert_eq!(selected.camp_unconscious_soldiers[0].handle, 321);
+        let selected = take_enemy_detection_aggregate(2, &out_of_view, &mut pending)
             .expect("exact EVENT_OUTOFVIEW queue entry keeps detection-built input");
-        assert_eq!(selected.personally_visible_enemies, 7);
+        assert_eq!(selected.nearby_sleeping_enemies[0].handle, 7);
         assert_eq!(
             pending.as_ref().expect("block remains for audit").matched,
             2
@@ -1031,29 +1021,35 @@ mod tests {
 
     #[test]
     fn event_view_tick_data_override_is_one_shot_at_exact_fifo_index() {
-        let mut full_tick_data = crate::ai::AiPerTickData::stub();
-        full_tick_data.personally_visible_enemies = 7;
-        full_tick_data.min_sq_enemy_distance = 321;
+        let aggregate = EnemyDetectionAggregate {
+            nearby_sleeping_enemies: vec![crate::ai::SleepingEnemyInfo {
+                handle: 7,
+                position: crate::ai::Position::default(),
+                is_pc: true,
+                is_robin: false,
+                is_vip: false,
+            }],
+            camp_unconscious_soldiers: vec![crate::ai_enemy::CampUnconsciousSoldierInfo {
+                handle: 321,
+                knocked_out_in_money_fight: true,
+            }],
+        };
         let shadow = crate::ai::Stimulus::with_position(
             crate::ai::StimulusType::EventSeesShadow,
             crate::ai::Position::default(),
         );
         let view = crate::ai::Stimulus::with_human(crate::ai::StimulusType::EventView, 42);
-        let mut pending = Some(PendingEnemyDetectionTickData::new(
-            1,
-            vec![view],
-            full_tick_data,
-        ));
+        let mut pending = Some(PendingEnemyDetection::new(1, vec![view], aggregate));
 
-        assert!(take_enemy_detection_tick_data(0, &shadow, &mut pending).is_none());
-        let selected = take_enemy_detection_tick_data(1, &view, &mut pending)
+        assert!(take_enemy_detection_aggregate(0, &shadow, &mut pending).is_none());
+        let selected = take_enemy_detection_aggregate(1, &view, &mut pending)
             .expect("exact EVENT_VIEW queue entry keeps detection-built input");
-        assert_eq!(selected.personally_visible_enemies, 7);
-        assert_eq!(selected.min_sq_enemy_distance, 321);
+        assert_eq!(selected.nearby_sleeping_enemies[0].handle, 7);
+        assert_eq!(selected.camp_unconscious_soldiers[0].handle, 321);
         assert_eq!(
             pending.as_ref().expect("block remains for audit").matched,
             1
         );
-        assert!(take_enemy_detection_tick_data(2, &view, &mut pending).is_none());
+        assert!(take_enemy_detection_aggregate(2, &view, &mut pending).is_none());
     }
 }

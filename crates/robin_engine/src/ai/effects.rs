@@ -228,14 +228,10 @@ pub enum AiOwnerWork {
     /// owner FIFO because callers can speak or change state immediately
     /// before/after it and those operations are observably ordered.
     NearbyCiviliansPanic,
-    /// Continue the common `EVENT_REACHPOINT` route handler after its
-    /// state-change callback has returned and committed.
+    /// Reserved legacy wire slot. Patrol arrival now executes synchronously.
+    /// TODO(codec): retire this variant with an explicit save/rollback format
+    /// migration; removing it shifts later bitcode tags and StateHash values.
     ResumeGotoRouteReachPoint {
-        /// Positions visible at the Original owner boundary where
-        /// `EVENT_REACHPOINT` was dispatched. Rust moves actors in a global
-        /// batch, so rebuilding these from the live world after the
-        /// `FilterAIEvent` callback would expose later legacy slots one
-        /// movement phase too early.
         owner_boundary_positions: Vec<(u32, Position)>,
     },
     /// Invoke actor-specific return-to-duty behavior requested by shared AI logic.

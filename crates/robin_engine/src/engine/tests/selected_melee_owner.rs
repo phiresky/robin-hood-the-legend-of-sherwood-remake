@@ -33,13 +33,6 @@ fn set_map_position(engine: &mut EngineInner, actor: EntityId, x: f32, y: f32) {
         .set_position_map(MapPoint::new(x, y));
 }
 
-fn positions(
-    engine: &EngineInner,
-) -> crate::entities::EntitySlots<Option<crate::entities::BoundaryPosition>> {
-    let positions = engine.boundary_positions_snapshot();
-    positions
-}
-
 fn bind_animation(engine: &mut EngineInner, actor: EntityId, action: OrderType) {
     bind_animations(engine, actor, &[action]);
 }
@@ -135,8 +128,7 @@ fn install_selected_smalltalk(
 }
 
 fn run_owner_walk(engine: &mut EngineInner, assets: &LevelAssets) {
-    let positions = positions(engine);
-    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), assets, &positions);
+    engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), assets);
 }
 
 #[test]
