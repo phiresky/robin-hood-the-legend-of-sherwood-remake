@@ -47,38 +47,64 @@ fn session_with_script(source: &str) -> LegacyVmSession {
     }
 }
 
-fn spellforge_args() -> crate::main_entry::MissionLaunch {
-    let mut args = crate::main_entry::MissionLaunch::from(CliArgs {
+fn base_cli() -> CliArgs {
+    CliArgs {
         rollback_check: false,
         ..CliArgs::default()
-    });
-    args.pending_lua_mission = Some(PendingLuaMission {
-        rhm_basename: "test_mission".to_owned(),
-        requires_spellforge: true,
-        spellforge_package: None,
-    });
-    args
+    }
+}
+
+fn spellforge_args(cli: CliArgs, requires_spellforge: bool) -> crate::main_entry::MissionRequest {
+    crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig::from(cli))
+        .with_content(crate::main_entry::MissionContent {
+            pending_lua_mission: Some(PendingLuaMission {
+                rhm_basename: "test_mission".to_owned(),
+                requires_spellforge,
+                spellforge_package: None,
+            }),
+            ..Default::default()
+        })
 }
 
 #[test]
 fn deterministic_and_network_modes_allow_spellforge() {
-    let mut replay = spellforge_args();
-    replay.replay = Some("unused.rhrec.jsonl".to_owned());
-    validate_launch_mode(&replay, false).unwrap();
+    let replay = spellforge_args(
+        CliArgs {
+            replay: Some("unused.rhrec.jsonl".to_owned()),
+            ..base_cli()
+        },
+        true,
+    );
+    validate_launch_mode(&replay.config.cli, false).unwrap();
 
-    let mut rollback = spellforge_args();
-    rollback.rollback_check = true;
-    validate_launch_mode(&rollback, false).unwrap();
+    let rollback = spellforge_args(
+        CliArgs {
+            rollback_check: true,
+            ..base_cli()
+        },
+        true,
+    );
+    validate_launch_mode(&rollback.config.cli, false).unwrap();
 
-    let mut host = spellforge_args();
-    host.server = true;
-    validate_launch_mode(&host, false).unwrap();
+    let host = spellforge_args(
+        CliArgs {
+            server: true,
+            ..base_cli()
+        },
+        true,
+    );
+    validate_launch_mode(&host.config.cli, false).unwrap();
 
-    let mut client = spellforge_args();
-    client.connect = Some("an-endpoint-id".to_owned());
-    validate_launch_mode(&client, false).unwrap();
+    let client = spellforge_args(
+        CliArgs {
+            connect: Some("an-endpoint-id".to_owned()),
+            ..base_cli()
+        },
+        true,
+    );
+    validate_launch_mode(&client.config.cli, false).unwrap();
 
-    validate_launch_mode(&spellforge_args(), true).unwrap();
+    validate_launch_mode(&spellforge_args(base_cli(), true).config.cli, true).unwrap();
 }
 
 #[test]
@@ -140,18 +166,18 @@ fn unsafe_nested_library_archive_path_is_rejected() {
 
 #[test]
 fn normal_single_player_and_vanilla_launches_remain_allowed() {
-    let spellforge = spellforge_args();
-    validate_launch_mode(&spellforge, false).unwrap();
+    let spellforge = spellforge_args(base_cli(), true);
+    validate_launch_mode(&spellforge.config.cli, false).unwrap();
 
-    let mut vanilla = spellforge;
-    vanilla
-        .pending_lua_mission
-        .as_mut()
-        .unwrap()
-        .requires_spellforge = false;
-    vanilla.rollback_check = true;
-    vanilla.replay = Some("unused.rhrec.jsonl".to_owned());
-    validate_launch_mode(&vanilla, false).unwrap();
+    let vanilla = spellforge_args(
+        CliArgs {
+            rollback_check: true,
+            replay: Some("unused.rhrec.jsonl".to_owned()),
+            ..base_cli()
+        },
+        false,
+    );
+    validate_launch_mode(&vanilla.config.cli, false).unwrap();
 }
 
 #[test]

@@ -626,161 +626,8 @@ impl TerminalDebriefingState {
                 }
                 TerminalDebriefingProgress::Pending
             }
-            TerminalDebriefingPhase::Debriefing(state) => {
-                if let Some(result) = pop_matching_dismissal(
-                    &mut context.frame.replay_modal_dismissals,
-                    &self.page.kind,
-                ) {
-                    return self.finish_final_decision(context, result);
-                }
-                if let Some(result) = Self::poll_authoritative_decision(
-                    context,
-                    self.page.kind.clone(),
-                    &mut self.final_dismissal,
-                ) {
-                    return self.finish_final_decision(context, result);
-                }
-                let resources = context
-                    .resources
-                    .menu
-                    .as_ref()
-                    .expect("terminal debriefing resources disappeared");
-                let cursor = default_modal_cursor(
-                    &mut context.presentation.sprites.cursor_renderer,
-                    &mut context.resources.cursor,
-                    &mut context.presentation.renderer,
-                );
-                let Some(outcome) = state.tick(&mut ModalScreenIo {
-                    window: context.window,
-                    renderer: &mut context.presentation.renderer,
-                    resources,
-                    cursor: Some(&cursor),
-                }) else {
-                    return TerminalDebriefingProgress::Pending;
-                };
-                if let DebriefingOutcome::LoadAttempt { body, was_on_stat } = outcome {
-                    let detailed_metadata = context
-                        .host
-                        .application_context()
-                        .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata)
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "terminal debriefing load picker requires an active profile: {error}"
-                            )
-                        });
-                    self.phase = TerminalDebriefingPhase::LoadPicker {
-                        picker: crate::ingame_menu::LoadPickerModalState::new(
-                            context.window,
-                            &context.presentation.renderer,
-                            &mut context.callbacks.save_manager,
-                            detailed_metadata,
-                            context.host.transport.net().is_some(),
-                        ),
-                        body,
-                        was_on_stat,
-                    };
-                    return TerminalDebriefingProgress::Pending;
-                }
-                let settled = match outcome {
-                    DebriefingOutcome::Ok => SettledDebriefingOutcome::Ok,
-                    DebriefingOutcome::Restart => SettledDebriefingOutcome::Restart,
-                    DebriefingOutcome::EmergencyEnd => SettledDebriefingOutcome::EmergencyEnd,
-                    DebriefingOutcome::LoadAttempt { .. } => unreachable!(),
-                };
-                let result = final_debriefing_result(&settled);
-                if let Some(result) = Self::publish_or_accept_local(
-                    context,
-                    self.page.kind.clone(),
-                    result,
-                    &mut self.final_dismissal,
-                ) {
-                    self.finish_final_decision(context, result)
-                } else {
-                    self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
-                    TerminalDebriefingProgress::Pending
-                }
-            }
-            TerminalDebriefingPhase::LoadPicker {
-                picker,
-                body,
-                was_on_stat,
-            } => {
-                let resources = context
-                    .resources
-                    .menu
-                    .as_ref()
-                    .expect("terminal load-picker resources disappeared");
-                let cursor = default_modal_cursor(
-                    &mut context.presentation.sprites.cursor_renderer,
-                    &mut context.resources.cursor,
-                    &mut context.presentation.renderer,
-                );
-                let outcome = picker.tick(
-                    &mut ModalScreenIo {
-                        window: context.window,
-                        renderer: &mut context.presentation.renderer,
-                        resources,
-                        cursor: Some(&cursor),
-                    },
-                    &mut context.callbacks.save_manager,
-                    Some(&mut context.host.audio.sound),
-                    context
-                        .audio
-                        .backend
-                        .as_mut()
-                        .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
-                    Some(&context.audio.sample_loader),
-                );
-                let Some(outcome) = outcome else {
-                    return TerminalDebriefingProgress::Pending;
-                };
-                picker.close(&mut context.presentation.renderer);
-                match outcome {
-                    SaveLoadOutcome::Cancel => {
-                        self.phase = TerminalDebriefingPhase::Debriefing(
-                            crate::ingame_menu::DebriefingModalState::new(
-                                resources,
-                                body.clone(),
-                                Some(&self.page.mission_stat),
-                                self.page.mission_length,
-                                self.page.won,
-                                self.page.restart_allowed,
-                                self.page.quick_load_key,
-                                self.page.restart_snapshot_exists,
-                                *was_on_stat,
-                            ),
-                        );
-                        TerminalDebriefingProgress::Pending
-                    }
-                    SaveLoadOutcome::Slot(slot) => {
-                        let slot =
-                            u32::try_from(slot).expect("save catalog exceeds wire slot range");
-                        self.local_load = match TerminalLoadSelection::capture(
-                            &context.callbacks.save_manager,
-                            slot,
-                        ) {
-                            Ok(selection) => Some(selection),
-                            Err(error) => {
-                                tracing::error!(%error, "debriefing selection was removed before acceptance");
-                                self.phase = self.begin_debriefing(resources);
-                                return TerminalDebriefingProgress::Pending;
-                            }
-                        };
-                        let result = engine_player_command::DialogResult::Load { slot };
-                        if let Some(result) = Self::publish_or_accept_local(
-                            context,
-                            self.page.kind.clone(),
-                            result,
-                            &mut self.final_dismissal,
-                        ) {
-                            self.finish_final_decision(context, result)
-                        } else {
-                            self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
-                            TerminalDebriefingProgress::Pending
-                        }
-                    }
-                }
-            }
+            TerminalDebriefingPhase::Debriefing(_) => self.tick_debriefing_page(context),
+            TerminalDebriefingPhase::LoadPicker { .. } => self.tick_load_picker(context),
             TerminalDebriefingPhase::AwaitingFinalAuthority => {
                 if let Some(result) = Self::poll_authoritative_decision(
                     context,
@@ -863,6 +710,174 @@ impl TerminalDebriefingState {
                 // commits and fatal disconnects. Replay never enters this hold;
                 // its recorded restore may already have run before this phase.
                 TerminalDebriefingProgress::Pending
+            }
+        }
+    }
+
+    /// `Debriefing` phase of [`Self::tick`].
+    fn tick_debriefing_page(
+        &mut self,
+        context: &mut TerminalDebriefingContext<'_>,
+    ) -> TerminalDebriefingProgress {
+        if let Some(result) =
+            pop_matching_dismissal(&mut context.frame.replay_modal_dismissals, &self.page.kind)
+        {
+            return self.finish_final_decision(context, result);
+        }
+        if let Some(result) = Self::poll_authoritative_decision(
+            context,
+            self.page.kind.clone(),
+            &mut self.final_dismissal,
+        ) {
+            return self.finish_final_decision(context, result);
+        }
+        let TerminalDebriefingPhase::Debriefing(state) = &mut self.phase else {
+            unreachable!("tick_debriefing_page runs only in the Debriefing phase");
+        };
+        let resources = context
+            .resources
+            .menu
+            .as_ref()
+            .expect("terminal debriefing resources disappeared");
+        let cursor = default_modal_cursor(
+            &mut context.presentation.sprites.cursor_renderer,
+            &mut context.resources.cursor,
+            &mut context.presentation.renderer,
+        );
+        let Some(outcome) = state.tick(&mut ModalScreenIo {
+            window: context.window,
+            renderer: &mut context.presentation.renderer,
+            resources,
+            cursor: Some(&cursor),
+        }) else {
+            return TerminalDebriefingProgress::Pending;
+        };
+        if let DebriefingOutcome::LoadAttempt { body, was_on_stat } = outcome {
+            let detailed_metadata = context
+                .host
+                .application_context()
+                .with_active_profile(|profile| profile.gameplay_config.detailed_save_metadata)
+                .unwrap_or_else(|error| {
+                    panic!("terminal debriefing load picker requires an active profile: {error}")
+                });
+            self.phase = TerminalDebriefingPhase::LoadPicker {
+                picker: crate::ingame_menu::LoadPickerModalState::new(
+                    context.window,
+                    &context.presentation.renderer,
+                    &mut context.callbacks.save_manager,
+                    detailed_metadata,
+                    context.host.transport.net().is_some(),
+                ),
+                body,
+                was_on_stat,
+            };
+            return TerminalDebriefingProgress::Pending;
+        }
+        let settled = match outcome {
+            DebriefingOutcome::Ok => SettledDebriefingOutcome::Ok,
+            DebriefingOutcome::Restart => SettledDebriefingOutcome::Restart,
+            DebriefingOutcome::EmergencyEnd => SettledDebriefingOutcome::EmergencyEnd,
+            DebriefingOutcome::LoadAttempt { .. } => unreachable!(),
+        };
+        let result = final_debriefing_result(&settled);
+        if let Some(result) = Self::publish_or_accept_local(
+            context,
+            self.page.kind.clone(),
+            result,
+            &mut self.final_dismissal,
+        ) {
+            self.finish_final_decision(context, result)
+        } else {
+            self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
+            TerminalDebriefingProgress::Pending
+        }
+    }
+
+    /// `LoadPicker` phase of [`Self::tick`].
+    fn tick_load_picker(
+        &mut self,
+        context: &mut TerminalDebriefingContext<'_>,
+    ) -> TerminalDebriefingProgress {
+        let TerminalDebriefingPhase::LoadPicker {
+            picker,
+            body,
+            was_on_stat,
+        } = &mut self.phase
+        else {
+            unreachable!("tick_load_picker runs only in the LoadPicker phase");
+        };
+        let resources = context
+            .resources
+            .menu
+            .as_ref()
+            .expect("terminal load-picker resources disappeared");
+        let cursor = default_modal_cursor(
+            &mut context.presentation.sprites.cursor_renderer,
+            &mut context.resources.cursor,
+            &mut context.presentation.renderer,
+        );
+        let outcome = picker.tick(
+            &mut ModalScreenIo {
+                window: context.window,
+                renderer: &mut context.presentation.renderer,
+                resources,
+                cursor: Some(&cursor),
+            },
+            &mut context.callbacks.save_manager,
+            Some(&mut context.host.audio.sound),
+            context
+                .audio
+                .backend
+                .as_mut()
+                .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
+            Some(&context.audio.sample_loader),
+        );
+        let Some(outcome) = outcome else {
+            return TerminalDebriefingProgress::Pending;
+        };
+        picker.close(&mut context.presentation.renderer);
+        match outcome {
+            SaveLoadOutcome::Cancel => {
+                self.phase = TerminalDebriefingPhase::Debriefing(
+                    crate::ingame_menu::DebriefingModalState::new(
+                        resources,
+                        body.clone(),
+                        Some(&self.page.mission_stat),
+                        self.page.mission_length,
+                        self.page.won,
+                        self.page.restart_allowed,
+                        self.page.quick_load_key,
+                        self.page.restart_snapshot_exists,
+                        *was_on_stat,
+                    ),
+                );
+                TerminalDebriefingProgress::Pending
+            }
+            SaveLoadOutcome::Slot(slot) => {
+                let slot = u32::try_from(slot).expect("save catalog exceeds wire slot range");
+                self.local_load = match TerminalLoadSelection::capture(
+                    &context.callbacks.save_manager,
+                    slot,
+                ) {
+                    Ok(selection) => Some(selection),
+                    Err(error) => {
+                        tracing::error!(%error, "debriefing selection was removed before acceptance");
+                        self.phase = self.begin_debriefing(resources);
+                        return TerminalDebriefingProgress::Pending;
+                    }
+                };
+                let result = engine_player_command::DialogResult::Load { slot };
+                if let Some(result) = Self::publish_or_accept_local(
+                    context,
+                    self.page.kind.clone(),
+                    result,
+                    &mut self.final_dismissal,
+                ) {
+                    self.finish_final_decision(context, result)
+                } else {
+                    self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
+                    TerminalDebriefingProgress::Pending
+                }
             }
         }
     }

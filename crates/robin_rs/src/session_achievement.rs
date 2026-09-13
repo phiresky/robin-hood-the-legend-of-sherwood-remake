@@ -23,13 +23,14 @@ pub struct SessionAchievementEligibility {
 
 impl SessionAchievementEligibility {
     pub(crate) fn from_launch(
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
         mode: SessionExecutionMode,
     ) -> Self {
         Self::from_launch_facts(
-            args.custom_mission.is_some(),
-            args.pending_lua_mission.is_some(),
-            args.resolved_mission_assets
+            args.content.custom_mission.is_some(),
+            args.content.pending_lua_mission.is_some(),
+            args.content
+                .resolved_mission_assets
                 .as_ref()
                 .is_some_and(|resolved| resolved.is_archive()),
             args.replay.is_some(),
@@ -118,18 +119,25 @@ mod tests {
 
     #[test]
     fn session_achievement_cli_path_flags_are_derived_once() {
-        let mut args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+            cli: crate::main_entry::CliArgs {
                 custom_mission: Some("mission.rhm".into()),
                 replay: Some("playback.rhrec".into()),
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
         let eligibility =
             SessionAchievementEligibility::from_launch(&args, SessionExecutionMode::Interactive);
-        args.custom_mission = None;
-        args.replay = None;
+        // A later launch without those facts does not revise the bound policy.
+        let later = crate::main_entry::MissionRequest {
+            replay: None,
+            ..args.with_content(crate::main_entry::MissionContent::default())
+        };
+        assert_ne!(
+            SessionAchievementEligibility::from_launch(&later, SessionExecutionMode::Interactive),
+            eligibility
+        );
         let context = eligibility.promotion_context(false);
         assert_eq!(context.kind, AchievementRunKind::CustomMission);
         assert!(context.replay_playback);
@@ -141,7 +149,7 @@ mod tests {
         let mut host = crate::host::Host::scratch(640.0, 480.0);
         assert!(host.session_achievement_eligibility().is_err());
         let policy = SessionAchievementEligibility::from_launch(
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             SessionExecutionMode::Headless,
         );
         host.bind_session_achievement_eligibility(policy).unwrap();

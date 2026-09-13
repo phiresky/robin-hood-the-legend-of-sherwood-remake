@@ -2,9 +2,11 @@
 
 /// Reject deserialization of a diagnostic-only type with its domain-specific error.
 /// Serialization remains owned by the caller: some projections use custom output.
+/// `$message` is any `&'static str` expression, so callers inside their own macros
+/// may build it with `concat!(stringify!(..), ..)`.
 #[macro_export]
 macro_rules! deny_deserialize {
-    ($ty:ty, $message:literal) => {
+    ($ty:ty, $message:expr) => {
         impl<'de> ::serde::Deserialize<'de> for $ty {
             fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
             where

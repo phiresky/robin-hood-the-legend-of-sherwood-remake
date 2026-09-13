@@ -38,7 +38,7 @@ impl ServerHandle {
         Arc::clone(&self.ranked_lifecycle)
     }
 
-    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, String> {
+    pub(crate) fn ranked_local_seat(&self) -> Result<PlayerId, MultiplayerError> {
         Ok(self.local_seat)
     }
 
@@ -91,7 +91,7 @@ impl ServerHandle {
     pub(crate) fn install_ranked_session_setup(
         &self,
         setup: Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let _authority = self.context.session_dispatch.lock();
         let Some(setup) = setup else {
             downgrade_ranked_session(
@@ -107,10 +107,14 @@ impl ServerHandle {
             NET_PROTOCOL_VERSION,
             setup,
         )
-        .map_err(|error| format!("construct official ranked host session: {error}"))?;
+        .map_err(|error| {
+            MultiplayerError::ranked_document("construct official ranked host session", error)
+        })?;
         ranked_lifecycle_lock(&self.ranked_lifecycle)
             .install_ranked(session)
-            .map_err(|error| format!("install ranked host session: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("install ranked host session", error)
+            })?;
         progress_ranked_admission(&self.context);
         Ok(())
     }
@@ -133,17 +137,19 @@ impl ServerHandle {
         content_identity_sha256: String,
         mission_profile_id: Option<u32>,
         expected_players: u32,
-    ) -> Result<crate::multiplayer::join_ticket::BrowserJoinTicket, String> {
+    ) -> Result<crate::multiplayer::join_ticket::BrowserJoinTicket, MultiplayerError> {
         crate::multiplayer::join_ticket::BrowserJoinTicket::issue(
             &self.host_key,
             &self.endpoint_addr,
             self.session_id.0,
-            current_epoch_ms()? / 1000,
-            content_edition,
-            content_identity_sha256,
-            self.mission_id.clone(),
-            mission_profile_id,
-            expected_players,
+            try_current_epoch_ms()? / 1000,
+            crate::multiplayer::join_ticket::BrowserJoinTicketContent {
+                content_edition,
+                content_identity_sha256,
+                mission_id: self.mission_id.clone(),
+                mission_profile_id,
+                expected_players,
+            },
         )
     }
 
@@ -248,15 +254,18 @@ pub(super) enum InactivePeerSession {
     Detached,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Not serde: `Protocol` carries the typed transport error.
+#[derive(Clone, Debug)]
 pub(super) enum PeerDispatchFailure {
     Inactive {
         seat: PlayerId,
         generation: u64,
         kind: InactivePeerSession,
     },
-    Protocol(String),
+    Protocol(MultiplayerError),
 }
+
+impl std::error::Error for PeerDispatchFailure {}
 
 impl std::fmt::Display for PeerDispatchFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -277,7 +286,7 @@ impl std::fmt::Display for PeerDispatchFailure {
                     InactivePeerSession::Detached => f.write_str("has a detached writer"),
                 }
             }
-            Self::Protocol(detail) => f.write_str(detail),
+            Self::Protocol(error) => error.fmt(f),
         }
     }
 }
@@ -292,14 +301,14 @@ pub(super) enum PeerReaderExit {
 
 pub(super) fn peer_reader_dispatch_result(
     result: Result<(), PeerDispatchFailure>,
-) -> Result<Option<PeerReaderExit>, String> {
+) -> Result<Option<PeerReaderExit>, MultiplayerError> {
     match result {
         Ok(()) => Ok(None),
         Err(error @ PeerDispatchFailure::Inactive { .. }) => {
             tracing::debug!(%error, "peer reader lost authority; draining its existing writer");
             Ok(Some(PeerReaderExit::Inactive))
         }
-        Err(error) => Err(error.to_string()),
+        Err(PeerDispatchFailure::Protocol(error)) => Err(error),
     }
 }
 
@@ -331,9 +340,14 @@ impl ServerPeers {
         &mut self,
         target: PlayerId,
         request: LeaderboardCoSignRequestV1,
-    ) -> Result<UnboundedSender<NetMsg>, String> {
+    ) -> Result<UnboundedSender<NetMsg>, MultiplayerError> {
         let sender = self.sessions.sender(&target.0).cloned().ok_or_else(|| {
-            format!("leaderboard co-sign target {target:?} is not an authenticated active peer")
+            MultiplayerError::Ranked(
+                format!(
+                    "leaderboard co-sign target {target:?} is not an authenticated active peer"
+                )
+                .into(),
+            )
         })?;
         self.cosigns.begin(target, request)?;
         Ok(sender)
@@ -346,7 +360,7 @@ impl ServerPeers {
         &mut self,
         from: PlayerId,
         response: &LeaderboardCoSignResponse,
-    ) -> Result<(), String> {
+    ) -> Result<(), MultiplayerError> {
         let expected_signer = self
             .sessions
             .ranked_identity(&from.0)
@@ -406,16 +420,18 @@ pub(super) fn commit_snapshot_transition(
 
 pub(super) fn maybe_begin_sim_locked(
     peers: &mut ServerPeers,
-) -> Result<Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)>, String> {
+) -> Result<Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)>, MultiplayerError> {
     let Some(begin_frame) = peers.readiness.candidate(
         peers.sessions.expected_players(),
         peers.sessions.readiness(),
     ) else {
         return Ok(None);
     };
-    let start_epoch_ms = current_epoch_ms()?
-        .checked_add(500)
-        .ok_or_else(|| "multiplayer BeginSim timestamp exceeds the u64 Unix range".to_owned())?;
+    let start_epoch_ms = try_current_epoch_ms()?.checked_add(500).ok_or_else(|| {
+        MultiplayerError::LocalState(
+            "multiplayer BeginSim timestamp exceeds the u64 Unix range".into(),
+        )
+    })?;
     let senders = peers
         .sessions
         .senders()
@@ -453,82 +469,30 @@ pub(super) struct ServerContext {
     pub(super) shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
-pub(super) fn fail_server(context: &ServerContext, error: String) {
+pub(super) fn fail_server(context: &ServerContext, error: MultiplayerError) {
     if !context.cancellation.swap(true, Ordering::AcqRel) {
-        let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+        let _ = context
+            .incoming_tx
+            .send(NetEvent::Fatal(NetFatal::new(error)));
     }
     let _ = context.shutdown_tx.send(true);
 }
 
-/// Start with an explicit identity key. Tests use this to
-/// avoid touching the per-install on-disk identity.
+/// Start with an explicit identity key and a throwaway campaign. Tests use
+/// this to avoid touching the per-install on-disk identity; production hosting
+/// uses [`start_server_in_campaign`].
 #[cfg(test)]
-pub fn start_server_with_key(
+pub(in crate::multiplayer) fn start_server_with_key(
     key: SecretKey,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<String>,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
-    expected_players: u32,
-) -> std::io::Result<ServerHandle> {
-    start_server_inner(
-        &MultiplayerCampaignSession::default(),
-        key,
-        ServerConfig {
-            host_nickname: host_nickname,
-            mission_id: mission_id,
-            mission_seed: mission_seed,
-            sim_config: sim_config,
-            speech_timing_locale: speech_timing_locale,
-            expected_players: expected_players,
-            browser_join_enabled: false,
-        },
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
-        None,
-    )
-}
-
-/// Test-only explicit-key entry point for an exact hosted package. Browser
-/// ticket publication is disabled; production hosting uses
-/// [`start_server_in_campaign`].
-#[cfg(test)]
-pub(in crate::multiplayer) fn start_server_with_key_and_content(
-    key: SecretKey,
-    host_nickname: String,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
-    expected_players: u32,
+    config: ServerConfig,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
         &MultiplayerCampaignSession::default(),
         key,
-        ServerConfig {
-            host_nickname: host_nickname,
-            mission_id: mission_id,
-            mission_seed: mission_seed,
-            sim_config: sim_config,
-            speech_timing_locale: None,
-            expected_players: expected_players,
-            browser_join_enabled: false,
-        },
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
+        config,
+        channels,
         content,
     )
 }
@@ -545,24 +509,51 @@ pub struct ServerConfig {
     pub browser_join_enabled: bool,
 }
 
+/// The transport-side ends of one mission's game-loop channels. The matching
+/// ends stay in the [`NetChannels`](crate::multiplayer::NetChannels) created
+/// alongside them by [`NetChannels::new_server`](crate::multiplayer::NetChannels::new_server).
+///
+/// Not serde: these are live channel ends and shared slots, not data.
+pub struct ServerChannels {
+    /// Events the server publishes to the game loop.
+    pub incoming_tx: Sender<NetEvent>,
+    /// Messages the game loop queues for broadcast.
+    pub outgoing_rx: Receiver<NetOutbound>,
+    /// The game loop's current simulation frame.
+    pub frame_cursor: FrameCursor,
+    /// Latest full snapshot handed to joining peers.
+    pub initial_snapshot: InitialSnapshot,
+}
+
+impl crate::multiplayer::NetChannels {
+    /// [`NetChannels::new`](Self::new) with the transport-side ends bundled
+    /// for [`start_server_in_campaign`].
+    pub fn new_server() -> (Self, ServerChannels) {
+        let (channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) = Self::new();
+        (
+            channels,
+            ServerChannels {
+                incoming_tx,
+                outgoing_rx,
+                frame_cursor,
+                initial_snapshot,
+            },
+        )
+    }
+}
+
 /// Start a mission transport within an explicitly owned campaign.
 pub fn start_server_in_campaign(
     campaign: &MultiplayerCampaignSession,
     config: ServerConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
         campaign,
         game_secret_key().map_err(std::io::Error::other)?,
         config,
-        incoming_tx,
-        outgoing_rx,
-        frame_cursor,
-        initial_snapshot,
+        channels,
         content,
     )
 }
@@ -571,10 +562,7 @@ pub(super) fn start_server_inner(
     campaign: &MultiplayerCampaignSession,
     key: SecretKey,
     config: ServerConfig,
-    incoming_tx: Sender<NetEvent>,
-    outgoing_rx: Receiver<NetOutbound>,
-    frame_cursor: FrameCursor,
-    initial_snapshot: InitialSnapshot,
+    channels: ServerChannels,
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     let ServerConfig {
@@ -586,14 +574,22 @@ pub(super) fn start_server_inner(
         expected_players,
         browser_join_enabled,
     } = config;
+    // Unpacked before the first fallible step, so every channel end is moved
+    // or dropped at exactly the points the former by-value parameters were.
+    let ServerChannels {
+        incoming_tx,
+        outgoing_rx,
+        frame_cursor,
+        initial_snapshot,
+    } = channels;
     let campaign_lease = campaign.reserve_server()?;
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;
     robin_engine::multiplayer::validate_mission_id(&mission_id).map_err(std::io::Error::other)?;
-    if !(1..=crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS).contains(&expected_players) {
+    if !(1..=crate::multiplayer::MAX_MULTIPLAYER_PLAYERS).contains(&expected_players) {
         return Err(std::io::Error::other(format!(
             "multiplayer expected-player count must be between 1 and {}, got {expected_players}",
-            crate::multiplayer::join_ticket::MAX_MULTIPLAYER_PLAYERS
+            crate::multiplayer::MAX_MULTIPLAYER_PLAYERS
         )));
     }
     let host_endpoint_id = key.public();
@@ -659,7 +655,7 @@ pub(super) fn start_server_inner(
     });
 
     let (startup_tx, startup_rx) =
-        std::sync::mpsc::sync_channel::<Result<(EndpointId, EndpointAddr), String>>(1);
+        std::sync::mpsc::sync_channel::<Result<(EndpointId, EndpointAddr), MultiplayerError>>(1);
     let runtime_thread = thread::Builder::new().name("mp-server".into()).spawn({
         let context = Arc::clone(&context);
         move || {
@@ -670,7 +666,8 @@ pub(super) fn start_server_inner(
                 Ok(rt) => rt,
                 Err(e) => {
                     context.cancellation.store(true, Ordering::Release);
-                    let _ = startup_tx.send(Err(format!("build tokio runtime: {e}")));
+                    let _ =
+                        startup_tx.send(Err(MultiplayerError::transport("build tokio runtime", e)));
                     return;
                 }
             };
@@ -710,8 +707,9 @@ pub(super) fn start_server_inner(
             let _ = shutdown_tx.send(true);
             let _ = runtime_thread.join();
             let _ = bridge_thread.join();
-            return Err(std::io::Error::other(format!(
-                "server startup channel closed: {e}"
+            return Err(std::io::Error::other(MultiplayerError::transport(
+                "server startup channel closed",
+                e,
             )));
         }
     };
@@ -746,7 +744,7 @@ pub(super) async fn run_server(
     key: SecretKey,
     context: Arc<ServerContext>,
     outgoing_async_rx: UnboundedReceiver<NetOutbound>,
-    startup_tx: std::sync::mpsc::SyncSender<Result<(EndpointId, EndpointAddr), String>>,
+    startup_tx: std::sync::mpsc::SyncSender<Result<(EndpointId, EndpointAddr), MultiplayerError>>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     browser_join_enabled: bool,
 ) {
@@ -764,18 +762,18 @@ pub(super) async fn run_server(
             .is_err()
         {
             endpoint.close().await;
-            let _ = startup_tx.send(Err(
+            let _ = startup_tx.send(Err(MultiplayerError::Unavailable(
                 "iroh relay did not become reachable within 15 seconds; disable browser join-link publication for a native-only game"
-                    .to_string(),
-            ));
+                    .into(),
+            )));
             return;
         }
         if endpoint.addr().relay_urls().next().is_none() {
             endpoint.close().await;
-            let _ = startup_tx.send(Err(
+            let _ = startup_tx.send(Err(MultiplayerError::Unavailable(
                 "iroh reported online without a relay URL; a browser invitation cannot be published"
-                    .to_string(),
-            ));
+                    .into(),
+            )));
             return;
         }
     }
@@ -812,12 +810,14 @@ pub(super) async fn run_server(
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 context.cancellation.store(true, Ordering::Release);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                let _ = context
+                    .incoming_tx
+                    .send(NetEvent::Fatal(NetFatal::new(error)));
             }
             Err(error) => {
                 context.cancellation.store(true, Ordering::Release);
-                let _ = context.incoming_tx.send(NetEvent::Fatal(format!(
-                    "multiplayer server outgoing pump failed: {error}"
+                let _ = context.incoming_tx.send(NetEvent::Fatal(NetFatal::new(
+                    MultiplayerError::transport("multiplayer server outgoing pump failed", error),
                 )));
             }
         }
@@ -832,21 +832,10 @@ pub(super) async fn run_server(
     tracing::info!("multiplayer server runtime stopped");
 }
 
-pub(super) fn ranked_lifecycle_lock(
-    lifecycle: &SharedRankedSessionLifecycle,
-) -> std::sync::MutexGuard<'_, RankedSessionLifecycle> {
-    lifecycle.lock().unwrap_or_else(|poisoned| {
-        tracing::error!(
-            "ranked session lifecycle lock was poisoned; retaining authoritative state"
-        );
-        poisoned.into_inner()
-    })
-}
-
 pub(super) fn validate_official_ranked_session(
     context: &ServerContext,
     session: &crate::leaderboard_ranked_session::RankedSessionHost,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     let genesis = session.genesis();
     let ranked = &genesis.claim.ranked_session;
     if genesis.claim.network_protocol_version != NET_PROTOCOL_VERSION
@@ -857,9 +846,9 @@ pub(super) fn validate_official_ranked_session(
         || !robin_run_protocol::official_content_subjects_v1(ranked.content_edition)
             .contains(&ranked.content_subject)
     {
-        return Err(
-            "ranked genesis is not the exact accepted official mission/content policy".to_string(),
-        );
+        return Err(MultiplayerError::Ranked(
+            "ranked genesis is not the exact accepted official mission/content policy".into(),
+        ));
     }
     Ok(())
 }
@@ -921,11 +910,15 @@ pub(super) fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u
         .map(|(frame, _)| *frame);
     let begin_frame = snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
     let begin_start_epoch_ms = if begin_frame != frame {
-        match current_epoch_ms().and_then(|now| {
-            now.checked_add(100).ok_or_else(|| {
-                "multiplayer ranked preflight timestamp exceeds the u64 Unix range".to_owned()
-            })
-        }) {
+        match try_current_epoch_ms()
+            .map_err(MultiplayerError::from)
+            .and_then(|now| {
+                now.checked_add(100).ok_or_else(|| {
+                    MultiplayerError::LocalState(
+                        "multiplayer ranked preflight timestamp exceeds the u64 Unix range".into(),
+                    )
+                })
+            }) {
             Ok(start_epoch_ms) => start_epoch_ms,
             Err(error) => {
                 tracing::error!(%error, "ranked preflight could not produce a start time");
@@ -984,7 +977,9 @@ pub(super) fn downgrade_ranked_session(
             // peers into simulation after losing its admission notification.
             fail_server(
                 context,
-                "host event receiver closed during ranked downgrade".into(),
+                MultiplayerError::ChannelClosed(
+                    "host event receiver closed during ranked downgrade".into(),
+                ),
             );
             return;
         }
@@ -1016,10 +1011,10 @@ pub(super) fn progress_ranked_admission(context: &ServerContext) {
             let session = lifecycle
                 .ranked_mut()
                 .expect("resolved non-browse ranked lifecycle has host state");
-            if let Err(detail) = validate_official_ranked_session(context, session) {
+            if let Err(error) = validate_official_ranked_session(context, session) {
                 RankedAdmissionProgress::Downgrade {
                     reason: RankedBrowseOnlyReason::HostRankedSessionUnavailable,
-                    detail,
+                    detail: error.to_string(),
                 }
             } else {
                 let mut peers = context.peers.lock();
@@ -1394,19 +1389,23 @@ pub(super) async fn run_server_accept_loop(context: Arc<ServerContext>, endpoint
 pub(super) async fn handle_incoming_peer(
     context: Arc<ServerContext>,
     incoming: iroh::endpoint::Incoming,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     let conn = tokio::time::timeout(HANDSHAKE_FRAME_TIMEOUT, incoming)
         .await
-        .map_err(|_| "peer QUIC handshake timed out".to_owned())?
-        .map_err(|e| format!("peer connecting: {e}"))?;
+        .map_err(|_| MultiplayerError::Handshake("peer QUIC handshake timed out".into()))?
+        .map_err(|e| MultiplayerError::transport("peer connecting", e))?;
     let remote_id = conn.remote_id();
     let peer_id = remote_id.to_string();
     tracing::info!(peer = %peer_id, "incoming connection");
 
     let (mut send, mut recv) = tokio::time::timeout(HANDSHAKE_FRAME_TIMEOUT, conn.accept_bi())
         .await
-        .map_err(|_| "peer did not open a game stream before handshake timeout".to_owned())?
-        .map_err(|e| format!("accept peer stream: {e}"))?;
+        .map_err(|_| {
+            MultiplayerError::Handshake(
+                "peer did not open a game stream before handshake timeout".into(),
+            )
+        })?
+        .map_err(|e| MultiplayerError::transport("accept peer stream", e))?;
 
     // Receive Hello.  Reject anything else.
     let (nickname, browser_auth, ranked_public_key) = match read_frame_bounded_with_timeout(
@@ -1428,23 +1427,28 @@ pub(super) async fn handle_incoming_peer(
                     "protocol mismatch (peer={protocol_version}, server={NET_PROTOCOL_VERSION})"
                 );
                 reject_opening(&mut send, &reason).await;
-                return Err(reason);
+                return Err(MultiplayerError::Handshake(reason.into()));
             }
             (nickname, browser_auth, ranked_public_key)
         }
         Some(other) => {
             let reason = format!("expected Hello, got {other:?}");
             reject_opening(&mut send, &reason).await;
-            return Err(reason);
+            return Err(MultiplayerError::Handshake(reason.into()));
         }
-        None => return Err("connection closed before Hello".to_string()),
+        None => {
+            return Err(MultiplayerError::Handshake(
+                "connection closed before Hello".into(),
+            ));
+        }
     };
 
     let owner = match authenticate_peer(&context, remote_id, browser_auth.as_ref()) {
         Ok(owner) => owner,
-        Err(reason) => {
-            reject_opening(&mut send, &reason).await;
-            return Err(reason);
+        Err(error) => {
+            // The wire rejection carries the reason as text.
+            reject_opening(&mut send, &error.to_string()).await;
+            return Err(error);
         }
     };
     let durable_public_key = match (owner, ranked_public_key) {
@@ -1476,9 +1480,9 @@ pub(super) async fn handle_incoming_peer(
     let (seat_claim, mut write_rx) =
         match prepare_peer_session(&context, owner, &nickname, ranked_identity) {
             Ok(prepared) => prepared,
-            Err(reason) => {
-                reject_opening(&mut send, &reason).await;
-                return Err(reason);
+            Err(error) => {
+                reject_opening(&mut send, &error.to_string()).await;
+                return Err(error);
             }
         };
     let assigned_seat_u8 = seat_claim.seat;
@@ -1503,7 +1507,7 @@ pub(super) async fn handle_incoming_peer(
                 write_frame(&mut send, &msg).await?;
             }
             // Queue closed: seat was dropped (shutdown or cleanup).
-            Ok::<(), String>(())
+            Ok::<(), MultiplayerError>(())
         };
         let reader = run_server_peer_reader(
             &context,
@@ -1529,7 +1533,7 @@ pub(super) fn prepare_peer_session(
     owner: PeerOwner,
     nickname: &str,
     ranked_identity: RankedPeerIdentity,
-) -> Result<(SeatClaim, UnboundedReceiver<NetMsg>), String> {
+) -> Result<(SeatClaim, UnboundedReceiver<NetMsg>), MultiplayerError> {
     let _authority = context.session_dispatch.lock();
     // Claim/reclaim a seat by authenticated owner, never by editable nickname.
     let seat_claim = {
@@ -1538,9 +1542,9 @@ pub(super) fn prepare_peer_session(
         if let Some(transition) = p.transitions.pending()
             && !returning_seat.is_some_and(|seat| transition.awaiting.contains(&seat))
         {
-            return Err(
-                "host is changing missions; only pending participants may reconnect".to_string(),
-            );
+            return Err(MultiplayerError::Handshake(
+                "host is changing missions; only pending participants may reconnect".into(),
+            ));
         }
         let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
         p.sessions
@@ -1560,11 +1564,14 @@ pub(super) fn prepare_peer_session(
     // half of the stream.  If the host has cached an initial-state
     // snapshot we follow up with that — mid-mission joiners adopt it
     // instead of trying to reproduce engine init from seed alone.
-    let opening_result = (|| -> Result<(), String> {
+    let writer_closed = |message: &'static str| MultiplayerError::ChannelClosed(message.into());
+    let opening_result = (|| -> Result<(), MultiplayerError> {
         let p = context.peers.lock();
         {
             let sender = p.sessions.sender(&assigned_seat_u8).ok_or_else(|| {
-                format!("claimed peer {assigned_seat:?} has no writer for Welcome")
+                MultiplayerError::LocalState(
+                    format!("claimed peer {assigned_seat:?} has no writer for Welcome").into(),
+                )
             })?;
             sender
                 .send(NetMsg::Welcome {
@@ -1576,7 +1583,7 @@ pub(super) fn prepare_peer_session(
                     speech_timing_locale: context.speech_timing_locale.clone(),
                     host_nickname: context.host_nickname.clone(),
                 })
-                .map_err(|_| "writer queue closed before Welcome")?;
+                .map_err(|_| writer_closed("writer queue closed before Welcome"))?;
             // `InitialSnapshot` is a plain std mutex shared with the
             // game loop; the snapshot value is only ever replaced
             // wholesale, so recover it if a prior holder panicked
@@ -1598,7 +1605,7 @@ pub(super) fn prepare_peer_session(
                         frame,
                         engine_bytes: bytes,
                     })
-                    .map_err(|_| "writer queue closed before InitialSnapshot")?;
+                    .map_err(|_| writer_closed("writer queue closed before InitialSnapshot"))?;
                 Some(frame)
             } else {
                 None
@@ -1609,12 +1616,14 @@ pub(super) fn prepare_peer_session(
                         id: transition.id,
                         payload: transition.payload.clone(),
                     })
-                    .map_err(|_| "writer queue closed before transition Prepare")?;
+                    .map_err(|_| writer_closed("writer queue closed before transition Prepare"))?;
             }
             if let Some(reason) = *context.ranked_browse_reason.lock() {
                 sender
                     .send(NetMsg::RankedBrowseOnly { reason })
-                    .map_err(|_| "writer queue closed before ranked browse-only status")?;
+                    .map_err(|_| {
+                        writer_closed("writer queue closed before ranked browse-only status")
+                    })?;
             }
             // An admitted ranked participant must re-attest this replacement
             // transport before a cached gameplay release is replayed. The
@@ -1623,8 +1632,10 @@ pub(super) fn prepare_peer_session(
                 let begin_frame =
                     snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
                 let begin_start_epoch_ms = if begin_frame != frame {
-                    current_epoch_ms()?.checked_add(100).ok_or_else(|| {
-                        "multiplayer reconnect timestamp exceeds the u64 Unix range".to_owned()
+                    try_current_epoch_ms()?.checked_add(100).ok_or_else(|| {
+                        MultiplayerError::LocalState(
+                            "multiplayer reconnect timestamp exceeds the u64 Unix range".into(),
+                        )
                     })?
                 } else {
                     start_epoch_ms
@@ -1634,7 +1645,7 @@ pub(super) fn prepare_peer_session(
                         frame: begin_frame,
                         start_epoch_ms: begin_start_epoch_ms,
                     })
-                    .map_err(|_| "writer queue closed before cached BeginSim")?;
+                    .map_err(|_| writer_closed("writer queue closed before cached BeginSim"))?;
             }
         }
         Ok(())
@@ -1782,7 +1793,7 @@ pub(super) async fn admit_distributed_mod(
     recv: &mut RecvStream,
     content: &HostedModContent,
     host_endpoint_id: String,
-) -> Result<bool, String> {
+) -> Result<bool, MultiplayerError> {
     let offer = content.offer(host_endpoint_id)?;
     write_frame_with_timeout(
         send,
@@ -1809,25 +1820,41 @@ pub(super) async fn admit_distributed_mod(
             full_mod_sha256,
             ..
         })) => {
-            return Err(format!(
-                "client requested distributed mod {}, offered {}",
-                robin_engine::spellforge::hex_hash(&full_mod_sha256),
-                robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
+            return Err(MultiplayerError::ContentMismatch(
+                format!(
+                    "client requested distributed mod {}, offered {}",
+                    robin_engine::spellforge::hex_hash(&full_mod_sha256),
+                    robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
+                )
+                .into(),
             ));
         }
         Some(NetMsg::ContentReject(robin_engine::multiplayer::ContentReject {
             full_mod_sha256,
             reason,
         })) if full_mod_sha256 == offer.full_mod_sha256 => {
-            return Err(format!("client declined exact host content: {reason}"));
+            return Err(MultiplayerError::ContentDeclined(
+                format!("client declined exact host content: {reason}").into(),
+            ));
         }
-        Some(other) => return Err(format!("expected ContentRequest, got {other:?}")),
-        None => return Err("connection closed before content decision".to_owned()),
+        Some(other) => {
+            return Err(MultiplayerError::RemoteProtocol(
+                format!("expected ContentRequest, got {other:?}").into(),
+            ));
+        }
+        None => {
+            return Err(MultiplayerError::Handshake(
+                "connection closed before content decision".into(),
+            ));
+        }
     };
     if resume_offset > content.encoded.len() as u64 {
-        return Err(format!(
-            "client resume offset {resume_offset} exceeds content length {}",
-            content.encoded.len()
+        return Err(MultiplayerError::ContentMismatch(
+            format!(
+                "client resume offset {resume_offset} exceeds content length {}",
+                content.encoded.len()
+            )
+            .into(),
         ));
     }
     let mut offset = resume_offset as usize;
@@ -1849,7 +1876,10 @@ pub(super) async fn admit_distributed_mod(
                 "content chunk",
             ) => result?,
             _ = tokio::time::sleep_until(transfer_deadline) => {
-                return Err(format!("content transfer exceeded {CONTENT_DECISION_TIMEOUT:?}"));
+                return Err(MultiplayerError::DeadlineExceeded {
+                    phase: "content transfer".into(),
+                    limit: CONTENT_DECISION_TIMEOUT,
+                });
             }
         }
         offset = end;
@@ -1875,13 +1905,15 @@ pub(super) async fn admit_distributed_mod(
         Some(NetMsg::ContentReject(robin_engine::multiplayer::ContentReject {
             full_mod_sha256,
             reason,
-        })) if full_mod_sha256 == offer.full_mod_sha256 => {
-            Err(format!("client rejected downloaded host content: {reason}"))
-        }
-        Some(other) => Err(format!(
-            "expected ContentReady/ContentPrepared, got {other:?}"
+        })) if full_mod_sha256 == offer.full_mod_sha256 => Err(MultiplayerError::ContentDeclined(
+            format!("client rejected downloaded host content: {reason}").into(),
         )),
-        None => Err("connection closed before content readiness".to_owned()),
+        Some(other) => Err(MultiplayerError::RemoteProtocol(
+            format!("expected ContentReady/ContentPrepared, got {other:?}").into(),
+        )),
+        None => Err(MultiplayerError::Handshake(
+            "connection closed before content readiness".into(),
+        )),
     }
 }
 
@@ -1899,7 +1931,7 @@ pub(super) fn authenticate_peer(
     context: &ServerContext,
     remote_id: EndpointId,
     browser_auth: Option<&BrowserPeerAuth>,
-) -> Result<PeerOwner, String> {
+) -> Result<PeerOwner, MultiplayerError> {
     let Some(auth) = browser_auth else {
         return Ok(PeerOwner::Native(*remote_id.as_bytes()));
     };
@@ -1910,12 +1942,14 @@ pub(super) fn authenticate_peer(
         || ticket.session_id()? != context.session_id.0
         || payload.expected_players != context.peers.lock().sessions.expected_players()
     {
-        return Err(
-            "browser invitation does not belong to this exact hosted mission session".to_string(),
-        );
+        return Err(MultiplayerError::Invitation(
+            "browser invitation does not belong to this exact hosted mission session".into(),
+        ));
     }
     if payload.mission_id != context.mission_id && !context.continued_session {
-        return Err("browser invitation belongs to another hosted mission".to_string());
+        return Err(MultiplayerError::Invitation(
+            "browser invitation belongs to another hosted mission".into(),
+        ));
     }
     let owner = PeerOwner::Browser(auth.durable_public_key);
     let use_kind = if context.peers.lock().sessions.owner_seat(owner).is_some() {
@@ -1923,33 +1957,35 @@ pub(super) fn authenticate_peer(
     } else {
         crate::multiplayer::join_ticket::InvitationUse::Initial
     };
-    ticket.validate_use_at(current_epoch_ms()? / 1000, use_kind)?;
-    let public_key = iroh::PublicKey::from_bytes(&auth.durable_public_key)
-        .map_err(|error| format!("invalid durable browser public key: {error}"))?;
-    let signature_bytes: [u8; iroh::Signature::LENGTH] = auth
-        .signature
-        .as_slice()
-        .try_into()
-        .map_err(|_| "browser seat proof signature must be 64 bytes".to_string())?;
+    ticket.validate_use_at(try_current_epoch_ms()? / 1000, use_kind)?;
+    let public_key = iroh::PublicKey::from_bytes(&auth.durable_public_key).map_err(|error| {
+        MultiplayerError::invalid_address("invalid durable browser public key", error)
+    })?;
+    let signature_bytes: [u8; iroh::Signature::LENGTH] =
+        auth.signature.as_slice().try_into().map_err(|_| {
+            MultiplayerError::Identity("browser seat proof signature must be 64 bytes".into())
+        })?;
     let signature = iroh::Signature::from_bytes(&signature_bytes);
     let message = browser_seat_proof_message(
         context.session_id.0,
         *context.host_endpoint_id.as_bytes(),
         *remote_id.as_bytes(),
     );
-    public_key
-        .verify(&message, &signature)
-        .map_err(|_| "browser seat proof does not bind this session and transport".to_string())?;
+    public_key.verify(&message, &signature).map_err(|_| {
+        MultiplayerError::Identity(
+            "browser seat proof does not bind this session and transport".into(),
+        )
+    })?;
     Ok(owner)
 }
 
 /// Keep the writer future pinned when the reader loses authority. Dropping and
 /// restarting write_frame could duplicate a partially written frame header.
 pub(super) async fn drive_server_peer_io(
-    reader: impl std::future::Future<Output = Result<PeerReaderExit, String>>,
-    writer: impl std::future::Future<Output = Result<(), String>>,
+    reader: impl std::future::Future<Output = Result<PeerReaderExit, MultiplayerError>>,
+    writer: impl std::future::Future<Output = Result<(), MultiplayerError>>,
     drain_timeout: Duration,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     tokio::pin!(writer);
     tokio::select! {
         result = reader => match result? {
@@ -1957,11 +1993,13 @@ pub(super) async fn drive_server_peer_io(
             PeerReaderExit::Inactive => {
                 tokio::time::timeout(drain_timeout, writer.as_mut())
                     .await
-                    .map_err(|_| "inactive peer writer timed out draining terminal frames".to_string())?
-                    .map_err(|error| format!("peer writer: {error}"))
+                    .map_err(|_| MultiplayerError::LocalState(
+                        "inactive peer writer timed out draining terminal frames".into(),
+                    ))?
+                    .map_err(|error| error.context("peer writer"))
             }
         },
-        result = writer.as_mut() => result.map_err(|error| format!("peer writer: {error}")),
+        result = writer.as_mut() => result.map_err(|error| error.context("peer writer")),
     }
 }
 
@@ -1971,7 +2009,7 @@ pub(super) async fn run_server_peer_reader(
     session_generation: u64,
     ranked_identity: RankedPeerIdentity,
     recv: &mut RecvStream,
-) -> Result<PeerReaderExit, String> {
+) -> Result<PeerReaderExit, MultiplayerError> {
     loop {
         let message = match read_frame(recv, InboundFramePolicy::ClientToServer).await {
             Ok(Some(message)) => message,
@@ -2030,7 +2068,9 @@ pub(super) fn apply_authenticated_peer_message(
     session_generation: u64,
     ranked_identity: RankedPeerIdentity,
     message: NetMsg,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
+    let remote = |message: String| MultiplayerError::RemoteProtocol(message.into());
+    let closed = |message: &'static str| MultiplayerError::ChannelClosed(message.into());
     validate_server_gameplay_wire_msg(&message)?;
     match message {
         NetMsg::Input {
@@ -2048,9 +2088,9 @@ pub(super) fn apply_authenticated_peer_message(
         }
         NetMsg::ModalProposal(proposal) => {
             if proposal.instance.session_id != context.session_id {
-                return Err(format!(
+                return Err(remote(format!(
                     "peer {seat:?} submitted a modal proposal for another session"
-                ));
+                )));
             }
             context
                 .incoming_tx
@@ -2058,12 +2098,12 @@ pub(super) fn apply_authenticated_peer_message(
                     from: seat,
                     proposal,
                 })
-                .map_err(|_| "host modal proposal channel is closed".to_string())?;
+                .map_err(|_| closed("host modal proposal channel is closed"))?;
         }
         NetMsg::ModalDecision { .. } => {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} attempted an authoritative modal decision"
-            ));
+            )));
         }
         NetMsg::ReadyToSim { frame } => {
             resolve_ranked_before_ready(context);
@@ -2083,9 +2123,9 @@ pub(super) fn apply_authenticated_peer_message(
         }
         NetMsg::SnapshotTransitionReady { id } => {
             if id.session_id != context.session_id {
-                return Err(format!(
+                return Err(remote(format!(
                     "peer {seat:?} acknowledged a snapshot transition for another session"
-                ));
+                )));
             }
             let committed = {
                 let mut peers = context.peers.lock();
@@ -2115,13 +2155,15 @@ pub(super) fn apply_authenticated_peer_message(
                     from: seat,
                     response,
                 })
-                .map_err(|_| "host leaderboard co-sign response channel is closed".to_string())?;
+                .map_err(|_| closed("host leaderboard co-sign response channel is closed"))?;
         }
         NetMsg::RankedContinuationReceiptSelection(selection) => {
             let decoded = decode_ranked_wire_document::<
                 CampaignContinuationReceiptSelectionResponseV1,
             >(selection.as_bytes())
-            .map_err(|error| format!("invalid continuation receipt selection: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("invalid continuation receipt selection", error)
+            })?;
             let expected_key = context
                     .peers
                     .lock()
@@ -2129,14 +2171,14 @@ pub(super) fn apply_authenticated_peer_message(
                     .and_then(|identity| identity.durable_public_key)
                     .map(PublicKey32::from_bytes)
                     .ok_or_else(|| {
-                        format!(
+                        MultiplayerError::Identity(format!(
                             "peer {seat:?} has no authenticated durable identity for continuation receipt selection"
-                        )
+                        ).into())
                     })?;
             if decoded.responder_public_key() != expected_key {
-                return Err(format!(
+                return Err(MultiplayerError::Identity(format!(
                     "peer {seat:?} selected a campaign receipt controlled by another durable identity"
-                ));
+                ).into()));
             }
             context
                 .incoming_tx
@@ -2144,18 +2186,23 @@ pub(super) fn apply_authenticated_peer_message(
                     from: seat,
                     selection,
                 })
-                .map_err(|_| "host continuation receipt selection channel is closed".to_string())?;
+                .map_err(|_| closed("host continuation receipt selection channel is closed"))?;
         }
         NetMsg::RankedContinuationPreflightSignature(signature) => {
             let signature_document =
                 crate::leaderboard_ranked_session::decode_canonical_ranked_wire_document::<
                     ParticipantSignatureV1,
                 >(signature.as_bytes())
-                .map_err(|error| format!("invalid continuation preflight signature: {error}"))?;
+                .map_err(|error| {
+                    MultiplayerError::ranked_document(
+                        "invalid continuation preflight signature",
+                        error,
+                    )
+                })?;
             if signature_document.public_key.is_zero() || signature_document.signature.is_zero() {
-                return Err(
-                    "continuation preflight signature contains zero key material".to_string(),
-                );
+                return Err(MultiplayerError::Identity(
+                    "continuation preflight signature contains zero key material".into(),
+                ));
             }
             let expected_key = context
                     .peers
@@ -2164,14 +2211,14 @@ pub(super) fn apply_authenticated_peer_message(
                     .and_then(|identity| identity.durable_public_key)
                     .map(PublicKey32::from_bytes)
                     .ok_or_else(|| {
-                        format!(
+                        MultiplayerError::Identity(format!(
                             "peer {seat:?} has no authenticated durable identity for continuation preflight"
-                        )
+                        ).into())
                     })?;
             if signature_document.public_key != expected_key {
-                return Err(format!(
+                return Err(MultiplayerError::Identity(format!(
                     "peer {seat:?} signed continuation preflight with a key other than its authenticated durable identity"
-                ));
+                ).into()));
             }
             context
                 .incoming_tx
@@ -2179,9 +2226,7 @@ pub(super) fn apply_authenticated_peer_message(
                     from: seat,
                     signature,
                 })
-                .map_err(|_| {
-                    "host continuation preflight signature channel is closed".to_string()
-                })?;
+                .map_err(|_| closed("host continuation preflight signature channel is closed"))?;
         }
         NetMsg::RankedJoinResponse(response) => {
             handle_ranked_join_response(
@@ -2201,26 +2246,26 @@ pub(super) fn apply_authenticated_peer_message(
         | NetMsg::RankedOfficialSessionSetup(_)
         | NetMsg::RankedContinuationReceiptSelectionRequest(_)
         | NetMsg::RankedContinuationPreflightClaim(_) => {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} attempted a server-only ranked control message"
-            ));
+            )));
         }
         NetMsg::LeaderboardCoSignRequest(_) => {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} attempted a server-only leaderboard co-sign request"
-            ));
+            )));
         }
         NetMsg::PrepareSnapshotTransition { .. } | NetMsg::CommitSnapshotTransition { .. } => {
-            return Err(format!(
+            return Err(remote(format!(
                 "peer {seat:?} attempted a host-only snapshot transition message"
-            ));
+            )));
         }
         _ => unreachable!("server gameplay message was validated before dispatch"),
     }
     Ok(())
 }
 
-pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), String> {
+pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), MultiplayerError> {
     match message {
         NetMsg::Input { .. }
         | NetMsg::Note(_)
@@ -2234,11 +2279,11 @@ pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), 
         NetMsg::ContentRequest { .. }
         | NetMsg::ContentReject { .. }
         | NetMsg::ContentReady { .. }
-        | NetMsg::ContentPrepared { .. } => {
-            Err("content-admission message arrived in an ordinary peer session".to_owned())
-        }
-        other => Err(format!(
-            "client sent invalid server-session message {other:?}"
+        | NetMsg::ContentPrepared { .. } => Err(MultiplayerError::RemoteProtocol(
+            "content-admission message arrived in an ordinary peer session".into(),
+        )),
+        other => Err(MultiplayerError::RemoteProtocol(
+            format!("client sent invalid server-session message {other:?}").into(),
         )),
     }
 }
@@ -2246,11 +2291,14 @@ pub(super) fn validate_server_gameplay_wire_msg(message: &NetMsg) -> Result<(), 
 pub(super) fn validate_peer_command_authority(
     seat: PlayerId,
     command: &robin_engine::player_command::PlayerCommand,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     if command.requires_host_authority() {
-        return Err(format!(
-            "peer {seat:?} attempted host-authoritative command {command:?}"
+        return Err(MultiplayerError::RemoteProtocol(
+            format!("peer {seat:?} attempted host-authoritative command {command:?}").into(),
         ));
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

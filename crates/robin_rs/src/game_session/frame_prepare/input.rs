@@ -17,14 +17,16 @@ fn begin_interactive_frame(
     runtime: &mut TimelineRuntime,
     hud: &mut MissionHud,
     presentation: &MissionPresentation,
-) -> Result<FrameStart, String> {
+) -> Result<FrameStart, MissionError> {
     let MissionIngress {
         host,
         manager,
         assets,
     } = ingress;
     let mut frame = MissionFrame::new(crate::window::process_uptime_ms());
-    runtime.begin_execution_trace(FrameContractStage::NetworkIngress);
+    runtime
+        .lifecycle_mut()
+        .begin_execution_trace(FrameContractStage::NetworkIngress);
 
     // ── Multiplayer: drain incoming wire events ───────────────
     // - Future inputs queue in `pending_inputs[target_frame]`.
@@ -40,8 +42,8 @@ fn begin_interactive_frame(
     // Publishes the current sim_frame to the server's broadcast
     // pump so peer-input target frames are stamped against a
     // fresh cursor.
-    let net_drain = drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())
-        .map_err(|error| error.to_string())?;
+    let net_drain =
+        drain_mission_network(runtime, host, manager, assets, true, current_epoch_ms())?;
     let mp_clock_pause = net_drain.pause_simulation;
     let net_inputs = net_drain.inputs;
 
@@ -83,19 +85,34 @@ fn begin_interactive_frame(
     })
 }
 
+/// This frame's camera-relevant input and the focus gates that suppress it.
+struct HostViewInput<'a> {
+    mouse_position: engine_coordinates::ScreenPoint,
+    keyboard_actions: &'a [GameAction],
+    mouse_actions: &'a [GameAction],
+    events: &'a [GameEvent],
+    /// Console or pause menu owns keyboard/mouse view actions.
+    view_suppressed: bool,
+    /// Touch panning is additionally off when the preference disables it.
+    pan_suppressed: bool,
+}
+
 /// Apply host-only camera controls. These deliberately remain available while
 /// deterministic replay or rewind suppresses simulation commands.
 fn apply_host_view_input(
     host: &mut Host,
     engine: &Engine,
     hud: &crate::game_session::interactive::MissionHud,
-    mouse_position: engine_coordinates::ScreenPoint,
-    keyboard_actions: &[GameAction],
-    mouse_actions: &[GameAction],
-    events: &[GameEvent],
-    view_suppressed: bool,
-    pan_suppressed: bool,
+    view: HostViewInput<'_>,
 ) {
+    let HostViewInput {
+        mouse_position,
+        keyboard_actions,
+        mouse_actions,
+        events,
+        view_suppressed,
+        pan_suppressed,
+    } = view;
     let now_ms = crate::window::process_uptime_ms();
     if pan_suppressed || engine.user_locked() {
         host.frontend.viewport.cancel_touch_motion();
@@ -233,6 +250,73 @@ fn touch_point_is_world(
     !reserved.iter().any(|rect| rect.contains_point(point))
 }
 
+/// The empty input batch of a frame whose mission UI owns input.
+fn no_collected_frame_input() -> CollectedFrameInput {
+    CollectedFrameInput {
+        events: Vec::new(),
+        keyboard_actions: Vec::new(),
+        mouse_actions: Vec::new(),
+        modifiers: InputModifiers {
+            ctrl: false,
+            shift: false,
+            alt: false,
+            plan: false,
+        },
+        minimap_toggle_pressed: false,
+        pause_closed_this_frame: false,
+        rewind_active: false,
+        step_forward_pressed: false,
+        step_back_pressed: false,
+    }
+}
+
+/// Multiplayer prologue of [`collect_input_and_menus`] after a committed
+/// transition was ruled out: start a deferred campaign exit, and show the
+/// host every visible peer modal proposal.
+fn begin_deferred_campaign_exit_and_present_proposals(
+    host: &mut crate::host::Host,
+    engine: &robin_engine::engine::Engine,
+    frame_number: u32,
+    callbacks: &mut RustCallbacks,
+    game: &mut crate::game::Game,
+) {
+    if let Some((request, id)) = transport::begin_deferred_campaign_exit(
+        &mut host.transport,
+        engine,
+        frame_number,
+        callbacks.pending_request().is_none(),
+    ) {
+        callbacks.queue_operation(request);
+        tracing::info!(
+            ?id,
+            frame = frame_number,
+            "multiplayer: waiting for peers to validate the campaign-exit snapshot"
+        );
+    }
+    if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
+    {
+        let proposals = net
+            .take_all_visible_modal_requests()
+            .unwrap_or_else(|error| {
+                panic!("failed to present multiplayer modal proposals: {error}")
+            });
+        if !proposals.is_empty() {
+            let summary = proposals
+                .iter()
+                .map(|request| {
+                    format!(
+                        "Player {} proposes {:?} for {:?}",
+                        request.from.0, request.result, request.kind
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            game.display_message(format!("{summary}; host confirmation is required."), 100);
+        }
+    }
+}
+
 /// Input owns privileged menu/restore work before downgrading to the world's
 /// read-only-engine input phase for gameplay command production.
 pub(super) async fn collect_input_and_menus(
@@ -244,7 +328,7 @@ pub(super) async fn collect_input_and_menus(
     window: &mut GameWindow,
     callbacks: &mut RustCallbacks,
     profiles: &engine_profiles::ProfileManager,
-) -> Result<ControlFlow<FrameControl, InputPrepared>, String> {
+) -> Result<ControlFlow<FrameControl, InputPrepared>, MissionError> {
     let FrameStart {
         mut frame,
         mp_clock_pause,
@@ -282,46 +366,18 @@ pub(super) async fn collect_input_and_menus(
             &mut game.operation,
             campaign_transition,
         )?;
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             exit_code,
         ))));
     }
-    if let Some((request, id)) = transport::begin_deferred_campaign_exit(
-        &mut host.transport,
+    begin_deferred_campaign_exit_and_present_proposals(
+        host,
         &manager.engine,
         runtime.frame_number(),
-        callbacks.pending_request().is_none(),
-    ) {
-        callbacks.queue_operation(request);
-        tracing::info!(
-            ?id,
-            frame = runtime.frame_number(),
-            "multiplayer: waiting for peers to validate the campaign-exit snapshot"
-        );
-    }
-    if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
-        && let Some(net) = host.transport.net()
-    {
-        let proposals = net
-            .take_all_visible_modal_requests()
-            .unwrap_or_else(|error| {
-                panic!("failed to present multiplayer modal proposals: {error}")
-            });
-        if !proposals.is_empty() {
-            let summary = proposals
-                .iter()
-                .map(|request| {
-                    format!(
-                        "Player {} proposes {:?} for {:?}",
-                        request.from.0, request.result, request.kind
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            game.display_message(format!("{summary}; host confirmation is required."), 100);
-        }
-    }
+        callbacks,
+        game,
+    );
 
     let client_waiting_for_campaign_host = host.transport.net().is_some()
         && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
@@ -329,28 +385,34 @@ pub(super) async fn collect_input_and_menus(
     let campaign_ui_presented = !client_waiting_for_campaign_host
         && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());
     match handle_sherwood_campaign_map_overlay(
-        game,
-        manager,
-        host,
-        callbacks,
+        SherwoodCtx {
+            game: &mut *game,
+            engine: &mut manager.engine,
+            host: &mut *host,
+            callbacks: &mut *callbacks,
+            assets,
+            window: &mut *window,
+            renderer: &mut presentation.renderer,
+            menu_resources: &mut resources.menu,
+            flow: &mut ui.sherwood_campaign_flow,
+            enable: &mut hud.sherwood_enable,
+        },
         &mut frame,
-        assets,
-        &mut *window,
-        &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
-        &mut resources.text,
-        &mut ui.campaign_map,
-        &mut ui.sherwood_campaign_flow,
-        &mut resources.menu,
-        &mut hud.sherwood_enable,
+        SherwoodModalResources {
+            cursor_res: &mut resources.cursor,
+            cursor_renderer: &mut presentation.sprites.cursor_renderer,
+            text_res: &mut resources.text,
+            campaign_map: &mut ui.campaign_map,
+        },
     )? {
         HandlerAction::Continue => {
-            runtime.trace(FrameContractStage::EarlyRestart);
+            runtime
+                .lifecycle_mut()
+                .trace(FrameContractStage::EarlyRestart);
             return Ok(ControlFlow::Break(FrameControl::RestartIteration));
         }
         HandlerAction::Exit(code) => {
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 code,
             ))));
@@ -367,22 +429,7 @@ pub(super) async fn collect_input_and_menus(
             .lost_sherwood_gate
             .blocks_mission(game.is_sherwood, &manager.engine);
     let collected = if mission_ui_owns_input {
-        EventHudOutcome::Ready(CollectedFrameInput {
-            events: Vec::new(),
-            keyboard_actions: Vec::new(),
-            mouse_actions: Vec::new(),
-            modifiers: InputModifiers {
-                ctrl: false,
-                shift: false,
-                alt: false,
-                plan: false,
-            },
-            minimap_toggle_pressed: false,
-            pause_closed_this_frame: false,
-            rewind_active: false,
-            step_forward_pressed: false,
-            step_back_pressed: false,
-        })
+        EventHudOutcome::Ready(no_collected_frame_input())
     } else {
         collect_event_and_hud_input(EventHudContext {
             host,
@@ -417,11 +464,13 @@ pub(super) async fn collect_input_and_menus(
     } = match collected {
         EventHudOutcome::Ready(input) => input,
         EventHudOutcome::Control(HandlerAction::Continue) => {
-            runtime.trace(FrameContractStage::EarlyRestart);
+            runtime
+                .lifecycle_mut()
+                .trace(FrameContractStage::EarlyRestart);
             return Ok(ControlFlow::Break(FrameControl::RestartIteration));
         }
         EventHudOutcome::Control(HandlerAction::Exit(code)) => {
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 code,
             ))));
@@ -453,26 +502,26 @@ pub(super) async fn collect_input_and_menus(
     // so they're safe during replay playback and rewind, when the
     // user wants to pan/zoom around the paused world.  Suppressed
     // only when the console or the pause menu has focus.
-    apply_host_view_input(
-        host,
-        engine,
-        hud,
-        input.threaded.position(),
-        &kb_actions,
-        &mouse_actions,
-        &events,
-        ui.console_overlay.is_visible() || ui.pause_menu.is_some() || pause_closed_this_frame,
-        ui.console_overlay.is_visible()
+    let view = HostViewInput {
+        mouse_position: input.threaded.position(),
+        keyboard_actions: &kb_actions,
+        mouse_actions: &mouse_actions,
+        events: &events,
+        view_suppressed: ui.console_overlay.is_visible()
+            || ui.pause_menu.is_some()
+            || pause_closed_this_frame,
+        pan_suppressed: ui.console_overlay.is_visible()
             || ui.pause_menu.is_some()
             || pause_closed_this_frame
             || !host.frontend.preferences().touch_camera_gestures(),
-    );
+    };
+    apply_host_view_input(host, engine, hud, view);
 
     // ── Skip all sim-affecting input during replay / rewind ──
     // Recorded commands are injected at the tick boundary instead
     // (replay), or suppressed entirely (rewind — live input
     // shouldn't perturb a state reconstructed from the past).
-    if runtime.playback().is_none() && !rewind_active {
+    if runtime.replay().playback().is_none() && !rewind_active {
         match drive_live_gameplay_input(
             LiveGameplayContext {
                 host,
@@ -502,11 +551,13 @@ pub(super) async fn collect_input_and_menus(
         .await
         {
             HandlerAction::Continue => {
-                runtime.trace(FrameContractStage::EarlyRestart);
+                runtime
+                    .lifecycle_mut()
+                    .trace(FrameContractStage::EarlyRestart);
                 return Ok(ControlFlow::Break(FrameControl::RestartIteration));
             }
             HandlerAction::Exit(code) => {
-                runtime.trace(FrameContractStage::Exit);
+                runtime.lifecycle_mut().trace(FrameContractStage::Exit);
                 return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                     code,
                 ))));
@@ -534,7 +585,9 @@ pub(super) async fn collect_input_and_menus(
         ui.active_ui_task = Some(task);
     }
 
-    runtime.trace(FrameContractStage::InputAndMenus);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::InputAndMenus);
 
     drop(commands);
     drop(external_actions);

@@ -291,18 +291,18 @@ pub(super) fn ensure_ranked_preflight_deadline(
     phase_started: web_time::Instant,
     phase_timeout_ms: u128,
     phase: &str,
-) -> Result<(), String> {
+) -> Result<(), RankedError> {
     match ranked_preflight_timeout(
         total_started.elapsed().as_millis(),
         phase_started.elapsed().as_millis(),
         phase_timeout_ms,
     ) {
-        Some(RankedPreflightTimeout::Total) => Err(format!(
+        Some(RankedPreflightTimeout::Total) => Err(RankedError::timeout(format!(
             "ranked multiplayer setup exceeded its total bounded window during {phase}"
-        )),
-        Some(RankedPreflightTimeout::PhaseInactivity) => Err(format!(
+        ))),
+        Some(RankedPreflightTimeout::PhaseInactivity) => Err(RankedError::timeout(format!(
             "ranked multiplayer setup made no authenticated progress during {phase}"
-        )),
+        ))),
         None => Ok(()),
     }
 }
@@ -333,7 +333,7 @@ async fn wait_for_host_preflight_lobby(
         crate::multiplayer::RankedMultiplayerPort,
         RankedPreflightLobbyV1,
     ),
-    String,
+    RankedError,
 > {
     let phase_started = web_time::Instant::now();
     let mut last_unavailable = "authenticated ranked lobby is not ready".to_owned();
@@ -344,16 +344,20 @@ async fn wait_for_host_preflight_lobby(
             RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
             "authenticated lobby formation",
         )
-        .map_err(|error| format!("{error}: {last_unavailable}"))?;
+        .map_err(|error| RankedError::timeout(format!("{error}: {last_unavailable}")))?;
         match net.ranked_port() {
             Ok(port) if port.role() == crate::multiplayer::RankedMultiplayerRole::Host => {
                 match port.host_preflight_lobby() {
                     Ok(lobby) => return Ok((port, lobby)),
-                    Err(error) => last_unavailable = error,
+                    Err(error) => last_unavailable = error.to_string(),
                 }
             }
-            Ok(_) => return Err("host preflight resolved a client transport capability".into()),
-            Err(error) => last_unavailable = error,
+            Ok(_) => {
+                return Err(RankedError::rejected(
+                    "host preflight resolved a client transport capability",
+                ));
+            }
+            Err(error) => last_unavailable = error.to_string(),
         }
         crate::window::sleep_ms(10).await;
     }
@@ -362,7 +366,7 @@ async fn wait_for_host_preflight_lobby(
 async fn wait_for_client_ranked_identity(
     net: &crate::multiplayer::NetChannels,
     total_started: web_time::Instant,
-) -> Result<crate::multiplayer::RankedMultiplayerPort, String> {
+) -> Result<crate::multiplayer::RankedMultiplayerPort, RankedError> {
     let phase_started = web_time::Instant::now();
     let mut last_unavailable = "authenticated ranked client identity is not ready".to_owned();
     loop {
@@ -372,16 +376,20 @@ async fn wait_for_client_ranked_identity(
             RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
             "authenticated client identity",
         )
-        .map_err(|error| format!("{error}: {last_unavailable}"))?;
+        .map_err(|error| RankedError::timeout(format!("{error}: {last_unavailable}")))?;
         match net.ranked_port() {
             Ok(port) if port.role() == crate::multiplayer::RankedMultiplayerRole::Client => {
                 match port.authenticated_ranked_identity_pair() {
                     Ok(_) => return Ok(port),
-                    Err(error) => last_unavailable = error,
+                    Err(error) => last_unavailable = error.to_string(),
                 }
             }
-            Ok(_) => return Err("client preflight resolved a host transport capability".into()),
-            Err(error) => last_unavailable = error,
+            Ok(_) => {
+                return Err(RankedError::rejected(
+                    "client preflight resolved a host transport capability",
+                ));
+            }
+            Err(error) => last_unavailable = error.to_string(),
         }
         crate::window::sleep_ms(10).await;
     }
@@ -394,15 +402,14 @@ async fn install_ranked_multiplayer_host(
     requested_metrics: Vec<BoardMetricV1>,
     roster_continuity: robin_run_protocol::CampaignRosterContinuityV1,
     run_preflight_grant_public_key: robin_run_protocol::PublicKey32,
-) -> Result<ResolvedMultiplayerAdmission, String> {
+) -> Result<ResolvedMultiplayerAdmission, RankedError> {
     let total_started = web_time::Instant::now();
     let (ready_port, lobby) = wait_for_host_preflight_lobby(net, total_started).await?;
     let port = &ready_port;
     if lobby.host_public_key != local_ranked_public_key().await? {
-        return Err(
-            "authenticated multiplayer host identity differs from the durable leaderboard identity"
-                .to_owned(),
-        );
+        return Err(RankedError::rejected(
+            "authenticated multiplayer host identity differs from the durable leaderboard identity",
+        ));
     }
     let run_preflight = if matches!(requested_scope, ScopeRequestV1::IndividualLevel) {
         acquire_fresh_run_preflight(
@@ -421,8 +428,10 @@ async fn install_ranked_multiplayer_host(
         RANKED_PREFLIGHT_PHASE_TIMEOUT_MS,
         "authority grant completion",
     )?;
-    let trusted_now_unix_ms = crate::leaderboard_receipt_watcher::now_unix_ms()
-        .map_err(|error| format!("ranked preflight current time is unavailable: {error}"))?;
+    let trusted_now_unix_ms =
+        crate::leaderboard_receipt_watcher::now_unix_ms().map_err(|error| {
+            RankedError::from(error).context("ranked preflight current time is unavailable")
+        })?;
     let setup = OfficialRankedSessionSetupV1 {
         ranked_session: config,
         custom_package_present: false,
@@ -439,7 +448,9 @@ async fn install_ranked_multiplayer_host(
     if final_port.role() != crate::multiplayer::RankedMultiplayerRole::Host
         || final_port.host_preflight_lobby()? != lobby
     {
-        return Err("authenticated ranked lobby changed during authority preflight".into());
+        return Err(RankedError::rejected(
+            "authenticated ranked lobby changed during authority preflight",
+        ));
     }
     // Publish first: installing the host setup may immediately release the
     // genesis challenge, while clients need the independently checked setup
@@ -455,16 +466,17 @@ async fn acquire_host_campaign_preflight(
     config: &robin_run_protocol::RankedSessionConfigV1,
     roster_continuity: robin_run_protocol::CampaignRosterContinuityV1,
     total_started: web_time::Instant,
-) -> Result<RankedRunPreflightAdmissionV1, String> {
+) -> Result<RankedRunPreflightAdmissionV1, RankedError> {
     if config.campaign_content_manifest_sha256.is_none() {
-        return Err("campaign-ranked multiplayer config has no campaign content catalog".into());
+        return Err(RankedError::unavailable(
+            "campaign-ranked multiplayer config has no campaign content catalog",
+        ));
     }
     let selection_request = CampaignContinuationReceiptSelectionRequestV1::from_lobby(
         lobby.clone(),
         config.clone(),
         roster_continuity,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let local_selection = select_local_campaign_receipt(&selection_request, lobby.host_public_key)?;
     port.host_publish_continuation_receipt_selection_request(&selection_request)?;
 
@@ -490,19 +502,20 @@ async fn acquire_host_campaign_preflight(
                 from,
                 response,
             }) => {
-                response.validate().map_err(|error| error.to_string())?;
+                response.validate()?;
                 if response.request() != &selection_request {
-                    return Err("campaign receipt response belongs to another preflight".into());
+                    return Err(RankedError::rejected(
+                        "campaign receipt response belongs to another preflight",
+                    ));
                 }
                 let responder = response.responder_public_key();
                 if !expected_remote_keys.contains(&responder)
                     || !responded_keys.insert(responder)
                     || !responded_seats.insert(from)
                 {
-                    return Err(
-                        "campaign receipt response has an unexpected or duplicate authenticated responder"
-                        .into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "campaign receipt response has an unexpected or duplicate authenticated responder",
+                    ));
                 }
                 port.validate_authenticated_remote_identity(from, responder)?;
                 phase_started = web_time::Instant::now();
@@ -513,10 +526,9 @@ async fn acquire_host_campaign_preflight(
                 }
             }
             Some(_) => {
-                return Err(
-                    "ranked transport delivered an out-of-phase authorization event during campaign selection"
-                        .into(),
-                );
+                return Err(RankedError::rejected(
+                    "ranked transport delivered an out-of-phase authorization event during campaign selection",
+                ));
             }
             None => crate::window::sleep_ms(10).await,
         }
@@ -535,10 +547,9 @@ async fn acquire_host_campaign_preflight(
                 .await?
         }
         _ => {
-            return Err(
-                "more than one controller selected an active receipt for the exact campaign start"
-                    .into(),
-            );
+            return Err(RankedError::rejected(
+                "more than one controller selected an active receipt for the exact campaign start",
+            ));
         }
     };
     Ok(run_preflight)
@@ -547,9 +558,10 @@ async fn acquire_host_campaign_preflight(
 fn select_local_campaign_receipt(
     request: &CampaignContinuationReceiptSelectionRequestV1,
     local_public_key: robin_run_protocol::PublicKey32,
-) -> Result<Option<CampaignContinuationReceiptSelectionV1>, String> {
-    let store = crate::leaderboard_chains::load()
-        .map_err(|error| format!("load verified campaign-chain receipts: {error}"))?;
+) -> Result<Option<CampaignContinuationReceiptSelectionV1>, RankedError> {
+    let store = crate::leaderboard_chains::load().map_err(|error| {
+        RankedError::from(error).context("load verified campaign-chain receipts")
+    })?;
     select_campaign_receipt_from_store(&store, request, local_public_key)
 }
 
@@ -557,12 +569,14 @@ pub(super) fn select_campaign_receipt_from_store(
     store: &crate::leaderboard_chains::CampaignChainStore,
     request: &CampaignContinuationReceiptSelectionRequestV1,
     local_public_key: robin_run_protocol::PublicKey32,
-) -> Result<Option<CampaignContinuationReceiptSelectionV1>, String> {
-    request.validate().map_err(|error| error.to_string())?;
+) -> Result<Option<CampaignContinuationReceiptSelectionV1>, RankedError> {
+    request.validate()?;
     let campaign_manifest = request
         .ranked_session
         .campaign_content_manifest_sha256
-        .ok_or_else(|| "campaign receipt selection has no campaign content catalog".to_owned())?;
+        .ok_or_else(|| {
+            RankedError::unavailable("campaign receipt selection has no campaign content catalog")
+        })?;
     let receipt = store
         .continuation_for_policy(
             &request.starting_campaign,
@@ -576,8 +590,7 @@ pub(super) fn select_campaign_receipt_from_store(
                 campaign_controller_public_key: local_public_key,
             },
             request.roster_continuity,
-        )
-        .map_err(|error| error.to_string())?
+        )?
         .cloned();
     receipt
         .map(|receipt| {
@@ -585,7 +598,7 @@ pub(super) fn select_campaign_receipt_from_store(
                 request: request.clone(),
                 receipt,
             };
-            selection.validate().map_err(|error| error.to_string())?;
+            selection.validate()?;
             Ok(selection)
         })
         .transpose()
@@ -597,17 +610,15 @@ async fn acquire_host_continuation_preflight(
     config: &robin_run_protocol::RankedSessionConfigV1,
     selection: &CampaignContinuationReceiptSelectionV1,
     total_started: web_time::Instant,
-) -> Result<RankedRunPreflightAdmissionV1, String> {
-    let preflight_setup = selection
-        .preflight_setup()
-        .map_err(|error| error.to_string())?;
+) -> Result<RankedRunPreflightAdmissionV1, RankedError> {
+    let preflight_setup = selection.preflight_setup()?;
     let controller = preflight_setup.campaign_controller_public_key;
     let claim = crate::leaderboard_ranked_session::RankedSessionHost::prepare_campaign_continuation_preflight_claim(
         lobby.host_public_key,
         config.clone(),
         preflight_setup,
     )
-    .map_err(|error| error.to_string())?;
+    ?;
     let host_signature = sign_campaign_continuation_preflight_as_host(&claim).await?;
     let controller_signature = if controller == lobby.host_public_key {
         sign_campaign_continuation_preflight_as_controller(&claim).await?
@@ -632,10 +643,9 @@ async fn acquire_host_continuation_preflight(
                     break signature;
                 }
                 Some(_) => {
-                    return Err(
-                        "ranked transport delivered an unexpected controller-signature event"
-                            .into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "ranked transport delivered an unexpected controller-signature event",
+                    ));
                 }
                 None => crate::window::sleep_ms(10).await,
             }
@@ -645,24 +655,20 @@ async fn acquire_host_continuation_preflight(
         claim,
         host_signature,
         controller_signature,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let api = preflight_api()?;
-    let task = api
-        .campaign_continuation_preflight_grant(&request)
-        .map_err(|error| error.to_string())?;
+    let task = api.campaign_continuation_preflight_grant(&request)?;
     let grant = crate::leaderboard_service::decode_campaign_continuation_preflight_grant(
-        Ok(task.take().await.map_err(|error| error.to_string())?),
+        Ok(task.take().await?),
         &request,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     Ok(RankedRunPreflightAdmissionV1::CampaignContinuation { request, grant })
 }
 
 async fn install_ranked_multiplayer_client(
     net: &crate::multiplayer::NetChannels,
     locally_prepared_config: robin_run_protocol::RankedSessionConfigV1,
-) -> Result<ResolvedMultiplayerAdmission, String> {
+) -> Result<ResolvedMultiplayerAdmission, RankedError> {
     let total_started = web_time::Instant::now();
     let port = wait_for_client_ranked_identity(net, total_started).await?;
     let (authenticated_host_public_key, local_public_key) =
@@ -689,7 +695,9 @@ async fn install_ranked_multiplayer_client(
                 ),
             ) => {
                 if selection_request.is_some() {
-                    return Err("host published more than one campaign receipt selection".into());
+                    return Err(RankedError::rejected(
+                        "host published more than one campaign receipt selection",
+                    ));
                 }
                 if request.lobby.host_public_key != authenticated_host_public_key
                     || request
@@ -698,10 +706,9 @@ async fn install_ranked_multiplayer_client(
                         .binary_search(&local_public_key)
                         .is_err()
                 {
-                    return Err(
-                        "campaign receipt selection does not match authenticated lobby identities"
-                            .into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "campaign receipt selection does not match authenticated lobby identities",
+                    ));
                 }
                 let authority = authorize_multiplayer_host_proposal(
                     &locally_prepared_config,
@@ -715,9 +722,9 @@ async fn install_ranked_multiplayer_client(
                         .manifest
                         .campaign_roster_continuity
                 {
-                    return Err(
-                        "host campaign receipt policy differs from the published ruleset".into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "host campaign receipt policy differs from the published ruleset",
+                    ));
                 }
                 let selected = select_local_campaign_receipt(&request, local_public_key)?;
                 if let Some(selection) = selected.as_ref() {
@@ -738,8 +745,9 @@ async fn install_ranked_multiplayer_client(
                 claim,
             )) => {
                 let selection = local_selection.as_ref().ok_or_else(|| {
-                    "host requested a controller signature without this peer selecting a receipt"
-                        .to_owned()
+                    RankedError::rejected(
+                        "host requested a controller signature without this peer selecting a receipt",
+                    )
                 })?;
                 validate_controller_preflight_claim(
                     &claim,
@@ -757,15 +765,16 @@ async fn install_ranked_multiplayer_client(
                 let scope_request = wire.run_preflight.scope_request();
                 let is_campaign = !matches!(scope_request, ScopeRequestV1::IndividualLevel);
                 if is_campaign != selection_request.is_some() {
-                    return Err("host skipped or spuriously used campaign receipt discovery".into());
+                    return Err(RankedError::rejected(
+                        "host skipped or spuriously used campaign receipt discovery",
+                    ));
                 }
                 if let Some(request) = selection_request.as_ref()
                     && request.ranked_session != wire.ranked_session
                 {
-                    return Err(
-                        "official setup differs from the campaign receipt selection proposal"
-                            .into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "official setup differs from the campaign receipt selection proposal",
+                    ));
                 }
                 enforce_controller_selection_result(
                     &wire,
@@ -793,16 +802,14 @@ async fn install_ranked_multiplayer_client(
                 };
                 let trusted_now_unix_ms = crate::leaderboard_receipt_watcher::now_unix_ms()
                     .map_err(|error| {
-                        format!("ranked setup current time is unavailable: {error}")
+                        RankedError::from(error).context("ranked setup current time is unavailable")
                     })?;
-                let setup = wire
-                    .prepare_for_authenticated_peer(
-                        &expectation,
-                        authenticated_host_public_key,
-                        local_public_key,
-                        trusted_now_unix_ms,
-                    )
-                    .map_err(|error| error.to_string())?;
+                let setup = wire.prepare_for_authenticated_peer(
+                    &expectation,
+                    authenticated_host_public_key,
+                    local_public_key,
+                    trusted_now_unix_ms,
+                )?;
                 ensure_ranked_preflight_deadline(
                     total_started,
                     web_time::Instant::now(),
@@ -814,9 +821,9 @@ async fn install_ranked_multiplayer_client(
                     || final_port.authenticated_ranked_identity_pair()?
                         != (authenticated_host_public_key, local_public_key)
                 {
-                    return Err(
-                        "authenticated ranked identities changed during authority preflight".into(),
-                    );
+                    return Err(RankedError::rejected(
+                        "authenticated ranked identities changed during authority preflight",
+                    ));
                 }
                 let resolved = ResolvedMultiplayerAdmission {
                     scope_request: setup.scope_request(),
@@ -827,10 +834,9 @@ async fn install_ranked_multiplayer_client(
                 return Ok(resolved);
             }
             Some(_) => {
-                return Err(
-                    "ranked transport delivered an out-of-phase mission-end authorization event before frame zero"
-                        .into(),
-                );
+                return Err(RankedError::rejected(
+                    "ranked transport delivered an out-of-phase mission-end authorization event before frame zero",
+                ));
             }
             None => crate::window::sleep_ms(10).await,
         }
@@ -842,11 +848,9 @@ pub(super) fn validate_controller_preflight_claim(
     selection: &CampaignContinuationReceiptSelectionV1,
     authenticated_host_public_key: robin_run_protocol::PublicKey32,
     local_public_key: robin_run_protocol::PublicKey32,
-) -> Result<(), String> {
-    claim.validate().map_err(|error| error.to_string())?;
-    let expected = selection
-        .preflight_setup()
-        .map_err(|error| error.to_string())?;
+) -> Result<(), RankedError> {
+    claim.validate()?;
+    let expected = selection.preflight_setup()?;
     if claim.host_public_key != authenticated_host_public_key
         || claim.campaign_controller_public_key != local_public_key
         || expected.campaign_controller_public_key != local_public_key
@@ -858,10 +862,9 @@ pub(super) fn validate_controller_preflight_claim(
         || claim.starting_campaign != selection.request.starting_campaign
         || claim.ranked_session != selection.request.ranked_session
     {
-        return Err(
-            "continuation preflight claim differs from the locally selected verified receipt"
-                .into(),
-        );
+        return Err(RankedError::rejected(
+            "continuation preflight claim differs from the locally selected verified receipt",
+        ));
     }
     Ok(())
 }
@@ -870,7 +873,7 @@ pub(super) fn enforce_controller_selection_result(
     wire: &OfficialRankedSessionWireSetupV1,
     local_selection: Option<&CampaignContinuationReceiptSelectionV1>,
     signed_claim: Option<&robin_run_protocol::CampaignContinuationPreflightRequestClaimV1>,
-) -> Result<(), String> {
+) -> Result<(), RankedError> {
     match (local_selection, signed_claim, &wire.run_preflight) {
         (None, None, _) => Ok(()),
         (
@@ -878,15 +881,15 @@ pub(super) fn enforce_controller_selection_result(
             Some(expected),
             RankedRunPreflightAdmissionV1::CampaignContinuation { request, .. },
         ) if &request.claim == expected => Ok(()),
-        (Some(_), None, _) => Err(
-            "host did not request the selected controller's exact continuation signature".into(),
-        ),
-        (Some(_), Some(_), _) => {
-            Err("official setup did not retain the controller-signed continuation".into())
-        }
-        (None, Some(_), _) => {
-            Err("controller signature exists without a selected local receipt".into())
-        }
+        (Some(_), None, _) => Err(RankedError::rejected(
+            "host did not request the selected controller's exact continuation signature",
+        )),
+        (Some(_), Some(_), _) => Err(RankedError::rejected(
+            "official setup did not retain the controller-signed continuation",
+        )),
+        (None, Some(_), _) => Err(RankedError::rejected(
+            "controller signature exists without a selected local receipt",
+        )),
     }
 }
 
@@ -894,66 +897,47 @@ async fn authorize_multiplayer_host_proposal(
     locally_prepared: &robin_run_protocol::RankedSessionConfigV1,
     proposed: &robin_run_protocol::RankedSessionConfigV1,
     scope_request: ScopeRequestV1,
-) -> Result<AuthorizedMultiplayerProposal, String> {
+) -> Result<AuthorizedMultiplayerProposal, RankedError> {
     validate_host_proposal_against_local_prepared(locally_prepared, proposed)?;
     let api = preflight_api()?;
-    let content_task = api
-        .content_manifest(proposed.content_manifest_sha256)
-        .map_err(|error| error.to_string())?;
+    let content_task = api.content_manifest(proposed.content_manifest_sha256)?;
 
-    let published_task = api
-        .published_ruleset(proposed.ruleset_manifest_sha256)
-        .map_err(|error| error.to_string())?;
-    let build_task = api
-        .build_manifest(proposed.build_manifest_sha256)
-        .map_err(|error| error.to_string())?;
+    let published_task = api.published_ruleset(proposed.ruleset_manifest_sha256)?;
+    let build_task = api.build_manifest(proposed.build_manifest_sha256)?;
     let content = crate::leaderboard_service::decode_content_manifest(
-        Ok(content_task
-            .take()
-            .await
-            .map_err(|error| error.to_string())?),
+        Ok(content_task.take().await?),
         proposed.content_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let rules = match &proposed.custom_rules_config {
         Some(custom) => custom.clone(),
         None => {
-            let task = api
-                .rules_config(proposed.rules_config_sha256)
-                .map_err(|error| error.to_string())?;
+            let task = api.rules_config(proposed.rules_config_sha256)?;
             crate::leaderboard_service::decode_rules_config(
-                Ok(task.take().await.map_err(|error| error.to_string())?),
+                Ok(task.take().await?),
                 proposed.rules_config_sha256,
-            )
-            .map_err(|error| error.to_string())?
+            )?
         }
     };
     let published = crate::leaderboard_service::decode_published_ruleset(
-        Ok(published_task
-            .take()
-            .await
-            .map_err(|error| error.to_string())?),
+        Ok(published_task.take().await?),
         proposed.ruleset_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let build = crate::leaderboard_service::decode_build_manifest(
-        Ok(build_task.take().await.map_err(|error| error.to_string())?),
+        Ok(build_task.take().await?),
         proposed.build_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     validate_multiplayer_host_documents(proposed, &scope_request, &content, &rules, &published)?;
     if !build_matches_runtime(&build)? {
-        return Err("host-selected verifier build does not match this runtime".into());
+        return Err(RankedError::rejected(
+            "host-selected verifier build does not match this runtime",
+        ));
     }
     if let Some(campaign_digest) = proposed.campaign_content_manifest_sha256 {
-        let task = api
-            .campaign_content_manifest(campaign_digest)
-            .map_err(|error| error.to_string())?;
+        let task = api.campaign_content_manifest(campaign_digest)?;
         let campaign = crate::leaderboard_service::decode_campaign_content_manifest(
-            Ok(task.take().await.map_err(|error| error.to_string())?),
+            Ok(task.take().await?),
             campaign_digest,
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
         validate_campaign_content_for_mission(
             &campaign,
             &content,
@@ -961,8 +945,7 @@ async fn authorize_multiplayer_host_proposal(
         )?;
         published
             .manifest
-            .validate_campaign_completion_catalog(&campaign)
-            .map_err(|error| error.to_string())?;
+            .validate_campaign_completion_catalog(&campaign)?;
     }
     Ok(AuthorizedMultiplayerProposal {
         requested_metrics: published.manifest.metrics.clone(),
@@ -973,11 +956,10 @@ async fn authorize_multiplayer_host_proposal(
 pub(super) fn validate_host_proposal_against_local_prepared(
     locally_prepared: &robin_run_protocol::RankedSessionConfigV1,
     proposed: &robin_run_protocol::RankedSessionConfigV1,
-) -> Result<(), String> {
+) -> Result<(), RankedError> {
     locally_prepared
         .validate()
-        .and_then(|()| proposed.validate())
-        .map_err(|error| error.to_string())?;
+        .and_then(|()| proposed.validate())?;
     let mut normalized = proposed.clone();
     // These two immutable documents select the board/campaign policy, not
     // simulation input. Every other current and future config field must be
@@ -985,9 +967,9 @@ pub(super) fn validate_host_proposal_against_local_prepared(
     normalized.ruleset_manifest_sha256 = locally_prepared.ruleset_manifest_sha256;
     normalized.campaign_content_manifest_sha256 = locally_prepared.campaign_content_manifest_sha256;
     if &normalized != locally_prepared {
-        return Err(
-            "host ranked proposal differs from the locally prepared simulation/config seal".into(),
-        );
+        return Err(RankedError::rejected(
+            "host ranked proposal differs from the locally prepared simulation/config seal",
+        ));
     }
     Ok(())
 }
@@ -998,27 +980,23 @@ fn validate_multiplayer_host_documents(
     content: &ContentManifestV1,
     rules: &RulesConfigIdentityV1,
     published: &PublishedRulesetV1,
-) -> Result<(), String> {
-    proposed
-        .validate_content_manifest(content)
-        .map_err(|error| error.to_string())?;
+) -> Result<(), RankedError> {
+    proposed.validate_content_manifest(content)?;
     let subject_is_official = official_content_subjects_v1(content.edition)
         .iter()
         .any(|subject| subject == &content.subject);
     if !subject_is_official
         || content.subject.mission_id() != proposed.mission_id
         || content.name != official_content_manifest_name_v1(content.edition, &content.subject)
-        || content
-            .canonical_digest()
-            .map_err(|error| error.to_string())?
-            != proposed.content_manifest_sha256
+        || content.canonical_digest()? != proposed.content_manifest_sha256
     {
-        return Err("host content is not the exact canonical official mission authority".into());
+        return Err(RankedError::rejected(
+            "host content is not the exact canonical official mission authority",
+        ));
     }
     published
         .manifest
-        .validate_ranked_simulation_policy(rules)
-        .map_err(|error| error.to_string())?;
+        .validate_ranked_simulation_policy(rules)?;
     let required_board_scope = match scope_request {
         ScopeRequestV1::IndividualLevel => RulesetBoardScopeV1::IndividualLevel,
         ScopeRequestV1::CampaignGenesis | ScopeRequestV1::CampaignContinuation { .. } => {
@@ -1072,7 +1050,9 @@ fn validate_multiplayer_host_documents(
             .network_protocol_versions
             .contains(&robin_engine::multiplayer::NET_PROTOCOL_VERSION)
     {
-        return Err("host ruleset does not admit the exact prepared mission tuple".into());
+        return Err(RankedError::rejected(
+            "host ruleset does not admit the exact prepared mission tuple",
+        ));
     }
     Ok(())
 }
@@ -1082,7 +1062,7 @@ async fn acquire_single_player_run_preflight(
     scope_request: &ScopeRequestV1,
     campaign_controller_public_key: Option<robin_run_protocol::PublicKey32>,
     local_campaign_chain_receipt: Option<&robin_run_protocol::CampaignChainReceiptV1>,
-) -> Result<crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1, String> {
+) -> Result<crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1, RankedError> {
     let host_public_key = local_ranked_public_key().await?;
     let admission = match scope_request {
         ScopeRequestV1::IndividualLevel => {
@@ -1106,12 +1086,13 @@ async fn acquire_single_player_run_preflight(
             predecessor_run_id,
         } => {
             let receipt = local_campaign_chain_receipt.ok_or_else(|| {
-                "campaign continuation has no exact locally retained verification receipt"
-                    .to_owned()
+                RankedError::unavailable(
+                    "campaign continuation has no exact locally retained verification receipt",
+                )
             })?;
-            receipt.validate().map_err(|error| error.to_string())?;
+            receipt.validate()?;
             let controller = campaign_controller_public_key.ok_or_else(|| {
-                "campaign continuation has no durable controller identity".to_owned()
+                RankedError::unavailable("campaign continuation has no durable controller identity")
             })?;
             if controller != host_public_key
                 || receipt.campaign_controller_public_key != controller
@@ -1128,16 +1109,16 @@ async fn acquire_single_player_run_preflight(
                     != ranked_session
                         .campaign_content_manifest_sha256
                         .ok_or_else(|| {
-                            "campaign continuation config has no campaign content manifest"
-                                .to_owned()
+                            RankedError::unavailable(
+                                "campaign continuation config has no campaign content manifest",
+                            )
                         })?
                 || receipt.competition_manifest_sha256 != ranked_session.competition_manifest_sha256
                 || receipt.expected_max_concurrent_players != 1
             {
-                return Err(
-                    "campaign continuation receipt does not match the exact local single-player tuple"
-                        .to_owned(),
-                );
+                return Err(RankedError::rejected(
+                    "campaign continuation receipt does not match the exact local single-player tuple",
+                ));
             }
             let claim = crate::leaderboard_ranked_session::RankedSessionHost::prepare_campaign_continuation_preflight_claim(
                 host_public_key,
@@ -1151,7 +1132,7 @@ async fn acquire_single_player_run_preflight(
                     predecessor_verification_sha256: receipt.predecessor_verification_sha256,
                 },
             )
-            .map_err(|error| error.to_string())?;
+            ?;
             let host_signature = sign_campaign_continuation_preflight_as_host(&claim).await?;
             let controller_signature =
                 sign_campaign_continuation_preflight_as_controller(&claim).await?;
@@ -1160,17 +1141,13 @@ async fn acquire_single_player_run_preflight(
                     claim,
                     host_signature,
                     controller_signature,
-                )
-                .map_err(|error| error.to_string())?;
+                )?;
             let api = preflight_api()?;
-            let task = api
-                .campaign_continuation_preflight_grant(&request)
-                .map_err(|error| error.to_string())?;
+            let task = api.campaign_continuation_preflight_grant(&request)?;
             let grant = crate::leaderboard_service::decode_campaign_continuation_preflight_grant(
-                Ok(task.take().await.map_err(|error| error.to_string())?),
+                Ok(task.take().await?),
                 &request,
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
             crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1::CampaignContinuation {
                 request,
                 grant,
@@ -1184,67 +1161,63 @@ async fn acquire_fresh_run_preflight(
     host_public_key: robin_run_protocol::PublicKey32,
     ranked_session: &robin_run_protocol::RankedSessionConfigV1,
     scope: robin_run_protocol::FreshRunScopeV1,
-) -> Result<crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1, String> {
+) -> Result<crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1, RankedError> {
     let claim =
         crate::leaderboard_ranked_session::RankedSessionHost::prepare_fresh_run_preflight_claim(
             host_public_key,
             ranked_session.clone(),
             scope,
-        )
-        .map_err(|error| error.to_string())?;
+        )?;
     let request = sign_fresh_run_preflight_request(claim).await?;
     let api = preflight_api()?;
-    let task = api
-        .fresh_run_preflight_grant(&request)
-        .map_err(|error| error.to_string())?;
+    let task = api.fresh_run_preflight_grant(&request)?;
     let grant = crate::leaderboard_service::decode_fresh_run_preflight_grant(
-        Ok(task.take().await.map_err(|error| error.to_string())?),
+        Ok(task.take().await?),
         &request,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     Ok(crate::leaderboard_ranked_session::RankedRunPreflightAdmissionV1::Fresh { request, grant })
 }
 
-fn preflight_api() -> Result<LeaderboardApi, String> {
+fn preflight_api() -> Result<LeaderboardApi, RankedError> {
     let preferences = crate::leaderboard_preferences::load()
-        .map_err(|error| format!("load leaderboard preferences: {error}"))?;
+        .map_err(|error| RankedError::from(error).context("load leaderboard preferences"))?;
     LeaderboardApi::from_preferences(&preferences)
-        .map_err(|error| format!("leaderboard endpoint unavailable: {error}"))
+        .map_err(|error| RankedError::from(error).context("leaderboard endpoint unavailable"))
 }
 
 async fn sign_fresh_run_preflight_request(
     claim: robin_run_protocol::FreshRunPreflightRequestClaimV1,
-) -> Result<robin_run_protocol::FreshRunPreflightRequestV1, String> {
+) -> Result<robin_run_protocol::FreshRunPreflightRequestV1, RankedError> {
     PlatformSigner::sign_fresh_run_preflight_request(claim)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(RankedError::from)
 }
 
 async fn sign_campaign_continuation_preflight_as_host(
     claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
-) -> Result<ParticipantSignatureV1, String> {
+) -> Result<ParticipantSignatureV1, RankedError> {
     PlatformSigner::sign_campaign_continuation_preflight_as_host(claim)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(RankedError::from)
 }
 
 async fn sign_campaign_continuation_preflight_as_controller(
     claim: &robin_run_protocol::CampaignContinuationPreflightRequestClaimV1,
-) -> Result<ParticipantSignatureV1, String> {
+) -> Result<ParticipantSignatureV1, RankedError> {
     PlatformSigner::sign_campaign_continuation_preflight_as_controller(claim)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(RankedError::from)
 }
 
 async fn create_official_ranked_session(
     setup: OfficialRankedSessionSetupV1,
-) -> Result<crate::leaderboard_ranked_session::RankedSessionHost, String> {
+) -> Result<crate::leaderboard_ranked_session::RankedSessionHost, RankedError> {
     PlatformSigner::create_official_ranked_session(
         robin_engine::multiplayer::NET_PROTOCOL_VERSION,
         setup,
     )
     .await
-    .map_err(|error| error.to_string())
+    .map_err(RankedError::from)
 }
 
 impl RankedPreFramePlan {
@@ -1409,29 +1382,26 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
     mission_id: &str,
     sim_config: robin_engine::engine::SimConfig,
     starting_campaign: &Campaign,
-) -> Result<RankedMissionAuthority, String> {
+) -> Result<RankedMissionAuthority, RankedError> {
     let preferences = crate::leaderboard_preferences::load()
-        .map_err(|error| format!("load leaderboard preferences: {error}"))?;
+        .map_err(|error| RankedError::from(error).context("load leaderboard preferences"))?;
     if preferences.preferred_competition_id.is_some() {
-        return Err(
-            "competition runs require a server grant before frame zero and are not armed by ordinary mission launch"
-                .to_owned(),
-        );
+        return Err(RankedError::unavailable(
+            "competition runs require a server grant before frame zero and are not armed by ordinary mission launch",
+        ));
     }
     let api = LeaderboardApi::from_preferences(&preferences)
-        .map_err(|error| format!("leaderboard endpoint unavailable: {error}"))?;
-    let metadata = crate::leaderboard_service::decode_metadata(Ok(api
-        .metadata()
-        .map_err(|error| error.to_string())?
-        .take()
-        .await
-        .map_err(|error| error.to_string())?))
-    .map_err(|error| error.to_string())?;
+        .map_err(|error| RankedError::from(error).context("leaderboard endpoint unavailable"))?;
+    let metadata = crate::leaderboard_service::decode_metadata(Ok(api.metadata()?.take().await?))?;
     let mission = metadata
         .missions
         .iter()
         .find(|mission| mission.mission_id == mission_id)
-        .ok_or_else(|| format!("mission `{mission_id}` has no published ranked content"))?;
+        .ok_or_else(|| {
+            RankedError::unavailable(format!(
+                "mission `{mission_id}` has no published ranked content"
+            ))
+        })?;
     if !matches!(
         preferences.preferred_scope,
         LeaderboardScope::IndividualLevel
@@ -1469,23 +1439,17 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
         })
         .collect::<Vec<_>>();
     if candidate_facets.is_empty() {
-        return Err(format!(
+        return Err(RankedError::unavailable(format!(
             "no published {:?} ranked ruleset matches mission `{mission_id}` and the selected facets",
             preferences.preferred_scope
-        ));
+        )));
     }
 
-    let content_task = api
-        .content_manifest(mission.content_manifest_sha256)
-        .map_err(|error| error.to_string())?;
+    let content_task = api.content_manifest(mission.content_manifest_sha256)?;
     let content_manifest = crate::leaderboard_service::decode_content_manifest(
-        Ok(content_task
-            .take()
-            .await
-            .map_err(|error| error.to_string())?),
+        Ok(content_task.take().await?),
         mission.content_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
 
     // A missing UI preference is not authority to pick the lexicographically
     // first board. Resolve every candidate against the exact loaded SimConfig
@@ -1524,13 +1488,13 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
     }
     let [(ruleset, rules_config, published_ruleset)] = exact_matches.as_slice() else {
         return match exact_matches.len() {
-            0 => Err(format!(
+            0 => Err(RankedError::unavailable(format!(
                 "no published ranked facet exactly matches the loaded gameplay configuration ({})",
                 rejected.join("; ")
-            )),
-            count => Err(format!(
+            ))),
+            count => Err(RankedError::unavailable(format!(
                 "{count} published ranked facets match the loaded gameplay configuration; choose an explicit preset and difficulty"
-            )),
+            ))),
         };
     };
     let build_manifest_sha256 = select_current_build(&api, published_ruleset).await?;
@@ -1557,27 +1521,24 @@ async fn fetch_campaign_authority(
     sim_config: robin_engine::engine::SimConfig,
     starting_campaign: &Campaign,
     preferences: &LeaderboardPreferences,
-) -> Result<RankedMissionAuthority, String> {
+) -> Result<RankedMissionAuthority, RankedError> {
     let starting_campaign_bytes = bitcode::encode(starting_campaign);
     if starting_campaign_bytes.is_empty() {
-        return Err("campaign-ranked mission has no exact starting campaign bytes".to_owned());
+        return Err(RankedError::unavailable(
+            "campaign-ranked mission has no exact starting campaign bytes",
+        ));
     }
     let local_public_key = local_ranked_public_key().await?;
     let participant_public_keys = [local_public_key];
-    let store = crate::leaderboard_chains::load()
-        .map_err(|error| format!("load verified campaign-chain receipts: {error}"))?;
+    let store = crate::leaderboard_chains::load().map_err(|error| {
+        RankedError::from(error).context("load verified campaign-chain receipts")
+    })?;
 
-    let content_task = api
-        .content_manifest(mission.content_manifest_sha256)
-        .map_err(|error| error.to_string())?;
+    let content_task = api.content_manifest(mission.content_manifest_sha256)?;
     let content_manifest = crate::leaderboard_service::decode_content_manifest(
-        Ok(content_task
-            .take()
-            .await
-            .map_err(|error| error.to_string())?),
+        Ok(content_task.take().await?),
         mission.content_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
 
     let candidate_facets = metadata
         .rulesets
@@ -1598,9 +1559,9 @@ async fn fetch_campaign_authority(
         })
         .collect::<Vec<_>>();
     if candidate_facets.is_empty() {
-        return Err(format!(
+        return Err(RankedError::unavailable(format!(
             "no published campaign-ranked facet matches mission `{mission_id}` and the selected preset/difficulty"
-        ));
+        )));
     }
 
     let mut exact_matches = Vec::new();
@@ -1613,17 +1574,11 @@ async fn fetch_campaign_authority(
             else {
                 unreachable!("campaign candidate filter fixed full-campaign identity")
             };
-            let catalog_task = api
-                .campaign_content_manifest(campaign_content_manifest_sha256)
-                .map_err(|error| error.to_string())?;
+            let catalog_task = api.campaign_content_manifest(campaign_content_manifest_sha256)?;
             let campaign_content = crate::leaderboard_service::decode_campaign_content_manifest(
-                Ok(catalog_task
-                    .take()
-                    .await
-                    .map_err(|error| error.to_string())?),
+                Ok(catalog_task.take().await?),
                 campaign_content_manifest_sha256,
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
             validate_campaign_content_for_mission(
                 &campaign_content,
                 &content_manifest,
@@ -1642,8 +1597,7 @@ async fn fetch_campaign_authority(
             .await?;
             published_ruleset
                 .manifest
-                .validate_campaign_completion_catalog(&campaign_content)
-                .map_err(|error| error.to_string())?;
+                .validate_campaign_completion_catalog(&campaign_content)?;
             if matches!(preferences.preferred_scope, LeaderboardScope::FullCampaign)
                 && published_ruleset
                     .manifest
@@ -1651,10 +1605,12 @@ async fn fetch_campaign_authority(
                     .binary_search(&RulesetBoardScopeV1::FullCampaign)
                     .is_err()
             {
-                return Err("ruleset does not publish full-campaign boards".to_owned());
+                return Err(RankedError::unavailable(
+                    "ruleset does not publish full-campaign boards",
+                ));
             }
             let build_manifest_sha256 = select_current_build(api, &published_ruleset).await?;
-            Ok::<_, String>((
+            Ok::<_, RankedError>((
                 facet,
                 rules_config,
                 published_ruleset,
@@ -1692,13 +1648,13 @@ async fn fetch_campaign_authority(
     ] = exact_matches.as_slice()
     else {
         return match exact_matches.len() {
-            0 => Err(format!(
+            0 => Err(RankedError::unavailable(format!(
                 "no published campaign facet has exact local authority ({})",
                 rejected.join("; ")
-            )),
-            count => Err(format!(
+            ))),
+            count => Err(RankedError::unavailable(format!(
                 "{count} campaign facets match the exact local state; choose an explicit preset and difficulty"
-            )),
+            ))),
         };
     };
     let receipt = store
@@ -1708,16 +1664,13 @@ async fn fetch_campaign_authority(
                 expected_max_concurrent_players: 1,
                 participant_public_keys: participant_public_keys.to_vec(),
                 campaign_content_manifest_sha256: *campaign_content_manifest_sha256,
-                rules_config_sha256: rules_config
-                    .canonical_digest()
-                    .map_err(|error| error.to_string())?,
+                rules_config_sha256: rules_config.canonical_digest()?,
                 ruleset_manifest_sha256: facet.ruleset_manifest_sha256,
                 competition_manifest_sha256: None,
                 campaign_controller_public_key: local_public_key,
             },
             published_ruleset.manifest.campaign_roster_continuity,
-        )
-        .map_err(|error| error.to_string())?
+        )?
         .cloned();
     let (scope_request, local_campaign_chain_receipt) = match receipt {
         Some(receipt) if receipt.state == robin_run_protocol::CampaignChainStateV1::Active => (
@@ -1727,7 +1680,11 @@ async fn fetch_campaign_authority(
             },
             Some(receipt),
         ),
-        Some(_) => return Err("matching campaign chain is already complete".to_owned()),
+        Some(_) => {
+            return Err(RankedError::unavailable(
+                "matching campaign chain is already complete",
+            ));
+        }
         None => (ScopeRequestV1::CampaignGenesis, None),
     };
     Ok(RankedMissionAuthority {
@@ -1749,23 +1706,22 @@ fn validate_campaign_content_for_mission(
     campaign: &CampaignContentManifestV1,
     content: &ContentManifestV1,
     expected_content_sha256: Digest32,
-) -> Result<(), String> {
-    campaign.validate().map_err(|error| error.to_string())?;
+) -> Result<(), RankedError> {
+    campaign.validate()?;
     if campaign.edition != content.edition
         || campaign.content_for(&content.subject) != Some(expected_content_sha256)
     {
-        return Err(
-            "campaign content catalog does not contain the exact loaded official mission"
-                .to_owned(),
-        );
+        return Err(RankedError::rejected(
+            "campaign content catalog does not contain the exact loaded official mission",
+        ));
     }
     Ok(())
 }
 
-async fn local_ranked_public_key() -> Result<robin_run_protocol::PublicKey32, String> {
+async fn local_ranked_public_key() -> Result<robin_run_protocol::PublicKey32, RankedError> {
     PlatformSigner::public_key()
         .await
-        .map_err(|error| error.to_string())
+        .map_err(RankedError::from)
 }
 
 async fn fetch_and_validate_ruleset_candidate<'a>(
@@ -1783,32 +1739,22 @@ async fn fetch_and_validate_ruleset_candidate<'a>(
         RulesConfigIdentityV1,
         PublishedRulesetV1,
     ),
-    String,
+    RankedError,
 > {
-    let rules_task = api
-        .rules_config(facet.rules_config_sha256)
-        .map_err(|error| error.to_string())?;
-    let published_task = api
-        .published_ruleset(facet.ruleset_manifest_sha256)
-        .map_err(|error| error.to_string())?;
+    let rules_task = api.rules_config(facet.rules_config_sha256)?;
+    let published_task = api.published_ruleset(facet.ruleset_manifest_sha256)?;
     let rules_config = crate::leaderboard_service::decode_rules_config(
-        Ok(rules_task.take().await.map_err(|error| error.to_string())?),
+        Ok(rules_task.take().await?),
         facet.rules_config_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let published_ruleset = crate::leaderboard_service::decode_published_ruleset(
-        Ok(published_task
-            .take()
-            .await
-            .map_err(|error| error.to_string())?),
+        Ok(published_task.take().await?),
         facet.ruleset_manifest_sha256,
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let rules_config = if published_ruleset.manifest.rules_config_constraint
         == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig
     {
-        robin_engine::simulation_inputs::custom_rules_config_v1(&rules_config, sim_config)
-            .map_err(|error| error.to_string())?
+        robin_engine::simulation_inputs::custom_rules_config_v1(&rules_config, sim_config)?
     } else {
         rules_config
     };
@@ -1816,53 +1762,64 @@ async fn fetch_and_validate_ruleset_candidate<'a>(
         mission_id,
         sim_config,
         expected_content_sha256,
-        facet,
-        content_manifest,
-        &rules_config,
-        &published_ruleset,
+        SinglePlayerAuthorityDocuments {
+            facet,
+            content: content_manifest,
+            rules: &rules_config,
+            published: &published_ruleset,
+        },
         required_board_scope,
         campaign_content_manifest_sha256,
     )?;
     Ok((facet, rules_config, published_ruleset))
 }
 
+/// Server documents fetched for one ruleset facet, validated together
+/// against the local mission tuple.
+struct SinglePlayerAuthorityDocuments<'a> {
+    facet: &'a robin_run_protocol::RulesetFacetV1,
+    content: &'a ContentManifestV1,
+    rules: &'a RulesConfigIdentityV1,
+    published: &'a PublishedRulesetV1,
+}
+
 fn validate_single_player_authority(
     mission_id: &str,
     sim_config: robin_engine::engine::SimConfig,
     expected_content_sha256: Digest32,
-    facet: &robin_run_protocol::RulesetFacetV1,
-    content: &ContentManifestV1,
-    rules: &RulesConfigIdentityV1,
-    published: &PublishedRulesetV1,
+    documents: SinglePlayerAuthorityDocuments<'_>,
     required_board_scope: RulesetBoardScopeV1,
     campaign_content_manifest_sha256: Option<Digest32>,
-) -> Result<(), String> {
+) -> Result<(), RankedError> {
+    let SinglePlayerAuthorityDocuments {
+        facet,
+        content,
+        rules,
+        published,
+    } = documents;
     let subject_is_official = official_content_subjects_v1(content.edition)
         .iter()
         .any(|subject| subject == &content.subject);
     if !subject_is_official
         || content.subject.mission_id() != mission_id
         || content.name != official_content_manifest_name_v1(content.edition, &content.subject)
-        || content
-            .canonical_digest()
-            .map_err(|error| error.to_string())?
-            != expected_content_sha256
+        || content.canonical_digest()? != expected_content_sha256
     {
-        return Err(
-            "content manifest is not the exact canonical official mission authority".into(),
-        );
+        return Err(RankedError::rejected(
+            "content manifest is not the exact canonical official mission authority",
+        ));
     }
     let expected_sim_config =
-        robin_engine::simulation_inputs::validate_ranked_simulation_policy_rules_config_v1(rules)
-            .map_err(|error| error.to_string())?
+        robin_engine::simulation_inputs::validate_ranked_simulation_policy_rules_config_v1(rules)?
             .0;
     if expected_sim_config != sim_config {
-        return Err("loaded mission SimConfig differs from the published ranked policy".into());
+        return Err(RankedError::rejected(
+            "loaded mission SimConfig differs from the published ranked policy",
+        ));
     }
     published
         .manifest
-        .validate_ranked_simulation_policy(rules)
-        .map_err(|error| error.to_string())?;
+        .validate_ranked_simulation_policy(rules)?;
     if !matches!(
         published.operational_status,
         RulesetOperationalStatusV1::Active
@@ -1898,7 +1855,9 @@ fn validate_single_player_authority(
             .network_protocol_versions
             .contains(&robin_engine::multiplayer::NET_PROTOCOL_VERSION)
     {
-        return Err("published ruleset does not admit the exact local mission tuple".into());
+        return Err(RankedError::rejected(
+            "published ruleset does not admit the exact local mission tuple",
+        ));
     }
     Ok(())
 }
@@ -1906,27 +1865,22 @@ fn validate_single_player_authority(
 async fn select_current_build(
     api: &LeaderboardApi,
     published: &PublishedRulesetV1,
-) -> Result<Digest32, String> {
+) -> Result<Digest32, RankedError> {
     for digest in &published.manifest.allowed_build_manifest_sha256 {
-        let task = api
-            .build_manifest(*digest)
-            .map_err(|error| error.to_string())?;
-        let build = crate::leaderboard_service::decode_build_manifest(
-            Ok(task.take().await.map_err(|error| error.to_string())?),
-            *digest,
-        )
-        .map_err(|error| error.to_string())?;
+        let task = api.build_manifest(*digest)?;
+        let build =
+            crate::leaderboard_service::decode_build_manifest(Ok(task.take().await?), *digest)?;
         if build_matches_runtime(&build)? {
             return Ok(*digest);
         }
     }
-    Err("no allowlisted verifier build matches this engine and protocol version".to_owned())
+    Err(RankedError::unavailable(
+        "no allowlisted verifier build matches this engine and protocol version",
+    ))
 }
 
-fn build_matches_runtime(build: &VersionedBuildManifest) -> Result<bool, String> {
-    let build = build
-        .backend_visible_v1()
-        .map_err(|error| error.to_string())?;
+fn build_matches_runtime(build: &VersionedBuildManifest) -> Result<bool, RankedError> {
+    let build = build.backend_visible_v1()?;
     Ok(
         build.source_commit == robin_replay_format::ENGINE_VERSION_HASH
             && build.replay_schema_version == robin_engine::replay::REPLAY_SCHEMA_VERSION

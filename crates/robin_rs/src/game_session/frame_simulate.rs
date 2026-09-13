@@ -122,6 +122,241 @@ struct SimulationModalState {
     history_commit_pending: bool,
 }
 
+/// Borrows a finished pause-side UI task outcome is applied to, split out of
+/// `InteractiveFrameSimulation::drive_pause_ui_tasks`.
+///
+/// Not serde: a frame-scoped bundle of borrowed process resources.
+struct UiTaskOutcomeTarget<'a> {
+    window: &'a mut GameWindow,
+    callbacks: &'a mut RustCallbacks,
+    host: &'a mut Host,
+    game: &'a mut Game,
+    input: &'a mut super::interactive::MissionInput,
+    audio: &'a mut super::interactive::MissionAudio,
+    hud: &'a mut super::interactive::MissionHud,
+    ui: &'a mut super::interactive::MissionUi,
+    presentation: &'a mut MissionPresentation,
+    frame: &'a mut MissionFrame,
+}
+
+impl UiTaskOutcomeTarget<'_> {
+    /// Apply one task outcome; returns whether the task requested a mission
+    /// exit.
+    fn apply(self, outcome: UiTaskOutcome) -> bool {
+        match outcome {
+            UiTaskOutcome::ReturnToPause => {
+                let Self {
+                    window,
+                    host,
+                    input,
+                    ui,
+                    presentation,
+                    ..
+                } = self;
+                if let Some(menu) = ui.pause_menu.as_mut() {
+                    menu.reset_after_side_menu();
+                    menu.seed_mouse_from_window(
+                        window,
+                        presentation.renderer.screen_width() as i32,
+                        presentation.renderer.screen_height() as i32,
+                    );
+                }
+                input.reset_after_modal(host);
+            }
+            UiTaskOutcome::OptionsAccepted(result) => self.apply_options_accepted(result),
+            UiTaskOutcome::SaveLoadSelected {
+                mode,
+                filename,
+                mission_id,
+            } => {
+                let Self {
+                    callbacks,
+                    host,
+                    input,
+                    ui,
+                    presentation,
+                    ..
+                } = self;
+                let slot = callbacks
+                    .save_manager
+                    .find_by_filename(&filename)
+                    .ok_or_else(|| anyhow::anyhow!("selected save slot '{filename}' disappeared"))
+                    .and_then(|index| callbacks.save_manager.slot_handle(index));
+                match slot {
+                    Ok(slot) => callbacks.queue_operation(match mode {
+                        SaveLoadMode::Save => SaveLoadRequest::Save {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                        SaveLoadMode::Load => SaveLoadRequest::Load {
+                            slot: Some(slot),
+                            mission_id,
+                        },
+                    }),
+                    Err(error) => {
+                        tracing::error!("Save/load selection rejected: {error:#}")
+                    }
+                }
+                ui.pause_menu = None;
+                presentation.renderer.clear_frozen_scene();
+                input.reset_after_modal(host);
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+            }
+            UiTaskOutcome::QuickLoadAccepted { load } => {
+                self.callbacks
+                    .queue_operation(SaveLoadRequest::ApplyLoad(load));
+                self.input.reset_after_modal(self.host);
+            }
+            UiTaskOutcome::QuickLoadCancelled => {
+                self.input.reset_after_modal(self.host);
+            }
+            UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
+                self.callbacks
+                    .emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                return true;
+            }
+            UiTaskOutcome::MissionEndLeaderboardFinished(controller) => {
+                if let Some(controller) = controller {
+                    self.callbacks.detach_leaderboard_submission(controller);
+                }
+            }
+        }
+        false
+    }
+
+    /// Accepted pause-side Options: persist, apply frontend preferences and
+    /// enqueue the authorized simulation-setting commands.
+    fn apply_options_accepted(self, result: super::ui_task_state::OptionsTaskResult) {
+        let Self {
+            window,
+            host,
+            game,
+            input,
+            audio,
+            hud,
+            ui,
+            presentation,
+            frame,
+            ..
+        } = self;
+        if result.changed {
+            host.application_context()
+                .update_and_retain_player_profiles(|manager| {
+                    let profile = manager
+                        .profiles
+                        .iter_mut()
+                        .find(|profile| profile.id == result.profile_id)
+                        .expect("Options profile disappeared while side task was open");
+                    profile.graphic_config = result.graphic_config.clone();
+                    profile.gameplay_config = result.profile_gameplay_config;
+                    profile.multiplayer_config = result.multiplayer_config;
+                    profile.sound_config = result.profile_sound_config;
+                })
+                .unwrap_or_else(|error| panic!("Options profile update failed: {error}"))
+                .log_persistence_error("Options: failed to save profile manager");
+        }
+
+        let effects = crate::host::FrontendPreferences::new(
+            result.key_config.clone(),
+            result.custom_key_config.clone(),
+            result.profile_gameplay_config,
+            &result.graphic_config,
+        )
+        .apply(&mut host.frontend);
+        // Preserve live side-effect order: cancel planning, update
+        // window/renderer presentation, release tactical control,
+        // then enqueue authorized simulation-setting commands.
+        if effects.cancel_planned_action {
+            dispatch_local_command(
+                &host.transport,
+                &mut frame.stage_post_commands(),
+                &PlayerCommand::CancelPlannedAction,
+            );
+        }
+        window.set_native_refresh_presentation(effects.native_refresh_presentation);
+        presentation.renderer.configure_native_refresh_presentation(
+            effects.native_refresh_presentation,
+            window.surface_config.width,
+            window.surface_config.height,
+        );
+        if effects.release_tactical_control {
+            dispatch_local_command(
+                &host.transport,
+                &mut frame.stage_post_commands(),
+                &PlayerCommand::ReleaseTacticalControl,
+            );
+        }
+        InteractiveFrameSimulation::dispatch_options_simulation_changes(&result, host, frame);
+
+        presentation
+            .renderer
+            .apply_upscale_config(&result.graphic_config);
+        if let Some(backend) = audio.backend.as_mut() {
+            host.audio.sound.apply_sound_settings(
+                false,
+                backend,
+                &result.profile_sound_config,
+                None,
+            );
+        } else {
+            host.audio.sound.apply_volumes(&result.profile_sound_config);
+        }
+
+        if result.resolution_changed {
+            window.set_logical_resolution_policy(&result.graphic_config);
+            presentation.renderer.sync_window_size(window);
+            let (logical_width, logical_height) = window.logical_size();
+            let width = logical_width as f32;
+            let height = logical_height as f32;
+            let width_u16 = logical_width as u16;
+            let height_u16 = logical_height as u16;
+            host.frontend.viewport.set_screen_size(width, height);
+            game.set_resolution(width_u16, height_u16);
+            input.resize(logical_width, logical_height);
+            hud.resize(logical_width, logical_height);
+            if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
+                dispatch_local_command(
+                    &host.transport,
+                    &mut frame.stage_post_commands(),
+                    &PlayerCommand::MinimapResize {
+                        base: engine_coordinates::ScreenPoint::new(width - 83.0, 38.0),
+                        corner_size: host.frontend.resources.mission_surfaces.corner_size(),
+                    },
+                );
+            }
+            game.reshow_campaign_map();
+        }
+        if result.key_config_changed {
+            input
+                .translator
+                .load_bindings_from_keyconfig(&result.key_config);
+        }
+
+        if result.key_config_changed {
+            host.application_context()
+                .with_key_configs_mut(|store| {
+                    let entry = store.entry_or_default(result.profile_id);
+                    entry.active = result.key_config.clone();
+                    entry.custom = result.custom_key_config.clone();
+                    if let Err(error) = store.save() {
+                        tracing::error!("Options: failed to save key configs: {error:#}");
+                    }
+                })
+                .unwrap_or_else(|error| panic!("Options key-config update failed: {error}"));
+            host.frontend.minimap_fast_key = input.translator.get_binding(GameKey::DisplayMap);
+        }
+        if let Some(menu) = ui.pause_menu.as_mut() {
+            menu.reset_after_side_menu();
+            menu.seed_mouse_from_window(
+                window,
+                presentation.renderer.screen_width() as i32,
+                presentation.renderer.screen_height() as i32,
+            );
+        }
+        input.reset_after_modal(host);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum UiTaskModalAdmission {
     Run,
@@ -257,6 +492,35 @@ enum ScriptedModalMode {
     AutoDismiss,
 }
 
+/// Mission state the normal frame tick and its post-tick RPC drain mutate.
+/// There is deliberately no `EngineManager`: frame execution never replaces
+/// snapshots.
+struct SimulationTickWorld<'a> {
+    host: &'a mut Host,
+    game: &'a mut crate::game::Game,
+    engine: &'a mut robin_engine::engine::Engine,
+    assets: &'a robin_engine::engine::LevelAssets,
+    dev: &'a mut robin_engine::engine::DevState,
+}
+
+/// Admission facts for this frame's manual (debugger) timeline movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ManualStepRequest {
+    /// A terminal mission transition is queued behind this frame.
+    pub(super) terminal_exit_pending: bool,
+    pub(super) keyboard_step: KeyboardStep,
+}
+
+/// Frontend borrows a scripted modal lane needs to construct, tick and draw
+/// its modal. Timeline and snapshot authority stay out by construction.
+struct ScriptedModalFrontend<'a> {
+    window: &'a mut GameWindow,
+    audio: &'a mut super::interactive::MissionAudio,
+    resources: &'a mut super::interactive::MissionResources,
+    ui: &'a mut super::interactive::MissionUi,
+    presentation: &'a mut super::interactive::MissionPresentation,
+}
+
 /// Drain the ordered dialogue -> popup/report -> debriefing lanes. An
 /// interactive frame renders at most one lane; headless map export drains all
 /// lanes without presenting them.
@@ -265,15 +529,18 @@ async fn drive_scripted_modal_lanes(
     game: &Game,
     engine: &robin_engine::engine::Engine,
     profiles: &engine_profiles::ProfileManager,
-    window: &mut GameWindow,
-    audio: &mut super::interactive::MissionAudio,
-    resources: &mut super::interactive::MissionResources,
-    ui: &mut super::interactive::MissionUi,
-    presentation: &mut super::interactive::MissionPresentation,
+    frontend: ScriptedModalFrontend<'_>,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     mut rendered: bool,
 ) -> bool {
+    let ScriptedModalFrontend {
+        window,
+        audio,
+        resources,
+        ui,
+        presentation,
+    } = frontend;
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
     if !rendered
         && ui.active_modal.is_none()
@@ -484,15 +751,18 @@ fn drive_leave_mission_prompt(
     host: &mut Host,
     engine: &robin_engine::engine::Engine,
     assets: &robin_engine::engine::LevelAssets,
-    window: &mut GameWindow,
-    audio: &mut super::interactive::MissionAudio,
-    resources: &mut super::interactive::MissionResources,
-    ui: &mut super::interactive::MissionUi,
-    presentation: &mut super::interactive::MissionPresentation,
+    frontend: ScriptedModalFrontend<'_>,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     rendered: bool,
 ) -> bool {
+    let ScriptedModalFrontend {
+        window,
+        audio,
+        resources,
+        ui,
+        presentation,
+    } = frontend;
     if rendered
         || (!host.effects.has_signal(HostSignal::MissionStatePopup) && ui.active_modal.is_none())
     {
@@ -601,7 +871,7 @@ impl InteractiveFrameSimulation {
         self,
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-    ) -> Result<FrameSimulationOutcome, String> {
+    ) -> Result<FrameSimulationOutcome, MissionError> {
         let state = Self::advance_simulation(self, mission, services);
         Self::drive_modals(mission, services, state).await
     }
@@ -615,7 +885,7 @@ impl InteractiveFrameSimulation {
         // File-backed screenshot runs have no player to dismiss a dialogue
         // which appears before their requested frame. Use the established
         // headless auto-dismiss path while retaining normal graphical ticks.
-        let auto_dismiss_modals = args.mission_start_map_output.is_some();
+        let auto_dismiss_modals = args.config.capture.map_output.is_some();
         let InteractiveMission {
             runtime, frontend, ..
         } = mission;
@@ -650,11 +920,13 @@ impl InteractiveFrameSimulation {
         let tick_exit_code = Self::advance_timeline(
             http,
             runtime,
-            host,
-            game,
-            &mut manager.engine,
-            assets,
-            dev,
+            SimulationTickWorld {
+                host: &mut *host,
+                game: &mut *game,
+                engine: &mut manager.engine,
+                assets,
+                dev: &mut *dev,
+            },
             &mut frame,
             execution,
         );
@@ -862,13 +1134,15 @@ impl InteractiveFrameSimulation {
                     assets.as_ref(),
                     dev,
                     &mut frame.stage_post_external_actions(),
-                    &mut presentation.renderer,
-                    &mut resources.cursor,
-                    &mut presentation.sprites.cursor_renderer,
-                    &input.threaded,
-                    &presentation.sprites.portrait_cache,
+                    super::render::CursorFrontend {
+                        renderer: &presentation.renderer,
+                        cursor_res: &mut resources.cursor,
+                        cursor_renderer: &mut presentation.sprites.cursor_renderer,
+                        threaded_input: &input.threaded,
+                        portrait_cache: &presentation.sprites.portrait_cache,
+                        last_cursor_id: &mut hud.last_cursor_id,
+                    },
                     shift_held,
-                    &mut hud.last_cursor_id,
                 );
                 let display_snapshot = host.frontend.presentation.engine_display.clone();
                 presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
@@ -901,7 +1175,7 @@ impl InteractiveFrameSimulation {
                 post_render_engine_cleanup(
                     frame,
                     host.transport.local_seat(),
-                    runtime.playback().is_some(),
+                    runtime.replay().playback().is_some(),
                 );
             }
             let menu_resources =
@@ -940,200 +1214,19 @@ impl InteractiveFrameSimulation {
 
             if let Some(outcome) = task_outcome {
                 task.cleanup();
-                match outcome {
-                    UiTaskOutcome::ReturnToPause => {
-                        if let Some(menu) = ui.pause_menu.as_mut() {
-                            menu.reset_after_side_menu();
-                            menu.seed_mouse_from_window(
-                                window,
-                                presentation.renderer.screen_width() as i32,
-                                presentation.renderer.screen_height() as i32,
-                            );
-                        }
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::OptionsAccepted(result) => {
-                        if result.changed {
-                            host.application_context()
-                                .update_and_retain_player_profiles(|manager| {
-                                    let profile = manager
-                                        .profiles
-                                        .iter_mut()
-                                        .find(|profile| profile.id == result.profile_id)
-                                        .expect(
-                                            "Options profile disappeared while side task was open",
-                                        );
-                                    profile.graphic_config = result.graphic_config.clone();
-                                    profile.gameplay_config = result.profile_gameplay_config;
-                                    profile.multiplayer_config = result.multiplayer_config;
-                                    profile.sound_config = result.profile_sound_config;
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options profile update failed: {error}")
-                                })
-                                .log_persistence_error("Options: failed to save profile manager");
-                        }
-
-                        let effects = crate::host::FrontendPreferences::new(
-                            result.key_config.clone(),
-                            result.custom_key_config.clone(),
-                            result.profile_gameplay_config,
-                            &result.graphic_config,
-                        )
-                        .apply(&mut host.frontend);
-                        // Preserve live side-effect order: cancel planning, update
-                        // window/renderer presentation, release tactical control,
-                        // then enqueue authorized simulation-setting commands.
-                        if effects.cancel_planned_action {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::CancelPlannedAction,
-                            );
-                        }
-                        window.set_native_refresh_presentation(effects.native_refresh_presentation);
-                        presentation.renderer.configure_native_refresh_presentation(
-                            effects.native_refresh_presentation,
-                            window.surface_config.width,
-                            window.surface_config.height,
-                        );
-                        if effects.release_tactical_control {
-                            dispatch_local_command(
-                                &host.transport,
-                                &mut frame.stage_post_commands(),
-                                &PlayerCommand::ReleaseTacticalControl,
-                            );
-                        }
-                        Self::dispatch_options_simulation_changes(&result, host, frame);
-
-                        presentation
-                            .renderer
-                            .apply_upscale_config(&result.graphic_config);
-                        if let Some(backend) = audio.backend.as_mut() {
-                            host.audio.sound.apply_sound_settings(
-                                false,
-                                backend,
-                                &result.profile_sound_config,
-                                None,
-                            );
-                        } else {
-                            host.audio.sound.apply_volumes(&result.profile_sound_config);
-                        }
-
-                        if result.resolution_changed {
-                            window.set_logical_resolution_policy(&result.graphic_config);
-                            presentation.renderer.sync_window_size(window);
-                            let (logical_width, logical_height) = window.logical_size();
-                            let width = logical_width as f32;
-                            let height = logical_height as f32;
-                            let width_u16 = logical_width as u16;
-                            let height_u16 = logical_height as u16;
-                            host.frontend.viewport.set_screen_size(width, height);
-                            game.set_resolution(width_u16, height_u16);
-                            input.resize(logical_width, logical_height);
-                            hud.resize(logical_width, logical_height);
-                            if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
-                                dispatch_local_command(
-                                    &host.transport,
-                                    &mut frame.stage_post_commands(),
-                                    &PlayerCommand::MinimapResize {
-                                        base: engine_coordinates::ScreenPoint::new(
-                                            width - 83.0,
-                                            38.0,
-                                        ),
-                                        corner_size: host
-                                            .frontend
-                                            .resources
-                                            .mission_surfaces
-                                            .corner_size(),
-                                    },
-                                );
-                            }
-                            game.reshow_campaign_map();
-                        }
-                        if result.key_config_changed {
-                            input
-                                .translator
-                                .load_bindings_from_keyconfig(&result.key_config);
-                        }
-
-                        if result.key_config_changed {
-                            host.application_context()
-                                .with_key_configs_mut(|store| {
-                                    let entry = store.entry_or_default(result.profile_id);
-                                    entry.active = result.key_config.clone();
-                                    entry.custom = result.custom_key_config.clone();
-                                    if let Err(error) = store.save() {
-                                        tracing::error!(
-                                            "Options: failed to save key configs: {error:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options key-config update failed: {error}")
-                                });
-                            host.frontend.minimap_fast_key =
-                                input.translator.get_binding(GameKey::DisplayMap);
-                        }
-                        if let Some(menu) = ui.pause_menu.as_mut() {
-                            menu.reset_after_side_menu();
-                            menu.seed_mouse_from_window(
-                                window,
-                                presentation.renderer.screen_width() as i32,
-                                presentation.renderer.screen_height() as i32,
-                            );
-                        }
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::SaveLoadSelected {
-                        mode,
-                        filename,
-                        mission_id,
-                    } => {
-                        let slot = callbacks
-                            .save_manager
-                            .find_by_filename(&filename)
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("selected save slot '{filename}' disappeared")
-                            })
-                            .and_then(|index| callbacks.save_manager.slot_handle(index));
-                        match slot {
-                            Ok(slot) => callbacks.queue_operation(match mode {
-                                SaveLoadMode::Save => SaveLoadRequest::Save {
-                                    slot: Some(slot),
-                                    mission_id,
-                                },
-                                SaveLoadMode::Load => SaveLoadRequest::Load {
-                                    slot: Some(slot),
-                                    mission_id,
-                                },
-                            }),
-                            Err(error) => {
-                                tracing::error!("Save/load selection rejected: {error:#}")
-                            }
-                        }
-                        ui.pause_menu = None;
-                        presentation.renderer.clear_frozen_scene();
-                        input.reset_after_modal(host);
-                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    }
-                    UiTaskOutcome::QuickLoadAccepted { load } => {
-                        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::QuickLoadCancelled => {
-                        input.reset_after_modal(host);
-                    }
-                    UiTaskOutcome::QuitMissionRequested | UiTaskOutcome::ExitRequested => {
-                        callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                        ui_task_exit_requested = true;
-                    }
-                    UiTaskOutcome::MissionEndLeaderboardFinished(controller) => {
-                        if let Some(controller) = controller {
-                            callbacks.detach_leaderboard_submission(controller);
-                        }
-                    }
+                ui_task_exit_requested = UiTaskOutcomeTarget {
+                    window,
+                    callbacks,
+                    host,
+                    game,
+                    input,
+                    audio,
+                    hud,
+                    ui,
+                    presentation,
+                    frame,
                 }
+                .apply(outcome);
             } else {
                 ui.active_ui_task = Some(task);
             }
@@ -1147,7 +1240,7 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
         state: SimulationModalState,
-    ) -> Result<FrameSimulationOutcome, String> {
+    ) -> Result<FrameSimulationOutcome, MissionError> {
         services.callbacks.poll_leaderboard_submissions();
         let mut state = state;
         let ui_task_exit_requested = Self::drive_pause_ui_tasks(mission, services, &mut state);
@@ -1226,11 +1319,13 @@ impl InteractiveFrameSimulation {
                 game,
                 &manager.engine,
                 profiles,
-                window,
-                audio,
-                resources,
-                ui,
-                presentation,
+                ScriptedModalFrontend {
+                    window: &mut *window,
+                    audio: &mut *audio,
+                    resources: &mut *resources,
+                    ui: &mut *ui,
+                    presentation: &mut *presentation,
+                },
                 &mut frame,
                 ScriptedModalMode::Interactive,
                 modal_rendered_this_frame,
@@ -1247,11 +1342,13 @@ impl InteractiveFrameSimulation {
                 host,
                 &manager.engine,
                 assets.as_ref(),
-                window,
-                audio,
-                resources,
-                ui,
-                presentation,
+                ScriptedModalFrontend {
+                    window: &mut *window,
+                    audio: &mut *audio,
+                    resources: &mut *resources,
+                    ui: &mut *ui,
+                    presentation: &mut *presentation,
+                },
                 &mut frame,
                 modal_mode,
                 modal_rendered_this_frame,
@@ -1271,7 +1368,7 @@ impl InteractiveFrameSimulation {
         if ui_task_exit_requested {
             let application_context = host.application_context().clone();
             let requested = frame.begin_post_initialize();
-            let post_initialized = runtime.cross_post_initialize(|| {
+            let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
                     &mut host.audio,
@@ -1298,7 +1395,7 @@ impl InteractiveFrameSimulation {
                 );
             }
             runtime.finish_recording(&mut frame);
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                 GameCode::Quit,
             )));
@@ -1306,7 +1403,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
-            playing_back: runtime.playback().is_some(),
+            playing_back: runtime.replay().playback().is_some(),
             host,
             game,
             manager,
@@ -1329,7 +1426,7 @@ impl InteractiveFrameSimulation {
         {
             let application_context = host.application_context().clone();
             let requested = frame.begin_post_initialize();
-            let post_initialized = runtime.cross_post_initialize(|| {
+            let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
                     &mut host.audio,
@@ -1356,13 +1453,15 @@ impl InteractiveFrameSimulation {
                 );
             }
             runtime.finish_recording(&mut frame);
-            runtime.trace(FrameContractStage::Exit);
+            runtime.lifecycle_mut().trace(FrameContractStage::Exit);
             return Ok(FrameSimulationOutcome::Control(FrameControl::exit(
                 GameCode::Quit,
             )));
         }
 
-        runtime.trace(FrameContractStage::ModalDrain);
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::ModalDrain);
         Ok(FrameSimulationOutcome::Present(FramePresentationHandoff {
             frame,
             rewind_active,
@@ -1378,14 +1477,17 @@ impl InteractiveFrameSimulation {
     fn advance_timeline(
         http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
-        host: &mut Host,
-        game: &mut crate::game::Game,
-        engine: &mut robin_engine::engine::Engine,
-        assets: &robin_engine::engine::LevelAssets,
-        dev: &mut robin_engine::engine::DevState,
+        world: SimulationTickWorld<'_>,
         frame: &mut MissionFrame,
         execution: FrameExecutionMode,
     ) -> Option<GameCode> {
+        let SimulationTickWorld {
+            host,
+            game,
+            engine,
+            assets,
+            dev,
+        } = world;
         // ── Record frame commands + periodic state hash ──
         // The matching `recorder.end_frame()` runs after the modal
         // drain block so `ModalDismiss` entries land in the same
@@ -1395,8 +1497,12 @@ impl InteractiveFrameSimulation {
         // pass). The hash itself was computed at the top of the
         // frame into `frame.recorder_hash` — writing it here
         // keeps the gating in one place.
-        runtime.begin_recording(frame, execution.records_commands());
-        runtime.trace(FrameContractStage::Simulation);
+        runtime
+            .replay_mut()
+            .begin_recording(frame, execution.records_commands());
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::Simulation);
 
         // ── Engine tick ──
         // The pause menu freezes the simulation by skipping the
@@ -1404,8 +1510,8 @@ impl InteractiveFrameSimulation {
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
-        let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
-        let tick_exit_code = runtime.run_simulation(|| {
+        let replay_idle = runtime.replay().playback().is_some() && !frame.has_recorded_input();
+        let tick_exit_code = runtime.lifecycle_mut().run_simulation(|| {
             if replay_idle {
                 frame.admit_simulation();
                 return None;
@@ -1454,14 +1560,16 @@ impl InteractiveFrameSimulation {
         super::runtime::drain_post_tick_rpc(
             http,
             runtime,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            engine,
-            assets,
-            dev,
+            super::runtime::PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut *engine,
+                assets,
+                dev: &mut *dev,
+            },
             frame,
         );
 
@@ -1480,7 +1588,9 @@ impl InteractiveFrameSimulation {
         }
         frame.commit_timeline_after(runtime.current_frame());
 
-        runtime.trace(FrameContractStage::HostRpcAndTimelineCommit);
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::HostRpcAndTimelineCommit);
         tick_exit_code
     }
 
@@ -1494,12 +1604,9 @@ impl InteractiveFrameSimulation {
         save_manager: &crate::savegame::SaveGameManager,
         mutation: super::runtime::MissionMutation<'_>,
         manual_pause: &mut bool,
-        ui: &mut super::interactive::MissionUi,
+        frontend: &mut super::interactive::InteractiveFrontend,
         window: &crate::window::GameWindow,
-        presentation: &mut super::interactive::MissionPresentation,
-        input: &mut super::interactive::MissionInput,
-        terminal_exit_pending: bool,
-        keyboard_step: KeyboardStep,
+        request: ManualStepRequest,
     ) {
         // ── Pending `/step-forward` / `/step-back` requests ──
         let super::runtime::MissionMutation {
@@ -1509,6 +1616,16 @@ impl InteractiveFrameSimulation {
             assets,
             dev,
         } = mutation;
+        let super::interactive::InteractiveFrontend {
+            ui,
+            presentation,
+            input,
+            ..
+        } = frontend;
+        let ManualStepRequest {
+            terminal_exit_pending,
+            keyboard_step,
+        } = request;
         // Run each queued step synchronously with its own tick +
         // bookkeeping (forward) or rewind-buffer seek (back).  These
         // requests intentionally bypass the `paused` gate — their whole
@@ -1538,11 +1655,13 @@ impl InteractiveFrameSimulation {
             },
             runtime,
             manual_pause,
-            &mut ui.active_modal,
-            ui.terminal_debriefing.as_mut(),
-            Some(save_manager),
-            mission_ui_block_reason,
-            None,
+            StepUiGates {
+                active_modal: &mut ui.active_modal,
+                terminal_debriefing: ui.terminal_debriefing.as_mut(),
+                terminal_save_manager: Some(save_manager),
+                mission_ui_block_reason,
+                session_modals: None,
+            },
             |policy| {
                 let Some(kind) = active_ui_task.as_ref().map(ActiveUiTask::kind) else {
                     return Ok(());
@@ -1579,15 +1698,13 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        http.set_replay_status(
-            runtime
-                .playback()
-                .map(|p| crate::http_server::ReplayStatus {
-                    frame: p.current_frame(),
-                    total: p.total_frames(),
-                    paused: *manual_pause,
-                }),
-        );
+        http.set_replay_status(runtime.replay().playback().map(|p| {
+            crate::http_server::ReplayStatus {
+                frame: p.current_frame(),
+                total: p.total_frames(),
+                paused: *manual_pause,
+            }
+        }));
 
         // ── Keyboard-driven single-frame step (`.` / `,`) ──
         // Same bookkeeping as the HTTP `/step-forward` / `/step-back`
@@ -1627,12 +1744,12 @@ impl InteractiveFrameSimulation {
             }
         } else if keyboard_step == KeyboardStep::Back {
             if let Some(target) = runtime.current_frame().previous()
-                && let Some(oldest) = runtime.retained_history().oldest_reachable_frame()
+                && let Some(oldest) = runtime.history().buffer().oldest_reachable_frame()
                 && target.number() >= oldest
             {
-                runtime.begin_rewind_session();
+                runtime.history_mut().begin_rewind_session();
                 let restored = runtime.restore_retained_frame(manager, assets, target);
-                runtime.end_rewind_session();
+                runtime.history_mut().end_rewind_session();
                 if !restored {
                     tracing::warn!("step-back: rewind_to({}) failed", target.number());
                 }
@@ -1774,11 +1891,13 @@ mod tests {
             InteractiveFrameSimulation::advance_timeline(
                 &mut http,
                 &mut timeline,
-                &mut host,
-                &mut game,
-                &mut engine,
-                &assets,
-                &mut dev,
+                super::SimulationTickWorld {
+                    host: &mut host,
+                    game: &mut game,
+                    engine: &mut engine,
+                    assets: &assets,
+                    dev: &mut dev,
+                },
                 &mut frame,
                 mode,
             );

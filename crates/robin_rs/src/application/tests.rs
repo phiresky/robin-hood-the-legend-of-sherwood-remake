@@ -1499,3 +1499,17 @@ fn failed_profile_recovery_revocation_keeps_remote_trust_unavailable() {
     std::fs::remove_file(root.path()).unwrap();
     std::fs::rename(moved, root.path()).unwrap();
 }
+
+#[test]
+fn require_returns_the_value() {
+    assert_eq!(super::require(Ok::<u8, String>(7), "Test Screen"), 7);
+}
+
+#[test]
+#[should_panic(expected = "Test Screen lost its ApplicationContext: lock poisoned")]
+fn require_panics_with_the_screen_name() {
+    super::require(
+        Err::<u8, String>("lock poisoned".to_string()),
+        "Test Screen",
+    );
+}

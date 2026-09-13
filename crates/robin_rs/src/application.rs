@@ -175,7 +175,7 @@ impl Drop for ApplicationServices {
 
 /// Explicit application-owned configuration and persistence context.
 ///
-/// `MissionLaunch` initially carries a bootstrap context containing only parsed
+/// `LaunchConfig` initially carries a bootstrap context containing only parsed
 /// options. `rust_init` supplies the required profile/key/shipping services
 /// before an async game loop begins. Service accessors project the required
 /// owned data while holding a lock, so no lock guard can cross an `.await`.
@@ -1264,6 +1264,17 @@ impl std::ops::Deref for ApplicationContext {
 #[cfg(test)]
 #[path = "application/tests.rs"]
 mod application_context_tests;
+
+/// Unwrap a screen-side `ApplicationContext` accessor result.
+///
+/// Screens run only after rust initialization, so a missing service or a
+/// poisoned lock is a programming error rather than a recoverable condition.
+/// Every screen used to hand-write `unwrap_or_else(|error| panic!(..))` with
+/// its own wording; this is the single panic format for that contract.
+#[track_caller]
+pub fn require<T>(result: Result<T, String>, screen: &str) -> T {
+    result.unwrap_or_else(|error| panic!("{screen} lost its ApplicationContext: {error}"))
+}
 
 fn lock_service<'a, T>(
     lock: &'a std::sync::Mutex<T>,

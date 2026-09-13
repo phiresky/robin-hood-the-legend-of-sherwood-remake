@@ -421,13 +421,7 @@ pub struct CommittedSave {
     digest: [u8; 32],
 }
 
-impl<'de> Deserialize<'de> for CommittedSave {
-    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> std::result::Result<Self, D::Error> {
-        Err(serde::de::Error::custom(
-            "save commit evidence is process-local",
-        ))
-    }
-}
+robin_util::deny_deserialize!(CommittedSave, "save commit evidence is process-local");
 
 impl CommittedSave {
     pub fn slot(&self) -> &SlotHandle {

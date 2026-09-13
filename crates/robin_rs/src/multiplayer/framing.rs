@@ -5,7 +5,7 @@ use super::*;
 /// or oversized control message is rejected before allocating its body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum NetFrameClass {
+pub enum NetFrameClass {
     Control = 0,
     Input = 1,
     Snapshot = 2,
@@ -23,14 +23,51 @@ pub(crate) const MAX_HELLO_FRAME_BYTES: usize = 24 * 1024;
 pub(crate) const MAX_CONTENT_FRAME_BYTES: usize =
     robin_engine::multiplayer::DISTRIBUTED_MOD_CHUNK_LIMIT + 16 * 1024;
 
+/// A frame violated the class, size or decoding rules of the wire framing.
+///
+/// Not serde: a local classification of rejected bytes, never persisted.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum FramingError {
+    #[error("unknown multiplayer frame class {0}")]
+    UnknownClass(u8),
+    #[error("{policy:?} may not send {class:?} frames")]
+    ClassNotAllowed {
+        policy: InboundFramePolicy,
+        class: NetFrameClass,
+    },
+    #[error("inbound {class:?} frame of {len} bytes exceeds {limit}-byte {policy:?} limit")]
+    InboundTooLarge {
+        class: NetFrameClass,
+        len: usize,
+        limit: usize,
+        policy: InboundFramePolicy,
+    },
+    #[error("outbound {class:?} frame of {len} bytes exceeds {limit}-byte limit")]
+    OutboundTooLarge {
+        class: NetFrameClass,
+        len: usize,
+        limit: usize,
+    },
+    #[error("outbound frame exceeds u32")]
+    OutboundExceedsU32,
+    /// The engine codec reports decode failures as text.
+    #[error("decode frame: {0}")]
+    Decode(String),
+    #[error("declared {declared:?} frame decoded as {decoded:?}")]
+    ClassMismatch {
+        declared: NetFrameClass,
+        decoded: NetFrameClass,
+    },
+}
+
 impl NetFrameClass {
-    pub(crate) fn from_byte(value: u8) -> Result<Self, String> {
+    pub(crate) fn from_byte(value: u8) -> Result<Self, FramingError> {
         match value {
             0 => Ok(Self::Control),
             1 => Ok(Self::Input),
             2 => Ok(Self::Snapshot),
             3 => Ok(Self::Content),
-            _ => Err(format!("unknown multiplayer frame class {value}")),
+            _ => Err(FramingError::UnknownClass(value)),
         }
     }
 
@@ -45,7 +82,7 @@ impl NetFrameClass {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InboundFramePolicy {
+pub enum InboundFramePolicy {
     // Browser production transport is client-only; shared framing tests still
     // exercise every direction on both targets.
     #[cfg(any(test, not(target_arch = "wasm32")))]
@@ -117,4 +154,40 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         | NetMsg::LeaderboardCoSignRequest(_)
         | NetMsg::LeaderboardCoSignResponse(_) => NetFrameClass::Control,
     }
+}
+
+/// Write one length-prefixed frame. Shared by the native server, the native
+/// client and the browser client; all three speak iroh bidirectional streams.
+pub(super) async fn write_frame(
+    send: &mut iroh::endpoint::SendStream,
+    msg: &NetMsg,
+) -> Result<(), MultiplayerError> {
+    let (header, bytes) = super::client_protocol::encode_frame(msg)?;
+    send.write_all(&header)
+        .await
+        .map_err(|e| MultiplayerError::transport("write frame header", e))?;
+    send.write_all(&bytes)
+        .await
+        .map_err(|e| MultiplayerError::transport("write frame body", e))?;
+    Ok(())
+}
+
+/// Read one frame.  `Ok(None)` means the stream finished cleanly at a
+/// frame boundary (graceful close).
+pub(super) async fn read_frame(
+    recv: &mut iroh::endpoint::RecvStream,
+    policy: InboundFramePolicy,
+) -> Result<Option<NetMsg>, MultiplayerError> {
+    let mut header = [0u8; 5];
+    match recv.read_exact(&mut header).await {
+        Ok(()) => {}
+        Err(iroh::endpoint::ReadExactError::FinishedEarly(0)) => return Ok(None),
+        Err(e) => return Err(MultiplayerError::transport("read frame header", e)),
+    }
+    let (class, len) = super::client_protocol::decode_header(header, policy)?;
+    let mut buf = vec![0u8; len];
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| MultiplayerError::transport("read frame body", e))?;
+    Ok(Some(super::client_protocol::decode_body(class, &buf)?))
 }

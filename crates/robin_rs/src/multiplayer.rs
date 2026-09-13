@@ -8,46 +8,18 @@
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
 mod clock;
+mod error;
 
-#[cfg(feature = "multiplayer")]
-mod client_gameplay;
-#[cfg(feature = "multiplayer")]
-mod client_outgoing;
-#[cfg(feature = "multiplayer")]
-mod client_protocol;
-#[cfg(feature = "multiplayer")]
-mod content_transfer;
-#[cfg(feature = "multiplayer")]
-pub use client_protocol::ClientSessionMetadata;
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
+pub use clock::{ClockError, current_epoch_ms};
+pub use error::{MessageError, MultiplayerError, SharedError};
 use robin_engine::multiplayer::LeaderboardAuthorizationInbox;
 use robin_engine::multiplayer::LeaderboardCoSignResponse;
-#[cfg(any(test, feature = "multiplayer"))]
-pub(crate) use robin_engine::multiplayer::MultiplayerSessionId;
 use robin_engine::multiplayer::NetChannels as EngineNetChannels;
-#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
-use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
     FrameCursor, InitialSnapshot, NetEvent, NetOutbound, RankedCoSignContextDocument,
     RankedContinuationPreflightClaimDocument, RankedContinuationPreflightSignatureDocument,
     RankedContinuationReceiptSelectionDocument, RankedContinuationReceiptSelectionRequestDocument,
     RankedOfficialSessionSetupDocument, RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
-};
-#[cfg(feature = "multiplayer")]
-pub(crate) use robin_engine::multiplayer::{NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg};
-#[cfg(feature = "multiplayer")]
-pub(crate) use robin_engine::multiplayer::{RankedBrowseOnlyReason, RankedJoinUnavailableReason};
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub(crate) use robin_engine::multiplayer::{
-    RankedJoinAccepted, RankedJoinClaimDocument, RankedParticipantRosterDocument,
-    RankedSessionGenesisDocument,
-};
-#[cfg(feature = "multiplayer")]
-pub(crate) use robin_engine::multiplayer::{
-    RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinResponse,
-    RankedSessionConfigDocument,
 };
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::{
@@ -64,108 +36,25 @@ use crate::leaderboard_ranked_session::{
     SharedRankedSessionLifecycle,
 };
 
-#[cfg(feature = "multiplayer")]
-mod framing;
-#[cfg(feature = "multiplayer")]
-pub(crate) use framing::*;
-
-#[cfg(feature = "multiplayer")]
-mod ranked_client;
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-use ranked_client::decode_ranked_participant_roster;
-#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
-use ranked_client::{ClientLeaderboardCoSignState, ClientRankedJoinState};
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub(crate) use ranked_client::{
-    MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, verify_leaderboard_cosign_response,
-};
-#[cfg(feature = "multiplayer")]
-pub(crate) use ranked_client::{SharedClientLeaderboardCoSignState, SharedClientRankedJoinState};
-
 pub mod content_identity;
-#[cfg(feature = "multiplayer")]
-pub mod identity;
-#[cfg(feature = "multiplayer")]
-pub mod join_ticket;
-#[cfg(feature = "multiplayer")]
-pub use join_ticket::MAX_MULTIPLAYER_PLAYERS;
-#[cfg(not(feature = "multiplayer"))]
+
+/// Most players one multiplayer session admits, host included. Browser join
+/// tickets and the native host both bound `expected_players` by it.
 pub const MAX_MULTIPLAYER_PLAYERS: u32 = 4;
+
+// The one feature gate of the transport: `enabled.rs` mounts the iroh
+// server/client (native) or relay client (browser); `disabled.rs` provides the
+// same names as inert stand-ins whose ranked entry points report that the
+// build has no multiplayer.
 #[cfg(feature = "multiplayer")]
-pub mod matchmaking;
+#[path = "multiplayer/enabled.rs"]
+mod transport;
 #[cfg(not(feature = "multiplayer"))]
-#[path = "multiplayer/matchmaking_disabled.rs"]
-pub mod matchmaking;
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub mod rendezvous;
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-mod native;
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub use native::{
-    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerConfig, ServerHandle,
-    connect_client, connect_client_in_campaign, start_server_in_campaign,
-};
-
-#[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
-mod wasm;
-
-#[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
-pub use wasm::{ClientHandle, connect_client};
-
-/// Owns every worker and platform resource for one multiplayer transport.
-///
-/// Dropping the runtime cancels its workers, closes the iroh endpoint
-/// (ending every peer connection), and joins native threads.
-///
-/// The original game's networking behavior
-/// Original-game network shutdown closes an active session and releases the
-/// DirectPlay object. This runtime preserves that resource-owning RAII
-/// behavior for the port's iroh transport.
-#[cfg(feature = "multiplayer")]
-pub enum MultiplayerRuntime {
-    #[cfg(not(target_arch = "wasm32"))]
-    Server(ServerHandle),
-    Client(ClientHandle),
-}
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-impl From<ServerHandle> for MultiplayerRuntime {
-    fn from(handle: ServerHandle) -> Self {
-        Self::Server(handle)
-    }
-}
-
-#[cfg(feature = "multiplayer")]
-impl From<ClientHandle> for MultiplayerRuntime {
-    fn from(handle: ClientHandle) -> Self {
-        Self::Client(handle)
-    }
-}
-
-#[cfg(feature = "multiplayer")]
-impl MultiplayerRuntime {
-    /// Stop the transport now. Calling this more than once is harmless.
-    pub fn shutdown(&mut self) {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Server(handle) => handle.shutdown(),
-            Self::Client(handle) => handle.shutdown(),
-        }
-    }
-}
-
-#[cfg(feature = "multiplayer")]
-impl Drop for MultiplayerRuntime {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
+#[path = "multiplayer/disabled.rs"]
+mod transport;
+pub use transport::*;
 
 mod ranked_port;
-#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
-use ranked_port::require_admitted_remote_ranked_claim;
 pub(crate) use ranked_port::{
     RankedAuthorizationEvent, RankedMultiplayerPort, RankedMultiplayerRole,
 };
@@ -177,7 +66,6 @@ pub(crate) use ranked_port::{
 /// have closed.
 pub struct NetChannels {
     channels: EngineNetChannels,
-    #[cfg(feature = "multiplayer")]
     runtime: Option<MultiplayerRuntime>,
 }
 
@@ -197,7 +85,6 @@ impl NetChannels {
         (
             Self {
                 channels,
-                #[cfg(feature = "multiplayer")]
                 runtime: None,
             },
             incoming_tx,
@@ -208,105 +95,34 @@ impl NetChannels {
     }
 
     /// Couple the channel bundle to its transport owner.
-    #[cfg(feature = "multiplayer")]
     pub fn attach_runtime(&mut self, runtime: impl Into<MultiplayerRuntime>) {
         assert!(
             self.runtime.is_none(),
             "multiplayer channels already have an attached runtime"
         );
-        self.runtime = Some(runtime.into());
+        // Convert inside `map`: without the feature `MultiplayerRuntime` is
+        // uninhabited, and a direct `Some(runtime.into())` is linted unreachable.
+        self.runtime = Some(runtime).map(Into::into);
     }
 
     /// Create a mission-end ranked authorization capability without lending
     /// the runtime owner or this non-clone channel bundle.
-    #[cfg(feature = "multiplayer")]
-    pub(crate) fn ranked_port(&self) -> Result<RankedMultiplayerPort, String> {
-        let (
-            role,
-            local_seat,
-            lifecycle,
-            authenticated_seats,
-            preflight_lobby,
-            authenticated_host_public_key,
-            local_public_key,
-        ) = match self.runtime.as_ref() {
-            #[cfg(not(target_arch = "wasm32"))]
-            Some(MultiplayerRuntime::Server(handle)) => (
-                RankedMultiplayerRole::Host,
-                handle.ranked_local_seat()?,
-                handle.ranked_lifecycle(),
-                handle.ranked_authenticated_seats(),
-                handle.ranked_preflight_lobby(),
-                Some(handle.ranked_host_public_key()),
-                Some(handle.ranked_host_public_key()),
-            ),
-            Some(MultiplayerRuntime::Client(handle)) => (
-                RankedMultiplayerRole::Client,
-                handle.ranked_local_seat()?,
-                handle.ranked_lifecycle(),
-                Vec::new(),
-                None,
-                handle.ranked_authenticated_host_public_key(),
-                handle.ranked_local_public_key(),
-            ),
-            None => {
-                return Err(
-                    "ranked multiplayer capability requires an attached authenticated runtime"
-                        .to_string(),
-                );
-            }
-        };
-        if (role == RankedMultiplayerRole::Host) != (local_seat == PlayerId::HOST) {
-            return Err("attached multiplayer runtime reported an invalid ranked seat role".into());
-        }
-        Ok(RankedMultiplayerPort {
-            role,
-            local_seat,
-            lifecycle,
-            outgoing: self.channels.outgoing.clone(),
-            authorization_inbox: self.channels.leaderboard_authorization_inbox(),
-            authenticated_seats,
-            preflight_lobby,
-            local_public_key,
-            authenticated_host_public_key,
-        })
-    }
-
-    #[cfg(not(feature = "multiplayer"))]
-    pub(crate) fn ranked_port(&self) -> Result<RankedMultiplayerPort, String> {
-        Err(
-            "ranked multiplayer capability is unavailable without the multiplayer feature"
-                .to_owned(),
-        )
+    pub(crate) fn ranked_port(&self) -> Result<RankedMultiplayerPort, MultiplayerError> {
+        transport::attached_ranked_port(self.runtime.as_ref(), &self.channels)
     }
 
     /// Resolve ranked bootstrap once exact official mission inputs are
     /// prepared. The attached authenticated runtime owns construction of its
     /// role-specific state. `None` explicitly and irreversibly declines ranking.
-    #[cfg(feature = "multiplayer")]
     pub(crate) fn install_ranked_session_setup(
         &self,
         setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
-        match self.runtime.as_ref() {
-            #[cfg(not(target_arch = "wasm32"))]
-            Some(MultiplayerRuntime::Server(handle)) => handle.install_ranked_session_setup(setup),
-            Some(MultiplayerRuntime::Client(handle)) => handle.install_ranked_session_setup(setup),
-            None => Err("ranked setup requires an attached authenticated runtime".to_string()),
-        }
-    }
-
-    #[cfg(not(feature = "multiplayer"))]
-    pub(crate) fn install_ranked_session_setup(
-        &self,
-        _setup: Option<OfficialRankedSessionSetupV1>,
-    ) -> Result<(), String> {
-        Err("ranked multiplayer setup is unavailable without the multiplayer feature".to_owned())
+    ) -> Result<(), MultiplayerError> {
+        transport::install_attached_ranked_session_setup(self.runtime.as_ref(), setup)
     }
 
     /// Explicitly stop and detach the transport. Drop performs the same work.
     pub fn shutdown(&mut self) {
-        #[cfg(feature = "multiplayer")]
         if let Some(mut runtime) = self.runtime.take() {
             runtime.shutdown();
         }
@@ -316,13 +132,8 @@ impl NetChannels {
     /// transport shuts down. Clients require no explicit flag: their durable
     /// browser owner or process-held native key reclaims the retained seat.
     pub(crate) fn preserve_session_for_next_mission(&mut self) {
-        #[cfg(feature = "multiplayer")]
-        match self.runtime.as_mut() {
-            #[cfg(not(target_arch = "wasm32"))]
-            Some(MultiplayerRuntime::Server(handle)) => {
-                handle.preserve_session_for_next_mission();
-            }
-            Some(MultiplayerRuntime::Client(_)) | None => {}
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.preserve_session_for_next_mission();
         }
     }
 }
@@ -337,6 +148,8 @@ impl Deref for NetChannels {
 
 #[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 mod tests {
+    use super::ranked_client::{ClientLeaderboardCoSignState, ClientRankedJoinState};
+    use super::ranked_port::require_admitted_remote_ranked_claim;
     use super::*;
     use crate::distributed_mod::DistributedModPackage;
     use crate::leaderboard_ranked_session::{
@@ -345,9 +158,9 @@ mod tests {
     };
     use crate::multiplayer::native::{
         HostedModContent, connect_client, connect_client_with_key, start_server_with_key,
-        start_server_with_key_and_content,
     };
     use robin_engine::multiplayer::LeaderboardCoSignResponse;
+    use robin_engine::multiplayer::new_frame_cursor;
     use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use robin_run_protocol::{
         Digest32, LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1,
@@ -364,20 +177,20 @@ mod tests {
     }
 
     fn start_owned_server() -> (NetChannels, String) {
-        let (mut channels, incoming_tx, outgoing_rx, frame_cursor, initial_snapshot) =
-            NetChannels::new();
+        let (mut channels, server_channels) = NetChannels::new_server();
         let handle = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            incoming_tx,
-            outgoing_rx,
-            frame_cursor,
-            initial_snapshot,
-            1,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 1,
+                browser_join_enabled: false,
+            },
+            server_channels,
+            None,
         )
         .expect("start server on an ephemeral iroh identity");
         let connect_string = handle.connect_string();
@@ -715,6 +528,7 @@ mod tests {
             mismatch_state
                 .receive_wire_challenge(fixture.challenge.clone())
                 .unwrap_err()
+                .to_string()
                 .contains("does not match")
         );
 
@@ -725,6 +539,7 @@ mod tests {
             state
                 .receive_wire_challenge(fixture.challenge.clone())
                 .unwrap_err()
+                .to_string()
                 .contains("replayed or replaced")
         );
         state.authorize_response(&fixture.response).unwrap();
@@ -791,6 +606,7 @@ mod tests {
             state
                 .receive_wire_challenge(fixture.challenge)
                 .unwrap_err()
+                .to_string()
                 .contains("earlier stream")
         );
         assert_eq!(
@@ -823,6 +639,7 @@ mod tests {
             state
                 .receive_wire_acceptance(substituted_roster)
                 .unwrap_err()
+                .to_string()
                 .contains("changed the immutable participant roster")
         );
         state.receive_wire_acceptance(reconnect_accepted).unwrap();
@@ -1066,6 +883,7 @@ mod tests {
             state
                 .receive_wire_request(continuation)
                 .unwrap_err()
+                .to_string()
                 .contains("duplicate")
         );
 
@@ -1081,6 +899,7 @@ mod tests {
             state
                 .authorize_response(&response)
                 .unwrap_err()
+                .to_string()
                 .contains("duplicate")
         );
     }
@@ -1098,7 +917,7 @@ mod tests {
             let state = ClientLeaderboardCoSignState::default();
             state.arm_request(expected).unwrap();
             let error = state.receive_wire_request(wrong).unwrap_err();
-            assert!(error.contains("does not equal"));
+            assert!(error.to_string().contains("does not equal"));
         }
 
         let mut wrong_session = expected;
@@ -1109,6 +928,7 @@ mod tests {
             state
                 .receive_wire_request(wrong_session)
                 .unwrap_err()
+                .to_string()
                 .contains("does not equal")
         );
         assert_eq!(
@@ -1170,16 +990,22 @@ mod tests {
         };
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            expected_config,
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: expected_config,
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start_server");
         _server
@@ -1285,16 +1111,22 @@ mod tests {
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start server");
         _server
@@ -1355,17 +1187,23 @@ mod tests {
         let server_key = iroh::SecretKey::generate();
         let server_cursor = new_frame_cursor();
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let _server = start_server_with_key_and_content(
+        let _server = start_server_with_key(
             server_key,
-            "host".into(),
-            "TestMission".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "TestMission".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: None,
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
             Some(hosted),
         )
         .expect("start content server");
@@ -1542,16 +1380,22 @@ mod tests {
         let server_snapshot = std::sync::Arc::new(std::sync::Mutex::new(None));
         let _server = start_server_with_key(
             iroh::SecretKey::generate(),
-            "host".into(),
-            "Dem_Lei_MP".into(),
-            42,
-            robin_engine::engine::SimConfig::default(),
-            Some("en-US".into()),
-            server_in_tx,
-            server_out_rx,
-            server_cursor,
-            server_snapshot,
-            2,
+            ServerConfig {
+                host_nickname: "host".into(),
+                mission_id: "Dem_Lei_MP".into(),
+                mission_seed: 42,
+                sim_config: robin_engine::engine::SimConfig::default(),
+                speech_timing_locale: Some("en-US".into()),
+                expected_players: 2,
+                browser_join_enabled: false,
+            },
+            ServerChannels {
+                incoming_tx: server_in_tx,
+                outgoing_rx: server_out_rx,
+                frame_cursor: server_cursor,
+                initial_snapshot: server_snapshot,
+            },
+            None,
         )
         .expect("start_server");
         let (client_in_tx, client_in_rx) = channel::<NetEvent>();

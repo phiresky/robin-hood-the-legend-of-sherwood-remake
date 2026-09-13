@@ -52,14 +52,18 @@ fn run_android(app: AndroidApp) -> anyhow::Result<i32> {
         .map_err(|_| anyhow::anyhow!("Android asset manager was already installed"))?;
     install_android_paths(&app);
 
-    let mut args = crate::main_entry::MissionLaunch::from(crate::main_entry::parse_cli());
-    // The bundled demo would otherwise auto-launch its mission. Keep the full
-    // menu available on Android while preserving all other parsed options.
-    args.force_main_menu = true;
-    // Android does not currently expose the script-RPC endpoint. On some
-    // devices the loopback bind fails with EPERM, so disable the desktop-only
-    // listener without changing other application configuration.
-    args.http_server = 0;
+    let args = crate::main_entry::LaunchConfig::from(crate::main_entry::CliArgs {
+        // The bundled demo would otherwise auto-launch its mission. Keep the
+        // full menu available on Android while preserving all other parsed
+        // options.
+        force_main_menu: true,
+        // Android does not currently expose the script-RPC endpoint. On some
+        // devices the loopback bind fails with EPERM, so disable the
+        // desktop-only listener without changing other application
+        // configuration.
+        http_server: 0,
+        ..crate::main_entry::parse_cli()
+    });
     let shipping = load_bundled_shipping_datadir(&app)?;
     install_bundled_core_overlay()?;
     let (campaign, profiles, application_context) =

@@ -424,24 +424,47 @@ pub(super) struct OptionsTaskState {
         Option<crate::ingame_menu::spellforge_content::SpellforgeContentSettingsState>,
 }
 
+/// Settings the in-game Options task starts from: the active profile's rows,
+/// with deterministic gameplay/sound rows already overridden from the running
+/// mission, plus the untouched profile copies used to restore on cancel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct OptionsSeed {
+    pub(super) profile_id: u32,
+    pub(super) graphic: GraphicConfig,
+    /// Gameplay rows seeded from the active mission's simulation config.
+    pub(super) gameplay: GameplayConfig,
+    pub(super) profile_gameplay: GameplayConfig,
+    pub(super) multiplayer: MultiplayerConfig,
+    /// Sound rows seeded from the active mission's simulation config.
+    pub(super) sound: SoundConfig,
+    pub(super) profile_sound: SoundConfig,
+    pub(super) keys: KeyConfig,
+    pub(super) custom_keys: KeyConfig,
+    pub(super) can_3d_sound: bool,
+    pub(super) host_gameplay_rules_editable: bool,
+}
+
 impl OptionsTaskState {
     pub(super) fn new(
         application_context: &crate::host::ApplicationContext,
         window: &crate::window::GameWindow,
         renderer: &Renderer,
         resources: &IngameMenuResources,
-        profile_id: u32,
-        graphic: GraphicConfig,
-        gameplay: GameplayConfig,
-        profile_gameplay: GameplayConfig,
-        multiplayer: MultiplayerConfig,
-        sound: SoundConfig,
-        profile_sound: SoundConfig,
-        keys: KeyConfig,
-        custom_keys: KeyConfig,
-        can_3d_sound: bool,
-        host_gameplay_rules_editable: bool,
+        seed: OptionsSeed,
     ) -> Self {
+        let OptionsSeed {
+            profile_id,
+            graphic,
+            gameplay,
+            profile_gameplay,
+            multiplayer,
+            sound,
+            profile_sound,
+            keys,
+            custom_keys,
+            can_3d_sound,
+            host_gameplay_rules_editable,
+        } = seed;
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,

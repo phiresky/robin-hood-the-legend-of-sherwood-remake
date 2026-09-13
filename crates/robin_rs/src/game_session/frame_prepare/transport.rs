@@ -15,11 +15,14 @@ pub(super) fn apply_committed_transition(
     engine: &mut Engine,
     operation: &mut GameOperationState,
     pending_load: &mut Option<PendingLevelLoad>,
-) -> Result<GameCode, String> {
+) -> Result<GameCode, crate::game_session::MissionError> {
     let transition_id = transition.id();
     if transition.is_save() {
-        let load = PreparedLoad::from_committed_snapshot(transition)
-            .map_err(|error| format!("committed load admission failed: {error:#}"))?;
+        let load = PreparedLoad::from_committed_snapshot(transition).map_err(|error| {
+            crate::game_session::MissionError::save(format!(
+                "committed load admission failed: {error:#}"
+            ))
+        })?;
         let target_mission_id = load.mission_id();
         *pending_load = Some(PendingLevelLoad::new(load));
         operation.set(GameCode::LevelLoad);

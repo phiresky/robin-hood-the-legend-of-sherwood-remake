@@ -196,7 +196,7 @@ pub const CORE_OVERLAY_DIR: &str = "assets/core-datadir";
 /// resources at the workspace root). The game may be launched from any
 /// working directory since the datadir is resolved independently.
 #[cfg(not(target_arch = "wasm32"))]
-fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
+pub(super) fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
     let mut candidates = vec![PathBuf::from(name)];
     if let Ok(exe) = std::env::current_exe()
         && let Some(exe_dir) = exe.parent()
@@ -207,22 +207,8 @@ fn resolve_install_resource_dir(name: &str) -> Option<std::path::PathBuf> {
     candidates.into_iter().find(|path| path.is_dir())
 }
 
-/// Resolve the repository/install `mods/` directory whose subdirectories
-/// are auto-mounted as overlay datadirs.  `None` when the installation
-/// ships no such directory.  Also scanned by the Custom Missions picker
-/// so overlay-shipped mods (hackable levels) can carry a `details.json`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
-    resolve_install_resource_dir(MODS_DIR)
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn overlay_mods_dir() -> Option<std::path::PathBuf> {
-    None
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
+pub(super) fn add_overlay_data_dirs(files: &SbFileSystem) -> Result<(), InitError> {
     let core_dir = resolve_install_resource_dir(CORE_OVERLAY_DIR).ok_or_else(|| {
         InitError::PlatformCoreOverlay {
             path: PathBuf::from(CORE_OVERLAY_DIR),
@@ -355,7 +341,7 @@ fn add_language_folder() {
 /// runtime pack validation cannot recognize a demo's raw Start.sxt format.
 /// Keep the original English-first order, scoped to this application reader.
 #[cfg(any(test, not(target_arch = "wasm32")))]
-fn add_language_folder_with_files(files: &SbFileSystem) -> Result<(), InitError> {
+pub(super) fn add_language_folder_with_files(files: &SbFileSystem) -> Result<(), InitError> {
     let add = |path: &str| match files.add_alternate_path(path) {
         Ok(()) | Err(SbFileError::PathAlreadyPresent) => Ok(()),
         Err(status) => Err(InitError::DataDirectoryInstall {
@@ -392,153 +378,6 @@ pub fn register_language_data_paths_for_tool() {
     add_language_folder();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn configured_data_dir(explicit: Option<&Path>, environment: Option<String>) -> Option<String> {
-    explicit
-        .map(|dir| dir.to_string_lossy().into_owned())
-        .or_else(|| environment.filter(|dir| !dir.is_empty()))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn install_primary_data_dir(files: &SbFileSystem, path: String) -> Result<(), InitError> {
-    files
-        .set_primary_path(&path)
-        .map_err(|status| InitError::DataDirectoryInstall { path, status })
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-#[test]
-fn explicit_datadir_precedes_environment_without_hiding_an_empty_override() {
-    assert_eq!(
-        configured_data_dir(Some(Path::new("explicit")), Some("environment".into())),
-        Some("explicit".into())
-    );
-    assert_eq!(
-        configured_data_dir(Some(Path::new("")), Some("environment".into())),
-        Some(String::new())
-    );
-    assert_eq!(configured_data_dir(None, Some(String::new())), None);
-    assert_eq!(configured_data_dir(None, None), None);
-    assert_eq!(
-        configured_data_dir(None, Some("environment".into())),
-        Some("environment".into())
-    );
-}
-
-/// Set up the working directory so that `Data/` is accessible.
-///
-/// `data_dir_override` (e.g. a tool's `--data-dir` flag) takes priority
-/// over the `ROBINHOOD_DATA_DIR` environment variable.
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
-    if let Some(data_dir) = data_dir {
-        tracing::info!("using primary datadir {}", data_dir);
-        install_primary_data_dir(files, data_dir)?;
-    } else {
-        // No override and no env var: reuse the remembered datadir, or
-        // auto-detect (working directory, executable directory, well-known
-        // CD/GOG/Steam install locations — validated via Data/robinhood.bks)
-        // and confirm with the player through the native dialog / folder
-        // picker. See `datadir_locator::resolve_datadir`.
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(Path::to_path_buf));
-        // Only non-interactive discovery may fall back to loose, unmarked Data/.
-        // Cancelling the picker must stop startup before installing any data.
-        let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
-        tracing::info!("using primary datadir {}", chosen.display());
-        install_primary_data_dir(files, chosen.to_string_lossy().into_owned())?;
-    }
-
-    // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
-    if !files
-        .try_exists("Data")
-        .map_err(|status| InitError::DataDirectoryInstall {
-            path: "Data".into(),
-            status,
-        })?
-    {
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "?".into());
-        return Err(InitError::DataDirectoryMissing {
-            cwd,
-            gog_store_url: crate::datadir_locator::GOG_STORE_URL,
-        });
-    }
-
-    add_overlay_data_dirs(files)?;
-    add_language_folder_with_files(files)?;
-    Ok(())
-}
-
-#[cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))]
-fn startup_data_dir(
-    resolution: crate::datadir_locator::DataDirResolution,
-) -> Result<PathBuf, InitError> {
-    use crate::datadir_locator::DataDirResolution;
-    match resolution {
-        DataDirResolution::Selected(path) => Ok(path),
-        DataDirResolution::Unavailable => Ok(PathBuf::from(".")),
-        DataDirResolution::Cancelled => Err(InitError::DataDirectoryCancelled),
-    }
-}
-
-#[cfg(all(test, not(target_arch = "wasm32"), not(target_os = "android")))]
-#[test]
-fn datadir_cancellation_does_not_fall_back_to_working_directory() {
-    use crate::datadir_locator::DataDirResolution;
-    assert!(matches!(
-        startup_data_dir(DataDirResolution::Cancelled),
-        Err(InitError::DataDirectoryCancelled)
-    ));
-    assert_eq!(
-        startup_data_dir(DataDirResolution::Unavailable).unwrap(),
-        PathBuf::from(".")
-    );
-    let selected = PathBuf::from("/chosen/game");
-    assert_eq!(
-        startup_data_dir(DataDirResolution::Selected(selected.clone())).unwrap(),
-        selected
-    );
-}
-
-/// Android uses a pre-converted shipping datadir bundled as an APK
-/// asset. If loose files are present (developer override), set the cwd
-/// up the same way as desktop; otherwise rely on the installed
-/// `ShippingDatadir` / `asset_fs` bundle.
-#[cfg(target_os = "android")]
-fn setup_data_dir(data_dir_override: Option<&Path>, files: &SbFileSystem) -> Result<(), InitError> {
-    let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
-    if let Some(data_dir) = data_dir {
-        install_primary_data_dir(files, data_dir)?;
-    }
-
-    if robin_engine::sbfile::resolve_case_insensitive(Path::new("Data")).is_none()
-        && files.mount_snapshot().asset_vfs.is_empty()
-    {
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "?".into());
-        return Err(InitError::DataDirectoryAndroidAssetsMissing { cwd });
-    }
-
-    Ok(())
-}
-
-/// Wasm version: there is no cwd or directory enumeration.  The Data/
-/// prefix is anchored at `ROBINHOOD_DATA_URL` (default `./data`), which
-/// `robin_util::asset_fs` consults for every read.  All we do here is
-/// bootstrap language-folder detection.
-#[cfg(target_arch = "wasm32")]
-fn setup_data_dir(
-    _data_dir_override: Option<&Path>,
-    _files: &SbFileSystem,
-) -> Result<(), InitError> {
-    Ok(())
-}
-
 /// Result tuple for [`rust_init`] / [`rust_init_with_shipping`] /
 /// [`rust_init_finish`]: the loaded campaign, mission profile manager, and
 /// explicit application context (player profiles, key bindings, options,
@@ -561,7 +400,7 @@ pub fn rust_init_with_data_dir(data_dir: Option<&Path>) -> Result<RustInit, Init
     let files = std::sync::Arc::new(SbFileSystem::new(std::sync::Arc::new(
         robin_util::asset_fs::AssetVfs::new(),
     )));
-    setup_data_dir(data_dir, &files)?;
+    super::platform::setup_data_dir(data_dir, &files)?;
     tracing::info!("Robin Hood — Rust entry point");
 
     // Load the shipping datadir if one exists. When present, subsystem
@@ -754,7 +593,7 @@ pub fn rust_init_with_shipping(
             .map(|shipping| shipping.asset_vfs().clone())
             .unwrap_or_else(|| robin_util::asset_fs::global().clone()),
     ));
-    setup_data_dir(None, &files)?;
+    super::platform::setup_data_dir(None, &files)?;
     tracing::info!("Robin Hood — Rust entry point (preinstalled shipping data)");
     rust_init_finish(shipping, files)
 }

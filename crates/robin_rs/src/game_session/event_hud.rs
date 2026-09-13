@@ -240,7 +240,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     let gamepad_gameplay_allowed = !modal_input_active
         && ui.pause_menu.is_none()
         && !ui.console_overlay.is_visible()
-        && runtime.playback().is_none()
+        && runtime.replay().playback().is_none()
         && !rewind_active;
     handle_gamepad_events(
         host,
@@ -257,25 +257,27 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     }
 
     match handle_sherwood_hud_buttons(
-        game,
-        manager,
-        host,
+        SherwoodCtx {
+            game: &mut *game,
+            engine: &mut manager.engine,
+            host: &mut *host,
+            callbacks: &mut *callbacks,
+            assets,
+            window: &mut *window,
+            renderer: &mut presentation.renderer,
+            menu_resources: &mut resources.menu,
+            flow: &mut ui.sherwood_campaign_flow,
+            enable: &mut hud.sherwood_enable,
+        },
         &mut frame.stage_commands(),
-        assets,
-        callbacks,
-        window,
-        &mut presentation.renderer,
-        &resources.menu,
-        &mut ui.sherwood_campaign_flow,
         &events,
         &hud.sherwood_layout,
-        &mut hud.sherwood_enable,
     ) {
         HandlerAction::Proceed => {}
         control => return EventHudOutcome::Control(control),
     }
 
-    let input_suppressed = runtime.playback().is_some() || rewind_active;
+    let input_suppressed = runtime.replay().playback().is_some() || rewind_active;
     let admit_touch = !input_suppressed && crate::touch_plan_hud::platform_has_touch_planning_hud();
     let screen_width = presentation.renderer.screen_width();
     events.retain(|event| {
@@ -468,8 +470,10 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         assets,
         host,
         dev,
-        &events,
-        &keyboard_actions,
+        super::input_handlers::ConsoleOverlayInput {
+            events: &events,
+            kb_actions: &keyboard_actions,
+        },
         &mut input.translator,
         frame,
     );

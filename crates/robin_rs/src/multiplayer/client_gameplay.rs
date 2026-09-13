@@ -4,16 +4,19 @@
 //! owners. In particular, BeginSim must pass the platform's ranked-admission
 //! policy before it can become an event; it is deliberately not decoded here.
 
-use super::{NetEvent, NetMsg};
+use super::{MultiplayerError, NetEvent, NetMsg};
 use std::sync::mpsc::Sender;
 
 /// Local lifecycle delivery is required while the owner exists. A closed
 /// receiver means that owner is gone: callers must stop, not reconnect a
 /// network session that can no longer publish its admission or readiness.
-pub(super) fn deliver(incoming: &Sender<NetEvent>, event: NetEvent) -> Result<(), String> {
-    incoming
-        .send(event)
-        .map_err(|_| "client network event channel is closed".to_owned())
+pub(super) fn deliver(
+    incoming: &Sender<NetEvent>,
+    event: NetEvent,
+) -> Result<(), MultiplayerError> {
+    incoming.send(event).map_err(|_| {
+        MultiplayerError::ChannelClosed("client network event channel is closed".into())
+    })
 }
 
 /// Publish lifecycle notifications in protocol order, stopping at the first
@@ -22,7 +25,7 @@ pub(super) fn deliver(incoming: &Sender<NetEvent>, event: NetEvent) -> Result<()
 pub(super) fn deliver_lifecycle(
     incoming: &Sender<NetEvent>,
     events: impl IntoIterator<Item = NetEvent>,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     events
         .into_iter()
         .try_for_each(|event| deliver(incoming, event))
@@ -67,7 +70,7 @@ pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
 pub(super) fn forward(
     message: NetMsg,
     incoming: &Sender<NetEvent>,
-) -> Result<Option<NetMsg>, String> {
+) -> Result<Option<NetMsg>, MultiplayerError> {
     match decode(message) {
         Ok(event) => {
             deliver(incoming, event)?;

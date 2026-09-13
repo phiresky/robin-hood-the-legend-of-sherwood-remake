@@ -5,8 +5,10 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
+use super::event_hud::InputModifiers;
+use super::live_gameplay::LiveGameplayContext;
 use super::sherwood_flow::{SherwoodCampaignFlow, SherwoodConfirmationAction};
-use super::ui_task_state::{ActiveUiTask, OptionsTaskState, SaveLoadTaskState};
+use super::ui_task_state::{ActiveUiTask, OptionsSeed, OptionsTaskState, SaveLoadTaskState};
 use super::{
     HandlerAction, MissionFrame, dispatch_local_command, dispatch_local_commands,
     required_menu_resources,
@@ -40,7 +42,6 @@ use robin_engine::element as engine_element;
 use robin_engine::element::{Command, Posture};
 use robin_engine::engine as engine_api;
 use robin_engine::engine::Engine;
-use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::game_operation::GameCode;
 use robin_engine::mission as engine_mission;
 use robin_engine::player_command as engine_player_command;
@@ -68,20 +69,13 @@ use robin_engine::tactical_control::{CombatStance, TacticalFormation};
 ///   Right click = cancel / stop / deselect-box completion
 ///   Right drag  = red deselection box
 pub(super) fn handle_mouse_input(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    screen_width: u16,
-    screen_height: u16,
-    portrait_cache: &PortraitCache,
-    frame_cmds: &mut FrameCommands,
+    mut ctx: MouseCtx<'_>,
     events: &[GameEvent],
     pause_menu: Option<&PauseMenu>,
     pause_closed_this_frame: bool,
-    shift_held: bool,
-    planning_held: bool,
-    ctrl_held: bool,
 ) {
+    let engine = ctx.engine;
+    let host = &mut *ctx.host;
     // ── Portrait action countdown ──
     // Decrements once per frame. MakeFast fires on double-click within window.
     if host.frontend.input.gestures.portrait_action_countdown > 0 {
@@ -103,8 +97,8 @@ pub(super) fn handle_mouse_input(
 
     for event in events {
         if matches!(event, GameEvent::WindowFocusChanged(false)) {
-            cancel_left_pointer(host, frame_cmds);
-            host.frontend.lose_pointer_focus();
+            cancel_left_pointer(ctx.host, ctx.frame_cmds);
+            ctx.host.frontend.lose_pointer_focus();
             continue;
         }
         if pause_menu.is_some() || pause_closed_this_frame {
@@ -137,59 +131,39 @@ pub(super) fn handle_mouse_input(
             GameEvent::ViewportPan { .. } => {}
             GameEvent::TouchMotionStop => {}
             GameEvent::PointerCancel => {
-                cancel_left_pointer(host, frame_cmds);
+                cancel_left_pointer(ctx.host, ctx.frame_cmds);
             }
             GameEvent::MouseDown(mx, my, 1, clicks) => {
-                on_left_mouse_down(
-                    engine,
-                    host,
-                    assets,
-                    frame_cmds,
-                    mx,
-                    my,
-                    clicks,
-                    planning_held,
-                );
+                ctx.on_left_mouse_down(mx, my, clicks);
             }
             GameEvent::MouseDown(mx, my, 3, clicks) => {
-                on_right_mouse_down(engine, host, mx, my, clicks, planning_held);
+                ctx.on_right_mouse_down(mx, my, clicks);
             }
             GameEvent::MouseMove { x, y, .. } => {
-                on_mouse_move(engine, host, assets, frame_cmds, x, y, planning_held);
+                ctx.on_mouse_move(x, y);
             }
             GameEvent::MouseUp(mx, my, 1) => {
-                on_left_mouse_up(
-                    engine,
-                    host,
-                    assets,
-                    portrait_cache,
-                    frame_cmds,
-                    screen_width,
-                    screen_height,
-                    mx,
-                    my,
-                    shift_held,
-                    planning_held,
-                    ctrl_held,
-                );
+                ctx.on_left_mouse_up(mx, my);
             }
             GameEvent::MouseUp(mx, my, 3) => {
-                on_right_mouse_up(
-                    engine,
-                    host,
-                    assets,
-                    portrait_cache,
-                    frame_cmds,
-                    screen_width,
-                    screen_height,
-                    mx,
-                    my,
-                    planning_held,
-                );
+                ctx.on_right_mouse_up(mx, my);
             }
             _ => {}
         }
     }
+}
+
+/// Mission borrows and per-frame facts shared by every mouse-event handler.
+pub(super) struct MouseCtx<'a> {
+    pub(super) engine: &'a Engine,
+    pub(super) host: &'a mut Host,
+    pub(super) assets: &'a engine_api::LevelAssets,
+    pub(super) portrait_cache: &'a PortraitCache,
+    pub(super) frame_cmds: &'a mut FrameCommands,
+    pub(super) screen_width: u16,
+    pub(super) screen_height: u16,
+    /// Modifier keys sampled once for the whole event batch.
+    pub(super) modifiers: InputModifiers,
 }
 
 /// Tear down a touch-originated left drag without running any release action.
@@ -215,882 +189,924 @@ fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
 
 // ─── Per-event handlers ─────────────────────────────────────────────
 
-/// Left-mouse-down: begin drags (multi-selection box, swordfight
-/// gesture polyline, per-action drag) and route minimap presses.
-fn on_left_mouse_down(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    frame_cmds: &mut FrameCommands,
-    mx: i32,
-    my: i32,
-    clicks: u8,
-    planning_held: bool,
-) {
-    let local_seat = host.transport.local_seat();
-    {
-        host.frontend.begin_left_pointer(
-            engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
-            clicks,
-        );
+impl MouseCtx<'_> {
+    /// Left-mouse-down: begin drags (multi-selection box, swordfight
+    /// gesture polyline, per-action drag) and route minimap presses.
+    fn on_left_mouse_down(&mut self, mx: i32, my: i32, clicks: u8) {
+        let (engine, assets) = (self.engine, self.assets);
+        let planning_held = self.modifiers.plan;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        {
+            host.frontend.begin_left_pointer(
+                engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
+                clicks,
+            );
 
-        let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
-        let on_minimap = host
-            .frontend
-            .presentation
-            .engine_display
-            .minimap()
-            .is_over_widget(click_pt);
-
-        if on_minimap {
-            let center = host
+            let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
+            let on_minimap = host
                 .frontend
                 .presentation
                 .engine_display
-                .resolve_minimap_center(click_pt, true, host.frontend.viewport.level_size);
-            // Commands are queued until the simulation tick. Capture locally
-            // so a move in this same event batch cannot hit the world.
-            host.frontend.begin_minimap_drag(center.is_some());
-            if let Some(point) = center {
-                host.frontend.viewport.center_on_point(point);
-                dispatch_local_command(
-                    &host.transport,
-                    frame_cmds,
-                    &PlayerCommand::CenterCameraOnPoint { point },
+                .minimap()
+                .is_over_widget(click_pt);
+
+            if on_minimap {
+                let center = host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .resolve_minimap_center(click_pt, true, host.frontend.viewport.level_size);
+                // Commands are queued until the simulation tick. Capture locally
+                // so a move in this same event batch cannot hit the world.
+                host.frontend.begin_minimap_drag(center.is_some());
+                if let Some(point) = center {
+                    host.frontend.viewport.center_on_point(point);
+                    dispatch_local_command(
+                        &host.transport,
+                        frame_cmds,
+                        &PlayerCommand::CenterCameraOnPoint { point },
+                    );
+                }
+                // Minimap click — start drag if map is deployed.
+                // In the event-driven model, MouseDown on the
+                // minimap is inherently "entered nicely".
+                let cmd = PlayerCommand::MinimapMouseDown {
+                    click_pt,
+                    continuing_drag: host
+                        .frontend
+                        .presentation
+                        .engine_display
+                        .minimap()
+                        .drag_start(),
+                };
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                // Don't start multi-selection when clicking minimap
+            } else if !host.frontend.input.ignore_next_drag()
+                && host.frontend.input.controls.has_focus
+                && let Some(map_pt) = host.frontend.viewport.screen_to_map(click_pt)
+            {
+                // Left-drag dispatch:
+                //   - `ignore_next_drag` → entire body skipped.
+                //   - `has_focus == false` (UI widget grabbed
+                //     focus earlier this frame) → skip engine-
+                //     level mouse dispatch.
+                //   - NoAction / HelpToClimb (with posture
+                //     HelpingToClimb) → start multi-selection.
+                //   - NoAction additionally bails on alt or
+                //     locker.
+                //   - Apple / Stone / Hit / HitHard / Heal /
+                //     Lever / Strangle → fire the matching
+                //     drag action (see `resolve_action_drag`).
+                let selected_action = if planning_held {
+                    engine.planned_action_for_seat(local_seat)
+                } else {
+                    engine.selected_action_for_seat(local_seat)
+                };
+                let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(
+                    &engine.presentation_view(),
+                    local_seat,
                 );
+                match selected_action {
+                    Action::HelpToClimb => {
+                        let posture_ok = engine
+                            .hero_selection(local_seat)
+                            .first()
+                            .and_then(|&id| engine.get_entity(id))
+                            .map(|e| e.element_data().posture())
+                            == Some(Posture::HelpingToClimb);
+                        if posture_ok && !is_swordfighting {
+                            host.frontend.input.start_multi_selection(map_pt);
+                        }
+                    }
+                    Action::NoAction
+                        if !engine.is_alt_effective(&host.frontend.input)
+                            && !engine.view_locked()
+                            && !is_swordfighting =>
+                    {
+                        host.frontend.input.start_multi_selection(map_pt);
+                    }
+                    Action::Apple
+                    | Action::Stone
+                    | Action::Hit
+                    | Action::HitHard
+                    | Action::Heal
+                    | Action::Lever
+                    | Action::Strangle
+                        if !planning_held =>
+                    {
+                        let cmds =
+                            crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
+                        dispatch_local_commands(&host.transport, frame_cmds, &cmds);
+                    }
+                    _ => {
+                        // Other actions (Bow, Net, Purse,
+                        // WaspNest, Shield/BigShield, Ale,
+                        // Beggar, Listen, Whistle, Eat, Guzzle)
+                        // have no drag arm — drag is a no-op
+                        // while they're armed.
+                    }
+                }
             }
-            // Minimap click — start drag if map is deployed.
-            // In the event-driven model, MouseDown on the
-            // minimap is inherently "entered nicely".
-            let cmd = PlayerCommand::MinimapMouseDown {
-                click_pt,
-                continuing_drag: host
+        }
+    }
+}
+
+impl MouseCtx<'_> {
+    /// Right-mouse-down: start the deselection drag.  Only `NoAction`
+    /// enables it, and only when not in swordfight, not Alt-held, and not
+    /// Locker-latched — missing any of these guards caused right-drag to
+    /// deselect PCs during swordfight, while an action was armed, etc.
+    fn on_right_mouse_down(&mut self, _mx: i32, _my: i32, clicks: u8) {
+        let engine = self.engine;
+        let planning_held = self.modifiers.plan;
+        let host = &mut *self.host;
+        let local_seat = host.transport.local_seat();
+        {
+            host.frontend.begin_right_pointer(clicks);
+
+            // `has_focus` gate: a UI widget that grabbed
+            // focus this frame blocks the deselection-drag
+            // from starting.
+            let cancelling_planned_action =
+                planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
+            let guard_ok = !cancelling_planned_action
+                && !crate::game_input::is_selected_unit_swordfighting(
+                    &engine.presentation_view(),
+                    local_seat,
+                )
+                && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
+                && !engine.is_alt_effective(&host.frontend.input)
+                && !engine.view_locked()
+                && host.frontend.input.controls.has_focus;
+            if guard_ok
+                && let Some(map_pt) = host
+                    .frontend
+                    .viewport
+                    .screen_to_map(engine_coordinates::ScreenPoint::new(_mx as f32, _my as f32))
+            {
+                host.frontend.input.start_multi_unselection(map_pt);
+            }
+        }
+    }
+}
+
+impl MouseCtx<'_> {
+    /// Mouse-move: swordfight gesture polyline, minimap hover/drag,
+    /// selection-box updates, and the per-frame action-drag dispatch.
+    fn on_mouse_move(&mut self, x: i32, y: i32) {
+        let (engine, assets) = (self.engine, self.assets);
+        let planning_held = self.modifiers.plan;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        {
+            let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
+
+            // While a left drag is in progress and the player
+            // has a swordfighting PC selected (and isn't
+            // holding alt or in another action mode), append
+            // every mouse move to the swordfight gesture
+            // polyline.  Gated on `is_dragging` (not
+            // `left_mouse_down`) so a portrait re-arm on a
+            // double-click stops the append path.
+            if host.frontend.input.is_dragging()
+                && !host.frontend.pointer_capture().minimap_drag_active()
+                && !engine.is_alt_effective(&host.frontend.input)
+                && engine.selected_action_for_seat(local_seat) == Action::NoAction
+                && crate::game_input::is_selected_unit_swordfighting(
+                    &engine.presentation_view(),
+                    local_seat,
+                )
+            {
+                host.frontend.add_gesture_point(mouse_pt);
+            }
+
+            // ── Minimap hover / drag update ──
+            // Single command handles ui_state, entered_nicely,
+            // capture, and drag continuation.
+            let cmd = PlayerCommand::MinimapMouseMove {
+                mouse_pt,
+                left_mouse_down: host.frontend.input.left_mouse_down(),
+                continuing_drag: host.frontend.input.left_mouse_down()
+                    && host
+                        .frontend
+                        .presentation
+                        .engine_display
+                        .minimap()
+                        .drag_start(),
+            };
+            dispatch_local_command(&host.transport, frame_cmds, &cmd);
+
+            if host.frontend.input.left_mouse_down()
+                && host.frontend.pointer_capture().minimap_camera_drag_active()
+                && let Some(point) = host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .resolve_minimap_center(mouse_pt, true, host.frontend.viewport.level_size)
+            {
+                host.frontend.viewport.center_on_point(point);
+            }
+
+            // Multi-selection box drag (only when not minimap-dragging).
+            // Skip the entire drag body while
+            // `ignore_next_drag` is latched — the drag never
+            // started (guarded at MouseDown), so nothing to
+            // update either way; keep the guard for safety.
+            if host.frontend.input.left_mouse_down()
+                && !host.frontend.pointer_capture().minimap_drag_active()
+                && !host
                     .frontend
                     .presentation
                     .engine_display
                     .minimap()
-                    .drag_start(),
-            };
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            // Don't start multi-selection when clicking minimap
-        } else if !host.frontend.input.ignore_next_drag()
-            && host.frontend.input.controls.has_focus
-            && let Some(map_pt) = host.frontend.viewport.screen_to_map(click_pt)
-        {
-            // Left-drag dispatch:
-            //   - `ignore_next_drag` → entire body skipped.
-            //   - `has_focus == false` (UI widget grabbed
-            //     focus earlier this frame) → skip engine-
-            //     level mouse dispatch.
-            //   - NoAction / HelpToClimb (with posture
-            //     HelpingToClimb) → start multi-selection.
-            //   - NoAction additionally bails on alt or
-            //     locker.
-            //   - Apple / Stone / Hit / HitHard / Heal /
-            //     Lever / Strangle → fire the matching
-            //     drag action (see `resolve_action_drag`).
-            let selected_action = if planning_held {
-                engine.planned_action_for_seat(local_seat)
-            } else {
-                engine.selected_action_for_seat(local_seat)
-            };
-            let is_swordfighting = crate::game_input::is_selected_unit_swordfighting(
-                &engine.presentation_view(),
-                local_seat,
-            );
-            match selected_action {
-                Action::HelpToClimb => {
-                    let posture_ok = engine
-                        .hero_selection(local_seat)
-                        .first()
-                        .and_then(|&id| engine.get_entity(id))
-                        .map(|e| e.element_data().posture())
-                        == Some(Posture::HelpingToClimb);
-                    if posture_ok && !is_swordfighting {
-                        host.frontend.input.start_multi_selection(map_pt);
-                    }
-                }
-                Action::NoAction
-                    if !engine.is_alt_effective(&host.frontend.input)
-                        && !engine.view_locked()
-                        && !is_swordfighting =>
-                {
-                    host.frontend.input.start_multi_selection(map_pt);
-                }
-                Action::Apple
-                | Action::Stone
-                | Action::Hit
-                | Action::HitHard
-                | Action::Heal
-                | Action::Lever
-                | Action::Strangle
-                    if !planning_held =>
-                {
+                    .drag_start()
+                && host.frontend.input.multi_selection_active()
+                && !host.frontend.input.ignore_next_drag()
+                && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
+            {
+                host.frontend.input.update_multi_selection(map_pt);
+            }
+            if host.frontend.input.controls.right_mouse_down
+                && host.frontend.input.multi_unselection_active()
+                && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
+            {
+                host.frontend.input.update_multi_selection(map_pt);
+            }
+
+            // ── Action-drag dispatch ──
+            // Fire the armed action on every mouse-move frame
+            // while the left button is held: when an action
+            // like Hit / Apple / Strangle is armed, the moment
+            // the cursor crosses over a focusable target the
+            // command launches immediately (not at MouseUp).
+            //
+            // Skip when dragging over the minimap — the
+            // minimap captures the drag — and when
+            // `ignore_next_drag` has suppressed this drag
+            // cycle.
+            if !planning_held
+                && host.frontend.input.left_mouse_down()
+                && !host.frontend.pointer_capture().minimap_drag_active()
+                && !host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .minimap()
+                    .drag_start()
+                && !host.frontend.input.ignore_next_drag()
+                && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
+            {
+                let selected_action = engine.selected_action_for_seat(local_seat);
+                if matches!(
+                    selected_action,
+                    robin_engine::profiles::Action::Apple
+                        | robin_engine::profiles::Action::Stone
+                        | robin_engine::profiles::Action::Hit
+                        | robin_engine::profiles::Action::HitHard
+                        | robin_engine::profiles::Action::Heal
+                        | robin_engine::profiles::Action::Lever
+                        | robin_engine::profiles::Action::Strangle
+                ) {
                     let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
                     dispatch_local_commands(&host.transport, frame_cmds, &cmds);
                 }
-                _ => {
-                    // Other actions (Bow, Net, Purse,
-                    // WaspNest, Shield/BigShield, Ale,
-                    // Beggar, Listen, Whistle, Eat, Guzzle)
-                    // have no drag arm — drag is a no-op
-                    // while they're armed.
-                }
             }
         }
     }
 }
 
-/// Right-mouse-down: start the deselection drag.  Only `NoAction`
-/// enables it, and only when not in swordfight, not Alt-held, and not
-/// Locker-latched — missing any of these guards caused right-drag to
-/// deselect PCs during swordfight, while an action was armed, etc.
-fn on_right_mouse_down(
-    engine: &Engine,
-    host: &mut Host,
-    _mx: i32,
-    _my: i32,
-    clicks: u8,
-    planning_held: bool,
-) {
-    let local_seat = host.transport.local_seat();
-    {
-        host.frontend.begin_right_pointer(clicks);
+impl MouseCtx<'_> {
+    /// Left-mouse-up: minimap release, box-select completion, portrait
+    /// clicks, or the world left-click resolver.
+    fn on_left_mouse_up(&mut self, mx: i32, my: i32) {
+        let engine = self.engine;
+        let portrait_cache = self.portrait_cache;
+        let (screen_width, screen_height) = (self.screen_width, self.screen_height);
+        let shift_held = self.modifiers.shift;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        {
+            let is_double = host.frontend.release_left_pointer();
 
-        // `has_focus` gate: a UI widget that grabbed
-        // focus this frame blocks the deselection-drag
-        // from starting.
-        let cancelling_planned_action =
-            planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction;
-        let guard_ok = !cancelling_planned_action
-            && !crate::game_input::is_selected_unit_swordfighting(
-                &engine.presentation_view(),
-                local_seat,
-            )
-            && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
-            && !engine.is_alt_effective(&host.frontend.input)
-            && !engine.view_locked()
-            && host.frontend.input.controls.has_focus;
-        if guard_ok
-            && let Some(map_pt) = host
+            // ── Minimap click / drag-end handling ──
+            // Checks dragged flag, dead zone, and dispatches
+            // to open or center-on-click.  Also handles drag
+            // release outside the minimap (cleans up drag
+            // state so it doesn't linger).
+            let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
+            let on_minimap = host
                 .frontend
-                .viewport
-                .screen_to_map(engine_coordinates::ScreenPoint::new(_mx as f32, _my as f32))
-        {
-            host.frontend.input.start_multi_unselection(map_pt);
-        }
-    }
-}
-
-/// Mouse-move: swordfight gesture polyline, minimap hover/drag,
-/// selection-box updates, and the per-frame action-drag dispatch.
-fn on_mouse_move(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    frame_cmds: &mut FrameCommands,
-    x: i32,
-    y: i32,
-    planning_held: bool,
-) {
-    let local_seat = host.transport.local_seat();
-    {
-        let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
-
-        // While a left drag is in progress and the player
-        // has a swordfighting PC selected (and isn't
-        // holding alt or in another action mode), append
-        // every mouse move to the swordfight gesture
-        // polyline.  Gated on `is_dragging` (not
-        // `left_mouse_down`) so a portrait re-arm on a
-        // double-click stops the append path.
-        if host.frontend.input.is_dragging()
-            && !host.frontend.pointer_capture().minimap_drag_active()
-            && !engine.is_alt_effective(&host.frontend.input)
-            && engine.selected_action_for_seat(local_seat) == Action::NoAction
-            && crate::game_input::is_selected_unit_swordfighting(
-                &engine.presentation_view(),
-                local_seat,
-            )
-        {
-            host.frontend.add_gesture_point(mouse_pt);
-        }
-
-        // ── Minimap hover / drag update ──
-        // Single command handles ui_state, entered_nicely,
-        // capture, and drag continuation.
-        let cmd = PlayerCommand::MinimapMouseMove {
-            mouse_pt,
-            left_mouse_down: host.frontend.input.left_mouse_down(),
-            continuing_drag: host.frontend.input.left_mouse_down()
-                && host
+                .presentation
+                .engine_display
+                .minimap()
+                .is_over_widget(click_pt);
+            let minimap_handled = on_minimap
+                || host.frontend.pointer_capture().minimap_drag_active()
+                || host
                     .frontend
                     .presentation
                     .engine_display
                     .minimap()
-                    .drag_start(),
-        };
-        dispatch_local_command(&host.transport, frame_cmds, &cmd);
-
-        if host.frontend.input.left_mouse_down()
-            && host.frontend.pointer_capture().minimap_camera_drag_active()
-            && let Some(point) = host
-                .frontend
-                .presentation
-                .engine_display
-                .resolve_minimap_center(mouse_pt, true, host.frontend.viewport.level_size)
-        {
-            host.frontend.viewport.center_on_point(point);
-        }
-
-        // Multi-selection box drag (only when not minimap-dragging).
-        // Skip the entire drag body while
-        // `ignore_next_drag` is latched — the drag never
-        // started (guarded at MouseDown), so nothing to
-        // update either way; keep the guard for safety.
-        if host.frontend.input.left_mouse_down()
-            && !host.frontend.pointer_capture().minimap_drag_active()
-            && !host
-                .frontend
-                .presentation
-                .engine_display
-                .minimap()
-                .drag_start()
-            && host.frontend.input.multi_selection_active()
-            && !host.frontend.input.ignore_next_drag()
-            && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
-        {
-            host.frontend.input.update_multi_selection(map_pt);
-        }
-        if host.frontend.input.controls.right_mouse_down
-            && host.frontend.input.multi_unselection_active()
-            && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
-        {
-            host.frontend.input.update_multi_selection(map_pt);
-        }
-
-        // ── Action-drag dispatch ──
-        // Fire the armed action on every mouse-move frame
-        // while the left button is held: when an action
-        // like Hit / Apple / Strangle is armed, the moment
-        // the cursor crosses over a focusable target the
-        // command launches immediately (not at MouseUp).
-        //
-        // Skip when dragging over the minimap — the
-        // minimap captures the drag — and when
-        // `ignore_next_drag` has suppressed this drag
-        // cycle.
-        if !planning_held
-            && host.frontend.input.left_mouse_down()
-            && !host.frontend.pointer_capture().minimap_drag_active()
-            && !host
-                .frontend
-                .presentation
-                .engine_display
-                .minimap()
-                .drag_start()
-            && !host.frontend.input.ignore_next_drag()
-            && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
-        {
-            let selected_action = engine.selected_action_for_seat(local_seat);
-            if matches!(
-                selected_action,
-                robin_engine::profiles::Action::Apple
-                    | robin_engine::profiles::Action::Stone
-                    | robin_engine::profiles::Action::Hit
-                    | robin_engine::profiles::Action::HitHard
-                    | robin_engine::profiles::Action::Heal
-                    | robin_engine::profiles::Action::Lever
-                    | robin_engine::profiles::Action::Strangle
-            ) {
-                let cmds = crate::game_input::resolve_action_drag(host, engine, assets, map_pt);
-                dispatch_local_commands(&host.transport, frame_cmds, &cmds);
+                    .drag_start();
+            host.frontend.end_minimap_drag();
+            if minimap_handled {
+                let center_on = host
+                    .frontend
+                    .presentation
+                    .engine_display
+                    .resolve_minimap_center(
+                        click_pt,
+                        on_minimap,
+                        host.frontend.viewport.level_size,
+                    );
+                let cmd = PlayerCommand::MinimapMouseUp { on_minimap };
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                if let Some(point) = center_on {
+                    host.frontend.viewport.center_on_point(point);
+                    dispatch_local_command(
+                        &host.transport,
+                        frame_cmds,
+                        &PlayerCommand::CenterCameraOnPoint { point },
+                    );
+                }
+                host.frontend.input.cancel_multi_selection();
             }
-        }
-    }
-}
 
-/// Left-mouse-up: minimap release, box-select completion, portrait
-/// clicks, or the world left-click resolver.
-fn on_left_mouse_up(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    portrait_cache: &PortraitCache,
-    frame_cmds: &mut FrameCommands,
-    screen_width: u16,
-    screen_height: u16,
-    mx: i32,
-    my: i32,
-    shift_held: bool,
-    planning_held: bool,
-    ctrl_held: bool,
-) {
-    let local_seat = host.transport.local_seat();
-    {
-        let is_double = host.frontend.release_left_pointer();
-
-        // ── Minimap click / drag-end handling ──
-        // Checks dragged flag, dead zone, and dispatches
-        // to open or center-on-click.  Also handles drag
-        // release outside the minimap (cleans up drag
-        // state so it doesn't linger).
-        let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
-        let on_minimap = host
-            .frontend
-            .presentation
-            .engine_display
-            .minimap()
-            .is_over_widget(click_pt);
-        let minimap_handled = on_minimap
-            || host.frontend.pointer_capture().minimap_drag_active()
-            || host
-                .frontend
-                .presentation
-                .engine_display
-                .minimap()
-                .drag_start();
-        host.frontend.end_minimap_drag();
-        if minimap_handled {
-            let center_on = host
-                .frontend
-                .presentation
-                .engine_display
-                .resolve_minimap_center(click_pt, on_minimap, host.frontend.viewport.level_size);
-            let cmd = PlayerCommand::MinimapMouseUp { on_minimap };
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            if let Some(point) = center_on {
-                host.frontend.viewport.center_on_point(point);
-                dispatch_local_command(
-                    &host.transport,
-                    frame_cmds,
-                    &PlayerCommand::CenterCameraOnPoint { point },
-                );
-            }
-            host.frontend.input.cancel_multi_selection();
-        }
-
-        if minimap_handled {
-            // Consumed by minimap — skip normal picking
-        } else if !host.frontend.input.controls.has_focus {
-            // When a UI widget grabbed focus earlier this
-            // frame, the engine-level left-click is
-            // silently dropped. The active multi-selection
-            // drag (if any) is still cleaned up below so
-            // the next frame starts clean.
-        } else if host.frontend.input.multi_selection_active()
-            && host.frontend.input.draw_multi_selection()
-        {
-            // Drag was large enough — box-select all PCs in the area.
-            // Shift adds to existing selection.
-            let cmd = PlayerCommand::BoxSelect {
-                pt1: host.frontend.input.multi_selection_pt1(),
-                pt2: host.frontend.input.multi_selection_pt2(),
-                shift: shift_held,
-            };
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            if host.frontend.preferences().control_tactical_units() {
-                let tactical_cmd = PlayerCommand::BoxSelectTacticalUnits {
+            if minimap_handled {
+                // Consumed by minimap — skip normal picking
+            } else if !host.frontend.input.controls.has_focus {
+                // When a UI widget grabbed focus earlier this
+                // frame, the engine-level left-click is
+                // silently dropped. The active multi-selection
+                // drag (if any) is still cleaned up below so
+                // the next frame starts clean.
+            } else if host.frontend.input.multi_selection_active()
+                && host.frontend.input.draw_multi_selection()
+            {
+                // Drag was large enough — box-select all PCs in the area.
+                // Shift adds to existing selection.
+                let cmd = PlayerCommand::BoxSelect {
                     pt1: host.frontend.input.multi_selection_pt1(),
                     pt2: host.frontend.input.multi_selection_pt2(),
                     shift: shift_held,
                 };
-                dispatch_local_command(&host.transport, frame_cmds, &tactical_cmd);
-            }
-            tracing::info!(
-                "Box-select: {} PCs and {} allied soldiers selected",
-                engine.hero_selection(local_seat).len(),
-                engine.tactical_selection(local_seat).len(),
-            );
-        } else {
-            // Single click (drag too small or no drag started — e.g. panel clicks
-            // where screen_to_map returns None so multi_selection never started).
-            host.frontend.input.cancel_multi_selection();
-
-            // If a swordfight gesture drag was being recorded, the LMB-up
-            // commits that gesture — skip portrait hit-testing so a release
-            // over a portrait doesn't accidentally select that PC.
-            let swordfight_drag = crate::game_input::is_selected_unit_swordfighting(
-                &engine.presentation_view(),
-                local_seat,
-            ) && !host.frontend.mouse_way().is_empty();
-
-            // Check portrait panel first (detailed sub-area hit-test).
-            let portrait_hit = if swordfight_drag {
-                None
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                if host.frontend.preferences().control_tactical_units() {
+                    let tactical_cmd = PlayerCommand::BoxSelectTacticalUnits {
+                        pt1: host.frontend.input.multi_selection_pt1(),
+                        pt2: host.frontend.input.multi_selection_pt2(),
+                        shift: shift_held,
+                    };
+                    dispatch_local_command(&host.transport, frame_cmds, &tactical_cmd);
+                }
+                tracing::info!(
+                    "Box-select: {} PCs and {} allied soldiers selected",
+                    engine.hero_selection(local_seat).len(),
+                    engine.tactical_selection(local_seat).len(),
+                );
             } else {
-                ui_panel::hit_test_portrait_detailed(
+                // Single click (drag too small or no drag started — e.g. panel clicks
+                // where screen_to_map returns None so multi_selection never started).
+                host.frontend.input.cancel_multi_selection();
+
+                // If a swordfight gesture drag was being recorded, the LMB-up
+                // commits that gesture — skip portrait hit-testing so a release
+                // over a portrait doesn't accidentally select that PC.
+                let swordfight_drag = crate::game_input::is_selected_unit_swordfighting(
                     &engine.presentation_view(),
                     local_seat,
-                    portrait_cache,
-                    screen_width,
-                    screen_height,
-                    mx as f32,
-                    my as f32,
-                )
-            };
+                ) && !host.frontend.mouse_way().is_empty();
 
-            if let Some(hit) = portrait_hit {
-                if on_portrait_click(
-                    engine,
-                    host,
-                    assets,
-                    frame_cmds,
-                    &hit,
-                    is_double,
-                    shift_held,
-                    planning_held,
-                    ctrl_held,
-                ) {
-                    // `true` mirrors the original `continue`:
-                    // the click was fully consumed, skip the
-                    // trailing multi-selection cleanup.
-                    return;
+                // Check portrait panel first (detailed sub-area hit-test).
+                let portrait_hit = if swordfight_drag {
+                    None
+                } else {
+                    ui_panel::hit_test_portrait_detailed(
+                        &engine.presentation_view(),
+                        local_seat,
+                        portrait_cache,
+                        screen_width,
+                        screen_height,
+                        mx as f32,
+                        my as f32,
+                    )
+                };
+
+                if let Some(hit) = portrait_hit {
+                    if self.on_portrait_click(&hit, is_double) {
+                        // `true` mirrors the original `continue`:
+                        // the click was fully consumed, skip the
+                        // trailing multi-selection cleanup.
+                        return;
+                    }
+                } else {
+                    self.on_world_click(mx, my, is_double);
                 }
-            } else {
-                on_world_click(
-                    engine,
-                    host,
-                    assets,
-                    frame_cmds,
-                    mx,
-                    my,
-                    shift_held,
-                    planning_held,
-                    ctrl_held,
-                    is_double,
-                );
             }
-        }
 
-        // Clean up multi-selection state at the end of the
-        // left-click handler.
-        host.frontend.input.cancel_selection_gestures();
+            // Clean up multi-selection state at the end of the
+            // left-click handler.
+            self.host.frontend.input.cancel_selection_gestures();
+        }
     }
 }
 
-/// Left-mouse-up on a portrait: quick-action slots, macro commit,
-/// Shield/Heal portrait targeting, burned-portrait widgets, and
-/// portrait (re)selection.
-///
-/// Returns `true` when the click was fully consumed and the caller
-/// must skip its trailing multi-selection cleanup (the paths that were
-/// `continue` statements before extraction).
-fn on_portrait_click(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    frame_cmds: &mut FrameCommands,
-    hit: &ui_panel::PortraitHit,
-    is_double: bool,
-    shift_held: bool,
-    planning_held: bool,
-    ctrl_held: bool,
-) -> bool {
-    let local_seat = host.transport.local_seat();
+impl MouseCtx<'_> {
+    /// Left-mouse-up on a portrait: quick-action slots, macro commit,
+    /// Shield/Heal portrait targeting, burned-portrait widgets, and
+    /// portrait (re)selection.
+    ///
+    /// Returns `true` when the click was fully consumed and the caller
+    /// must skip its trailing multi-selection cleanup (the paths that were
+    /// `continue` statements before extraction).
+    fn on_portrait_click(&mut self, hit: &ui_panel::PortraitHit, is_double: bool) -> bool {
+        let engine = self.engine;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
 
-    if matches!(
-        hit.area,
-        PortraitHitArea::PageLeft | PortraitHitArea::PageRight
-    ) {
-        let delta = if hit.area == PortraitHitArea::PageLeft {
-            -1
-        } else {
-            1
-        };
-        let cmd = PlayerCommand::PageTacticalPortraits { delta };
-        dispatch_local_command(&host.transport, frame_cmds, &cmd);
-        return true;
-    }
+        if matches!(
+            hit.area,
+            PortraitHitArea::PageLeft | PortraitHitArea::PageRight
+        ) {
+            let delta = if hit.area == PortraitHitArea::PageLeft {
+                -1
+            } else {
+                1
+            };
+            let cmd = PlayerCommand::PageTacticalPortraits { delta };
+            dispatch_local_command(&host.transport, frame_cmds, &cmd);
+            return true;
+        }
 
-    if !matches!(hit.target, PortraitTarget::Pc(_)) {
-        let members = match hit.target {
-            PortraitTarget::AlliedSelection => engine.tactical_selection(local_seat),
-            PortraitTarget::AlliedGroup(group_id) => engine
-                .tactical_pinned_groups(local_seat)
-                .iter()
-                .find(|group| group.id == group_id)
-                .unwrap_or_else(|| panic!("portrait references missing allied group {group_id}"))
-                .members
-                .as_slice(),
-            PortraitTarget::Pc(_) => unreachable!(),
-        };
-        match hit.area {
-            PortraitHitArea::Pin => {
-                let cmd = match hit.target {
-                    PortraitTarget::AlliedSelection => PlayerCommand::PinTacticalSelection,
-                    PortraitTarget::AlliedGroup(group_id) => {
-                        PlayerCommand::UnpinTacticalGroup { group_id }
-                    }
-                    PortraitTarget::Pc(_) => unreachable!(),
-                };
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            }
-            PortraitHitArea::AlliedAction(0) => {
-                let stance = members
-                    .first()
-                    .and_then(|id| engine.tactical_order(*id))
-                    .map_or(CombatStance::Defensive, |order| order.stance)
-                    .next();
-                let cmd = PlayerCommand::SetCombatStance {
-                    soldiers: members.to_vec(),
-                    stance,
-                };
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            }
-            PortraitHitArea::AlliedAction(1) => {
-                let formation = members
-                    .first()
-                    .and_then(|id| engine.tactical_order(*id))
-                    .map_or(TacticalFormation::Line, |order| order.formation);
-                host.frontend
-                    .arm_tactical_patrol(members.to_vec(), formation);
-            }
-            PortraitHitArea::AlliedAction(2) => {
-                let formation = members
-                    .first()
-                    .and_then(|id| engine.tactical_order(*id))
-                    .map_or(TacticalFormation::Line, |order| order.formation)
-                    .next();
-                let cmd = PlayerCommand::SetTacticalFormation {
-                    soldiers: members.to_vec(),
-                    formation,
-                };
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            }
-            PortraitHitArea::TopScroll
-            | PortraitHitArea::BottomScroll
-            | PortraitHitArea::Visage => {
-                center_on_reselected_allied_portrait(
-                    host,
-                    engine,
-                    local_seat,
-                    members,
-                    shift_held || ctrl_held,
-                    hit.area,
-                );
-                if let PortraitTarget::AlliedGroup(group_id) = hit.target {
-                    let cmd = PlayerCommand::SelectTacticalGroup {
-                        group_id,
-                        append: shift_held || ctrl_held,
+        if !matches!(hit.target, PortraitTarget::Pc(_)) {
+            self.on_allied_portrait_click(hit);
+            return true;
+        }
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        {
+            let pc_id = hit.pc_id;
+
+            if let PortraitHitArea::QuickAction(slot) = hit.area {
+                let has_macro = engine.has_quick_action(pc_id, slot);
+                let is_recording_slot = engine.is_qa_recording_for(pc_id);
+                if engine.is_recording_macro() && is_recording_slot {
+                    let cmd = PlayerCommand::ChangeQaMemory { slot };
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                } else if has_macro {
+                    let cmd = PlayerCommand::StartMacro {
+                        pc: Some(pc_id),
+                        slot,
                     };
                     dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                } else {
+                    return true;
                 }
-            }
-            _ => {}
-        }
-        return true;
-    }
-    {
-        let pc_id = hit.pc_id;
-
-        if let PortraitHitArea::QuickAction(slot) = hit.area {
-            let has_macro = engine.has_quick_action(pc_id, slot);
-            let is_recording_slot = engine.is_qa_recording_for(pc_id);
-            if engine.is_recording_macro() && is_recording_slot {
-                let cmd = PlayerCommand::ChangeQaMemory { slot };
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            } else if has_macro {
-                let cmd = PlayerCommand::StartMacro {
-                    pc: Some(pc_id),
-                    slot,
-                };
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            } else {
+                host.frontend.input.cancel_selection_gestures();
                 return true;
             }
-            host.frontend.input.cancel_selection_gestures();
-            return true;
-        }
 
-        // ── Portrait click while recording: stop & commit ──
-        // Clicking the portrait of the PC currently
-        // being recorded dispatches a
-        // stop-recording-macro and swallows the
-        // click.  Scoped to visage/scroll areas
-        // (non-action-button, non-burned) so the
-        // portrait body acts as the "commit macro"
-        // button during recording.
-        let macro_stop_handled = !hit.is_burned
-            && !is_double
-            && engine.is_qa_recording_for(pc_id)
-            && matches!(
-                hit.area,
-                PortraitHitArea::TopScroll
-                    | PortraitHitArea::BottomScroll
-                    | PortraitHitArea::Visage
-            );
-        if macro_stop_handled {
-            let cmd = PlayerCommand::StopRecordingMacro;
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            tracing::info!("Portrait click: stop recording macro on slot {}", hit.slot);
-            // Swallow the click.
-            host.frontend.input.cancel_selection_gestures();
-            return true;
-        }
-
-        // ── Shield/Heal portrait targeting ──
-        // When a Shield/BigShield/Heal action is
-        // pending, clicking a non-burned portrait
-        // commits that action on the portrait's PC.
-        let mut portrait_action_handled = macro_stop_handled;
-        if !hit.is_burned && !is_double && !macro_stop_handled {
-            let selected_action = if planning_held {
-                engine.planned_action_for_seat(local_seat)
-            } else {
-                engine.selected_action_for_seat(local_seat)
-            };
-            portrait_action_handled = match selected_action {
-                Action::Heal => {
-                    if crate::game_input::is_valid_heal_portrait_target(engine, pc_id) {
-                        if let Some(&healer_id) = engine.hero_selection(local_seat).first() {
-                            let cmds = vec![
-                                PlayerCommand::LaunchInteraction {
-                                    actor: healer_id,
-                                    target: pc_id,
-                                    command: Command::HealCmd,
-                                    running: false,
-                                },
-                                PlayerCommand::CancelAction { pc_id: healer_id },
-                            ];
-                            let cmds = crate::game_input::queue_shift_click_commands(
-                                cmds,
-                                selected_action,
-                                planning_held,
-                            );
-                            dispatch_local_commands(&host.transport, frame_cmds, &cmds);
-                            tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                }
-                Action::Shield | Action::BigShield => {
-                    if let Some(&shielder_id) = engine.hero_selection(local_seat).first()
-                        && let Some(cmds) = crate::game_input::resolve_shield_portrait_click(
-                            engine,
-                            local_seat,
-                            shielder_id,
-                            pc_id,
-                            planning_held,
-                        )
-                    {
-                        if !cmds.is_empty() {
-                            dispatch_local_commands(&host.transport, frame_cmds, &cmds);
-                            tracing::info!(
-                                "Portrait shield protectee: {:?} → {:?}",
-                                shielder_id,
-                                pc_id
-                            );
-                        }
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            };
-        }
-
-        if portrait_action_handled {
-            // Click consumed by portrait action targeting
-        } else if hit.is_burned {
-            // ── Burned portrait clicks ──
-            match hit.area {
-                PortraitHitArea::Amulet => {
-                    // Amulet click revives from coma.
-                    tracing::info!(
-                        "Portrait amulet click: slot {}, reviving from coma",
-                        hit.slot
-                    );
-                    let cmd = PlayerCommand::ResetComa { pc_id };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                }
-                PortraitHitArea::Guard => {
-                    // Guard click centers on the guard.
-                    if let Some(guard_pos) = engine.get_guard_position(pc_id) {
-                        tracing::info!("Portrait guard click: centering on guard");
-                        host.frontend.viewport.center_on_point(guard_pos);
-                    }
-                }
-                PortraitHitArea::Trumpet => {
-                    // Burned-branch trumpet click
-                    // dispatches `SendReinforcement`,
-                    // which clears `trumpet_enabled`
-                    // (so the player can't queue a
-                    // second replacement while the
-                    // first is in flight), posts the
-                    // PC message, arms
-                    // `time_till_reinforcement`, and
-                    // plays the new-peasant jingle.
-                    tracing::info!(
-                        "Portrait trumpet click: slot {}, requesting reinforcement",
-                        hit.slot
-                    );
-                    let cmd = PlayerCommand::SendReinforcement { pc_id };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                }
-                _ => {
-                    // Other burned areas: no action
-                    // (double-click is a no-op in
-                    // burned state).
-                }
-            }
-        } else if is_double {
-            // ── Double-click on non-burned portrait ──
-            // If the action countdown is active, a
-            // double-click accelerates the
-            // last-dispatched action (MakeFast).
-            if host.frontend.input.gestures.portrait_action_countdown > 0 {
-                if let Some(fast_pc) = host.frontend.input.gestures.portrait_action_pc {
-                    let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                }
-                host.frontend.input.gestures.portrait_action_countdown = 0;
-                host.frontend.input.gestures.portrait_action_pc = None;
-            } else if engine.is_pc_selectable(assets, pc_id) {
-                let cmd = PlayerCommand::SelectPc {
-                    pc_id,
-                    append: false,
-                };
+            // ── Portrait click while recording: stop & commit ──
+            // Clicking the portrait of the PC currently
+            // being recorded dispatches a
+            // stop-recording-macro and swallows the
+            // click.  Scoped to visage/scroll areas
+            // (non-action-button, non-burned) so the
+            // portrait body acts as the "commit macro"
+            // button during recording.
+            let macro_stop_handled = !hit.is_burned
+                && !is_double
+                && engine.is_qa_recording_for(pc_id)
+                && matches!(
+                    hit.area,
+                    PortraitHitArea::TopScroll
+                        | PortraitHitArea::BottomScroll
+                        | PortraitHitArea::Visage
+                );
+            if macro_stop_handled {
+                let cmd = PlayerCommand::StopRecordingMacro;
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                tracing::info!("Portrait double-click: selected slot {}", hit.slot);
-            } else if let Some(ent) = engine.get_entity(pc_id) {
-                host.frontend
-                    .viewport
-                    .center_on_point(ent.position_iface().map_position());
-                tracing::info!("Portrait double-click: centering on non-selectable PC");
+                tracing::info!("Portrait click: stop recording macro on slot {}", hit.slot);
+                // Swallow the click.
+                host.frontend.input.cancel_selection_gestures();
+                return true;
             }
-        } else {
-            // ── Normal click on non-burned portrait ──
+
+            // ── Shield/Heal portrait targeting ──
+            // When a Shield/BigShield/Heal action is
+            // pending, clicking a non-burned portrait
+            // commits that action on the portrait's PC.
+            let mut portrait_action_handled = macro_stop_handled;
+            if !hit.is_burned && !is_double && !macro_stop_handled {
+                portrait_action_handled = self.on_portrait_action_target(hit);
+            }
+
+            if portrait_action_handled {
+                // Click consumed by portrait action targeting
+            } else if hit.is_burned {
+                self.on_burned_portrait_click(hit);
+            } else if is_double {
+                self.on_double_portrait_click(hit);
+            } else {
+                self.on_normal_portrait_click(hit);
+            }
+        }
+        false
+    }
+
+    /// Allied (tactical) portrait click: page, pin, stance/formation/patrol
+    /// buttons and group reselection. The caller treats it as fully consumed.
+    fn on_allied_portrait_click(&mut self, hit: &ui_panel::PortraitHit) {
+        let engine = self.engine;
+        let (shift_held, ctrl_held) = (self.modifiers.shift, self.modifiers.ctrl);
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        {
+            let members = match hit.target {
+                PortraitTarget::AlliedSelection => engine.tactical_selection(local_seat),
+                PortraitTarget::AlliedGroup(group_id) => engine
+                    .tactical_pinned_groups(local_seat)
+                    .iter()
+                    .find(|group| group.id == group_id)
+                    .unwrap_or_else(|| {
+                        panic!("portrait references missing allied group {group_id}")
+                    })
+                    .members
+                    .as_slice(),
+                PortraitTarget::Pc(_) => unreachable!(),
+            };
             match hit.area {
-                PortraitHitArea::ActionButton(btn_idx) => {
-                    // A left click always selects the action. Ammo dropping is
-                    // exclusively a right-click gesture in the original UI.
-                    let Some(profile_action) = engine
-                        .get_entity(pc_id)
-                        .and_then(|entity| entity.pc_data())
-                        .and_then(|pc| {
-                            assets
-                                .profile_manager
-                                .get_character(pc.profile_index)
-                                .and_then(|profile| profile.actions.get(btn_idx as usize))
-                        })
-                        .copied()
-                    else {
-                        tracing::warn!(
-                            "Portrait left-click ignored: missing action {} for {:?}",
-                            btn_idx,
-                            pc_id
-                        );
-                        return false;
+                PortraitHitArea::Pin => {
+                    let cmd = match hit.target {
+                        PortraitTarget::AlliedSelection => PlayerCommand::PinTacticalSelection,
+                        PortraitTarget::AlliedGroup(group_id) => {
+                            PlayerCommand::UnpinTacticalGroup { group_id }
+                        }
+                        PortraitTarget::Pc(_) => unreachable!(),
                     };
-                    let dispatched = portrait_action_dispatchable(
-                        planning_held,
-                        profile_action,
-                        engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
-                    );
-                    if dispatched {
-                        let planned_action = profile_action;
-                        let cmd = if planning_held {
-                            PlayerCommand::SelectPlannedAction {
-                                pc_id,
-                                action: planned_action,
-                            }
-                        } else {
-                            PlayerCommand::SelectAction {
-                                pc_id,
-                                action_index: btn_idx as u32,
-                            }
-                        };
-                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                        host.frontend.input.gestures.portrait_action_countdown = 5;
-                        host.frontend.input.gestures.portrait_action_pc =
-                            engine.hero_selection(local_seat).first().copied();
-
-                        // Action-button click only arms
-                        // the action; the fire-on-target step
-                        // happens on the second click of the
-                        // two-click flow.  The armed-then-fire
-                        // branch lives in the
-                        // `portrait_action_handled` path
-                        // above, which pulls the actor from
-                        // the seat selection, uses the
-                        // clicked portrait's PC as the
-                        // target, and emits a trailing
-                        // `CancelAction`.
-                        //
-                        // Shield/BigShield additionally have a
-                        // two-click danger-point + protected
-                        // state machine that a same-click
-                        // shortcut cannot cover; sticking to
-                        // the two-click flow keeps the path
-                        // consistent.
-
-                        tracing::info!(
-                            "Portrait action button {}: dispatched on slot {}",
-                            btn_idx,
-                            hit.slot
-                        );
-                    } else {
-                        let cmd2 = PlayerCommand::SelectPc {
-                            pc_id,
-                            append: ctrl_held,
-                        };
-                        dispatch_local_command(&host.transport, frame_cmds, &cmd2);
-                        tracing::info!(
-                            "Portrait action button {} disabled on slot {}; selecting PC",
-                            btn_idx,
-                            hit.slot
-                        );
-                    }
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                }
+                PortraitHitArea::AlliedAction(0) => {
+                    let stance = members
+                        .first()
+                        .and_then(|id| engine.tactical_order(*id))
+                        .map_or(CombatStance::Defensive, |order| order.stance)
+                        .next();
+                    let cmd = PlayerCommand::SetCombatStance {
+                        soldiers: members.to_vec(),
+                        stance,
+                    };
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                }
+                PortraitHitArea::AlliedAction(1) => {
+                    let formation = members
+                        .first()
+                        .and_then(|id| engine.tactical_order(*id))
+                        .map_or(TacticalFormation::Line, |order| order.formation);
+                    host.frontend
+                        .arm_tactical_patrol(members.to_vec(), formation);
+                }
+                PortraitHitArea::AlliedAction(2) => {
+                    let formation = members
+                        .first()
+                        .and_then(|id| engine.tactical_order(*id))
+                        .map_or(TacticalFormation::Line, |order| order.formation)
+                        .next();
+                    let cmd = PlayerCommand::SetTacticalFormation {
+                        soldiers: members.to_vec(),
+                        formation,
+                    };
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
                 }
                 PortraitHitArea::TopScroll
                 | PortraitHitArea::BottomScroll
                 | PortraitHitArea::Visage => {
-                    center_on_reselected_portrait_pc(
-                        host, engine, local_seat, pc_id, ctrl_held, hit.area,
+                    center_on_reselected_allied_portrait(
+                        host,
+                        engine,
+                        local_seat,
+                        members,
+                        shift_held || ctrl_held,
+                        hit.area,
                     );
-                    let cmd = PlayerCommand::SelectPc {
-                        pc_id,
-                        append: ctrl_held,
-                    };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                    tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
+                    if let PortraitTarget::AlliedGroup(group_id) = hit.target {
+                        let cmd = PlayerCommand::SelectTacticalGroup {
+                            group_id,
+                            append: shift_held || ctrl_held,
+                        };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    }
                 }
-                PortraitHitArea::QuickAction(_) => {
-                    let cmd = PlayerCommand::SelectPc {
-                        pc_id,
-                        append: ctrl_held,
-                    };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                    tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
-                }
-                // Amulet / Guard / Trumpet only matter on burned portraits,
-                // which branch earlier; on a non-burned portrait these
-                // areas don't exist, but if the hit-tester returns them
-                // we fall back to a plain select rather than dropping
-                // the click.
-                PortraitHitArea::Amulet | PortraitHitArea::Guard | PortraitHitArea::Trumpet => {
-                    let cmd = PlayerCommand::SelectPc {
-                        pc_id,
-                        append: ctrl_held,
-                    };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                }
-                PortraitHitArea::AlliedAction(_)
-                | PortraitHitArea::Pin
-                | PortraitHitArea::PageLeft
-                | PortraitHitArea::PageRight => {
-                    unreachable!("allied portrait hit reached PC portrait handling")
+                _ => {}
+            }
+        }
+    }
+
+    /// Shield/Heal portrait targeting on a non-burned, single-clicked PC
+    /// portrait. Returns whether the pending action consumed the click.
+    fn on_portrait_action_target(&mut self, hit: &ui_panel::PortraitHit) -> bool {
+        let engine = self.engine;
+        let planning_held = self.modifiers.plan;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        let pc_id = hit.pc_id;
+        {
+            {
+                let selected_action = if planning_held {
+                    engine.planned_action_for_seat(local_seat)
+                } else {
+                    engine.selected_action_for_seat(local_seat)
+                };
+                match selected_action {
+                    Action::Heal => {
+                        if crate::game_input::is_valid_heal_portrait_target(engine, pc_id) {
+                            if let Some(&healer_id) = engine.hero_selection(local_seat).first() {
+                                let cmds = vec![
+                                    PlayerCommand::LaunchInteraction {
+                                        actor: healer_id,
+                                        target: pc_id,
+                                        command: Command::HealCmd,
+                                        running: false,
+                                    },
+                                    PlayerCommand::CancelAction { pc_id: healer_id },
+                                ];
+                                let cmds = crate::game_input::queue_shift_click_commands(
+                                    cmds,
+                                    selected_action,
+                                    planning_held,
+                                );
+                                dispatch_local_commands(&host.transport, frame_cmds, &cmds);
+                                tracing::info!("Portrait heal: {:?} → heal {:?}", healer_id, pc_id);
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                    Action::Shield | Action::BigShield => {
+                        if let Some(&shielder_id) = engine.hero_selection(local_seat).first()
+                            && let Some(cmds) = crate::game_input::resolve_shield_portrait_click(
+                                engine,
+                                local_seat,
+                                shielder_id,
+                                pc_id,
+                                planning_held,
+                            )
+                        {
+                            if !cmds.is_empty() {
+                                dispatch_local_commands(&host.transport, frame_cmds, &cmds);
+                                tracing::info!(
+                                    "Portrait shield protectee: {:?} → {:?}",
+                                    shielder_id,
+                                    pc_id
+                                );
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
                 }
             }
         }
     }
-    false
+
+    /// Click on a burned (coma / replaced) PC portrait: amulet, guard and
+    /// trumpet widgets.
+    fn on_burned_portrait_click(&mut self, hit: &ui_panel::PortraitHit) {
+        let engine = self.engine;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let pc_id = hit.pc_id;
+        {
+            {
+                // ── Burned portrait clicks ──
+                match hit.area {
+                    PortraitHitArea::Amulet => {
+                        // Amulet click revives from coma.
+                        tracing::info!(
+                            "Portrait amulet click: slot {}, reviving from coma",
+                            hit.slot
+                        );
+                        let cmd = PlayerCommand::ResetComa { pc_id };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    }
+                    PortraitHitArea::Guard => {
+                        // Guard click centers on the guard.
+                        if let Some(guard_pos) = engine.get_guard_position(pc_id) {
+                            tracing::info!("Portrait guard click: centering on guard");
+                            host.frontend.viewport.center_on_point(guard_pos);
+                        }
+                    }
+                    PortraitHitArea::Trumpet => {
+                        // Burned-branch trumpet click
+                        // dispatches `SendReinforcement`,
+                        // which clears `trumpet_enabled`
+                        // (so the player can't queue a
+                        // second replacement while the
+                        // first is in flight), posts the
+                        // PC message, arms
+                        // `time_till_reinforcement`, and
+                        // plays the new-peasant jingle.
+                        tracing::info!(
+                            "Portrait trumpet click: slot {}, requesting reinforcement",
+                            hit.slot
+                        );
+                        let cmd = PlayerCommand::SendReinforcement { pc_id };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    }
+                    _ => {
+                        // Other burned areas: no action
+                        // (double-click is a no-op in
+                        // burned state).
+                    }
+                }
+            }
+        }
+    }
+
+    /// Double-click on a non-burned PC portrait: MakeFast, select, or center.
+    fn on_double_portrait_click(&mut self, hit: &ui_panel::PortraitHit) {
+        let (engine, assets) = (self.engine, self.assets);
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let pc_id = hit.pc_id;
+        {
+            {
+                // ── Double-click on non-burned portrait ──
+                // If the action countdown is active, a
+                // double-click accelerates the
+                // last-dispatched action (MakeFast).
+                if host.frontend.input.gestures.portrait_action_countdown > 0 {
+                    if let Some(fast_pc) = host.frontend.input.gestures.portrait_action_pc {
+                        let cmd = PlayerCommand::MakePcFast { pc_id: fast_pc };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    }
+                    host.frontend.input.gestures.portrait_action_countdown = 0;
+                    host.frontend.input.gestures.portrait_action_pc = None;
+                } else if engine.is_pc_selectable(assets, pc_id) {
+                    let cmd = PlayerCommand::SelectPc {
+                        pc_id,
+                        append: false,
+                    };
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    tracing::info!("Portrait double-click: selected slot {}", hit.slot);
+                } else if let Some(ent) = engine.get_entity(pc_id) {
+                    host.frontend
+                        .viewport
+                        .center_on_point(ent.position_iface().map_position());
+                    tracing::info!("Portrait double-click: centering on non-selectable PC");
+                }
+            }
+        }
+    }
+
+    /// Single click on a non-burned PC portrait: action buttons, reselection
+    /// and plain selection.
+    fn on_normal_portrait_click(&mut self, hit: &ui_panel::PortraitHit) {
+        let (engine, assets) = (self.engine, self.assets);
+        let (planning_held, ctrl_held) = (self.modifiers.plan, self.modifiers.ctrl);
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        let pc_id = hit.pc_id;
+        {
+            {
+                // ── Normal click on non-burned portrait ──
+                match hit.area {
+                    PortraitHitArea::ActionButton(btn_idx) => {
+                        // A left click always selects the action. Ammo dropping is
+                        // exclusively a right-click gesture in the original UI.
+                        let Some(profile_action) = engine
+                            .get_entity(pc_id)
+                            .and_then(|entity| entity.pc_data())
+                            .and_then(|pc| {
+                                assets
+                                    .profile_manager
+                                    .get_character(pc.profile_index)
+                                    .and_then(|profile| profile.actions.get(btn_idx as usize))
+                            })
+                            .copied()
+                        else {
+                            tracing::warn!(
+                                "Portrait left-click ignored: missing action {} for {:?}",
+                                btn_idx,
+                                pc_id
+                            );
+                            return;
+                        };
+                        let dispatched = portrait_action_dispatchable(
+                            planning_held,
+                            profile_action,
+                            engine.can_dispatch_pc_action(assets, pc_id, btn_idx),
+                        );
+                        if dispatched {
+                            let planned_action = profile_action;
+                            let cmd = if planning_held {
+                                PlayerCommand::SelectPlannedAction {
+                                    pc_id,
+                                    action: planned_action,
+                                }
+                            } else {
+                                PlayerCommand::SelectAction {
+                                    pc_id,
+                                    action_index: btn_idx as u32,
+                                }
+                            };
+                            dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                            host.frontend.input.gestures.portrait_action_countdown = 5;
+                            host.frontend.input.gestures.portrait_action_pc =
+                                engine.hero_selection(local_seat).first().copied();
+
+                            // Action-button click only arms
+                            // the action; the fire-on-target step
+                            // happens on the second click of the
+                            // two-click flow.  The armed-then-fire
+                            // branch lives in the
+                            // `portrait_action_handled` path
+                            // above, which pulls the actor from
+                            // the seat selection, uses the
+                            // clicked portrait's PC as the
+                            // target, and emits a trailing
+                            // `CancelAction`.
+                            //
+                            // Shield/BigShield additionally have a
+                            // two-click danger-point + protected
+                            // state machine that a same-click
+                            // shortcut cannot cover; sticking to
+                            // the two-click flow keeps the path
+                            // consistent.
+
+                            tracing::info!(
+                                "Portrait action button {}: dispatched on slot {}",
+                                btn_idx,
+                                hit.slot
+                            );
+                        } else {
+                            let cmd2 = PlayerCommand::SelectPc {
+                                pc_id,
+                                append: ctrl_held,
+                            };
+                            dispatch_local_command(&host.transport, frame_cmds, &cmd2);
+                            tracing::info!(
+                                "Portrait action button {} disabled on slot {}; selecting PC",
+                                btn_idx,
+                                hit.slot
+                            );
+                        }
+                    }
+                    PortraitHitArea::TopScroll
+                    | PortraitHitArea::BottomScroll
+                    | PortraitHitArea::Visage => {
+                        center_on_reselected_portrait_pc(
+                            host, engine, local_seat, pc_id, ctrl_held, hit.area,
+                        );
+                        let cmd = PlayerCommand::SelectPc {
+                            pc_id,
+                            append: ctrl_held,
+                        };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                        tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
+                    }
+                    PortraitHitArea::QuickAction(_) => {
+                        let cmd = PlayerCommand::SelectPc {
+                            pc_id,
+                            append: ctrl_held,
+                        };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                        tracing::info!("Portrait select: slot {}, area {:?}", hit.slot, hit.area);
+                    }
+                    // Amulet / Guard / Trumpet only matter on burned portraits,
+                    // which branch earlier; on a non-burned portrait these
+                    // areas don't exist, but if the hit-tester returns them
+                    // we fall back to a plain select rather than dropping
+                    // the click.
+                    PortraitHitArea::Amulet | PortraitHitArea::Guard | PortraitHitArea::Trumpet => {
+                        let cmd = PlayerCommand::SelectPc {
+                            pc_id,
+                            append: ctrl_held,
+                        };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                    }
+                    PortraitHitArea::AlliedAction(_)
+                    | PortraitHitArea::Pin
+                    | PortraitHitArea::PageLeft
+                    | PortraitHitArea::PageRight => {
+                        unreachable!("allied portrait hit reached PC portrait handling")
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn portrait_action_dispatchable(
@@ -1127,356 +1143,363 @@ fn portrait_action_right_click(
     }
 }
 
-/// Left-mouse-up on the world (no portrait hit): swordfight-gesture
-/// commit or the regular left-click resolver.
-fn on_world_click(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    frame_cmds: &mut FrameCommands,
-    mx: i32,
-    my: i32,
-    shift_held: bool,
-    planning_held: bool,
-    ctrl_held: bool,
-    is_double: bool,
-) {
-    // ── Engine-level LMB release ──
-    // Prologue:
-    //   ignore_next_drag = false;
-    //   if (ignore_next_left_click) {
-    //       ignore_next_left_click = false;
-    //       cancel multi-selection state;
-    //       if (!ctrl_held) return;
-    //       target_drag = None;
-    //   }
-    //   next_left_double_is_simple = false;
-    // Clearing `ignore_next_drag` on every LMB
-    // release lets a subsequent drag fire again
-    // once the button is re-pressed.
-    host.frontend.input.accept_mouse_event(false, true);
-    let mut swallow_click = false;
-    if host.frontend.input.consume_suppressed_click() {
-        // The next platform double-click is
-        // already demoted at MouseDown via the
-        // `next_left_double_is_simple` flag, so
-        // there's nothing extra to do here.
-        host.frontend.input.cancel_selection_gestures();
-        if !ctrl_held {
-            swallow_click = true;
-        } else {
-            host.frontend.input.gestures.target_drag = None;
+impl MouseCtx<'_> {
+    /// Left-mouse-up on the world (no portrait hit): swordfight-gesture
+    /// commit or the regular left-click resolver.
+    fn on_world_click(&mut self, mx: i32, my: i32, is_double: bool) {
+        let (engine, assets) = (self.engine, self.assets);
+        let InputModifiers {
+            shift: shift_held,
+            plan: planning_held,
+            ctrl: ctrl_held,
+            ..
+        } = self.modifiers;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        // ── Engine-level LMB release ──
+        // Prologue:
+        //   ignore_next_drag = false;
+        //   if (ignore_next_left_click) {
+        //       ignore_next_left_click = false;
+        //       cancel multi-selection state;
+        //       if (!ctrl_held) return;
+        //       target_drag = None;
+        //   }
+        //   next_left_double_is_simple = false;
+        // Clearing `ignore_next_drag` on every LMB
+        // release lets a subsequent drag fire again
+        // once the button is re-pressed.
+        host.frontend.input.accept_mouse_event(false, true);
+        let mut swallow_click = false;
+        if host.frontend.input.consume_suppressed_click() {
+            // The next platform double-click is
+            // already demoted at MouseDown via the
+            // `next_left_double_is_simple` flag, so
+            // there's nothing extra to do here.
+            host.frontend.input.cancel_selection_gestures();
+            if !ctrl_held {
+                swallow_click = true;
+            } else {
+                host.frontend.input.gestures.target_drag = None;
+            }
         }
-    }
-    host.frontend.input.finish_click_dispatch();
+        host.frontend.input.finish_click_dispatch();
 
-    if !swallow_click
-        && let Some(map_pt) = host
-            .frontend
-            .viewport
-            .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
-    {
-        if let Some(cmd) = host.frontend.resolve_tactical_target(map_pt) {
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            return;
+        if !swallow_click
+            && let Some(map_pt) = host
+                .frontend
+                .viewport
+                .screen_to_map(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
+        {
+            if let Some(cmd) = host.frontend.resolve_tactical_target(map_pt) {
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                return;
+            }
+            // Resolve swordfight first, then regular click
+            let mut cmds =
+                crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
+            if cmds.is_empty() {
+                cmds = crate::game_input::resolve_left_click_with_planning(
+                    host,
+                    engine,
+                    assets,
+                    map_pt,
+                    crate::game_input::ClickModifiers {
+                        shift: shift_held,
+                        planning: planning_held,
+                        control: ctrl_held,
+                        double: is_double,
+                    },
+                );
+            }
+            let queued_action = if planning_held {
+                engine.planned_action_for_seat(host.transport.local_seat())
+            } else {
+                Action::NoAction
+            };
+            cmds =
+                crate::game_input::queue_shift_click_commands(cmds, queued_action, planning_held);
+            dispatch_local_commands(&host.transport, frame_cmds, &cmds);
         }
-        // Resolve swordfight first, then regular click
-        let mut cmds = crate::game_input::resolve_swordfight(host, engine, assets, map_pt, true);
-        if cmds.is_empty() {
-            cmds = crate::game_input::resolve_left_click_with_planning(
-                host,
-                engine,
-                assets,
-                map_pt,
-                crate::game_input::ClickModifiers {
-                    shift: shift_held,
-                    planning: planning_held,
-                    control: ctrl_held,
-                    double: is_double,
-                },
-            );
-        }
-        let queued_action = if planning_held {
-            engine.planned_action_for_seat(host.transport.local_seat())
-        } else {
-            Action::NoAction
-        };
-        cmds = crate::game_input::queue_shift_click_commands(cmds, queued_action, planning_held);
-        dispatch_local_commands(&host.transport, frame_cmds, &cmds);
     }
 }
 
-/// Right-mouse-up: deselection box completion, macro-recording commit,
-/// alt view-cone clear, minimap close, portrait right-click handling,
-/// or the map right-click resolver.
-fn on_right_mouse_up(
-    engine: &Engine,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    portrait_cache: &PortraitCache,
-    frame_cmds: &mut FrameCommands,
-    screen_width: u16,
-    screen_height: u16,
-    mx: i32,
-    my: i32,
-    planning_held: bool,
-) {
-    let local_seat = host.transport.local_seat();
-    let right_double_click = host.frontend.release_right_pointer();
-    {
-        if planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
-            let cmd = PlayerCommand::CancelPlannedAction;
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            host.frontend.input.cancel_multi_unselection();
-            host.frontend.input.accept_mouse_event(true, true);
-            host.frontend.input.finish_click_dispatch();
-            host.frontend.input.cancel_selection_gestures();
-            host.frontend.cancel_touch_planning();
-            return;
-        }
-
-        if host.frontend.cancel_tactical_target() {
-            host.frontend.input.cancel_multi_unselection();
-            return;
-        }
-
-        // When a UI widget grabbed focus earlier this
-        // frame, the engine-level right-click is dropped.
-        if !host.frontend.input.controls.has_focus {
-            host.frontend.input.cancel_multi_unselection();
-            return;
-        }
-
-        // While a macro is recording, right-click commits
-        // (stop-recording-macro) and swallows the click.
-        // Box-unselect, alt-view-cone clear, and the
-        // map/portrait right-click resolver all wait for
-        // the next right-click.
-        if engine.is_recording_macro() {
-            let cmd = PlayerCommand::StopRecordingMacro;
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            host.frontend.input.cancel_multi_unselection();
-            host.frontend.input.accept_mouse_event(false, true);
-            host.frontend.input.accept_mouse_event(true, false);
-            host.frontend.input.finish_click_dispatch();
-            host.frontend.input.cancel_selection_gestures();
-            return;
-        }
-
-        if host.frontend.input.multi_unselection_active()
-            && host.frontend.input.draw_multi_selection()
+impl MouseCtx<'_> {
+    /// Right-mouse-up: deselection box completion, macro-recording commit,
+    /// alt view-cone clear, minimap close, portrait right-click handling,
+    /// or the map right-click resolver.
+    fn on_right_mouse_up(&mut self, mx: i32, my: i32) {
+        let (engine, assets) = (self.engine, self.assets);
+        let portrait_cache = self.portrait_cache;
+        let (screen_width, screen_height) = (self.screen_width, self.screen_height);
+        let planning_held = self.modifiers.plan;
+        let host = &mut *self.host;
+        let frame_cmds = &mut *self.frame_cmds;
+        let local_seat = host.transport.local_seat();
+        let right_double_click = host.frontend.release_right_pointer();
         {
-            // Red deselection box was drawn — deselect PCs in area
-            let cmd = PlayerCommand::BoxUnselect {
-                pt1: host.frontend.input.multi_selection_pt1(),
-                pt2: host.frontend.input.multi_selection_pt2(),
-            };
-            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            tracing::info!(
-                "Box-deselect: {} PCs remain selected",
-                engine.selected_hero_ids().len()
-            );
-        } else if engine.is_alt_effective(&host.frontend.input) {
-            // Alt+right-click while the view cone overlay
-            // is active swallows the click:
-            //   - permanent alt (lock on): unlocks alt
-            //     without clearing the selected view
-            //     element.
-            //   - momentary alt: clears the selected view
-            //     element.
-            if engine.is_lock_alt() {
-                let cmd = PlayerCommand::SetLockAlt(false);
+            if planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
+                let cmd = PlayerCommand::CancelPlannedAction;
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            } else {
-                host.frontend.set_selected_view_element(None);
+                host.frontend.input.cancel_multi_unselection();
+                host.frontend.input.accept_mouse_event(true, true);
+                host.frontend.input.finish_click_dispatch();
+                host.frontend.input.cancel_selection_gestures();
+                host.frontend.cancel_touch_planning();
+                return;
             }
-            host.frontend.input.cancel_multi_unselection();
-        } else {
-            host.frontend.input.cancel_multi_unselection();
 
-            // Right-click on minimap closes it.
-            if host
-                .frontend
-                .presentation
-                .engine_display
-                .minimap()
-                .is_displayed()
-                && host
+            if host.frontend.cancel_tactical_target() {
+                host.frontend.input.cancel_multi_unselection();
+                return;
+            }
+
+            // When a UI widget grabbed focus earlier this
+            // frame, the engine-level right-click is dropped.
+            if !host.frontend.input.controls.has_focus {
+                host.frontend.input.cancel_multi_unselection();
+                return;
+            }
+
+            // While a macro is recording, right-click commits
+            // (stop-recording-macro) and swallows the click.
+            // Box-unselect, alt-view-cone clear, and the
+            // map/portrait right-click resolver all wait for
+            // the next right-click.
+            if engine.is_recording_macro() {
+                let cmd = PlayerCommand::StopRecordingMacro;
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                host.frontend.input.cancel_multi_unselection();
+                host.frontend.input.accept_mouse_event(false, true);
+                host.frontend.input.accept_mouse_event(true, false);
+                host.frontend.input.finish_click_dispatch();
+                host.frontend.input.cancel_selection_gestures();
+                return;
+            }
+
+            if host.frontend.input.multi_unselection_active()
+                && host.frontend.input.draw_multi_selection()
+            {
+                // Red deselection box was drawn — deselect PCs in area
+                let cmd = PlayerCommand::BoxUnselect {
+                    pt1: host.frontend.input.multi_selection_pt1(),
+                    pt2: host.frontend.input.multi_selection_pt2(),
+                };
+                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                tracing::info!(
+                    "Box-deselect: {} PCs remain selected",
+                    engine.selected_hero_ids().len()
+                );
+            } else if engine.is_alt_effective(&host.frontend.input) {
+                // Alt+right-click while the view cone overlay
+                // is active swallows the click:
+                //   - permanent alt (lock on): unlocks alt
+                //     without clearing the selected view
+                //     element.
+                //   - momentary alt: clears the selected view
+                //     element.
+                if engine.is_lock_alt() {
+                    let cmd = PlayerCommand::SetLockAlt(false);
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                } else {
+                    host.frontend.set_selected_view_element(None);
+                }
+                host.frontend.input.cancel_multi_unselection();
+            } else {
+                host.frontend.input.cancel_multi_unselection();
+
+                // Right-click on minimap closes it.
+                if host
                     .frontend
                     .presentation
                     .engine_display
                     .minimap()
-                    .is_over_widget(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
-            {
-                let cmd = PlayerCommand::MinimapRightClick;
-                dispatch_local_command(&host.transport, frame_cmds, &cmd);
-            } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
-                &engine.presentation_view(),
-                local_seat,
-                portrait_cache,
-                screen_width,
-                screen_height,
-                mx as f32,
-                my as f32,
-            ) {
-                if !matches!(hit.target, PortraitTarget::Pc(_)) {
-                    let cmd = match hit.target {
-                        PortraitTarget::AlliedGroup(group_id) => {
-                            PlayerCommand::UnpinTacticalGroup { group_id }
-                        }
-                        PortraitTarget::AlliedSelection => PlayerCommand::ClearTacticalSelection,
-                        PortraitTarget::Pc(_) => unreachable!(),
-                    };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                    return;
-                }
-                if let PortraitHitArea::QuickAction(slot) = hit.area {
-                    let pc_id = hit.pc_id;
-                    let cmd = PlayerCommand::DeleteMacro {
-                        pc: Some(pc_id),
-                        slot,
-                    };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                    return;
-                }
-                // Original radio-button parity: right-clicking the selected
-                // action unselects it. Right-clicking an already-unselected
-                // finite-ammo action drops one; its repeated/double event
-                // requests five. Shift is unrelated to ammo amount.
-                let pc_id = hit.pc_id;
-                let armed_action = engine.selected_action_for_seat(local_seat);
-                let action_armed = matches!(
-                    armed_action,
-                    robin_engine::profiles::Action::Heal
-                        | robin_engine::profiles::Action::Shield
-                        | robin_engine::profiles::Action::BigShield
-                );
-                if !hit.is_burned
-                    && let PortraitHitArea::ActionButton(btn_idx) = hit.area
+                    .is_displayed()
+                    && host
+                        .frontend
+                        .presentation
+                        .engine_display
+                        .minimap()
+                        .is_over_widget(engine_coordinates::ScreenPoint::new(mx as f32, my as f32))
                 {
-                    let Some((clicked_action, max_ammo)) = engine
-                        .get_entity(pc_id)
-                        .and_then(|entity| entity.pc_data())
-                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
-                        .and_then(|profile| {
-                            Some((
-                                *profile.actions.get(btn_idx as usize)?,
-                                *profile.action_max_ammo.get(btn_idx as usize)?,
-                            ))
-                        })
-                    else {
-                        tracing::warn!(
-                            "Portrait right-click ignored: missing action {} for {:?}",
-                            btn_idx,
-                            pc_id
-                        );
-                        host.frontend.input.cancel_multi_unselection();
-                        return;
-                    };
-
-                    match portrait_action_right_click(
-                        clicked_action,
-                        armed_action,
-                        max_ammo,
-                        right_double_click,
-                    ) {
-                        PortraitActionRightClick::Cancel => {
-                            let cmd = PlayerCommand::CancelAction { pc_id };
-                            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                            tracing::info!(
-                                "Portrait right-click: cancel action on slot {}",
-                                hit.slot
-                            );
-                        }
-                        PortraitActionRightClick::DropAmmo(amount) => {
-                            let cmd = PlayerCommand::DropAmmo {
-                                pc_id,
-                                action_id: clicked_action as u32,
-                                amount,
-                            };
-                            dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                            tracing::info!(
-                                "Portrait right-click: drop {:?} x{} on slot {}",
-                                clicked_action,
-                                amount,
-                                hit.slot
-                            );
-                        }
-                    }
-                } else if !hit.is_burned && action_armed {
-                    // When the pointer is inside a non-burned
-                    // portrait and a Heal/Shield/BigShield
-                    // action is armed, right-click cancels the
-                    // action regardless of which sub-widget
-                    // (visage / scroll / etc.) is under the
-                    // pointer.  Emit CancelAction for any
-                    // non-`ActionButton` area while an action
-                    // is armed.
-                    if let Some(&actor_id) = engine.hero_selection(local_seat).first() {
-                        let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
+                    let cmd = PlayerCommand::MinimapRightClick;
+                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
+                    &engine.presentation_view(),
+                    local_seat,
+                    portrait_cache,
+                    screen_width,
+                    screen_height,
+                    mx as f32,
+                    my as f32,
+                ) {
+                    if !matches!(hit.target, PortraitTarget::Pc(_)) {
+                        let cmd = match hit.target {
+                            PortraitTarget::AlliedGroup(group_id) => {
+                                PlayerCommand::UnpinTacticalGroup { group_id }
+                            }
+                            PortraitTarget::AlliedSelection => {
+                                PlayerCommand::ClearTacticalSelection
+                            }
+                            PortraitTarget::Pc(_) => unreachable!(),
+                        };
                         dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                        tracing::info!(
-                            "Portrait right-click while {:?} armed: cancel on slot {}",
-                            armed_action,
-                            hit.slot
-                        );
+                        return;
                     }
-                } else if !hit.is_burned
-                    && engine.hero_selection(local_seat).contains(&pc_id)
-                    && matches!(
-                        hit.area,
-                        PortraitHitArea::TopScroll
-                            | PortraitHitArea::BottomScroll
-                            | PortraitHitArea::Visage
-                    )
-                {
-                    // A right-click on lower/upper/visage of
-                    // an open (selected) non-burned portrait
-                    // unselects the PC.  Use
-                    // `TogglePcSelection` since we already
-                    // verified the PC is in the selection.
-                    let cmd = PlayerCommand::TogglePcSelection { pc_id };
-                    dispatch_local_command(&host.transport, frame_cmds, &cmd);
-                    tracing::info!("Portrait right-click: unselect PC on slot {}", hit.slot);
-                }
-                // Other portrait right-click areas: swallow
-                // the click (don't fall through to map).
-            } else {
-                let cmds = crate::game_input::resolve_right_click(engine, local_seat);
-                dispatch_local_commands(&host.transport, frame_cmds, &cmds);
-            }
-        }
+                    if let PortraitHitArea::QuickAction(slot) = hit.area {
+                        let pc_id = hit.pc_id;
+                        let cmd = PlayerCommand::DeleteMacro {
+                            pc: Some(pc_id),
+                            slot,
+                        };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                        return;
+                    }
+                    // Original radio-button parity: right-clicking the selected
+                    // action unselects it. Right-clicking an already-unselected
+                    // finite-ammo action drops one; its repeated/double event
+                    // requests five. Shift is unrelated to ammo amount.
+                    let pc_id = hit.pc_id;
+                    let armed_action = engine.selected_action_for_seat(local_seat);
+                    let action_armed = matches!(
+                        armed_action,
+                        robin_engine::profiles::Action::Heal
+                            | robin_engine::profiles::Action::Shield
+                            | robin_engine::profiles::Action::BigShield
+                    );
+                    if !hit.is_burned
+                        && let PortraitHitArea::ActionButton(btn_idx) = hit.area
+                    {
+                        let Some((clicked_action, max_ammo)) = engine
+                            .get_entity(pc_id)
+                            .and_then(|entity| entity.pc_data())
+                            .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                            .and_then(|profile| {
+                                Some((
+                                    *profile.actions.get(btn_idx as usize)?,
+                                    *profile.action_max_ammo.get(btn_idx as usize)?,
+                                ))
+                            })
+                        else {
+                            tracing::warn!(
+                                "Portrait right-click ignored: missing action {} for {:?}",
+                                btn_idx,
+                                pc_id
+                            );
+                            host.frontend.input.cancel_multi_unselection();
+                            return;
+                        };
 
-        // Clean up: wipe the `IgnoreMouseEvent` flags and
-        // the multi-selection state so the next frame
-        // starts with a clean slate.  The macro-recording
-        // short-circuit above already clears these;
-        // duplicating the clears on the non-recording path
-        // keeps the "flags are zero at end of RMB release"
-        // invariant even when `resolve_right_click` ran.
-        host.frontend.input.accept_mouse_event(true, true);
-        host.frontend.input.finish_click_dispatch();
-        host.frontend.input.cancel_selection_gestures();
+                        match portrait_action_right_click(
+                            clicked_action,
+                            armed_action,
+                            max_ammo,
+                            right_double_click,
+                        ) {
+                            PortraitActionRightClick::Cancel => {
+                                let cmd = PlayerCommand::CancelAction { pc_id };
+                                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                                tracing::info!(
+                                    "Portrait right-click: cancel action on slot {}",
+                                    hit.slot
+                                );
+                            }
+                            PortraitActionRightClick::DropAmmo(amount) => {
+                                let cmd = PlayerCommand::DropAmmo {
+                                    pc_id,
+                                    action_id: clicked_action as u32,
+                                    amount,
+                                };
+                                dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                                tracing::info!(
+                                    "Portrait right-click: drop {:?} x{} on slot {}",
+                                    clicked_action,
+                                    amount,
+                                    hit.slot
+                                );
+                            }
+                        }
+                    } else if !hit.is_burned && action_armed {
+                        // When the pointer is inside a non-burned
+                        // portrait and a Heal/Shield/BigShield
+                        // action is armed, right-click cancels the
+                        // action regardless of which sub-widget
+                        // (visage / scroll / etc.) is under the
+                        // pointer.  Emit CancelAction for any
+                        // non-`ActionButton` area while an action
+                        // is armed.
+                        if let Some(&actor_id) = engine.hero_selection(local_seat).first() {
+                            let cmd = PlayerCommand::CancelAction { pc_id: actor_id };
+                            dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                            tracing::info!(
+                                "Portrait right-click while {:?} armed: cancel on slot {}",
+                                armed_action,
+                                hit.slot
+                            );
+                        }
+                    } else if !hit.is_burned
+                        && engine.hero_selection(local_seat).contains(&pc_id)
+                        && matches!(
+                            hit.area,
+                            PortraitHitArea::TopScroll
+                                | PortraitHitArea::BottomScroll
+                                | PortraitHitArea::Visage
+                        )
+                    {
+                        // A right-click on lower/upper/visage of
+                        // an open (selected) non-burned portrait
+                        // unselects the PC.  Use
+                        // `TogglePcSelection` since we already
+                        // verified the PC is in the selection.
+                        let cmd = PlayerCommand::TogglePcSelection { pc_id };
+                        dispatch_local_command(&host.transport, frame_cmds, &cmd);
+                        tracing::info!("Portrait right-click: unselect PC on slot {}", hit.slot);
+                    }
+                    // Other portrait right-click areas: swallow
+                    // the click (don't fall through to map).
+                } else {
+                    let cmds = crate::game_input::resolve_right_click(engine, local_seat);
+                    dispatch_local_commands(&host.transport, frame_cmds, &cmds);
+                }
+            }
+
+            // Clean up: wipe the `IgnoreMouseEvent` flags and
+            // the multi-selection state so the next frame
+            // starts with a clean slate.  The macro-recording
+            // short-circuit above already clears these;
+            // duplicating the clears on the non-recording path
+            // keeps the "flags are zero at end of RMB release"
+            // invariant even when `resolve_right_click` ran.
+            host.frontend.input.accept_mouse_event(true, true);
+            host.frontend.input.finish_click_dispatch();
+            host.frontend.input.cancel_selection_gestures();
+        }
     }
 }
 
+/// Drive the pause menu over this frame's events and react to its outcome.
+///
+/// The live-gameplay context already carries every borrow the menu and the
+/// side tasks it opens need; only the per-frame close flag and the event
+/// batch travel separately.
 pub(super) fn handle_pause_menu_events(
-    pause_menu: &mut Option<PauseMenu>,
-    active_ui_task: &mut Option<ActiveUiTask>,
+    context: &mut LiveGameplayContext<'_>,
     pause_closed_this_frame: &mut bool,
-    host: &mut Host,
-    engine: &Engine,
-    assets: &engine_api::LevelAssets,
-    callbacks: &mut RustCallbacks,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    menu_resources: &mut Option<IngameMenuResources>,
-    audio_backend: &mut Option<PlatformAudioBackend>,
-    sample_loader: &SampleLoader,
-    threaded_input: &mut ThreadedInput,
-    input_translator: &mut InputTranslator,
     events: &[GameEvent],
 ) -> HandlerAction {
+    let engine: &Engine = context.engine;
+    let assets: &engine_api::LevelAssets = context.assets;
+    let host: &mut Host = &mut *context.host;
+    let callbacks: &mut RustCallbacks = &mut *context.callbacks;
+    let event_pump: &mut GameWindow = &mut *context.window;
+    let renderer: &mut Renderer = &mut context.presentation.renderer;
+    let menu_resources: &mut Option<IngameMenuResources> = &mut context.resources.menu;
+    let audio_backend: &mut Option<PlatformAudioBackend> = &mut context.audio.backend;
+    let sample_loader: &SampleLoader = &context.audio.sample_loader;
+    let threaded_input: &mut ThreadedInput = &mut context.input.threaded;
+    let input_translator: &mut InputTranslator = &mut context.input.translator;
+    let pause_menu: &mut Option<PauseMenu> = &mut context.ui.pause_menu;
+    let active_ui_task: &mut Option<ActiveUiTask> = &mut context.ui.active_ui_task;
     if active_ui_task.is_some() {
         return HandlerAction::Proceed;
     }
@@ -1617,17 +1640,20 @@ pub(super) fn handle_pause_menu_events(
                     event_pump,
                     renderer,
                     resources,
-                    profile_id,
-                    graphic_config,
-                    gameplay_config,
-                    profile_gameplay_config,
-                    multiplayer_config,
-                    sound_config,
-                    profile_sound_config,
-                    host.frontend.preferences().key_config().clone(),
-                    host.frontend.preferences().custom_key_config().clone(),
-                    host.audio.sound.can_3d_sound(),
-                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
+                    OptionsSeed {
+                        profile_id,
+                        graphic: graphic_config,
+                        gameplay: gameplay_config,
+                        profile_gameplay: profile_gameplay_config,
+                        multiplayer: multiplayer_config,
+                        sound: sound_config,
+                        profile_sound: profile_sound_config,
+                        keys: host.frontend.preferences().key_config().clone(),
+                        custom_keys: host.frontend.preferences().custom_key_config().clone(),
+                        can_3d_sound: host.audio.sound.can_3d_sound(),
+                        host_gameplay_rules_editable: host.transport.local_seat()
+                            == engine_player_command::PlayerId::HOST,
+                    },
                 )));
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
@@ -1821,20 +1847,23 @@ fn defer_multiplayer_campaign_exit(host: &mut Host, mission_id: u32) -> bool {
 /// (StartMission), or `Proceed` to continue with the rest of the
 /// frame.
 pub(super) fn handle_sherwood_hud_buttons(
-    game: &mut Game,
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
+    ctx: SherwoodCtx<'_>,
     frame_cmds: &mut FrameCommands,
-    assets: &engine_api::LevelAssets,
-    callbacks: &mut RustCallbacks,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    menu_resources: &Option<IngameMenuResources>,
-    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     events: &[GameEvent],
     sherwood_layout: &SherwoodHudLayout,
-    sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
+    let SherwoodCtx {
+        game,
+        engine,
+        host,
+        callbacks,
+        assets,
+        window: event_pump,
+        renderer,
+        menu_resources,
+        flow: sherwood_flow,
+        enable: sherwood_enable,
+    } = ctx;
     if host.transport.net().is_some()
         && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
     {
@@ -1842,7 +1871,6 @@ pub(super) fn handle_sherwood_hud_buttons(
         // and receive the eventual authoritative mission transition.
         return HandlerAction::Proceed;
     }
-    let engine = &mut manager.engine;
     sherwood_enable.sherwood_trading = game.is_sherwood
         && sherwood_trading_access(host, engine, &assets.profile_manager)
             .validate()
@@ -2066,218 +2094,277 @@ pub(super) fn handle_sherwood_hud_buttons(
     HandlerAction::Proceed
 }
 
+/// Mission borrows shared by the Sherwood HUD buttons and the Sherwood
+/// campaign-map overlay.
+pub(super) struct SherwoodCtx<'a> {
+    pub(super) game: &'a mut Game,
+    pub(super) engine: &'a mut Engine,
+    pub(super) host: &'a mut Host,
+    pub(super) callbacks: &'a mut RustCallbacks,
+    pub(super) assets: &'a engine_api::LevelAssets,
+    pub(super) window: &'a mut GameWindow,
+    pub(super) renderer: &'a mut Renderer,
+    pub(super) menu_resources: &'a mut Option<IngameMenuResources>,
+    pub(super) flow: &'a mut Option<SherwoodCampaignFlow>,
+    pub(super) enable: &'a mut SherwoodButtonEnable,
+}
+
+/// Presentation resources only the campaign-map overlay's modals need.
+pub(super) struct SherwoodModalResources<'a> {
+    pub(super) cursor_res: &'a mut ResourceManager,
+    pub(super) cursor_renderer: &'a mut CursorRenderer,
+    pub(super) text_res: &'a mut ResourceManager,
+    pub(super) campaign_map: &'a mut CampaignMapState,
+}
+
+impl SherwoodCtx<'_> {
+    /// Advance one non-map Sherwood modal flow (pseudo-mission debriefing,
+    /// mission description, or a Yes/No confirmation) by a presentation frame.
+    ///
+    /// Every path returns the frame's handler decision; a still-pending modal
+    /// re-arms itself in `flow` first.
+    fn drive_sherwood_modal_flow(
+        &mut self,
+        active_flow: SherwoodCampaignFlow,
+        frame: &mut MissionFrame,
+        modal: &mut SherwoodModalResources<'_>,
+    ) -> Result<HandlerAction, super::MissionError> {
+        let game = &mut *self.game;
+        let engine = &mut *self.engine;
+        let host = &mut *self.host;
+        let callbacks = &mut *self.callbacks;
+        let assets = self.assets;
+        let event_pump = &mut *self.window;
+        let renderer = &mut *self.renderer;
+        let menu_resources = &mut *self.menu_resources;
+        let sherwood_flow = &mut *self.flow;
+        let sherwood_enable = &mut *self.enable;
+        let cursor_res = &mut *modal.cursor_res;
+        let cursor_renderer = &mut *modal.cursor_renderer;
+        {
+            match active_flow {
+                SherwoodCampaignFlow::Map(_) => {
+                    unreachable!("the overlay shell re-arms the campaign-map flow itself")
+                }
+                SherwoodCampaignFlow::PseudoDebrief { mut state } => {
+                    let outcome = if let Some(resources) = menu_resources.as_ref() {
+                        let cursor =
+                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                        state.tick(&mut ModalScreenIo {
+                            window: event_pump,
+                            renderer,
+                            resources,
+                            cursor: cursor.as_ref(),
+                        })
+                    } else {
+                        tracing::warn!(
+                            "Pseudo-mission debriefing resources disappeared — acknowledging it"
+                        );
+                        Some(ingame_menu::DebriefingOutcome::Ok)
+                    };
+                    if outcome.is_none() {
+                        *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief { state });
+                        return Ok(HandlerAction::Proceed);
+                    }
+
+                    let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
+                    let result = mission_description::admit_paused_campaign_action(
+                        engine,
+                        assets,
+                        action.clone(),
+                    );
+                    assert!(matches!(
+                        result,
+                        engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
+                    ));
+                    frame.record_applied_external_action(action);
+                    if engine.campaign().get_ares() == 0 {
+                        return Ok(HandlerAction::Exit(GameCode::Quit));
+                    }
+                    game.show_campaign_map();
+                    return Ok(HandlerAction::Proceed);
+                }
+                SherwoodCampaignFlow::MissionDescription {
+                    mission_index,
+                    mut state,
+                    mut admitted_actions,
+                } => {
+                    let Some(resources) = menu_resources.as_mut() else {
+                        panic!("mission-description resources disappeared while the modal was open")
+                    };
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    let mut frame_actions = Vec::new();
+                    let outcome = state.tick(
+                        event_pump,
+                        renderer,
+                        resources,
+                        cursor,
+                        engine,
+                        assets,
+                        &mut frame_actions,
+                        &assets.profile_manager,
+                    );
+                    admitted_actions.extend(frame_actions);
+                    let Some((choice, men_to_blazon)) = outcome else {
+                        *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
+                            mission_index,
+                            state,
+                            admitted_actions,
+                        });
+                        return Ok(HandlerAction::Proceed);
+                    };
+                    for action in admitted_actions {
+                        frame.record_applied_external_action(action);
+                    }
+                    match choice {
+                        MissionChoice::StartMission => {
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::CampaignSelectNextMission {
+                                    mission_idx: Some(mission_index),
+                                },
+                            );
+                            game.set_men_to_blazon_conversion(men_to_blazon);
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
+                            );
+                            *sherwood_enable = SherwoodButtonEnable::post_commit();
+                        }
+                        MissionChoice::ShowPendingMissions => {
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
+                            );
+                            game.show_campaign_map();
+                        }
+                        MissionChoice::None => game.show_campaign_map(),
+                    }
+                    game.persistent.campaign_map_displayed = false;
+                    return Ok(HandlerAction::Proceed);
+                }
+                SherwoodCampaignFlow::Confirmation { mut state, action } => {
+                    let resources =
+                        required_menu_resources(menu_resources, "Sherwood mission confirmation");
+                    let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+                    let Some(confirmed) = state.tick(&mut ModalScreenIo {
+                        window: event_pump,
+                        renderer,
+                        resources,
+                        cursor: Some(&cursor),
+                    }) else {
+                        *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation { state, action });
+                        return Ok(HandlerAction::Proceed);
+                    };
+                    if !confirmed {
+                        return Ok(HandlerAction::Proceed);
+                    }
+                    match action {
+                        SherwoodConfirmationAction::ReturnToMap => {
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
+                            );
+                            *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                            game.show_campaign_map();
+                            return Ok(HandlerAction::Proceed);
+                        }
+                        SherwoodConfirmationAction::StartMission {
+                            men_to_blazon: true,
+                        } => {
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::UnselectAllPcs,
+                            );
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
+                            );
+                            game.persistent.campaign_map_active = true;
+                            game.persistent.campaign_map_displayed = true;
+                            game.set_men_to_blazon_conversion(false);
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::SetMenToBlazonConversionMode { on: false },
+                            );
+                            *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                            return Ok(HandlerAction::Proceed);
+                        }
+                        SherwoodConfirmationAction::StartMission {
+                            men_to_blazon: false,
+                        } => {
+                            let mission_id =
+                                current_mission_id(engine.campaign(), &assets.profile_manager);
+                            dispatch_local_command(
+                                &host.transport,
+                                &mut frame.stage_commands(),
+                                &PlayerCommand::CampaignHarvestProductionSectorState,
+                            );
+                            if defer_multiplayer_campaign_exit(host, mission_id) {
+                                return Ok(HandlerAction::Proceed);
+                            }
+                            callbacks.queue_operation(SaveLoadRequest::Sherwood { mission_id });
+                            return Ok(HandlerAction::Exit(GameCode::LevelInterrupted));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Handle the Sherwood campaign-map overlay modal.
 ///
 /// Returns `HandlerAction::Exit(GameCode::Quit)` when the player
 /// escapes out of the map (emergency quit-game path).  Returns
 /// `Proceed` otherwise.
 pub(super) fn handle_sherwood_campaign_map_overlay(
-    game: &mut Game,
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
-    callbacks: &mut RustCallbacks,
+    mut ctx: SherwoodCtx<'_>,
     frame: &mut MissionFrame,
-    assets: &engine_api::LevelAssets,
-    event_pump: &mut GameWindow,
-    renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
-    text_res: &mut ResourceManager,
-    sherwood_campaign_map: &mut CampaignMapState,
-    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
-    menu_resources: &mut Option<IngameMenuResources>,
-    sherwood_enable: &mut SherwoodButtonEnable,
-) -> Result<HandlerAction, String> {
-    let engine = &mut manager.engine;
-    if host.transport.net().is_some()
-        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
-        && (game.persistent.campaign_map_active || sherwood_flow.is_some())
+    mut modal: SherwoodModalResources<'_>,
+) -> Result<HandlerAction, super::MissionError> {
+    if ctx.host.transport.net().is_some()
+        && ctx.host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
+        && (ctx.game.persistent.campaign_map_active || ctx.flow.is_some())
     {
         // Mission-description ticks can spend blazons through synchronous
         // external actions, so clients must not even advance their local
         // campaign modal state. They keep simulating until the host publishes
         // the exact campaign-exit snapshot.
-        game.display_message(
+        ctx.game.display_message(
             "The multiplayer host is choosing the next campaign action.".to_string(),
             100,
         );
         return Ok(HandlerAction::Proceed);
     }
-    if let Some(active_flow) = sherwood_flow.take() {
+    if let Some(active_flow) = ctx.flow.take() {
         match active_flow {
             SherwoodCampaignFlow::Map(state) => {
-                *sherwood_flow = Some(SherwoodCampaignFlow::Map(state));
+                *ctx.flow = Some(SherwoodCampaignFlow::Map(state));
             }
-            SherwoodCampaignFlow::PseudoDebrief { mut state } => {
-                let outcome = if let Some(resources) = menu_resources.as_ref() {
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    state.tick(&mut ModalScreenIo {
-                        window: event_pump,
-                        renderer,
-                        resources,
-                        cursor: cursor.as_ref(),
-                    })
-                } else {
-                    tracing::warn!(
-                        "Pseudo-mission debriefing resources disappeared — acknowledging it"
-                    );
-                    Some(ingame_menu::DebriefingOutcome::Ok)
-                };
-                if outcome.is_none() {
-                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief { state });
-                    return Ok(HandlerAction::Proceed);
-                }
-
-                let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
-                let result = mission_description::admit_paused_campaign_action(
-                    engine,
-                    assets,
-                    action.clone(),
-                );
-                assert!(matches!(
-                    result,
-                    engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
-                ));
-                frame.record_applied_external_action(action);
-                if engine.campaign().get_ares() == 0 {
-                    return Ok(HandlerAction::Exit(GameCode::Quit));
-                }
-                game.show_campaign_map();
-                return Ok(HandlerAction::Proceed);
-            }
-            SherwoodCampaignFlow::MissionDescription {
-                mission_index,
-                mut state,
-                mut admitted_actions,
-            } => {
-                let Some(resources) = menu_resources.as_mut() else {
-                    panic!("mission-description resources disappeared while the modal was open")
-                };
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                let mut frame_actions = Vec::new();
-                let outcome = state.tick(
-                    event_pump,
-                    renderer,
-                    resources,
-                    cursor,
-                    engine,
-                    assets,
-                    &mut frame_actions,
-                    &assets.profile_manager,
-                );
-                admitted_actions.extend(frame_actions);
-                let Some((choice, men_to_blazon)) = outcome else {
-                    *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
-                        mission_index,
-                        state,
-                        admitted_actions,
-                    });
-                    return Ok(HandlerAction::Proceed);
-                };
-                for action in admitted_actions {
-                    frame.record_applied_external_action(action);
-                }
-                match choice {
-                    MissionChoice::StartMission => {
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::CampaignSelectNextMission {
-                                mission_idx: Some(mission_index),
-                            },
-                        );
-                        game.set_men_to_blazon_conversion(men_to_blazon);
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::post_commit();
-                    }
-                    MissionChoice::ShowPendingMissions => {
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
-                        );
-                        game.show_campaign_map();
-                    }
-                    MissionChoice::None => game.show_campaign_map(),
-                }
-                game.persistent.campaign_map_displayed = false;
-                return Ok(HandlerAction::Proceed);
-            }
-            SherwoodCampaignFlow::Confirmation { mut state, action } => {
-                let resources =
-                    required_menu_resources(menu_resources, "Sherwood mission confirmation");
-                let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
-                let Some(confirmed) = state.tick(&mut ModalScreenIo {
-                    window: event_pump,
-                    renderer,
-                    resources,
-                    cursor: Some(&cursor),
-                }) else {
-                    *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation { state, action });
-                    return Ok(HandlerAction::Proceed);
-                };
-                if !confirmed {
-                    return Ok(HandlerAction::Proceed);
-                }
-                match action {
-                    SherwoodConfirmationAction::ReturnToMap => {
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
-                        game.show_campaign_map();
-                        return Ok(HandlerAction::Proceed);
-                    }
-                    SherwoodConfirmationAction::StartMission {
-                        men_to_blazon: true,
-                    } => {
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::UnselectAllPcs,
-                        );
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
-                        );
-                        game.persistent.campaign_map_active = true;
-                        game.persistent.campaign_map_displayed = true;
-                        game.set_men_to_blazon_conversion(false);
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::SetMenToBlazonConversionMode { on: false },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
-                        return Ok(HandlerAction::Proceed);
-                    }
-                    SherwoodConfirmationAction::StartMission {
-                        men_to_blazon: false,
-                    } => {
-                        let mission_id =
-                            current_mission_id(engine.campaign(), &assets.profile_manager);
-                        dispatch_local_command(
-                            &host.transport,
-                            &mut frame.stage_commands(),
-                            &PlayerCommand::CampaignHarvestProductionSectorState,
-                        );
-                        if defer_multiplayer_campaign_exit(host, mission_id) {
-                            return Ok(HandlerAction::Proceed);
-                        }
-                        callbacks.queue_operation(SaveLoadRequest::Sherwood { mission_id });
-                        return Ok(HandlerAction::Exit(GameCode::LevelInterrupted));
-                    }
-                }
-            }
+            other => return ctx.drive_sherwood_modal_flow(other, frame, &mut modal),
         }
     }
+    let game = &mut *ctx.game;
+    let engine = &mut *ctx.engine;
+    let host = &mut *ctx.host;
+    let assets = ctx.assets;
+    let event_pump = &mut *ctx.window;
+    let renderer = &mut *ctx.renderer;
+    let menu_resources = &mut *ctx.menu_resources;
+    let sherwood_flow = &mut *ctx.flow;
+    let sherwood_enable = &mut *ctx.enable;
+    let cursor_res = &mut *modal.cursor_res;
+    let cursor_renderer = &mut *modal.cursor_renderer;
+    let text_res = &mut *modal.text_res;
+    let sherwood_campaign_map = &mut *modal.campaign_map;
     // ── Sherwood campaign-map overlay ──
     // Open the campaign-map overlay whenever `campaign_map_active`
     // is set (player entered Sherwood, or the DisplayCampaignMap
@@ -2390,72 +2477,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
         // reach that clear.
         match choice {
             CampaignMapChoice::PseudoDebriefTimer => {
-                let won = pseudo_status == engine_mission::MissionStatus::Won;
-                if let Some(resources) = menu_resources.as_ref() {
-                    // Try the per-mission win/lose text first, fall
-                    // back to the generic strategical-mission text
-                    // only if the resource lookup fails.
-                    let last_id = engine.campaign().last_pseudo_mission_id;
-                    let pseudo_red = crate::mission_descriptors::for_presentation(
-                        host.application_context(),
-                        host.frontend.resources.shipping.as_deref(),
-                        last_id,
-                    );
-                    let per_mission_text = pseudo_red.as_ref().and_then(|desc| {
-                        let table_id = if won {
-                            desc.debriefing.win_text_table_id
-                        } else {
-                            desc.debriefing.lose_text_table_id
-                        };
-                        if !text_res.has_resource(table_id) {
-                            return None;
-                        }
-                        match text_res.get_string(table_id, 0) {
-                            Ok(s) => Some(s.to_string()),
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Pseudo-mission debriefing: text {table_id}/0 not found: {e}"
-                                );
-                                None
-                            }
-                        }
-                    });
-                    let text = per_mission_text.unwrap_or_else(|| {
-                        let id = if won {
-                            resources::MT_MSG_STRATEGICAL_MISSION_WON
-                        } else {
-                            resources::MT_MSG_STRATEGICAL_MISSION_LOST
-                        };
-                        resources.menu_text.get(id)
-                    });
-                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
-                        state: ingame_menu::DebriefingModalState::new(
-                            resources, text, None, 0, won, false, None, false, false,
-                        ),
-                    });
-                    return Ok(HandlerAction::Proceed);
-                } else {
-                    tracing::warn!(
-                        "Pseudo-mission debriefing: menu resources unavailable — dropping dialog"
-                    );
-                }
-                let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
-                let result = mission_description::admit_paused_campaign_action(
-                    engine,
-                    assets,
-                    action.clone(),
-                );
-                assert!(matches!(
-                    result,
-                    engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
-                ));
-                frame.record_applied_external_action(action);
-                let ares_after = engine.campaign().get_ares();
-                if ares_after == 0 {
-                    return Ok(HandlerAction::Exit(GameCode::Quit));
-                }
-                game.show_campaign_map();
-                return Ok(HandlerAction::Proceed);
+                return ctx.on_pseudo_debrief_timer(frame, &mut modal, pseudo_status);
             }
             CampaignMapChoice::SelectMission(idx) => {
                 // Open the pre-mission description dialog: clicking a
@@ -2531,6 +2553,98 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
     }
 
     Ok(HandlerAction::Proceed)
+}
+
+impl SherwoodCtx<'_> {
+    /// The campaign map's pseudo-mission debriefing timer fired: open the
+    /// win/lose debriefing modal, or acknowledge it directly when the menu
+    /// resources are unavailable.
+    fn on_pseudo_debrief_timer(
+        &mut self,
+        frame: &mut MissionFrame,
+        modal: &mut SherwoodModalResources<'_>,
+        pseudo_status: engine_mission::MissionStatus,
+    ) -> Result<HandlerAction, super::MissionError> {
+        let game = &mut *self.game;
+        let engine = &mut *self.engine;
+        let host = &mut *self.host;
+        let assets = self.assets;
+        let menu_resources = &mut *self.menu_resources;
+        let sherwood_flow = &mut *self.flow;
+        let text_res = &mut *modal.text_res;
+        {
+            {
+                {
+                    let won = pseudo_status == engine_mission::MissionStatus::Won;
+                    if let Some(resources) = menu_resources.as_ref() {
+                        // Try the per-mission win/lose text first, fall
+                        // back to the generic strategical-mission text
+                        // only if the resource lookup fails.
+                        let last_id = engine.campaign().last_pseudo_mission_id;
+                        let pseudo_red = crate::mission_descriptors::for_presentation(
+                            host.application_context(),
+                            host.frontend.resources.shipping.as_deref(),
+                            last_id,
+                        );
+                        let per_mission_text = pseudo_red.as_ref().and_then(|desc| {
+                        let table_id = if won {
+                            desc.debriefing.win_text_table_id
+                        } else {
+                            desc.debriefing.lose_text_table_id
+                        };
+                        if !text_res.has_resource(table_id) {
+                            return None;
+                        }
+                        match text_res.get_string(table_id, 0) {
+                            Ok(s) => Some(s.to_string()),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Pseudo-mission debriefing: text {table_id}/0 not found: {e}"
+                                );
+                                None
+                            }
+                        }
+                    });
+                        let text = per_mission_text.unwrap_or_else(|| {
+                            let id = if won {
+                                resources::MT_MSG_STRATEGICAL_MISSION_WON
+                            } else {
+                                resources::MT_MSG_STRATEGICAL_MISSION_LOST
+                            };
+                            resources.menu_text.get(id)
+                        });
+                        *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
+                            state: ingame_menu::DebriefingModalState::new(
+                                resources, text, None, 0, won, false, None, false, false,
+                            ),
+                        });
+                        return Ok(HandlerAction::Proceed);
+                    } else {
+                        tracing::warn!(
+                            "Pseudo-mission debriefing: menu resources unavailable — dropping dialog"
+                        );
+                    }
+                    let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
+                    let result = mission_description::admit_paused_campaign_action(
+                        engine,
+                        assets,
+                        action.clone(),
+                    );
+                    assert!(matches!(
+                        result,
+                        engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
+                    ));
+                    frame.record_applied_external_action(action);
+                    let ares_after = engine.campaign().get_ares();
+                    if ares_after == 0 {
+                        return Ok(HandlerAction::Exit(GameCode::Quit));
+                    }
+                    game.show_campaign_map();
+                    Ok(HandlerAction::Proceed)
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

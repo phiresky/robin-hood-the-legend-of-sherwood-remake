@@ -6,9 +6,27 @@
 //! the native loader. The web converter records that same identity in its
 //! canonical Full-package manifest.
 
+use super::MultiplayerError;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use sha2::{Digest as _, Sha256};
+
+/// Content closure is not the exact expected shape.
+fn invalid(message: impl Into<std::borrow::Cow<'static, str>>) -> MultiplayerError {
+    MultiplayerError::ContentIdentity(message.into())
+}
+
+/// Content closure could not be read or parsed.
+#[cfg(not(target_arch = "wasm32"))]
+fn content_io(
+    context: String,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> MultiplayerError {
+    MultiplayerError::ContentIo {
+        context: context.into(),
+        source: std::sync::Arc::new(source),
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,26 +85,26 @@ pub struct WebContentManifest {
 /// primary `Data/` directory. Locale discovery intentionally mirrors
 /// `main_entry::add_language_folder` and the web converter.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn source_content_identity(data_dir: &Path) -> Result<String, String> {
+pub fn source_content_identity(data_dir: &Path) -> Result<String, MultiplayerError> {
     let data_dir = fs::canonicalize(data_dir).map_err(|error| {
-        format!(
-            "resolve content Data directory {}: {error}",
-            data_dir.display()
+        content_io(
+            format!("resolve content Data directory {}", data_dir.display()),
+            error,
         )
     })?;
     if !data_dir.is_dir() {
-        return Err(format!(
+        return Err(invalid(format!(
             "content Data path is not a directory: {}",
             data_dir.display()
-        ));
+        )));
     }
     let install_root = data_dir
         .parent()
         .ok_or_else(|| {
-            format!(
+            invalid(format!(
                 "content Data directory has no install root: {}",
                 data_dir.display()
-            )
+            ))
         })?
         .to_path_buf();
     let mut roots = vec![("primary".to_string(), data_dir)];
@@ -113,12 +131,11 @@ pub fn source_content_identity(data_dir: &Path) -> Result<String, String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn active_content_identity(
     files: &robin_engine::sbfile::SbFileSystem,
-) -> Result<String, String> {
+) -> Result<String, MultiplayerError> {
     if files.has_zip_overlays() {
-        return Err(
-            "browser invitations require an unmodified content closure; a ZIP overlay is active"
-                .to_string(),
-        );
+        return Err(invalid(
+            "browser invitations require an unmodified content closure; a ZIP overlay is active",
+        ));
     }
     for overlay in files.overlay_paths() {
         let normalized = overlay
@@ -126,9 +143,9 @@ pub fn active_content_identity(
             .trim_end_matches('/')
             .to_ascii_lowercase();
         if !normalized.ends_with("/assets/core-datadir") && normalized != "assets/core-datadir" {
-            return Err(format!(
+            return Err(invalid(format!(
                 "browser invitations require an unmodified content closure; unsupported overlay is active: {overlay}"
-            ));
+            )));
         }
     }
 
@@ -140,20 +157,21 @@ pub fn active_content_identity(
     let marker = files.resolve_data_path("Data/robinhood.bks")
         .or_else(|| files.resolve_data_path("Data/datadir.bin"))
         .ok_or_else(|| {
-            "cannot identify native content closure: neither Data/robinhood.bks nor Data/datadir.bin is available"
-                .to_string()
+            invalid(
+                "cannot identify native content closure: neither Data/robinhood.bks nor Data/datadir.bin is available",
+            )
         })?;
     let data_dir = marker.parent().ok_or_else(|| {
-        format!(
+        invalid(format!(
             "native content marker has no Data directory: {}",
             marker.display()
-        )
+        ))
     })?;
     if marker.file_name().is_some_and(|name| name == "datadir.bin") {
-        return Err(format!(
+        return Err(invalid(format!(
             "shipping host content at {} has no {WEB_CONTENT_MANIFEST_NAME}; browser invitation publication is unsafe",
             data_dir.display()
-        ));
+        )));
     }
     source_content_identity(data_dir)
 }
@@ -169,7 +187,7 @@ fn locale_data_dir(install_root: &Path, locale: &str) -> Option<PathBuf> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn hash_roots(roots: &[(String, PathBuf)]) -> Result<String, String> {
+fn hash_roots(roots: &[(String, PathBuf)]) -> Result<String, MultiplayerError> {
     let mut hasher = Sha256::new();
     hasher.update(CONTENT_IDENTITY_DOMAIN);
     for (label, root) in roots {
@@ -180,62 +198,67 @@ fn hash_roots(roots: &[(String, PathBuf)]) -> Result<String, String> {
         for (relative, path) in files {
             hasher.update((relative.len() as u64).to_le_bytes());
             hasher.update(relative.as_bytes());
-            let mut file = fs::File::open(&path)
-                .map_err(|error| format!("open content file {}: {error}", path.display()))?;
+            let mut file = fs::File::open(&path).map_err(|error| {
+                content_io(format!("open content file {}", path.display()), error)
+            })?;
             let length = file
                 .metadata()
-                .map_err(|error| format!("stat content file {}: {error}", path.display()))?
+                .map_err(|error| {
+                    content_io(format!("stat content file {}", path.display()), error)
+                })?
                 .len();
             hasher.update(length.to_le_bytes());
-            hash_reader(&mut file, &mut hasher)
-                .map_err(|error| format!("read content file {}: {error}", path.display()))?;
+            hash_reader(&mut file, &mut hasher).map_err(|error| {
+                content_io(format!("read content file {}", path.display()), error)
+            })?;
         }
     }
     Ok(hex_digest(hasher.finalize().into()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn collect_regular_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
+fn collect_regular_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, MultiplayerError> {
     let mut pending = vec![root.to_path_buf()];
     let mut files = BTreeMap::new();
     while let Some(directory) = pending.pop() {
         let entries = fs::read_dir(&directory).map_err(|error| {
-            format!(
-                "enumerate content directory {}: {error}",
-                directory.display()
+            content_io(
+                format!("enumerate content directory {}", directory.display()),
+                error,
             )
         })?;
         for entry in entries {
             let entry = entry.map_err(|error| {
-                format!(
-                    "enumerate content directory {}: {error}",
-                    directory.display()
+                content_io(
+                    format!("enumerate content directory {}", directory.display()),
+                    error,
                 )
             })?;
             let path = entry.path();
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| format!("stat content path {}: {error}", path.display()))?;
+            let metadata = fs::symlink_metadata(&path).map_err(|error| {
+                content_io(format!("stat content path {}", path.display()), error)
+            })?;
             if metadata.file_type().is_symlink() {
-                return Err(format!(
+                return Err(invalid(format!(
                     "content identity refuses symlinked path {}",
                     path.display()
-                ));
+                )));
             }
             if metadata.is_dir() {
                 pending.push(path);
                 continue;
             }
             if !metadata.is_file() {
-                return Err(format!(
+                return Err(invalid(format!(
                     "content identity refuses non-file path {}",
                     path.display()
-                ));
+                )));
             }
             let relative = path
                 .strip_prefix(root)
                 .expect("walked path must remain under content root")
                 .to_str()
-                .ok_or_else(|| format!("content path is not UTF-8: {}", path.display()))?
+                .ok_or_else(|| invalid(format!("content path is not UTF-8: {}", path.display())))?
                 .replace('\\', "/")
                 .to_ascii_lowercase();
             if relative.is_empty()
@@ -243,19 +266,22 @@ fn collect_regular_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, Strin
                     .split('/')
                     .any(|part| part.is_empty() || part == "." || part == "..")
             {
-                return Err(format!("content path is not canonical: {}", path.display()));
+                return Err(invalid(format!(
+                    "content path is not canonical: {}",
+                    path.display()
+                )));
             }
             match files.entry(relative) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     entry.insert(path);
                 }
                 std::collections::btree_map::Entry::Occupied(entry) => {
-                    return Err(format!(
+                    return Err(invalid(format!(
                         "content paths collide case-insensitively at {}: {} and {}",
                         entry.key(),
                         entry.get().display(),
                         path.display()
-                    ));
+                    )));
                 }
             }
         }
@@ -264,34 +290,36 @@ fn collect_regular_files(root: &Path) -> Result<BTreeMap<String, PathBuf>, Strin
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn verify_web_content_package(manifest_path: &Path) -> Result<String, String> {
+fn verify_web_content_package(manifest_path: &Path) -> Result<String, MultiplayerError> {
     let bytes = fs::read(manifest_path).map_err(|error| {
-        format!(
-            "read web content manifest {}: {error}",
-            manifest_path.display()
+        content_io(
+            format!("read web content manifest {}", manifest_path.display()),
+            error,
         )
     })?;
     let manifest: WebContentManifest = serde_json::from_slice(&bytes).map_err(|error| {
-        format!(
-            "parse web content manifest {}: {error}",
-            manifest_path.display()
+        content_io(
+            format!("parse web content manifest {}", manifest_path.display()),
+            error,
         )
     })?;
     let canonical = serde_json::to_vec(&manifest)
-        .map_err(|error| format!("serialize web content manifest: {error}"))?;
+        .map_err(|error| content_io("serialize web content manifest".to_owned(), error))?;
     if canonical != bytes {
-        return Err("web content manifest is not canonical JSON".to_string());
+        return Err(invalid("web content manifest is not canonical JSON"));
     }
     validate_sha256(&manifest.native_content_sha256, "native content identity")?;
     if manifest.schema != WEB_CONTENT_MANIFEST_SCHEMA {
-        return Err("web content manifest has unsupported schema".to_string());
+        return Err(invalid("web content manifest has unsupported schema"));
     }
     if manifest.engine_version != crate::replay_format::ENGINE_SOURCE_COMMIT {
-        return Err("web content manifest was built for a different engine commit".to_string());
+        return Err(invalid(
+            "web content manifest was built for a different engine commit",
+        ));
     }
     let root = manifest_path
         .parent()
-        .ok_or_else(|| "web content manifest has no package root".to_string())?;
+        .ok_or_else(|| invalid("web content manifest has no package root"))?;
     let actual = collect_regular_files(root)?;
     let mut expected = BTreeSet::from([WEB_CONTENT_MANIFEST_NAME.to_string()]);
     verify_manifest_file(
@@ -304,11 +332,16 @@ fn verify_web_content_package(manifest_path: &Path) -> Result<String, String> {
     for file in &manifest.files {
         verify_manifest_file(root, &file.path, file.byte_length, &file.sha256)?;
         if !expected.insert(file.path.to_ascii_lowercase()) {
-            return Err(format!("web content manifest repeats {}", file.path));
+            return Err(invalid(format!(
+                "web content manifest repeats {}",
+                file.path
+            )));
         }
     }
     if !actual.keys().eq(expected.iter()) {
-        return Err("web content package has missing or unexpected files".to_string());
+        return Err(invalid(
+            "web content package has missing or unexpected files",
+        ));
     }
     Ok(manifest.native_content_sha256)
 }
@@ -319,26 +352,28 @@ fn verify_manifest_file(
     relative: &str,
     length: u64,
     digest: &str,
-) -> Result<(), String> {
+) -> Result<(), MultiplayerError> {
     validate_relative_path(relative)?;
     validate_sha256(digest, "web content file digest")?;
     let path = root.join(relative);
     let mut file = fs::File::open(&path)
-        .map_err(|error| format!("open web content file {}: {error}", path.display()))?;
+        .map_err(|error| content_io(format!("open web content file {}", path.display()), error))?;
     let metadata = file
         .metadata()
-        .map_err(|error| format!("stat web content file {}: {error}", path.display()))?;
+        .map_err(|error| content_io(format!("stat web content file {}", path.display()), error))?;
     if !metadata.is_file() || metadata.len() != length {
-        return Err(format!(
+        return Err(invalid(format!(
             "web content file has wrong type or length: {relative}"
-        ));
+        )));
     }
     let mut hasher = Sha256::new();
     hash_reader(&mut file, &mut hasher)
-        .map_err(|error| format!("read web content file {}: {error}", path.display()))?;
+        .map_err(|error| content_io(format!("read web content file {}", path.display()), error))?;
     let actual = hex_digest(hasher.finalize().into());
     if actual != digest {
-        return Err(format!("web content file has wrong digest: {relative}"));
+        return Err(invalid(format!(
+            "web content file has wrong digest: {relative}"
+        )));
     }
     Ok(())
 }
@@ -359,24 +394,28 @@ fn hash_reader(reader: &mut impl std::io::Read, hasher: &mut Sha256) -> std::io:
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn validate_relative_path(path: &str) -> Result<(), String> {
+fn validate_relative_path(path: &str) -> Result<(), MultiplayerError> {
     if robin_util::asset_fs::validate_canonical_relative_path(path).is_err()
         || !path
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/'))
     {
-        return Err(format!("web content path is not canonical: {path}"));
+        return Err(invalid(format!(
+            "web content path is not canonical: {path}"
+        )));
     }
     Ok(())
 }
 
-pub fn validate_sha256(value: &str, label: &str) -> Result<(), String> {
+pub fn validate_sha256(value: &str, label: &str) -> Result<(), MultiplayerError> {
     if value.len() != 64
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
-        return Err(format!("{label} must be one lowercase SHA-256 digest"));
+        return Err(invalid(format!(
+            "{label} must be one lowercase SHA-256 digest"
+        )));
     }
     Ok(())
 }
@@ -406,11 +445,13 @@ mod tests {
         std::fs::write(&second, b"second").unwrap();
         let error = super::collect_regular_files(root.path()).unwrap_err();
         assert!(
-            error.contains("collide case-insensitively at mission.dat"),
+            error
+                .to_string()
+                .contains("collide case-insensitively at mission.dat"),
             "{error}"
         );
-        assert!(error.contains("Mission.dat"), "{error}");
-        assert!(error.contains("mission.dat"), "{error}");
+        assert!(error.to_string().contains("Mission.dat"), "{error}");
+        assert!(error.to_string().contains("mission.dat"), "{error}");
         assert_eq!(std::fs::read(first).unwrap(), b"first");
         assert_eq!(std::fs::read(second).unwrap(), b"second");
     }
@@ -483,7 +524,10 @@ mod tests {
             .add_overlay_path(overlay.path().to_str().unwrap())
             .expect("mount fixture asset directory");
         let error = super::active_content_identity(&files).unwrap_err();
-        assert!(error.contains("unsupported overlay is active"), "{error}");
+        assert!(
+            error.to_string().contains("unsupported overlay is active"),
+            "{error}"
+        );
     }
     use super::{
         WEB_CONTENT_MANIFEST_NAME, WEB_CONTENT_MANIFEST_SCHEMA, WebContentDatadir,
@@ -564,6 +608,7 @@ mod tests {
         assert!(
             verify_web_content_package(&manifest_path)
                 .unwrap_err()
+                .to_string()
                 .contains("missing or unexpected files")
         );
         std::fs::remove_file(extra).expect("remove extra fixture file");
@@ -574,6 +619,7 @@ mod tests {
         assert!(
             verify_web_content_package(&manifest_path)
                 .unwrap_err()
+                .to_string()
                 .contains("wrong digest")
         );
     }

@@ -19,7 +19,7 @@ pub(super) struct MissionServices<'a> {
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
-    pub(super) args: &'a crate::main_entry::MissionLaunch,
+    pub(super) args: &'a crate::main_entry::MissionRequest,
 }
 
 /// Control returned by one interactive host-frame iteration.
@@ -59,11 +59,11 @@ impl InteractiveMission {
     pub(super) async fn run(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<GameCode, String> {
+    ) -> Result<GameCode, MissionError> {
         #[cfg(target_arch = "wasm32")]
         crate::replay_archive::flush_browser_storage()
             .await
-            .map_err(|error| format!("persist initial replay: {error:#}"))?;
+            .map_err(|error| MissionError::replay(format!("persist initial replay: {error:#}")))?;
         if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
             return Ok(code);
         }
@@ -72,7 +72,9 @@ impl InteractiveMission {
             #[cfg(target_arch = "wasm32")]
             crate::replay_archive::flush_browser_storage()
                 .await
-                .map_err(|error| format!("persist replay frame: {error:#}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("persist replay frame: {error:#}"))
+                })?;
             let control = control?;
             if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
                 return Ok(code);
@@ -80,13 +82,13 @@ impl InteractiveMission {
             match control {
                 FrameControl::Continue | FrameControl::RestartIteration => {}
                 FrameControl::Exit(exit) => {
-                    if let Some(output) = services.args.mission_start_map_output.as_deref() {
-                        return Err(format!(
+                    if let Some(output) = services.args.config.capture.map_output.as_deref() {
+                        return Err(MissionError::render(format!(
                             "mission exited at simulation frame {} before screenshot frame {} could be written to {}",
                             self.runtime.timeline.frame_number(),
-                            services.args.mission_start_map_frame,
+                            services.args.config.capture.map_frame,
                             output.display()
-                        ));
+                        )));
                     }
                     return Ok(exit.into_game_code());
                 }
@@ -99,7 +101,7 @@ impl InteractiveMission {
     async fn capture_requested_screenshot_if_ready(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<Option<GameCode>, String> {
+    ) -> Result<Option<GameCode>, MissionError> {
         let args = services.args;
         // Preserve the existing statement order while migrating ownership. These
         // are disjoint borrows from the two mission-lifetime roots, not secondary
@@ -125,7 +127,7 @@ impl InteractiveMission {
             ..
         } = frontend;
 
-        if timeline_frame < args.mission_start_map_frame {
+        if timeline_frame < args.config.capture.map_frame {
             return Ok(None);
         }
 
@@ -135,8 +137,8 @@ impl InteractiveMission {
         // This matches the original startup boundary in
         // the original game's initialization; the deferred
         // PostInitialize dispatch around lines 1835-1841).
-        if let Some(output_path) = args.mission_start_map_output.as_deref() {
-            if args.mission_start_reveal_all {
+        if let Some(output_path) = args.config.capture.map_output.as_deref() {
+            if args.config.capture.reveal_all {
                 let application_context = host.application_context().clone();
                 crate::sim_timeline::run_engine_frame_core(
                     &mut host.frontend,
@@ -182,7 +184,7 @@ impl InteractiveMission {
             // A full-map export is not an interactive screenshot. Keep the
             // cursor out of its top-left map pixel. Viewport captures retain
             // the ordinary cursor/HUD composition.
-            if !args.mission_start_viewport_capture {
+            if !args.config.capture.viewport_capture {
                 host.frontend.input.feedback.mouse_opacity = 0;
             }
             let display_snapshot = host.frontend.presentation.engine_display.clone();
@@ -201,9 +203,9 @@ impl InteractiveMission {
                     },
                 );
                 let screenshot = crate::http_server::ScreenshotRequest {
-                    frame: Some(args.mission_start_map_frame),
-                    hide_ui: !args.mission_start_viewport_capture,
-                    full_map: !args.mission_start_viewport_capture,
+                    frame: Some(args.config.capture.map_frame),
+                    hide_ui: !args.config.capture.viewport_capture,
+                    full_map: !args.config.capture.viewport_capture,
                     ..Default::default()
                 };
                 capture_screenshot_to_path(
@@ -219,10 +221,10 @@ impl InteractiveMission {
             };
 
             capture_result.await.map_err(|err| {
-                format!(
-                    "failed to render mission-start map to {}: {err}",
+                err.context(format!(
+                    "failed to render mission-start map to {}",
                     output_path.display()
-                )
+                ))
             })?;
             tracing::info!(
                 frame = timeline_frame,
@@ -254,109 +256,56 @@ impl InteractiveMission {
     }
 }
 
-/// Short-lived owner of the post-modal graphical tail. It keeps application
-/// services outside mission state while giving recorder, audio, presentation,
-/// PostInitialize, and pacing one explicit orchestration boundary.
-struct InteractiveFrameFinish<'mission, 'services, 'app> {
-    mission: &'mission mut InteractiveMission,
-    services: &'services mut MissionServices<'app>,
-    state: FramePresentationHandoff,
+/// Borrows of the fixed-tick render dispatch in
+/// [`InteractiveFrameFinish::run`]: HUD preparation, pending captures,
+/// native-refresh camera sampling, the live draw and its present.
+///
+/// Not serde: a frame-scoped bundle of borrowed process resources.
+struct FixedTickRender<'a, 'h> {
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    startup_audio_pause: &'a mut Option<crate::web_audio_backend::StartupWarmupPause>,
+    callbacks: &'a mut RustCallbacks,
+    args: &'a crate::main_entry::MissionRequest,
+    http: &'a mut crate::http_server::SessionIngress,
+    runtime: &'a super::runtime::TimelineRuntime,
+    host: &'a mut crate::host::HostPresentation<'h>,
+    game: &'a mut crate::game::Game,
+    engine: &'a robin_engine::engine::Engine,
+    assets: &'a std::sync::Arc<robin_engine::engine::LevelAssets>,
+    dev: &'a robin_engine::engine::DevState,
+    frontend: &'a mut super::interactive::InteractiveFrontend,
+    frame: &'a mut MissionFrame,
+    shift_held: bool,
+    rewind_active: bool,
 }
 
-impl InteractiveFrameFinish<'_, '_, '_> {
-    async fn run(self) {
+impl FixedTickRender<'_, '_> {
+    /// Draw and present this fixed tick when `should_draw`; returns whether
+    /// the live frame was presented.
+    async fn run(self, should_draw: bool) -> bool {
         let Self {
-            mission,
-            services,
-            state,
-        } = self;
-        let callbacks = &mut *services.callbacks;
-        let args = services.args;
-        let FramePresentationHandoff {
-            mut frame,
-            rewind_active,
-            consumed_buffered,
-            shift_held,
-            modal_rendered: modal_rendered_this_frame,
-            history_commit_pending,
-        } = state;
-        let InteractiveMission {
-            runtime, frontend, ..
-        } = mission;
-        let MissionRuntime {
-            world,
-            timeline: runtime,
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause,
+            callbacks,
+            args,
             http,
-            ..
-        } = runtime;
-        let mut startup_timer = (runtime.frame_number() <= 1)
-            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
-        let profiling = super::frame_perf::enabled();
-        let phase_start = super::frame_perf::start(profiling);
-        finish_interactive_audio(runtime, world, frontend, callbacks);
-        super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
-        if let Some(timer) = startup_timer.as_mut() {
-            timer.step("audio");
-        }
-
-        let phase_start = super::frame_perf::start(profiling);
-        runtime.begin_presentation();
-        runtime.trace(FrameContractStage::Presentation);
-        let warming_up_map_export = args.mission_start_map_output.is_some()
-            && runtime.frame_number() <= args.mission_start_map_frame;
-        let should_draw = !world.view().host.frontend.presentation.skip_render
-            && !modal_rendered_this_frame
-            && !warming_up_map_export;
-        if should_draw {
-            // Cursor command production and deferred decal effects belong to
-            // the fixed-tick input/host boundary, not the rendering capability.
-            let MissionInputPhase {
-                host,
-                engine,
-                assets,
-                dev,
-                mut external_actions,
-                ..
-            } = world.post_tick_input_phase(&mut frame);
-            pre_render_engine_setup(host);
-            update_mouse_and_cursor(
-                engine,
-                host,
-                assets,
-                dev,
-                &mut external_actions,
-                &mut frontend.presentation.renderer,
-                &mut frontend.resources.cursor,
-                &mut frontend.presentation.sprites.cursor_renderer,
-                &frontend.input.threaded,
-                &frontend.presentation.sprites.portrait_cache,
-                shift_held,
-                &mut frontend.hud.last_cursor_id,
-            );
-        }
-        let MissionPresentationPhase {
-            host: mut presentation_host,
+            runtime,
+            host,
             game,
             engine,
             assets,
             dev,
-        } = world.presentation_phase();
-        let host = &mut presentation_host;
+            frontend,
+            frame,
+            shift_held,
+            rewind_active,
+        } = self;
         let input = &mut frontend.input;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
         let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
-        // ── Render dispatch ──
-        // The display-state machine (display_op transitions, scrolling
-        // deceleration, zoom interpolation, minimap transition) now runs
-        // inside `perform_hourglass` so rollback replay re-runs the
-        // same mutations. `last_skip_render` carries the
-        // fast-forward "skip this frame" decision back to the host.
-        // File-backed map exports need normal simulation/PostInitialize frames,
-        // not intermediate window presentation. Their requested full-map
-        // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
             super::render::prepare_fixed_tick_hud(
@@ -364,11 +313,13 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 host,
                 assets,
                 game,
-                presentation,
-                hud,
-                input,
-                ui,
-                resources.hud_fonts.is_some(),
+                super::render::FixedTickHudFrontend {
+                    presentation: &*presentation,
+                    hud: &mut *hud,
+                    input: &*input,
+                    ui: &mut *ui,
+                    has_hud_fonts: resources.hud_fonts.is_some(),
+                },
             );
             presentation.prepare_zoom(engine, host, hud, input);
             let mut render_ctx = presentation.render_context(
@@ -426,7 +377,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.presentation.draw_order.clone();
             let interpolation_enabled = host.frontend.preferences().native_refresh_presentation()
-                && !args.fast_forward
+                && !args.config.cli.fast_forward
                 && !engine.is_fast_forward()
                 && !rewind_active;
             native_refresh_interpolation.prepare_fixed_tick(
@@ -467,7 +418,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
             let presented = render_ctx.present();
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-            if services.startup_audio_pause.take().is_some() {
+            if startup_audio_pause.take().is_some() {
                 // Actual playback bypasses this reservation. A failed surface
                 // acquisition must not indefinitely park speculative warmup.
                 if !presented {
@@ -498,10 +449,144 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             saved_camera.apply(host.frontend);
             host.frontend.presentation.draw_order = saved_draw_order;
             sync_render_camera(host.frontend);
-            post_render_engine_cleanup(&mut frame, host.local_seat, runtime.playback().is_some());
+            post_render_engine_cleanup(
+                frame,
+                host.local_seat,
+                runtime.replay().playback().is_some(),
+            );
         } else {
             native_refresh_interpolation.clear();
         }
+        fixed_tick_presented
+    }
+}
+
+/// Short-lived owner of the post-modal graphical tail. It keeps application
+/// services outside mission state while giving recorder, audio, presentation,
+/// PostInitialize, and pacing one explicit orchestration boundary.
+struct InteractiveFrameFinish<'mission, 'services, 'app> {
+    mission: &'mission mut InteractiveMission,
+    services: &'services mut MissionServices<'app>,
+    state: FramePresentationHandoff,
+}
+
+impl InteractiveFrameFinish<'_, '_, '_> {
+    async fn run(self) {
+        let Self {
+            mission,
+            services,
+            state,
+        } = self;
+        let callbacks = &mut *services.callbacks;
+        let args = services.args;
+        let FramePresentationHandoff {
+            mut frame,
+            rewind_active,
+            consumed_buffered,
+            shift_held,
+            modal_rendered: modal_rendered_this_frame,
+            history_commit_pending,
+        } = state;
+        let InteractiveMission {
+            runtime, frontend, ..
+        } = mission;
+        let MissionRuntime {
+            world,
+            timeline: runtime,
+            http,
+            ..
+        } = runtime;
+        let mut startup_timer = (runtime.frame_number() <= 1)
+            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
+        let profiling = super::frame_perf::enabled();
+        let phase_start = super::frame_perf::start(profiling);
+        finish_interactive_audio(runtime, world, frontend, callbacks);
+        super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("audio");
+        }
+
+        let phase_start = super::frame_perf::start(profiling);
+        runtime.lifecycle_mut().begin_presentation();
+        runtime
+            .lifecycle_mut()
+            .trace(FrameContractStage::Presentation);
+        let warming_up_map_export = args.config.capture.map_output.is_some()
+            && runtime.frame_number() <= args.config.capture.map_frame;
+        let should_draw = !world.view().host.frontend.presentation.skip_render
+            && !modal_rendered_this_frame
+            && !warming_up_map_export;
+        if should_draw {
+            // Cursor command production and deferred decal effects belong to
+            // the fixed-tick input/host boundary, not the rendering capability.
+            let MissionInputPhase {
+                host,
+                engine,
+                assets,
+                dev,
+                mut external_actions,
+                ..
+            } = world.post_tick_input_phase(&mut frame);
+            pre_render_engine_setup(host);
+            update_mouse_and_cursor(
+                engine,
+                host,
+                assets,
+                dev,
+                &mut external_actions,
+                super::render::CursorFrontend {
+                    renderer: &frontend.presentation.renderer,
+                    cursor_res: &mut frontend.resources.cursor,
+                    cursor_renderer: &mut frontend.presentation.sprites.cursor_renderer,
+                    threaded_input: &frontend.input.threaded,
+                    portrait_cache: &frontend.presentation.sprites.portrait_cache,
+                    last_cursor_id: &mut frontend.hud.last_cursor_id,
+                },
+                shift_held,
+            );
+        }
+        let MissionPresentationPhase {
+            host: mut presentation_host,
+            game,
+            engine,
+            assets,
+            dev,
+        } = world.presentation_phase();
+        let host = &mut presentation_host;
+        // ── Render dispatch ──
+        // The display-state machine (display_op transitions, scrolling
+        // deceleration, zoom interpolation, minimap transition) now runs
+        // inside `perform_hourglass` so rollback replay re-runs the
+        // same mutations. `last_skip_render` carries the
+        // fast-forward "skip this frame" decision back to the host.
+        // File-backed map exports need normal simulation/PostInitialize frames,
+        // not intermediate window presentation. Their requested full-map
+        // screenshot is rendered once immediately after the target frame.
+        let fixed_tick_presented = FixedTickRender {
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause: &mut *services.startup_audio_pause,
+            callbacks: &mut *callbacks,
+            args,
+            http: &mut *http,
+            runtime: &*runtime,
+            host: &mut *host,
+            game: &mut *game,
+            engine,
+            assets,
+            dev,
+            frontend: &mut *frontend,
+            frame: &mut frame,
+            shift_held,
+            rewind_active,
+        }
+        .run(should_draw)
+        .await;
+        let input = &mut frontend.input;
+        let resources = &mut frontend.resources;
+        let ui = &mut frontend.ui;
+        let hud = &mut frontend.hud;
+        let presentation = &mut frontend.presentation;
+        let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
         // end if draw_result == 0 (skip render in fast-forward)
         super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
         if let Some(timer) = startup_timer.as_mut() {
@@ -543,8 +628,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // pair instead of inferring it from hourglass admission.
         let phase_start = super::frame_perf::start(profiling);
         finalize_interactive_recording(runtime, &mut frame);
-        let was_recording = runtime.is_recording();
-        if runtime.seal_terminal_recording(&frame) && was_recording {
+        let was_recording = runtime.replay().is_recording();
+        if runtime.replay_mut().seal_terminal_recording(&frame) && was_recording {
             if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
                 host.application_context()
                     .recording_index()
@@ -662,7 +747,7 @@ impl InteractiveMission {
     async fn run_frame(
         &mut self,
         services: &mut MissionServices<'_>,
-    ) -> Result<FrameControl, String> {
+    ) -> Result<FrameControl, MissionError> {
         let first_frame = self.runtime.timeline.frame_number() == 0;
         let mut startup_timer =
             first_frame.then(|| super::setup::PhaseTimer::new("first mission frame"));
@@ -738,15 +823,15 @@ impl InteractiveMission {
                     &services.callbacks.save_manager,
                     world.mutation(),
                     &mut control.manual_pause,
-                    &mut self.frontend.ui,
+                    &mut self.frontend,
                     services.window,
-                    &mut self.frontend.presentation,
-                    &mut self.frontend.input,
-                    terminal_pending,
-                    super::frame_simulate::KeyboardStep::from_pressed(
-                        step_forward_pressed,
-                        step_back_pressed,
-                    ),
+                    super::frame_simulate::ManualStepRequest {
+                        terminal_exit_pending: terminal_pending,
+                        keyboard_step: super::frame_simulate::KeyboardStep::from_pressed(
+                            step_forward_pressed,
+                            step_back_pressed,
+                        ),
+                    },
                 );
                 FrameControl::Continue
             }
@@ -795,11 +880,13 @@ fn finish_interactive_audio(
             .as_mut()
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
-    runtime.trace(FrameContractStage::AppEffects);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::AppEffects);
     if let Some(boundary) = frontend.audio.tick(engine, audio, viewport, assets) {
-        runtime.queue_sound_boundary(boundary);
+        runtime.lifecycle_mut().queue_sound_boundary(boundary);
     }
-    runtime.trace(FrameContractStage::Audio);
+    runtime.lifecycle_mut().trace(FrameContractStage::Audio);
 }
 
 /// Cross the one-shot post-refresh script boundary and update the initial
@@ -814,8 +901,8 @@ fn run_interactive_post_initialize(
 ) {
     let application_context = host.application_context().clone();
     let requested = frame.begin_post_initialize();
-    let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
-    let post_initialized = runtime.cross_post_initialize(|| {
+    let replay_idle = runtime.replay().playback().is_some() && !frame.has_recorded_input();
+    let post_initialized = runtime.lifecycle_mut().cross_post_initialize(|| {
         if replay_idle {
             return false;
         }
@@ -916,9 +1003,9 @@ fn plan_interactive_pacing(
     host: &Host,
     engine: &Engine,
     frame: &MissionFrame,
-    args: &crate::main_entry::MissionLaunch,
+    args: &crate::main_entry::MissionRequest,
 ) -> (u32, u64) {
-    runtime.trace(FrameContractStage::Pacing);
+    runtime.lifecycle_mut().trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
     // `--fast-forward` CLI flag skips the pacing sleep entirely so
     // the loop runs at full host speed (tests / profiling).  The
@@ -930,7 +1017,7 @@ fn plan_interactive_pacing(
     let presentation_now_ms = crate::window::process_uptime_us() / 1_000;
     let frame_end_ms = presentation_now_ms as u32;
     let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
-    let target = if args.fast_forward {
+    let target = if args.config.cli.fast_forward {
         0
     } else if engine.is_fast_forward() {
         1
@@ -944,16 +1031,19 @@ fn plan_interactive_pacing(
     let normal_sleep_ms = target.saturating_sub(elapsed);
     let host_deadline_ms = if host.transport.net().is_some()
         && host.transport.local_seat() != engine_player_command::PlayerId::HOST
-        && !args.fast_forward
+        && !args.config.cli.fast_forward
     {
-        runtime.host_frame_deadline_ms()
+        runtime
+            .multiplayer()
+            .timing()
+            .deadline_ms(runtime.frame_number())
     } else {
         None
     };
-    let outcome = runtime.plan_frame_outcome(
+    let outcome = runtime.lifecycle().plan_frame_outcome(
         frame_end_ms,
         FramePacing {
-            fast_forward_requested: args.fast_forward,
+            fast_forward_requested: args.config.cli.fast_forward,
             headless: false,
             engine_fast_forward: engine.is_fast_forward(),
             slow_motion: host.frontend.slow_motion,
@@ -969,9 +1059,14 @@ fn plan_interactive_pacing(
     };
     if host_deadline_ms.is_some() {
         let correction_ms = i64::from(remaining_sleep_ms) - i64::from(normal_sleep_ms);
-        if correction_ms != 0 && runtime.sleep_correction_log_due(frame_end_ms) {
+        if correction_ms != 0
+            && runtime
+                .multiplayer_mut()
+                .timing_mut()
+                .sleep_correction_log_due(frame_end_ms)
+        {
             tracing::info!(
-                scheduled_frame = runtime.host_schedule_frame(),
+                scheduled_frame = runtime.multiplayer().timing().schedule_frame(),
                 local_frame = runtime.frame_number(),
                 normal_sleep_ms,
                 adjusted_sleep_ms = remaining_sleep_ms,
@@ -980,7 +1075,10 @@ fn plan_interactive_pacing(
             );
         }
     }
-    runtime.publish_multiplayer_timing(&host.transport, remaining_sleep_ms);
+    let clock_frame = runtime.frame_number();
+    runtime
+        .multiplayer_mut()
+        .publish_timing(&host.transport, clock_frame, remaining_sleep_ms);
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this
     // budget; neither may turn it into a fresh relative sleep.

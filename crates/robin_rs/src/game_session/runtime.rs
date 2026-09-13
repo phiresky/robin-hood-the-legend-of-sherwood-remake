@@ -4,7 +4,8 @@
 //! presentation work, but they share the same deterministic frame
 //! bookkeeping through [`TimelineRuntime`].
 
-use super::multiplayer::{MultiplayerAdmissionEvent, MultiplayerRollbackTelemetry};
+use super::MissionError;
+use super::multiplayer::MultiplayerAdmissionEvent;
 use super::replay_init::ReplayAndRollback;
 use crate::game::Game;
 use crate::host::Host;
@@ -25,6 +26,7 @@ pub(super) use robin_engine::replay::{ReplayFrameOrdinal, TimelineFrame};
 
 mod frame;
 mod history;
+mod multiplayer_sync;
 pub(super) mod reconciliation;
 mod recording;
 mod timing;
@@ -33,11 +35,11 @@ use frame::MissionFrameSnapshot;
 use frame::RecorderFrameState;
 pub(super) use frame::{FrameActionBatch, FrameCommandBatch, MissionFrame};
 use history::ReconstructionHistory;
+use multiplayer_sync::MultiplayerSync;
 use reconciliation::NetworkReconciliation;
 #[cfg(test)]
 use recording::RecordingValidity;
 use recording::ReplayLifecycle;
-use timing::MultiplayerTiming;
 
 /// Result of asking the timeline for the next replay-owned debugger step.
 ///
@@ -353,7 +355,7 @@ impl MissionRuntime {
     /// Network ingress remains a driver concern and must run before this
     /// method. That ordering is observable for late multiplayer inputs.
     pub(super) fn begin_frame(&mut self, now_ms: u32) -> MissionFrame {
-        self.timeline.reset_execution_trace();
+        self.timeline.lifecycle.reset_execution_trace();
         let mut frame = MissionFrame::new(now_ms);
         self.timeline
             .open_frame(&mut frame, &self.world.manager.engine);
@@ -369,7 +371,7 @@ impl MissionRuntime {
     pub(super) fn inject_next_replay_frame(
         &mut self,
         frame: &mut MissionFrame,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.timeline.apply_playback_timeline_events(
             &mut self.world.host,
             &mut self.world.game,
@@ -388,10 +390,14 @@ impl MissionRuntime {
         mission_frame: &mut MissionFrame,
     ) -> Option<GameCode> {
         if policy.skip_tick || policy.paused {
-            self.timeline.trace(FrameContractStage::PausedOrRewind);
+            self.timeline
+                .lifecycle
+                .trace(FrameContractStage::PausedOrRewind);
         }
-        self.timeline.trace(FrameContractStage::Simulation);
-        self.timeline.run_simulation(|| {
+        self.timeline
+            .lifecycle
+            .trace(FrameContractStage::Simulation);
+        self.timeline.lifecycle.run_simulation(|| {
             let application_context = self.world.host.application_context().clone();
             let mission_transitioning = !self
                 .world
@@ -432,17 +438,20 @@ impl MissionRuntime {
         drain_post_tick_rpc(
             &mut self.http,
             &mut self.timeline,
-            &mut self.world.host.frontend,
-            &mut self.world.host.audio,
-            &mut self.world.host.effects,
-            &application_context,
-            &self.world.host.transport,
-            &mut self.world.manager.engine,
-            &self.world.assets,
-            &mut self.world.dev,
+            PostTickRpcPhase {
+                frontend: &mut self.world.host.frontend,
+                audio: &mut self.world.host.audio,
+                effects: &mut self.world.host.effects,
+                application_context: &application_context,
+                transport: &self.world.host.transport,
+                engine: &mut self.world.manager.engine,
+                assets: &self.world.assets,
+                dev: &mut self.world.dev,
+            },
             frame,
         );
         self.timeline
+            .lifecycle
             .trace(FrameContractStage::HostRpcAndTimelineCommit);
     }
 
@@ -455,7 +464,7 @@ impl MissionRuntime {
             world, timeline, ..
         } = self;
         let requested = frame.begin_post_initialize();
-        let initialized = timeline.cross_post_initialize(|| {
+        let initialized = timeline.lifecycle.cross_post_initialize(|| {
             let application_context = world.host.application_context().clone();
             let initialized = crate::sim_timeline::run_post_initialize_stage_with_actions(
                 &mut world.host.frontend,
@@ -478,6 +487,20 @@ impl MissionRuntime {
     }
 }
 
+/// Borrows admitted at the shared post-tick RPC boundary: host effect domains,
+/// shared transport, and the live engine. `Game`, `EngineManager` and the
+/// aggregate `Host` are deliberately absent.
+pub(super) struct PostTickRpcPhase<'a> {
+    pub(super) frontend: &'a mut crate::host::HostFrontend,
+    pub(super) audio: &'a mut crate::host::HostAudio,
+    pub(super) effects: &'a mut crate::host::HostEffectBatches,
+    pub(super) application_context: &'a crate::host::ApplicationContext,
+    pub(super) transport: &'a crate::host::HostTransport,
+    pub(super) engine: &'a mut Engine,
+    pub(super) assets: &'a LevelAssets,
+    pub(super) dev: &'a mut DevState,
+}
+
 /// Shared post-tick effect/RPC boundary. Neither driver grants access to Game,
 /// EngineManager (snapshot replacement), or the aggregate Host here. Only
 /// presentation/audio effect domains and shared transport access without session
@@ -487,16 +510,19 @@ impl MissionRuntime {
 pub(super) fn drain_post_tick_rpc(
     http: &mut crate::http_server::SessionIngress,
     timeline: &mut TimelineRuntime,
-    frontend: &mut crate::host::HostFrontend,
-    audio: &mut crate::host::HostAudio,
-    effects: &mut crate::host::HostEffectBatches,
-    application_context: &crate::host::ApplicationContext,
-    transport: &crate::host::HostTransport,
-    engine: &mut Engine,
-    assets: &LevelAssets,
-    dev: &mut DevState,
+    phase: PostTickRpcPhase<'_>,
     frame: &mut MissionFrame,
 ) {
+    let PostTickRpcPhase {
+        frontend,
+        audio,
+        effects,
+        application_context,
+        transport,
+        engine,
+        assets,
+        dev,
+    } = phase;
     let pending_actions = frame.unapplied_post_external_actions();
     if !pending_actions.is_empty() {
         crate::sim_timeline::run_post_external_action_stage(
@@ -520,7 +546,9 @@ pub(super) fn drain_post_tick_rpc(
         assets,
         &mut frame.stage_post_commands(),
     );
-    timeline.record_input_taints(http.take_pending_replay_taints());
+    timeline
+        .replay
+        .record_taints(http.take_pending_replay_taints());
     frame.record_applied_post_external_actions(actions);
 }
 
@@ -664,445 +692,33 @@ impl FrameClock {
     }
 }
 
-/// The exact pre-command state captured when bootstrap admits its Restart
-/// save. Keep it while persistence completes, rather than hashing a later state.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub(super) struct BootstrapSaveBoundary {
-    identity: ReplaySaveIdentity,
-    marker: robin_engine::replay::ReplaySaveMarker,
-}
-
-impl BootstrapSaveBoundary {
-    pub(super) fn capture(
-        engine: &Engine,
-        host: &Host,
-        game: &Game,
-        session_identity: Option<ReplaySaveIdentity>,
-    ) -> Self {
-        Self {
-            identity: session_identity.unwrap_or_else(|| {
-                GameRuntimeSnapshot::identity_of_live(engine, host, game)
-                    .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"))
-            }),
-            marker: robin_engine::replay::ReplaySaveMarker {
-                state_hash: robin_engine::replay::state_hash(engine),
-                timeline_frame: 0,
-            },
-        }
-    }
-}
-
-/// Mission-lifetime replay, rollback, network, and frame-clock state.
-///
-/// This is deliberately not serializable: recorder writers, rollback
-/// workers, and live network diagnostics are process resources, not game
-/// state. Persisting them would create a fake/default runtime on restore.
-pub(super) struct TimelineRuntime {
-    /// Actual save/replay restoration awaiting process-owned lifecycle sync.
-    state_restored: bool,
-    /// Single authority for history, network, and replay frame identity.
-    current_frame: TimelineFrame,
-    /// Dense host-record position, separate from the lockstep cursor.
-    replay_ordinal: ReplayFrameOrdinal,
-    network: NetworkReconciliation,
+/// Host-frame phase state machine for one mission driver: its contract, the
+/// coarse phase, the pacing clock, the diagnostic execution trace, facts
+/// waiting for the next opened frame, and the restoration flag awaiting
+/// process-owned lifecycle synchronization.
+pub(super) struct FrameLifecycle {
     contract: FrameContract,
     phase: MissionPhase,
     clock: FrameClock,
     execution_trace: FrameExecutionTrace,
     pending_external_facts: robin_engine::engine::ExternalFacts,
-
-    replay: ReplayLifecycle,
-    history: ReconstructionHistory,
-    pub(super) start_paused: bool,
-    pub(super) replay_finished_logged: bool,
-
-    mp_admission: MultiplayerAdmission,
-    multiplayer_timing: MultiplayerTiming,
-    pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
+    /// Actual save/replay restoration awaiting process-owned lifecycle sync.
+    state_restored: bool,
 }
 
-/// Network admission state for the deterministic mission timeline.
-///
-mod admission;
-pub(super) use admission::MultiplayerAdmission;
-
-impl TimelineRuntime {
-    pub(super) fn new(
-        replay: ReplayAndRollback,
-        contract: FrameContract,
-        wait_for_multiplayer_start: bool,
-        local_is_host: bool,
-    ) -> Self {
+impl FrameLifecycle {
+    fn new(contract: FrameContract) -> Self {
         Self {
-            state_restored: false,
-            current_frame: TimelineFrame::ZERO,
-            replay_ordinal: ReplayFrameOrdinal::ZERO,
-            network: NetworkReconciliation::default(),
             contract,
             phase: MissionPhase::Presentation,
             clock: FrameClock::new(),
             execution_trace: FrameExecutionTrace::default(),
             pending_external_facts: robin_engine::engine::ExternalFacts::default(),
-            replay: ReplayLifecycle::new(replay.recorder, replay.player, replay.recording_control),
-            history: ReconstructionHistory::new(replay.rewind_buffer, replay.rollback_checker),
-            start_paused: replay.start_paused,
-            replay_finished_logged: false,
-            mp_admission: match (wait_for_multiplayer_start, local_is_host) {
-                (false, _) => MultiplayerAdmission::NotRequired,
-                (true, true) => MultiplayerAdmission::HostWaitingForBegin,
-                (true, false) => MultiplayerAdmission::PeerWaitingForSnapshot,
-            },
-            multiplayer_timing: MultiplayerTiming::default(),
-            last_mp_rollback: None,
+            state_restored: false,
         }
     }
 
-    pub(super) fn initially_paused(&self) -> bool {
-        self.start_paused
-    }
-
-    pub(super) fn host_schedule_frame(&self) -> Option<u32> {
-        self.multiplayer_timing.schedule_frame()
-    }
-
-    pub(super) fn host_frame_deadline_ms(&self) -> Option<i64> {
-        self.multiplayer_timing.deadline_ms(self.frame_number())
-    }
-
-    pub(super) fn accept_host_frame_schedule(&mut self, frame: u32, delay_ms: u32) {
-        let now_ms = crate::window::process_uptime_ms();
-        if !self
-            .multiplayer_timing
-            .accept_schedule(frame, delay_ms, now_ms)
-        {
-            tracing::trace!(
-                clock_frame = frame,
-                current_sample_frame = self.host_schedule_frame(),
-                "multiplayer: ignored stale host frame schedule"
-            );
-            return;
-        }
-        tracing::info!(
-            host_clock_frame = frame,
-            ms_until_next_frame = delay_ms,
-            local_frame_at_receive = self.frame_number(),
-            deadline_delta_ms_for_local_frame = self
-                .host_frame_deadline_ms()
-                .expect("schedule just installed")
-                - i64::from(now_ms),
-            "multiplayer: received host frame schedule"
-        );
-    }
-
-    pub(super) fn clock_ahead_log_due(&mut self, now_ms: u32) -> bool {
-        self.multiplayer_timing.clock_ahead_log_due(now_ms)
-    }
-
-    pub(super) fn sleep_correction_log_due(&mut self, now_ms: u32) -> bool {
-        self.multiplayer_timing.sleep_correction_log_due(now_ms)
-    }
-
-    pub(super) fn sample_host_state_hash(&mut self, compute: impl FnOnce() -> u64) {
-        self.multiplayer_timing
-            .sample_hash(self.frame_number(), compute);
-    }
-
-    /// Both graphical and headless drivers publish through this consuming
-    /// transition. A failed send is not retried: NetChannels latches worker
-    /// failure for the next ingress poll, just as before this extraction.
-    pub(super) fn publish_multiplayer_timing(
-        &mut self,
-        transport: &crate::host::HostTransport,
-        remaining_sleep_ms: u32,
-    ) {
-        let Some(net) = transport.net() else { return };
-        if transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
-            return;
-        }
-        let Some(sample) = self.multiplayer_timing.take_publication() else {
-            return;
-        };
-        net.publish_frame(self.frame_number());
-        tracing::info!(
-            hash_frame = sample.frame,
-            clock_frame = self.frame_number(),
-            remaining_sleep_ms,
-            "multiplayer: host sending state hash timing sample"
-        );
-        if let Err(error) = net.send_state_hash(
-            sample.frame,
-            sample.hash,
-            self.frame_number(),
-            remaining_sleep_ms,
-        ) {
-            tracing::error!(%error, "multiplayer state hash publication failed");
-        }
-    }
-
-    pub(super) fn playback(&self) -> Option<&ReplayPlayer> {
-        self.replay.playback()
-    }
-
-    pub(super) fn is_recording(&self) -> bool {
-        self.replay.is_recording()
-    }
-
-    pub(super) fn inject_replay_input(&mut self, frame: &mut MissionFrame) {
-        self.replay.inject_replay_input(frame);
-        frame.assert_replay_timeline_before(self.current_frame());
-    }
-
-    pub(super) fn resolve_replay_ordinal(
-        &self,
-        target: TimelineFrame,
-    ) -> Result<Option<ReplayFrameOrdinal>, String> {
-        self.replay.resolve_ordinal(target)
-    }
-
-    #[cfg(test)]
-    pub(super) fn install_test_recorder(&mut self, recorder: ReplayRecorder) {
-        self.replay.install_test_recorder(recorder);
-    }
-
-    #[cfg(test)]
-    pub(super) fn seal_test_recorder(&mut self) {
-        self.replay.seal();
-    }
-
-    pub(super) fn multiplayer_admission(&self) -> MultiplayerAdmission {
-        self.mp_admission
-    }
-
-    pub(super) fn retained_history(&self) -> &RewindBuffer {
-        &self.history.buffer
-    }
-
-    pub(super) fn pending_input_frame_count(&self) -> usize {
-        self.network.pending_frame_count()
-    }
-
-    pub(super) fn reset_rollback_checker(&mut self) {
-        self.history.reset_checker();
-    }
-
-    pub(super) fn begin_rewind_session(&mut self) {
-        self.history.buffer.begin_session();
-    }
-
-    pub(super) fn end_rewind_session(&mut self) {
-        self.history.buffer.end_session();
-    }
-
-    pub(super) fn begin_history_frame(&mut self, frame: u32, engine: &Engine) {
-        assert_eq!(
-            frame,
-            self.frame_number(),
-            "history capture must use the authoritative timeline frame"
-        );
-        self.history.buffer.begin_frame(frame, engine);
-    }
-
-    pub(super) fn commit_history_frame(
-        &mut self,
-        input: robin_engine::engine::SimulationFrameInput,
-        engine: &Engine,
-    ) {
-        self.history.commit(input, engine);
-    }
-
-    pub(super) fn branch_history_at(&mut self, frame: u32) {
-        self.history.buffer.truncate_future(frame);
-        self.history.reset_checker();
-        self.network.invalidate_after(frame);
-    }
-
-    pub(super) fn checkpoint_history(&mut self, engine: &Engine) {
-        self.history
-            .buffer
-            .checkpoint_recent(self.frame_number(), engine);
-    }
-
-    pub(super) fn drain_network_inputs(
-        &mut self,
-        host: &mut Host,
-        manager: &mut EngineManager,
-        assets: &mut Arc<LevelAssets>,
-    ) -> Result<super::multiplayer::NetDrainResult, super::multiplayer::MultiplayerSessionError>
-    {
-        let result = super::multiplayer::drain_net_inputs(
-            host,
-            manager,
-            self.frame_number(),
-            &mut self.network,
-            assets,
-            &mut self.history.buffer,
-        )?;
-        if result.rewrote_sim_state {
-            self.history.reset_checker();
-        }
-        Ok(result)
-    }
-
-    #[cfg(test)]
-    pub(super) fn append_history_fixture(
-        &mut self,
-        input: robin_engine::engine::SimulationFrameInput,
-    ) {
-        self.history.buffer.end_frame_input(input);
-    }
-
-    #[cfg(test)]
-    pub(super) fn clear_recent_history_fixture(&mut self) {
-        self.history.buffer.clear_recent_checkpoints();
-    }
-
-    #[cfg(test)]
-    pub(super) fn reconstruct_history_fixture(
-        &mut self,
-        assets: &LevelAssets,
-        frame: u32,
-    ) -> Option<Engine> {
-        self.history.buffer.rewind_to(assets, frame)
-    }
-
-    pub(super) const fn current_frame(&self) -> TimelineFrame {
-        self.current_frame
-    }
-
-    pub(super) const fn frame_number(&self) -> u32 {
-        self.current_frame.number()
-    }
-
-    /// Advance after one authoritative transaction has committed. This says
-    /// nothing about whether that transaction executed an engine hourglass.
-    pub(super) fn advance_frame(&mut self) -> TimelineFrame {
-        self.current_frame = self.current_frame.next();
-        self.current_frame
-    }
-
-    /// Reposition the authoritative cursor after snapshot adoption, load-back,
-    /// or debugger rewind. Callers must have already replaced/restored Engine
-    /// state at precisely this pre-transaction boundary.
-    pub(super) fn adopt_frame(&mut self, frame: TimelineFrame) {
-        self.current_frame = frame;
-        self.network.discard_inputs_before(frame);
-    }
-
-    /// Restore the engine and every cursor/history consumer to a retained
-    /// pre-transaction boundary. Session caching is controlled by the caller
-    /// so hold-to-rewind can reuse reconstruction work across host frames.
-    pub(super) fn restore_retained_frame(
-        &mut self,
-        manager: &mut EngineManager,
-        assets: &LevelAssets,
-        target: TimelineFrame,
-    ) -> bool {
-        let Some(engine) = self.history.buffer.rewind_to(assets, target.number()) else {
-            return false;
-        };
-        let Ok(mapped_ordinal) = self.replay.seek_timeline(target) else {
-            return false;
-        };
-        manager.engine = engine;
-        self.adopt_frame(target);
-        if let Some(ordinal) = mapped_ordinal {
-            self.replay_ordinal = ordinal;
-        }
-        self.history.finish_restore(target.number());
-        true
-    }
-
-    /// Reset every in-memory reconstruction of the current deterministic
-    /// future after a whole-state discontinuity such as save-load adoption.
-    ///
-    /// Original-game loading is followed by
-    /// post-load resynchronization; the original game has no command journal. The Rust
-    /// equivalent must additionally invalidate all journals and checkpoints
-    /// whose future was derived from the replaced state.
-    fn reset_reconstruction_history(&mut self, target: TimelineFrame, engine: &Engine) {
-        self.adopt_frame(target);
-        self.history.adopt_snapshot(target.number(), engine);
-    }
-
-    /// Called by the host operation that publishes a replacement snapshot and
-    /// resets the transport ready barrier. A spontaneous BeginSim is still an
-    /// error; only this explicitly adopted frame can release the new gate.
-    pub(super) fn begin_synchronized_step_resync(&mut self) {
-        assert!(
-            matches!(
-                self.mp_admission,
-                MultiplayerAdmission::Running
-                    | MultiplayerAdmission::HostWaitingForResyncBegin { .. }
-            ),
-            "host resynchronization requested outside a running/adopting session"
-        );
-        self.mp_admission = MultiplayerAdmission::HostWaitingForResyncBegin {
-            snapshot_frame: self.frame_number(),
-        };
-        self.network.abandon_prediction();
-        self.multiplayer_timing.reset_for_resynchronization();
-    }
-
-    pub(super) fn remember_local_mp_hash(&mut self, frame: u32, hash: u64) {
-        self.network.remember_local_hash(frame, hash);
-    }
-
-    pub(super) fn has_local_mp_hash(&self, frame: u32) -> bool {
-        self.network.has_local_hash(frame)
-    }
-
-    pub(super) fn invalidate_local_mp_hashes_after(&mut self, frame: u32) {
-        self.network.invalidate_after(frame);
-    }
-
-    pub(super) fn clear_local_mp_hashes(&mut self) {
-        self.network.clear_local_hashes();
-    }
-
-    pub(super) fn take_due_mp_hash_comparisons(&mut self) -> Vec<(u32, u64, Option<u64>)> {
-        self.network.take_due_comparisons(self.current_frame)
-    }
-
-    pub(super) fn apply_multiplayer_admission_events(
-        &mut self,
-        events: &[MultiplayerAdmissionEvent],
-    ) -> Result<(), super::multiplayer::MultiplayerSessionError> {
-        for event in events {
-            if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
-                self.network.clear_hashes();
-                self.multiplayer_timing.reset_for_resynchronization();
-            }
-            if matches!(
-                event,
-                MultiplayerAdmissionEvent::Disconnected
-                    | MultiplayerAdmissionEvent::InitialSnapshotAdopted { .. }
-            ) {
-                self.network.clear_local_hashes();
-            }
-            self.mp_admission.apply(*event)?;
-        }
-        Ok(())
-    }
-
-    /// Advance the wall-clock release gate and report whether simulation must
-    /// remain held for multiplayer admission.
-    pub(super) fn multiplayer_admission_paused(&mut self, now_epoch_ms: u64) -> bool {
-        if let MultiplayerAdmission::WaitingForStart {
-            frame,
-            start_epoch_ms,
-        } = self.mp_admission
-            && now_epoch_ms >= start_epoch_ms
-        {
-            self.mp_admission = MultiplayerAdmission::Running;
-            tracing::info!(frame, "multiplayer: synchronized start gate opened");
-        }
-        !matches!(
-            self.mp_admission,
-            MultiplayerAdmission::NotRequired | MultiplayerAdmission::Running
-        )
-    }
-
-    pub(super) fn frame_contract(&self) -> FrameContract {
+    pub(super) fn contract(&self) -> FrameContract {
         self.contract
     }
 
@@ -1132,110 +748,12 @@ impl TimelineRuntime {
         &self.execution_trace.stages
     }
 
-    /// Capture timeline state into an already-created driver frame.
-    ///
-    /// Graphical networking can append current-frame inputs before this
-    /// boundary; true headless creates an empty frame and opens it directly.
-    pub(super) fn open_frame(&mut self, frame: &mut MissionFrame, engine: &Engine) {
-        frame.bind_timeline(self.current_frame());
-        assert!(
-            frame.external_facts.is_empty(),
-            "timeline facts must be attached before replay/rewind input adoption",
-        );
-        frame.external_facts = std::mem::take(&mut self.pending_external_facts);
-        frame.recorder_hash = self.begin_frame(frame.started_at_ms, engine);
-        self.trace(FrameContractStage::TimelineBegin);
-    }
-
-    /// A second ingress drain may reconstruct the open frame after late input
-    /// invalidates both pending snapshot tiers. Re-open only that capture,
-    /// preserving this host iteration's commands, facts, clock and ordinal.
-    pub(super) fn reopen_after_pre_tick_network_rollback(
-        &mut self,
-        frame: &mut MissionFrame,
-        engine: &Engine,
-    ) {
-        assert_eq!(
-            self.phase,
-            MissionPhase::Input,
-            "network rollback must precede simulation"
-        );
-        assert_eq!(
-            frame.timeline_before,
-            Some(self.current_frame()),
-            "late-input rollback must reconstruct the already-open frame"
-        );
-        assert!(
-            frame.timeline_after.is_none(),
-            "cannot reopen an already committed frame"
-        );
-        self.history.buffer.begin_frame(self.frame_number(), engine);
-        // Recording samples the final pre-command state, not the speculative
-        // state captured before the late input arrived. Do not call open_frame:
-        // it would bind twice and consume external facts a second time.
-        frame.recorder_hash = self.replay.is_recording().then_some(()).and_then(|_| {
-            self.replay_ordinal
-                .number()
-                .is_multiple_of(25)
-                .then(|| robin_engine::replay::state_hash(engine))
-        });
-    }
-
     pub(super) fn queue_sound_boundary(&mut self, boundary: robin_engine::engine::SoundBoundary) {
         assert!(
             self.pending_external_facts.sound_boundary.is_none(),
             "a host frame cannot cross more than one sound boundary",
         );
         self.pending_external_facts.sound_boundary = Some(boundary);
-    }
-
-    /// Start the input phase and capture the shared pre-command snapshots.
-    ///
-    /// `begin_frame` intentionally permits replacing any previous phase:
-    /// native event handlers can restart the outer loop before simulation,
-    /// abandoning that host frame exactly as the old loop did.
-    pub(super) fn begin_frame(&mut self, now_ms: u32, engine: &Engine) -> Option<u64> {
-        if let Some(ordinal) = self.replay.next_ordinal() {
-            self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
-        }
-        self.phase = MissionPhase::Input;
-        self.clock.begin(now_ms);
-        self.multiplayer_timing.begin_host_frame();
-        let current_frame = self.frame_number();
-        self.history.buffer.begin_frame(current_frame, engine);
-
-        let recorder_hash = self.replay.is_recording().then_some(()).and_then(|_| {
-            self.replay_ordinal
-                .number()
-                .is_multiple_of(25)
-                .then(|| robin_engine::replay::state_hash(engine))
-        });
-        if let Some(player) = self.replay.playback()
-            && !player.is_finished()
-        {
-            let frame = player.current_frame();
-            assert_eq!(
-                frame,
-                self.replay_ordinal.number(),
-                "replay player cursor diverged from timeline-owned host ordinal"
-            );
-            let is_terminal_frame = frame + 1 >= player.total_frames();
-            let restore = player.load_back_for_frame(frame).is_some();
-            if !is_terminal_frame
-                && !restore
-                && let Some(expected) = player.hash_for_frame(frame)
-            {
-                let actual = robin_engine::replay::state_hash(engine);
-                if actual != expected {
-                    tracing::error!(
-                        "Replay desync at frame {frame}: expected {expected:016x}, got {actual:016x}"
-                    );
-                } else {
-                    tracing::debug!("Replay hash OK @ frame {frame}: {actual:016x}");
-                }
-            }
-        }
-        recorder_hash
     }
 
     pub(super) fn begin_simulation(&mut self) {
@@ -1250,32 +768,6 @@ impl TimelineRuntime {
         let result = action();
         self.begin_bookkeeping();
         result
-    }
-
-    /// Commit rollback and rewind history for a frame already admitted by its
-    /// driver.
-    ///
-    /// Pause/rewind admission and recorder ordering remain driver concerns.
-    /// Once admitted, rollback verification and rewind history are one owner
-    /// boundary. Graphical cursor admission occurs before manual debugger
-    /// steps; headless admission occurs here immediately afterward.
-    pub(super) fn commit_simulation_history(
-        &mut self,
-        manager: &mut EngineManager,
-        frame: &MissionFrame,
-        policy: FrameCommitPolicy,
-    ) {
-        assert!(
-            matches!(
-                self.phase,
-                MissionPhase::Bookkeeping | MissionPhase::Presentation
-            ),
-            "simulation commit requested outside bookkeeping/presentation phase"
-        );
-        if policy.store_rewind_commands {
-            self.history
-                .commit(frame.authoritative_input(), &manager.engine);
-        }
     }
 
     pub(super) fn begin_bookkeeping(&mut self) {
@@ -1306,16 +798,438 @@ impl TimelineRuntime {
         }
     }
 
+    pub(super) fn note_state_restored(&mut self) {
+        self.state_restored = true;
+    }
+
+    pub(super) fn take_state_restored(&mut self) -> bool {
+        std::mem::take(&mut self.state_restored)
+    }
+
+    fn transition(&mut self, expected: MissionPhase, next: MissionPhase) {
+        transition_phase(&mut self.phase, expected, next);
+    }
+}
+
+/// The exact pre-command state captured when bootstrap admits its Restart
+/// save. Keep it while persistence completes, rather than hashing a later state.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(super) struct BootstrapSaveBoundary {
+    identity: ReplaySaveIdentity,
+    marker: robin_engine::replay::ReplaySaveMarker,
+}
+
+impl BootstrapSaveBoundary {
+    pub(super) fn capture(
+        engine: &Engine,
+        host: &Host,
+        game: &Game,
+        session_identity: Option<ReplaySaveIdentity>,
+    ) -> Self {
+        Self {
+            identity: session_identity.unwrap_or_else(|| {
+                GameRuntimeSnapshot::identity_of_live(engine, host, game)
+                    .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"))
+            }),
+            marker: robin_engine::replay::ReplaySaveMarker {
+                state_hash: robin_engine::replay::state_hash(engine),
+                timeline_frame: 0,
+            },
+        }
+    }
+}
+
+/// Mission-lifetime timeline cursor and the owners that must follow it.
+///
+/// The facade owns only the authoritative lockstep cursor. Everything else
+/// lives in one sub-owner per concern, reachable through accessors:
+/// [`FrameLifecycle`] (phase, clock, trace, pending facts), `ReplayLifecycle`
+/// (recording/playback and the dense host ordinal), `ReconstructionHistory`
+/// (rewind buffer and rollback checker), `NetworkReconciliation` (pending
+/// inputs and rollback hashes), and `MultiplayerSync` (admission gate, host
+/// clock, rollback telemetry). Methods remaining on `TimelineRuntime` read or
+/// move the cursor, or sequence two or more sub-owners in a fixed order.
+///
+/// This is deliberately not serializable: recorder writers, rollback
+/// workers, and live network diagnostics are process resources, not game
+/// state. Persisting them would create a fake/default runtime on restore.
+pub(super) struct TimelineRuntime {
+    /// Single authority for history, network, and replay frame identity.
+    current_frame: TimelineFrame,
+    lifecycle: FrameLifecycle,
+    replay: ReplayLifecycle,
+    history: ReconstructionHistory,
+    network: NetworkReconciliation,
+    multiplayer: MultiplayerSync,
+}
+
+/// Network admission state for the deterministic mission timeline.
+///
+mod admission;
+pub(super) use admission::MultiplayerAdmission;
+
+/// Move the cursor and drop network inputs queued before it. Shared by
+/// [`TimelineRuntime::adopt_frame`] and history rebasing, which may run while
+/// the replay owner is mutably borrowed.
+fn adopt_cursor(
+    current_frame: &mut TimelineFrame,
+    network: &mut NetworkReconciliation,
+    frame: TimelineFrame,
+) {
+    *current_frame = frame;
+    network.discard_inputs_before(frame);
+}
+
+/// Reset every in-memory reconstruction of the current deterministic
+/// future after a whole-state discontinuity such as save-load adoption.
+///
+/// Original-game loading is followed by
+/// post-load resynchronization; the original game has no command journal. The Rust
+/// equivalent must additionally invalidate all journals and checkpoints
+/// whose future was derived from the replaced state.
+fn rebase_reconstruction(
+    current_frame: &mut TimelineFrame,
+    network: &mut NetworkReconciliation,
+    history: &mut ReconstructionHistory,
+    target: TimelineFrame,
+    engine: &Engine,
+) {
+    adopt_cursor(current_frame, network, target);
+    history.adopt_snapshot(target.number(), engine);
+}
+
+impl TimelineRuntime {
+    pub(super) fn new(
+        replay: ReplayAndRollback,
+        contract: FrameContract,
+        wait_for_multiplayer_start: bool,
+        local_is_host: bool,
+    ) -> Self {
+        Self {
+            current_frame: TimelineFrame::ZERO,
+            lifecycle: FrameLifecycle::new(contract),
+            replay: ReplayLifecycle::new(
+                replay.recorder,
+                replay.player,
+                replay.recording_control,
+                replay.start_paused,
+            ),
+            history: ReconstructionHistory::new(replay.rewind_buffer, replay.rollback_checker),
+            network: NetworkReconciliation::default(),
+            multiplayer: MultiplayerSync::new(wait_for_multiplayer_start, local_is_host),
+        }
+    }
+
+    pub(super) fn lifecycle(&self) -> &FrameLifecycle {
+        &self.lifecycle
+    }
+
+    pub(super) fn lifecycle_mut(&mut self) -> &mut FrameLifecycle {
+        &mut self.lifecycle
+    }
+
+    pub(super) fn replay(&self) -> &ReplayLifecycle {
+        &self.replay
+    }
+
+    pub(super) fn replay_mut(&mut self) -> &mut ReplayLifecycle {
+        &mut self.replay
+    }
+
+    pub(super) fn history(&self) -> &ReconstructionHistory {
+        &self.history
+    }
+
+    pub(super) fn history_mut(&mut self) -> &mut ReconstructionHistory {
+        &mut self.history
+    }
+
+    pub(super) fn network(&self) -> &NetworkReconciliation {
+        &self.network
+    }
+
+    pub(super) fn network_mut(&mut self) -> &mut NetworkReconciliation {
+        &mut self.network
+    }
+
+    pub(super) fn multiplayer(&self) -> &MultiplayerSync {
+        &self.multiplayer
+    }
+
+    pub(super) fn multiplayer_mut(&mut self) -> &mut MultiplayerSync {
+        &mut self.multiplayer
+    }
+
+    /// Inject the admitted replay record, then prove it starts at the cursor.
+    pub(super) fn inject_replay_input(&mut self, frame: &mut MissionFrame) {
+        self.replay.inject_replay_input(frame);
+        frame.assert_replay_timeline_before(self.current_frame());
+    }
+
+    /// History capture is keyed by the cursor; callers cannot choose a frame.
+    pub(super) fn begin_history_frame(&mut self, frame: u32, engine: &Engine) {
+        assert_eq!(
+            frame,
+            self.frame_number(),
+            "history capture must use the authoritative timeline frame"
+        );
+        self.history.buffer.begin_frame(frame, engine);
+    }
+
+    /// Live input diverged from buffered history: truncate history, reset the
+    /// checker, then drop hash samples derived from the abandoned future.
+    pub(super) fn branch_history_at(&mut self, frame: u32) {
+        self.history.buffer.truncate_future(frame);
+        self.history.reset_checker();
+        self.network.invalidate_after(frame);
+    }
+
+    /// Network drain rewrites history and network state together; the
+    /// checker is reset only after the drain reports rewritten state.
+    pub(super) fn drain_network_inputs(
+        &mut self,
+        host: &mut Host,
+        manager: &mut EngineManager,
+        assets: &mut Arc<LevelAssets>,
+    ) -> Result<super::multiplayer::NetDrainResult, super::multiplayer::MultiplayerSessionError>
+    {
+        let result = super::multiplayer::drain_net_inputs(
+            host,
+            manager,
+            self.frame_number(),
+            &mut self.network,
+            assets,
+            &mut self.history.buffer,
+        )?;
+        if result.rewrote_sim_state {
+            self.history.reset_checker();
+        }
+        Ok(result)
+    }
+
+    pub(super) const fn current_frame(&self) -> TimelineFrame {
+        self.current_frame
+    }
+
+    pub(super) const fn frame_number(&self) -> u32 {
+        self.current_frame.number()
+    }
+
+    /// Advance after one authoritative transaction has committed. This says
+    /// nothing about whether that transaction executed an engine hourglass.
+    pub(super) fn advance_frame(&mut self) -> TimelineFrame {
+        self.current_frame = self.current_frame.next();
+        self.current_frame
+    }
+
+    /// Reposition the authoritative cursor after snapshot adoption, load-back,
+    /// or debugger rewind. Callers must have already replaced/restored Engine
+    /// state at precisely this pre-transaction boundary.
+    pub(super) fn adopt_frame(&mut self, frame: TimelineFrame) {
+        adopt_cursor(&mut self.current_frame, &mut self.network, frame);
+    }
+
+    /// Restore the engine and every cursor/history consumer to a retained
+    /// pre-transaction boundary. Session caching is controlled by the caller
+    /// so hold-to-rewind can reuse reconstruction work across host frames.
+    pub(super) fn restore_retained_frame(
+        &mut self,
+        manager: &mut EngineManager,
+        assets: &LevelAssets,
+        target: TimelineFrame,
+    ) -> bool {
+        let Some(engine) = self.history.buffer.rewind_to(assets, target.number()) else {
+            return false;
+        };
+        let Ok(mapped_ordinal) = self.replay.seek_timeline(target) else {
+            return false;
+        };
+        manager.engine = engine;
+        self.adopt_frame(target);
+        if let Some(ordinal) = mapped_ordinal {
+            self.replay.ordinal = ordinal;
+        }
+        self.history.finish_restore(target.number());
+        true
+    }
+
+    /// See [`rebase_reconstruction`].
+    fn reset_reconstruction_history(&mut self, target: TimelineFrame, engine: &Engine) {
+        rebase_reconstruction(
+            &mut self.current_frame,
+            &mut self.network,
+            &mut self.history,
+            target,
+            engine,
+        );
+    }
+
+    /// Called by the host operation that publishes a replacement snapshot and
+    /// resets the transport ready barrier. A spontaneous BeginSim is still an
+    /// error; only this explicitly adopted frame can release the new gate.
+    ///
+    /// Sequences admission (at the cursor), network prediction and host clock.
+    pub(super) fn begin_synchronized_step_resync(&mut self) {
+        assert!(
+            matches!(
+                self.multiplayer.admission,
+                MultiplayerAdmission::Running
+                    | MultiplayerAdmission::HostWaitingForResyncBegin { .. }
+            ),
+            "host resynchronization requested outside a running/adopting session"
+        );
+        self.multiplayer.admission = MultiplayerAdmission::HostWaitingForResyncBegin {
+            snapshot_frame: self.frame_number(),
+        };
+        self.network.abandon_prediction();
+        self.multiplayer.timing.reset_for_resynchronization();
+    }
+
+    /// Per event, discard the network hash samples and host clock sample that
+    /// the event invalidates before the admission transition is applied.
+    pub(super) fn apply_multiplayer_admission_events(
+        &mut self,
+        events: &[MultiplayerAdmissionEvent],
+    ) -> Result<(), super::multiplayer::MultiplayerSessionError> {
+        for event in events {
+            if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
+                self.network.clear_hashes();
+                self.multiplayer.timing.reset_for_resynchronization();
+            }
+            if matches!(
+                event,
+                MultiplayerAdmissionEvent::Disconnected
+                    | MultiplayerAdmissionEvent::InitialSnapshotAdopted { .. }
+            ) {
+                self.network.clear_local_hashes();
+            }
+            self.multiplayer.admission.apply(*event)?;
+        }
+        Ok(())
+    }
+
+    /// Capture timeline state into an already-created driver frame.
+    ///
+    /// Graphical networking can append current-frame inputs before this
+    /// boundary; true headless creates an empty frame and opens it directly.
+    pub(super) fn open_frame(&mut self, frame: &mut MissionFrame, engine: &Engine) {
+        frame.bind_timeline(self.current_frame());
+        assert!(
+            frame.external_facts.is_empty(),
+            "timeline facts must be attached before replay/rewind input adoption",
+        );
+        frame.external_facts = std::mem::take(&mut self.lifecycle.pending_external_facts);
+        frame.recorder_hash = self.begin_frame(frame.started_at_ms, engine);
+        self.lifecycle.trace(FrameContractStage::TimelineBegin);
+    }
+
+    /// A second ingress drain may reconstruct the open frame after late input
+    /// invalidates both pending snapshot tiers. Re-open only that capture,
+    /// preserving this host iteration's commands, facts, clock and ordinal.
+    pub(super) fn reopen_after_pre_tick_network_rollback(
+        &mut self,
+        frame: &mut MissionFrame,
+        engine: &Engine,
+    ) {
+        assert_eq!(
+            self.lifecycle.phase,
+            MissionPhase::Input,
+            "network rollback must precede simulation"
+        );
+        assert_eq!(
+            frame.timeline_before,
+            Some(self.current_frame()),
+            "late-input rollback must reconstruct the already-open frame"
+        );
+        assert!(
+            frame.timeline_after.is_none(),
+            "cannot reopen an already committed frame"
+        );
+        self.history.buffer.begin_frame(self.frame_number(), engine);
+        // Recording samples the final pre-command state, not the speculative
+        // state captured before the late input arrived. Do not call open_frame:
+        // it would bind twice and consume external facts a second time.
+        frame.recorder_hash = self.replay.recorder_hash(engine);
+    }
+
+    /// Start the input phase and capture the shared pre-command snapshots.
+    ///
+    /// `begin_frame` intentionally permits replacing any previous phase:
+    /// native event handlers can restart the outer loop before simulation,
+    /// abandoning that host frame exactly as the old loop did.
+    pub(super) fn begin_frame(&mut self, now_ms: u32, engine: &Engine) -> Option<u64> {
+        if let Some(ordinal) = self.replay.next_ordinal() {
+            self.replay.ordinal = ReplayFrameOrdinal::from_wire(ordinal);
+        }
+        self.lifecycle.phase = MissionPhase::Input;
+        self.lifecycle.clock.begin(now_ms);
+        self.multiplayer.timing.begin_host_frame();
+        let current_frame = self.frame_number();
+        self.history.buffer.begin_frame(current_frame, engine);
+
+        let recorder_hash = self.replay.recorder_hash(engine);
+        if let Some(player) = self.replay.playback()
+            && !player.is_finished()
+        {
+            let frame = player.current_frame();
+            assert_eq!(
+                frame,
+                self.replay.ordinal.number(),
+                "replay player cursor diverged from timeline-owned host ordinal"
+            );
+            let is_terminal_frame = frame + 1 >= player.total_frames();
+            let restore = player.load_back_for_frame(frame).is_some();
+            if !is_terminal_frame
+                && !restore
+                && let Some(expected) = player.hash_for_frame(frame)
+            {
+                let actual = robin_engine::replay::state_hash(engine);
+                if actual != expected {
+                    tracing::error!(
+                        "Replay desync at frame {frame}: expected {expected:016x}, got {actual:016x}"
+                    );
+                } else {
+                    tracing::debug!("Replay hash OK @ frame {frame}: {actual:016x}");
+                }
+            }
+        }
+        recorder_hash
+    }
+
+    /// Commit rollback and rewind history for a frame already admitted by its
+    /// driver.
+    ///
+    /// Pause/rewind admission and recorder ordering remain driver concerns.
+    /// Once admitted, rollback verification and rewind history are one owner
+    /// boundary. Graphical cursor admission occurs before manual debugger
+    /// steps; headless admission occurs here immediately afterward.
+    pub(super) fn commit_simulation_history(
+        &mut self,
+        manager: &mut EngineManager,
+        frame: &MissionFrame,
+        policy: FrameCommitPolicy,
+    ) {
+        assert!(
+            matches!(
+                self.lifecycle.phase,
+                MissionPhase::Bookkeeping | MissionPhase::Presentation
+            ),
+            "simulation commit requested outside bookkeeping/presentation phase"
+        );
+        if policy.store_rewind_commands {
+            self.history
+                .commit(frame.authoritative_input(), &manager.engine);
+        }
+    }
+
     /// React to a completed in-mission save or load on the live side,
     /// keeping the recording one linear timeline.
     ///
-    /// A save at a clean pre-command boundary becomes a save-marker record
-    /// (state hash + frame) so a later load of it can be expressed as a
-    /// load-back.  A load resets rewind history (the buffered timeline no
-    /// longer describes the engine's future), drops commands already
-    /// dispatched this frame (their effects were overwritten wholesale),
-    /// and records a load-back to the linked mission archive marker, including
-    /// saves made by earlier processes.
+    /// Saves are replay-only ([`ReplayLifecycle::note_save_written`]). A load
+    /// marks the lifecycle restored, then lets the replay owner record it
+    /// while rebasing cursor, network inputs and rewind history (the buffered
+    /// timeline no longer describes the engine's future) at the exact point
+    /// of its sequence where the reset belongs.
     pub(super) fn note_save_load_event(
         &mut self,
         recording_index: &crate::mission_replays::RecordingIndex,
@@ -1325,186 +1239,37 @@ impl TimelineRuntime {
     ) {
         match event {
             crate::main_entry::SaveLoadEvent::SaveWritten { identity } => {
-                let replay_ordinal = self.replay_ordinal;
-                if !self.replay.is_recording() {
-                    return;
-                }
-                if self.replay.saved_frame(identity).is_some() {
-                    self.synchronize_save_boundary(frame, engine);
-                    return;
-                }
-                // Gameplay input remains queued until after save processing.
-                // A nonempty command queue is not evidence of a mid-frame capture.
-                let hash = robin_engine::replay::state_hash(engine);
-                let marker_timeline = self.current_frame;
                 self.replay
-                    .record_save(identity, replay_ordinal, marker_timeline, hash);
-                tracing::info!(
-                    replay_ordinal = replay_ordinal.number(),
-                    timeline_frame = marker_timeline.number(),
-                    hash = format!("{hash:016x}"),
-                    "replay: save marker recorded"
-                );
+                    .note_save_written(identity, self.current_frame, frame, engine);
             }
             crate::main_entry::SaveLoadEvent::LoadApplied {
                 snapshot,
                 identity,
                 is_continue,
             } => {
-                self.state_restored = true;
-                match self.replay.restore_archive(&snapshot) {
-                    Ok(Some(crate::replay_recording::ReplayRestoreBoundary {
-                        ordinal,
-                        timeline_frame: timeline,
-                        marker_ordinal: target,
-                    })) => {
-                        self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
-                        let timeline = TimelineFrame::from_wire(timeline);
-                        self.reset_reconstruction_history(timeline, engine);
-                        let recorder_state = frame.recorder_state;
-                        frame
-                            .reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
-                        frame.recorder_state = recorder_state;
-                        frame.rebind_timeline_after_discontinuity(timeline);
-                        frame.recorder_hash = ordinal
-                            .is_multiple_of(25)
-                            .then(|| robin_engine::replay::state_hash(engine));
-                        if let Some(target) = target {
-                            self.replay.record_load_back(
-                                self.replay_ordinal,
-                                ReplayFrameOrdinal::from_wire(target),
-                                is_continue,
-                            );
-                        } else {
-                            self.replay.record_load_snapshot(
-                                self.replay_ordinal,
-                                snapshot,
-                                timeline,
-                                is_continue,
-                            );
-                        }
-                        self.replay.record_taints(
-                            self.replay_ordinal,
-                            [robin_engine::replay_rankability::InputTaintKind::StateLoad],
-                        );
-                        match self.replay.commit_restore_boundary(
-                            timeline,
-                            robin_engine::replay::state_hash(engine),
-                            recording_index,
-                        ) {
-                            Ok(next) => {
-                                self.replay_ordinal = ReplayFrameOrdinal::from_wire(next);
-                                frame.recorder_hash = next
-                                    .is_multiple_of(25)
-                                    .then(|| robin_engine::replay::state_hash(engine));
-                            }
-                            Err(error) => {
-                                self.replay.invalidate(format!(
-                                    "failed to persist replay restore: {error}"
-                                ));
-                                frame.recorder_state = RecorderFrameState::Inactive;
-                                frame.recorder_hash = None;
-                            }
-                        }
-                        return;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        self.replay
-                            .invalidate(format!("replay history unavailable after load: {error}"));
-                        frame.recorder_state = RecorderFrameState::Inactive;
-                        frame.recorder_hash = None;
-                        return;
-                    }
-                }
-                let reopened = self.replay.reopen_after_restore(identity, recording_index);
-                if reopened {
-                    self.replay_ordinal = ReplayFrameOrdinal::ZERO;
-                    // The load replaced every effect admitted before it. Keep
-                    // this host frame's scheduling flags, but give the new
-                    // attempt a clean recording transaction.
-                    frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
-                }
-                let replay_ordinal = self.replay_ordinal;
-                self.replay.record_taints(
-                    replay_ordinal,
-                    [robin_engine::replay_rankability::InputTaintKind::StateLoad],
+                self.lifecycle.note_state_restored();
+                let Self {
+                    current_frame,
+                    replay,
+                    history,
+                    network,
+                    ..
+                } = self;
+                let current = *current_frame;
+                replay.note_load_applied(
+                    snapshot,
+                    identity,
+                    is_continue,
+                    current,
+                    recording::RestoreBoundary {
+                        recording_index,
+                        frame,
+                        engine,
+                    },
+                    |target| rebase_reconstruction(current_frame, network, history, target, engine),
                 );
-                // The engine state jumped; buffered rewind history no longer
-                // describes this timeline's future.
-                let recorded_save = self.replay.saved_frame(identity);
-                let target = recorded_save.map_or(self.current_frame, |(_, timeline)| timeline);
-                self.reset_reconstruction_history(target, engine);
-                frame.rebind_timeline_after_discontinuity(target);
-                if !frame.commands().is_empty() {
-                    tracing::debug!(
-                        dropped = frame.commands().len(),
-                        "replay: dropping commands dispatched before the load; \
-                         their effects were overwritten by the loaded state"
-                    );
-                    frame.discard_commands();
-                }
-                if !self.replay.is_recording() {
-                    frame.recorder_state = RecorderFrameState::Inactive;
-                    frame.recorder_hash = None;
-                    return;
-                }
-                if let Some((to_ordinal, _)) = recorded_save {
-                    frame.recorder_hash = replay_ordinal
-                        .number()
-                        .is_multiple_of(25)
-                        .then(|| robin_engine::replay::state_hash(engine));
-                    self.replay
-                        .record_load_back(replay_ordinal, to_ordinal, is_continue);
-                    tracing::info!(
-                        replay_ordinal = replay_ordinal.number(),
-                        to_ordinal = to_ordinal.number(),
-                        "replay: load recorded as linear load-back"
-                    );
-                } else {
-                    // TODO(replay): deduplicate repeated external-save payloads
-                    // within an attempt without losing their restore boundaries.
-                    self.replay
-                        .record_load_snapshot(replay_ordinal, snapshot, target, is_continue);
-                    let recorder_state = frame.recorder_state;
-                    frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
-                    frame.recorder_state = recorder_state;
-                }
             }
         }
-    }
-
-    /// Save capture may insert host-only records during the open input phase.
-    /// Resample cadence at the new ordinal before queued commands are applied.
-    pub(super) fn synchronize_save_boundary(&mut self, frame: &mut MissionFrame, engine: &Engine) {
-        if let Some(ordinal) = self.replay.next_ordinal()
-            && ordinal != self.replay_ordinal.number()
-        {
-            self.replay_ordinal = ReplayFrameOrdinal::from_wire(ordinal);
-            frame.recorder_hash = ordinal
-                .is_multiple_of(25)
-                .then(|| robin_engine::replay::state_hash(engine));
-        }
-    }
-
-    pub(super) fn note_state_restored(&mut self) {
-        self.state_restored = true;
-    }
-
-    pub(super) fn take_state_restored(&mut self) -> bool {
-        std::mem::take(&mut self.state_restored)
-    }
-
-    /// Register a successfully completed bootstrap Restart save at frame zero.
-    ///
-    /// That save is captured during mission setup, immediately before
-    /// runtime construction, so its payload is exactly the frame-0
-    /// boundary state the replay header reconstructs.  Registering it here
-    /// lets a later script-triggered restart record as a load-back to
-    /// frame 0 instead of a timeline discontinuity.
-    pub(super) fn register_bootstrap_save(&mut self, completed: Option<BootstrapSaveBoundary>) {
-        self.replay
-            .register_bootstrap(self.replay_ordinal, completed);
     }
 
     /// Apply recorded save/load timeline events at the current playback
@@ -1520,9 +1285,8 @@ impl TimelineRuntime {
         game: &mut Game,
         manager: &mut EngineManager,
         assets: &LevelAssets,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         let adopted_timeline = self.replay.apply_playback_boundary(
-            self.replay_ordinal,
             self.current_frame,
             &mut self.history.buffer,
             host,
@@ -1531,7 +1295,7 @@ impl TimelineRuntime {
             assets,
         )?;
         if let Some(target) = adopted_timeline {
-            self.state_restored = true;
+            self.lifecycle.note_state_restored();
             // The boundary helper resets rewind itself because debugger-step
             // callers use it directly. TimelineRuntime additionally rebases
             // every reconstruction consumer on the adopted pre-tick state.
@@ -1549,27 +1313,13 @@ impl TimelineRuntime {
         host: &mut Host,
         game: &mut Game,
         assets: &LevelAssets,
-    ) -> Result<(), String> {
+    ) -> Result<(), MissionError> {
         self.replay.restore_initial(manager, host, game, assets)?;
-        self.replay_ordinal = ReplayFrameOrdinal::ZERO;
+        self.replay.ordinal = ReplayFrameOrdinal::ZERO;
         self.reset_reconstruction_history(TimelineFrame::ZERO, &manager.engine);
-        self.state_restored = true;
-        self.replay_finished_logged = false;
+        self.lifecycle.note_state_restored();
+        self.replay.finished_logged = false;
         Ok(())
-    }
-
-    /// Consume a replay record outside the normal outer-frame lifecycle.
-    /// Debugger/manual stepping owns its own transaction, so it advances the
-    /// dense replay ordinal immediately instead of deferring it to
-    /// [`Self::finish_recording`].
-    pub(super) fn consume_replay_frame_for_step(&mut self) -> Result<ReplayStepAdmission, String> {
-        let admission = self
-            .replay
-            .consume_step(self.replay_ordinal, self.current_frame)?;
-        if matches!(admission, ReplayStepAdmission::Recorded(_)) {
-            self.replay_ordinal.advance();
-        }
-        Ok(admission)
     }
 
     /// Manual ticks have their own recorder transaction without restarting the
@@ -1580,26 +1330,15 @@ impl TimelineRuntime {
         engine: &Engine,
         fresh_live_input: bool,
     ) -> MissionFrame {
-        self.trace(FrameContractStage::ManualTransactionBegin);
+        self.lifecycle
+            .trace(FrameContractStage::ManualTransactionBegin);
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(self.current_frame());
         if fresh_live_input {
-            frame.external_facts = std::mem::take(&mut self.pending_external_facts);
+            frame.external_facts = std::mem::take(&mut self.lifecycle.pending_external_facts);
         }
-        frame.recorder_hash = self.replay.is_recording().then_some(()).and_then(|_| {
-            self.replay_ordinal
-                .number()
-                .is_multiple_of(25)
-                .then(|| robin_engine::replay::state_hash(engine))
-        });
+        frame.recorder_hash = self.replay.recorder_hash(engine);
         frame
-    }
-
-    pub(super) fn begin_recording(&mut self, frame: &mut MissionFrame, enabled: bool) {
-        if !self.replay.is_recording() || !enabled {
-            return;
-        }
-        frame.open_recording();
     }
 
     /// A step request may dismiss an already-open modal before its first
@@ -1618,37 +1357,32 @@ impl TimelineRuntime {
         {
             return;
         }
-        self.trace(FrameContractStage::ManualTransactionBegin);
+        self.lifecycle
+            .trace(FrameContractStage::ManualTransactionBegin);
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(self.current_frame());
         frame.host_controls_only();
         frame.modal_dismissals = controls;
         frame.recorder_hash = self
-            .replay_ordinal
+            .replay
+            .ordinal
             .number()
             .is_multiple_of(25)
             .then(|| robin_engine::replay::state_hash(engine));
-        self.begin_recording(&mut frame, true);
+        self.replay.begin_recording(&mut frame, true);
         frame.commit_timeline_after(self.current_frame());
         self.finish_recording(&mut frame);
     }
 
-    /// Attach source evidence observed outside the deterministic command
-    /// value (notably HTTP player-command and stepping ingress) to the current
-    /// streaming replay ordinal.
-    pub(super) fn record_input_taints(
-        &mut self,
-        taints: impl IntoIterator<Item = robin_engine::replay_rankability::InputTaintKind>,
-    ) {
-        self.replay.record_taints(self.replay_ordinal, taints);
-    }
-
-    /// Close the recorder frame opened by [`Self::begin_recording`].
+    /// Close the recorder frame opened by `ReplayLifecycle::begin_recording`.
     ///
     /// Normal presentation and emergency modal exits call this same owner
     /// method. Inactive frames (rewind, buffered replay, or no recorder)
     /// do not call `end_frame`, but they still cross this finalization boundary;
     /// closing an already-finished frame is a lifecycle bug.
+    ///
+    /// Sequences the replay write and ordinal advance before the lifecycle's
+    /// `RecorderCommit` trace.
     pub(super) fn finish_recording(&mut self, frame: &mut MissionFrame) {
         let mut consumed_record = frame.replay_record_consumed;
         if frame.close_recording() {
@@ -1667,7 +1401,7 @@ impl TimelineRuntime {
                 })
                 .collect();
             if self.replay.write_frame(
-                self.replay_ordinal,
+                self.replay.ordinal,
                 transition.before,
                 transition.after,
                 input,
@@ -1683,57 +1417,14 @@ impl TimelineRuntime {
                 assert_eq!(transition, expected, "replay timeline transition diverged");
             }
             tracing::trace!(
-                replay_ordinal = self.replay_ordinal.number(),
+                replay_ordinal = self.replay.ordinal.number(),
                 timeline_before = transition.before.number(),
                 timeline_after = transition.after.number(),
                 "replay host record committed"
             );
-            self.replay_ordinal.advance();
+            self.replay.ordinal.advance();
         }
-        self.trace(FrameContractStage::RecorderCommit);
-    }
-
-    /// Seal the recorder after the deterministic quit-mission update has
-    /// committed. Ranked replay validation requires that terminal command to
-    /// be the final replay record; narrative/stat modal dismissals are host UI
-    /// and must not extend the canonical simulation artifact.
-    pub(super) fn seal_terminal_recording(&mut self, frame: &MissionFrame) -> bool {
-        let terminal_count = frame
-            .commands
-            .commands
-            .iter()
-            .chain(frame.post_commands.commands.iter())
-            .filter(|input| {
-                matches!(
-                    &input.command,
-                    PlayerCommand::ApplyQuitMissionUpdates { .. }
-                )
-            })
-            .count();
-        if terminal_count == 0 {
-            return false;
-        }
-        assert_eq!(
-            terminal_count, 1,
-            "one mission frame cannot contain multiple terminal updates"
-        );
-        assert_eq!(
-            frame.recorder_state,
-            RecorderFrameState::Finished,
-            "terminal replay must be sealed after recorder finalization"
-        );
-        if self.replay.is_recording() {
-            self.replay.seal();
-            tracing::debug!(
-                replay_ordinal = self.replay_ordinal.number(),
-                "sealed canonical replay at terminal mission record"
-            );
-        }
-        true
-    }
-
-    fn transition(&mut self, expected: MissionPhase, next: MissionPhase) {
-        transition_phase(&mut self.phase, expected, next);
+        self.lifecycle.trace(FrameContractStage::RecorderCommit);
     }
 }
 
@@ -1753,31 +1444,31 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     game: &mut Game,
     manager: &mut EngineManager,
     assets: &LevelAssets,
-) -> Result<Option<TimelineFrame>, String> {
+) -> Result<Option<TimelineFrame>, MissionError> {
     let frame = player.current_frame();
     let mut adopted_timeline = None;
     if let Some(marker) = player.save_marker_for_frame(frame) {
         if current_timeline.number() != marker.timeline_frame {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay save marker at ordinal {frame} belongs to timeline {}, current timeline is {}",
                 marker.timeline_frame,
                 current_timeline.number()
-            ));
+            )));
         }
         let actual = robin_engine::replay::state_hash(&manager.engine);
         if actual != marker.state_hash {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "replay save-marker desync at frame {frame}: \
                  expected {:016x}, got {actual:016x}",
                 marker.state_hash
-            ));
+            )));
         }
         pinned_saves.insert(
             frame,
             GameRuntimeSnapshot::capture(&manager.engine, host, game).map_err(|error| {
-                format!(
+                MissionError::replay(format!(
                     "replay save marker at ordinal {frame} could not pin save payload: {error:#}"
-                )
+                ))
             })?,
         );
         tracing::info!(frame, "replay playback: pinned save state");
@@ -1785,21 +1476,28 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
     if let Some(load_back) = player.load_back_for_frame(frame) {
         if let Some(snapshot) = &load_back.snapshot {
             let save: crate::save_file::GameSaveFile = serde_json::from_slice(&snapshot.payload)
-                .map_err(|error| format!("invalid embedded save at frame {frame}: {error}"))?;
-            save.validate_current_schema()
-                .map_err(|error| format!("invalid embedded save: {error:#}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("invalid embedded save at frame {frame}: {error}"))
+                })?;
+            save.validate_current_schema().map_err(|error| {
+                MissionError::replay(format!("invalid embedded save: {error:#}"))
+            })?;
             save.engine
                 .campaign()
                 .validate_history_schema()
-                .map_err(|error| format!("invalid embedded save campaign: {error}"))?;
+                .map_err(|error| {
+                    MissionError::replay(format!("invalid embedded save campaign: {error}"))
+                })?;
             if save.header.mission_assets != player.header().mission_assets {
-                return Err(format!(
+                return Err(MissionError::replay(format!(
                     "embedded save at frame {frame} requires different mission assets"
-                ));
+                )));
             }
             save.apply_to_with_game(&mut manager.engine, host, game, assets)
                 .map_err(|error| {
-                    format!("embedded save restore at frame {frame} failed: {error}")
+                    MissionError::replay(format!(
+                        "embedded save restore at frame {frame} failed: {error}"
+                    ))
                 })?;
             game.apply_post_load_sync(load_back.is_continue);
             game.post_load_resolution_resync();
@@ -1807,9 +1505,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             if let Some(expected) = player.hash_for_frame(frame) {
                 let actual = robin_engine::replay::state_hash(&manager.engine);
                 if actual != expected {
-                    return Err(format!(
+                    return Err(MissionError::replay(format!(
                         "replay embedded-save desync at frame {frame}: expected {expected:016x}, got {actual:016x}"
-                    ));
+                    )));
                 }
             }
             return Ok(Some(TimelineFrame::from_wire(snapshot.timeline_frame)));
@@ -1818,20 +1516,20 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
             .get(&load_back.to_frame)
             .cloned()
             .ok_or_else(|| {
-                format!(
+                MissionError::replay(format!(
                     "replay load-back at frame {frame} targets frame {}, \
                  but no save state was pinned there (corrupt recording?)",
                     load_back.to_frame
-                )
+                ))
             })?;
         pinned
             .apply_to_with_game(&mut manager.engine, host, game, assets)
             .map_err(|error| {
-                format!(
+                MissionError::replay(format!(
                     "replay load-back at frame {frame} could not restore marker \
                      frame {}: {error}",
                     load_back.to_frame
-                )
+                ))
             })?;
         adopted_timeline = Some(TimelineFrame::from_wire(
             player
@@ -1845,9 +1543,9 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         if let Some(expected) = player.hash_for_frame(frame)
             && restored_hash != expected
         {
-            return Err(format!(
+            return Err(MissionError::replay(format!(
                 "Replay desync after save restore at frame {frame}: expected {expected:016x}, got {restored_hash:016x}"
-            ));
+            )));
         }
         *rewind_buffer = RewindBuffer::new();
         tracing::info!(
@@ -1994,14 +1692,16 @@ mod tests {
         drain_post_tick_rpc(
             &mut http,
             &mut timeline,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            &mut engine,
-            &assets,
-            &mut dev,
+            PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut engine,
+                assets: &assets,
+                dev: &mut dev,
+            },
             &mut frame,
         );
         assert_eq!(
@@ -2030,14 +1730,16 @@ mod tests {
         drain_post_tick_rpc(
             &mut http,
             &mut timeline,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            &mut engine,
-            &assets,
-            &mut dev,
+            PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut engine,
+                assets: &assets,
+                dev: &mut dev,
+            },
             &mut frame,
         );
         assert_eq!(
@@ -2226,17 +1928,19 @@ mod tests {
             } else {
                 terminal.post_commands.push(command);
             }
-            timeline.begin_recording(&mut terminal, true);
+            timeline.replay_mut().begin_recording(&mut terminal, true);
             let after = timeline.advance_frame();
             terminal.commit_timeline_after(after);
             timeline.finish_recording(&mut terminal);
-            assert!(timeline.seal_terminal_recording(&terminal));
-            assert!(!timeline.is_recording());
+            assert!(timeline.replay_mut().seal_terminal_recording(&terminal));
+            assert!(!timeline.replay().is_recording());
 
             // Narrative UI continues for more outer frames, but sealing makes
             // it impossible for a modal dismissal (or any other host input)
             // to extend the artifact beyond the terminal command.
-            timeline.begin_execution_trace(FrameContractStage::NetworkIngress);
+            timeline
+                .lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::NetworkIngress);
             let mut debrief = MissionFrame::new(1);
             debrief.bind_timeline(timeline.current_frame());
             debrief.modal_dismissals.push(PlayerCommand::ModalDismiss {
@@ -2247,7 +1951,7 @@ mod tests {
                 },
                 result: robin_engine::player_command::DialogResult::Completed,
             });
-            timeline.begin_recording(&mut debrief, true);
+            timeline.replay_mut().begin_recording(&mut debrief, true);
             debrief.commit_timeline_after(timeline.current_frame());
             timeline.finish_recording(&mut debrief);
             drop(timeline);
@@ -2279,7 +1983,7 @@ mod tests {
         frame.commit_timeline_after(timeline.current_frame());
         frame.recorder_state = RecorderFrameState::Finished;
 
-        assert!(!timeline.seal_terminal_recording(&frame));
+        assert!(!timeline.replay_mut().seal_terminal_recording(&frame));
     }
 
     #[test]
@@ -2309,8 +2013,8 @@ mod tests {
             )
             .unwrap();
             let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
-            timeline.install_test_recorder(recorder);
-            timeline.register_bootstrap_save(
+            timeline.replay_mut().install_test_recorder(recorder);
+            timeline.replay_mut().register_bootstrap(
                 restart_save_started
                     .then(|| BootstrapSaveBoundary::capture(&engine, &host, &game, None)),
             );
@@ -2391,13 +2095,15 @@ mod tests {
         .unwrap();
         let mut timeline =
             timeline_for_trace_test_with_control(FrameContract::Graphical, service.recording());
-        timeline.install_test_recorder(recorder);
-        timeline.register_bootstrap_save(Some(BootstrapSaveBoundary::capture(
-            &engine,
-            &host,
-            &game,
-            Some(identity),
-        )));
+        timeline.replay_mut().install_test_recorder(recorder);
+        timeline
+            .replay_mut()
+            .register_bootstrap(Some(BootstrapSaveBoundary::capture(
+                &engine,
+                &host,
+                &game,
+                Some(identity),
+            )));
 
         // Complete the first attempt. Its immutable export must remain intact
         // while the active spool switches to each subsequent restored attempt.
@@ -2411,10 +2117,10 @@ mod tests {
                 completed_at_unix_seconds: Some(1),
                 campaign_run_nonce: Some(2),
             });
-        timeline.begin_recording(&mut terminal, true);
+        timeline.replay_mut().begin_recording(&mut terminal, true);
         terminal.commit_timeline_after(timeline.advance_frame());
         timeline.finish_recording(&mut terminal);
-        timeline.seal_terminal_recording(&terminal);
+        timeline.replay_mut().seal_terminal_recording(&terminal);
         let previous = service.exports().snapshot().unwrap();
         let original = previous.parse_sync().unwrap();
 
@@ -2438,8 +2144,8 @@ mod tests {
                 &mut frame,
                 &engine,
             );
-            assert!(timeline.is_recording());
-            assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
+            assert!(timeline.replay().is_recording());
+            assert_eq!(timeline.replay.ordinal, ReplayFrameOrdinal::ZERO);
             assert_eq!(frame.recorder_hash, Some(restored_hash));
             frame
                 .post_commands
@@ -2449,11 +2155,13 @@ mod tests {
                     completed_at_unix_seconds: Some(10 + attempt),
                     campaign_run_nonce: Some(2),
                 });
-            timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
-            timeline.begin_recording(&mut frame, true);
+            timeline
+                .lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
+            timeline.replay_mut().begin_recording(&mut frame, true);
             frame.commit_timeline_after(timeline.advance_frame());
             timeline.finish_recording(&mut frame);
-            timeline.seal_terminal_recording(&frame);
+            timeline.replay_mut().seal_terminal_recording(&frame);
             let restarted = service.exports().snapshot().unwrap().parse_sync().unwrap();
             let compact = robin_replay_format::encode_compact(
                 &restarted,
@@ -2529,6 +2237,7 @@ mod tests {
                         &assets,
                     )
                     .unwrap_err()
+                    .to_string()
                     .contains("desync after save restore")
             );
             let mut playback = timeline_for_trace_test(FrameContract::Headless);
@@ -2545,6 +2254,7 @@ mod tests {
                         &assets,
                     )
                     .unwrap_err()
+                    .to_string()
                     .contains("save-marker desync")
             );
         }
@@ -2574,10 +2284,12 @@ mod tests {
             &mut frame,
             &engine,
         );
-        assert!(timeline.is_recording());
+        assert!(timeline.replay().is_recording());
         assert_eq!(timeline.replay.validity(), RecordingValidity::Linear);
-        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
-        timeline.begin_recording(&mut frame, true);
+        timeline
+            .lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.replay_mut().begin_recording(&mut frame, true);
         frame.commit_timeline_after(timeline.advance_frame());
         timeline.finish_recording(&mut frame);
         let external = service.exports().snapshot().unwrap().parse_sync().unwrap();
@@ -2618,18 +2330,22 @@ mod tests {
         )
         .unwrap();
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
-        timeline.install_test_recorder(recorder);
-        timeline.register_bootstrap_save(Some(BootstrapSaveBoundary::capture(
-            &engine,
-            &host,
-            &game,
-            Some(identity),
-        )));
+        timeline.replay_mut().install_test_recorder(recorder);
+        timeline
+            .replay_mut()
+            .register_bootstrap(Some(BootstrapSaveBoundary::capture(
+                &engine,
+                &host,
+                &game,
+                Some(identity),
+            )));
         for _ in 0..3 {
-            timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+            timeline
+                .lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
             let mut frame = MissionFrame::new(0);
             frame.bind_timeline(timeline.current_frame());
-            timeline.begin_recording(&mut frame, true);
+            timeline.replay_mut().begin_recording(&mut frame, true);
             frame.commit_timeline_after(timeline.advance_frame());
             timeline.finish_recording(&mut frame);
         }
@@ -2650,11 +2366,13 @@ mod tests {
             &mut frame,
             &engine,
         );
-        assert!(timeline.take_state_restored());
-        assert!(!timeline.take_state_restored());
+        assert!(timeline.lifecycle_mut().take_state_restored());
+        assert!(!timeline.lifecycle_mut().take_state_restored());
         assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
-        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
-        timeline.begin_recording(&mut frame, true);
+        timeline
+            .lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.replay_mut().begin_recording(&mut frame, true);
         frame.commit_timeline_after(timeline.advance_frame());
         timeline.finish_recording(&mut frame);
         drop(timeline);
@@ -2769,10 +2487,11 @@ mod tests {
             &engine,
         );
         for _ in 0..5 {
-            live.begin_execution_trace(FrameContractStage::TimelineBegin);
+            live.lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
             let mut frame = MissionFrame::new(0);
             frame.bind_timeline(live.current_frame());
-            live.begin_recording(&mut frame, true);
+            live.replay_mut().begin_recording(&mut frame, true);
             let after = live.advance_frame();
             frame.commit_timeline_after(after);
             live.finish_recording(&mut frame);
@@ -2812,8 +2531,9 @@ mod tests {
             &engine,
         );
         assert_eq!(live.current_frame(), TimelineFrame::ZERO);
-        live.begin_execution_trace(FrameContractStage::TimelineBegin);
-        live.begin_recording(&mut frame, true);
+        live.lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::TimelineBegin);
+        live.replay_mut().begin_recording(&mut frame, true);
         let after = live.advance_frame();
         frame.commit_timeline_after(after);
         live.finish_recording(&mut frame);
@@ -2867,7 +2587,8 @@ mod tests {
         assert!(playback.replay.has_pinned_save(0));
         for _ in 0..5 {
             let ReplayStepAdmission::Recorded(recorded) = playback
-                .consume_replay_frame_for_step()
+                .replay
+                .consume_frame_for_step(playback.current_frame)
                 .expect("consume replay transaction")
             else {
                 panic!("five replay transactions remain");
@@ -2954,7 +2675,12 @@ mod tests {
                 .install_capture_recorder(Some(recorder.clone()));
             let mut runtime =
                 timeline_for_trace_test_with_control(FrameContract::Headless, service.recording());
-            runtime.replay = ReplayLifecycle::new(Some(recorder), None, service.recording());
+            runtime.replay = ReplayLifecycle::new(
+                Some(recorder),
+                None,
+                service.recording(),
+                runtime.replay.start_paused(),
+            );
             (runtime, service)
         }
 
@@ -2990,7 +2716,7 @@ mod tests {
             for command in commands {
                 frame.stage_commands().push(command);
             }
-            runtime.begin_recording(&mut frame, true);
+            runtime.replay_mut().begin_recording(&mut frame, true);
             engine
                 .advance_frame(
                     assets,
@@ -3027,10 +2753,10 @@ mod tests {
                 &mut frame,
                 engine,
             );
-            assert!(runtime.is_recording());
+            assert!(runtime.replay().is_recording());
             game.apply_post_load_sync(false);
             game.post_load_resolution_resync();
-            runtime.begin_recording(&mut frame, true);
+            runtime.replay_mut().begin_recording(&mut frame, true);
             engine
                 .advance_frame(assets, SimulationFrameInput::default())
                 .unwrap();
@@ -3073,7 +2799,7 @@ mod tests {
             1,
             "saving must leave queued gameplay input intact"
         );
-        live.begin_recording(&mut pending, true);
+        live.replay_mut().begin_recording(&mut pending, true);
         engine
             .advance_frame(
                 &assets,
@@ -3132,7 +2858,8 @@ mod tests {
             let error = live
                 .replay
                 .restore_archive(&serde_json::to_vec(&bad).unwrap())
-                .unwrap_err();
+                .unwrap_err()
+                .to_string();
             assert!(
                 error.contains(if corrupt_digest {
                     "payload does not match"
@@ -3161,7 +2888,7 @@ mod tests {
             MissionArchive::create(&mission).is_err(),
             "--record must never overwrite an existing mission"
         );
-        live.seal_test_recorder();
+        live.replay_mut().seal();
         // Drop every process-owned recording handle. Only the save and mission
         // directory survive; the next recorder starts with an empty marker map.
         drop(live);
@@ -3271,18 +2998,23 @@ mod tests {
         };
         for _ in 0..2 {
             super::super::tick::run_forward_ticks_with_session_modals(
-                &mut seek_manager,
-                &mut seek_host,
-                &assets,
-                &mut dev,
-                &mut seek_game,
+                super::super::tick::StepWorld {
+                    manager: &mut seek_manager,
+                    host: &mut seek_host,
+                    assets: &assets,
+                    dev: &mut dev,
+                    game: &mut seek_game,
+                },
                 &mut seek_runtime,
                 11,
                 &mut policy,
                 None,
             )
             .unwrap();
-            assert_eq!(seek_runtime.playback().unwrap().current_frame(), 11);
+            assert_eq!(
+                seek_runtime.replay().playback().unwrap().current_frame(),
+                11
+            );
             assert_eq!(
                 robin_engine::replay::state_hash(&seek_manager.engine),
                 expected_hash
@@ -3290,7 +3022,7 @@ mod tests {
             seek_runtime
                 .rewind_replay_to_start(&mut seek_manager, &mut seek_host, &mut seek_game, &assets)
                 .unwrap();
-            assert_eq!(seek_runtime.playback().unwrap().current_frame(), 0);
+            assert_eq!(seek_runtime.replay().playback().unwrap().current_frame(), 0);
             assert_eq!(
                 robin_engine::replay::state_hash(&seek_manager.engine),
                 robin_engine::replay::state_hash(&seek_initial)
@@ -3329,7 +3061,7 @@ mod tests {
             let service = Arc::new(crate::replay_service::ReplayService::default());
             let mut live =
                 timeline_for_trace_test_with_control(FrameContract::Headless, service.recording());
-            live.install_test_recorder(
+            live.replay_mut().install_test_recorder(
                 ReplayRecorder::with_writer(
                     Box::new(service.recording().begin_recording()),
                     "embedded".into(),
@@ -3368,21 +3100,23 @@ mod tests {
             first.bind_timeline(live.current_frame());
             first.stage_commands().push(PlayerCommand::SetFastForward);
             first.restrict_hourglass(false);
-            live.begin_execution_trace(FrameContractStage::TimelineBegin);
-            live.begin_recording(&mut first, true);
+            live.lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
+            live.replay_mut().begin_recording(&mut first, true);
             first.commit_timeline_after(live.current_frame());
             live.finish_recording(&mut first);
             let mut tick = MissionFrame::new(0);
             tick.bind_timeline(live.current_frame());
-            live.begin_execution_trace(FrameContractStage::TimelineBegin);
-            live.begin_recording(&mut tick, true);
+            live.lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
+            live.replay_mut().begin_recording(&mut tick, true);
             engine
                 .advance_frame(&assets, SimulationFrameInput::new(Vec::new()))
                 .unwrap();
             tick.commit_timeline_after(live.advance_frame());
             live.finish_recording(&mut tick);
             if sealed {
-                live.seal_test_recorder();
+                live.replay_mut().seal();
             }
 
             // Load from its serialized form, before mutating away the live
@@ -3412,13 +3146,14 @@ mod tests {
                 &mut restored,
                 &engine,
             );
-            assert!(live.is_recording());
+            assert!(live.replay().is_recording());
             assert!(restored.commands().is_empty());
             game.apply_post_load_sync(true);
             game.post_load_resolution_resync();
             let restored_hash = robin_engine::replay::state_hash(&engine);
-            live.begin_execution_trace(FrameContractStage::TimelineBegin);
-            live.begin_recording(&mut restored, true);
+            live.lifecycle_mut()
+                .begin_execution_trace(FrameContractStage::TimelineBegin);
+            live.replay_mut().begin_recording(&mut restored, true);
             restored.commit_timeline_after(live.advance_frame());
             engine
                 .advance_frame(&assets, SimulationFrameInput::new(Vec::new()))
@@ -3473,7 +3208,8 @@ mod tests {
                         &mut untouched,
                         &assets,
                     )
-                    .unwrap_err();
+                    .unwrap_err()
+                    .to_string();
                     assert!(
                         error.contains(if corrupt_json {
                             "invalid embedded save"
@@ -3618,7 +3354,8 @@ mod tests {
             &mut manager,
             &assets,
         )
-        .expect_err("mismatched marker must fail playback");
+        .expect_err("mismatched marker must fail playback")
+        .to_string();
 
         assert!(error.contains("save-marker desync"), "{error}");
         assert!(pinned_saves.is_empty());
@@ -3643,8 +3380,8 @@ mod tests {
         // Save-load/replay adoption replaces the state after open_frame but
         // before this loop iteration's tick and history commit.
         timeline.reset_reconstruction_history(timeline.current_frame(), &manager.engine);
-        timeline.begin_simulation();
-        timeline.begin_bookkeeping();
+        timeline.lifecycle_mut().begin_simulation();
+        timeline.lifecycle_mut().begin_bookkeeping();
         timeline.commit_simulation_history(
             &mut manager,
             &frame,
@@ -3654,12 +3391,13 @@ mod tests {
         );
 
         assert_eq!(
-            timeline.retained_history().next_record_frame(),
+            timeline.history().buffer().next_record_frame(),
             crate::rewind::SNAPSHOT_INTERVAL + 1
         );
         assert!(
             timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .commands_for(crate::rewind::SNAPSHOT_INTERVAL)
                 .is_some()
         );
@@ -3719,10 +3457,10 @@ mod tests {
     fn host_waits_for_begin_and_the_synchronized_release_time() {
         let mut timeline = multiplayer_timeline(true);
         assert_eq!(
-            timeline.mp_admission,
+            timeline.multiplayer.admission,
             MultiplayerAdmission::HostWaitingForBegin
         );
-        assert!(timeline.multiplayer_admission_paused(500));
+        assert!(timeline.multiplayer.admission_paused(500));
 
         timeline
             .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
@@ -3731,16 +3469,19 @@ mod tests {
             }])
             .expect("valid multiplayer admission");
 
-        assert!(timeline.multiplayer_admission_paused(999));
-        assert!(!timeline.multiplayer_admission_paused(1_000));
-        assert_eq!(timeline.mp_admission, MultiplayerAdmission::Running);
+        assert!(timeline.multiplayer.admission_paused(999));
+        assert!(!timeline.multiplayer.admission_paused(1_000));
+        assert_eq!(
+            timeline.multiplayer.admission,
+            MultiplayerAdmission::Running
+        );
     }
 
     #[test]
     fn joining_peer_requires_snapshot_then_begin_before_release() {
         let mut timeline = multiplayer_timeline(false);
         assert_eq!(
-            timeline.mp_admission,
+            timeline.multiplayer.admission,
             MultiplayerAdmission::PeerWaitingForSnapshot
         );
 
@@ -3755,14 +3496,14 @@ mod tests {
             .expect("valid multiplayer admission");
 
         assert_eq!(
-            timeline.mp_admission,
+            timeline.multiplayer.admission,
             MultiplayerAdmission::WaitingForStart {
                 frame: 37,
                 start_epoch_ms: 2_000,
             }
         );
-        assert!(timeline.multiplayer_admission_paused(1_999));
-        assert!(!timeline.multiplayer_admission_paused(2_000));
+        assert!(timeline.multiplayer.admission_paused(1_999));
+        assert!(!timeline.multiplayer.admission_paused(2_000));
     }
 
     #[test]
@@ -3770,9 +3511,12 @@ mod tests {
         for contract in [FrameContract::Graphical, FrameContract::Headless] {
             for from_network in [false, true] {
                 let mut timeline = timeline_for_trace_test(contract);
-                timeline.mp_admission = MultiplayerAdmission::Running;
+                timeline.multiplayer.admission = MultiplayerAdmission::Running;
                 timeline.adopt_frame(TimelineFrame::from_wire(25));
-                timeline.sample_host_state_hash(|| 1);
+                timeline
+                    .multiplayer
+                    .timing
+                    .sample_hash(timeline.current_frame.number(), || 1);
                 if from_network {
                     timeline
                         .apply_multiplayer_admission_events(&[
@@ -3782,11 +3526,14 @@ mod tests {
                 } else {
                     timeline.begin_synchronized_step_resync();
                 }
-                assert!(timeline.multiplayer_timing.take_publication().is_none());
-                timeline.sample_host_state_hash(|| 2);
-                let sample = timeline.multiplayer_timing.take_publication().unwrap();
+                assert!(timeline.multiplayer.timing.take_publication().is_none());
+                timeline
+                    .multiplayer
+                    .timing
+                    .sample_hash(timeline.current_frame.number(), || 2);
+                let sample = timeline.multiplayer.timing.take_publication().unwrap();
                 assert_eq!((sample.frame, sample.hash), (25, 2));
-                assert!(timeline.multiplayer_timing.take_publication().is_none());
+                assert!(timeline.multiplayer.timing.take_publication().is_none());
             }
         }
     }
@@ -3794,28 +3541,33 @@ mod tests {
     #[test]
     fn host_resync_requires_explicit_adoption_and_matching_begin() {
         let mut timeline = multiplayer_timeline(true);
-        timeline.mp_admission = MultiplayerAdmission::Running;
+        timeline.multiplayer.admission = MultiplayerAdmission::Running;
         timeline.adopt_frame(TimelineFrame::from_wire(35));
-        timeline.remember_local_mp_hash(25, 7);
+        timeline.network.remember_local_hash(25, 7);
         timeline.network.admit_remote_hash(25, 7);
         timeline.begin_synchronized_step_resync();
-        assert!(!timeline.has_local_mp_hash(25));
-        assert!(timeline.take_due_mp_hash_comparisons().is_empty());
-        assert!(timeline.multiplayer_admission_paused(99));
+        assert!(!timeline.network.has_local_hash(25));
+        assert!(
+            timeline
+                .network
+                .take_due_comparisons(timeline.current_frame)
+                .is_empty()
+        );
+        assert!(timeline.multiplayer.admission_paused(99));
         timeline
             .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
                 frame: 35,
                 start_epoch_ms: 100,
             }])
             .expect("valid multiplayer admission");
-        assert!(timeline.multiplayer_admission_paused(99));
-        assert!(!timeline.multiplayer_admission_paused(100));
+        assert!(timeline.multiplayer.admission_paused(99));
+        assert!(!timeline.multiplayer.admission_paused(100));
     }
 
     #[test]
     fn running_host_rejects_unsolicited_begin() {
         let mut timeline = multiplayer_timeline(true);
-        timeline.mp_admission = MultiplayerAdmission::Running;
+        timeline.multiplayer.admission = MultiplayerAdmission::Running;
         let error = timeline
             .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::BeginSim {
                 frame: 35,
@@ -3832,7 +3584,7 @@ mod tests {
     #[test]
     fn resynchronizing_host_rejects_wrong_snapshot_frame() {
         let mut timeline = multiplayer_timeline(true);
-        timeline.mp_admission = MultiplayerAdmission::Running;
+        timeline.multiplayer.admission = MultiplayerAdmission::Running;
         timeline.adopt_frame(TimelineFrame::from_wire(35));
         timeline.begin_synchronized_step_resync();
         let error = timeline
@@ -3851,21 +3603,30 @@ mod tests {
     #[test]
     fn delayed_hash_comparison_uses_exact_frame_and_invalidates_rollback_future() {
         let mut timeline = multiplayer_timeline(false);
-        timeline.remember_local_mp_hash(25, 10);
-        timeline.remember_local_mp_hash(50, 20);
+        timeline.network.remember_local_hash(25, 10);
+        timeline.network.remember_local_hash(50, 20);
         timeline.network.admit_remote_hash(25, 10);
         timeline.network.admit_remote_hash(50, 30);
         timeline.network.admit_remote_hash(100, 40);
         timeline.adopt_frame(TimelineFrame::from_wire(75));
-        timeline.invalidate_local_mp_hashes_after(25);
+        timeline.network.invalidate_after(25);
         assert_eq!(
-            timeline.take_due_mp_hash_comparisons(),
+            timeline
+                .network
+                .take_due_comparisons(timeline.current_frame),
             vec![(25, 10, Some(10)), (50, 30, None)]
         );
-        assert!(timeline.take_due_mp_hash_comparisons().is_empty());
+        assert!(
+            timeline
+                .network
+                .take_due_comparisons(timeline.current_frame)
+                .is_empty()
+        );
         timeline.adopt_frame(TimelineFrame::from_wire(100));
         assert_eq!(
-            timeline.take_due_mp_hash_comparisons(),
+            timeline
+                .network
+                .take_due_comparisons(timeline.current_frame),
             vec![(100, 40, None)]
         );
     }
@@ -3874,25 +3635,29 @@ mod tests {
     fn retained_mp_hashes_are_bounded_and_reconnect_discards_prediction_generation() {
         let mut timeline = multiplayer_timeline(false);
         for frame in 0..300 {
-            timeline.remember_local_mp_hash(frame, u64::from(frame));
+            timeline
+                .network
+                .remember_local_hash(frame, u64::from(frame));
         }
-        assert!(!timeline.has_local_mp_hash(43));
-        assert!(timeline.has_local_mp_hash(44));
+        assert!(!timeline.network.has_local_hash(43));
+        assert!(timeline.network.has_local_hash(44));
         timeline
             .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected])
             .expect("valid multiplayer admission");
-        assert!((0..300).all(|frame| !timeline.has_local_mp_hash(frame)));
+        assert!((0..300).all(|frame| !timeline.network.has_local_hash(frame)));
     }
 
     #[test]
     fn delayed_hash_mismatch_is_not_discarded_when_peer_runs_ahead() {
         let mut timeline = multiplayer_timeline(false);
-        timeline.remember_local_mp_hash(25, 123);
-        timeline.remember_local_mp_hash(25, 999); // repeated paused boundary
+        timeline.network.remember_local_hash(25, 123);
+        timeline.network.remember_local_hash(25, 999); // repeated paused boundary
         timeline.network.admit_remote_hash(25, 456);
         timeline.adopt_frame(TimelineFrame::from_wire(99));
         assert_eq!(
-            timeline.take_due_mp_hash_comparisons(),
+            timeline
+                .network
+                .take_due_comparisons(timeline.current_frame),
             vec![(25, 456, Some(123))]
         );
     }
@@ -3900,7 +3665,7 @@ mod tests {
     #[test]
     fn host_horizon_resync_event_rearms_only_its_exact_snapshot_barrier() {
         let mut timeline = multiplayer_timeline(true);
-        timeline.mp_admission = MultiplayerAdmission::Running;
+        timeline.multiplayer.admission = MultiplayerAdmission::Running;
         timeline
             .apply_multiplayer_admission_events(&[
                 MultiplayerAdmissionEvent::HostResynchronizing { frame: 50 },
@@ -3910,8 +3675,8 @@ mod tests {
                 },
             ])
             .expect("valid multiplayer admission");
-        assert!(timeline.multiplayer_admission_paused(99));
-        assert!(!timeline.multiplayer_admission_paused(100));
+        assert!(timeline.multiplayer.admission_paused(99));
+        assert!(!timeline.multiplayer.admission_paused(100));
     }
 
     #[test]
@@ -3930,8 +3695,8 @@ mod tests {
                 },
             ])
             .expect("valid multiplayer admission");
-        assert!(timeline.multiplayer_admission_paused(100));
-        assert!(!timeline.multiplayer_admission_paused(200));
+        assert!(timeline.multiplayer.admission_paused(100));
+        assert!(!timeline.multiplayer.admission_paused(200));
     }
 
     #[test]
@@ -3946,17 +3711,17 @@ mod tests {
                 },
             ])
             .expect("valid multiplayer admission");
-        assert!(!timeline.multiplayer_admission_paused(10));
+        assert!(!timeline.multiplayer.admission_paused(10));
 
         timeline
             .apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected])
             .expect("valid multiplayer admission");
 
         assert_eq!(
-            timeline.mp_admission,
+            timeline.multiplayer.admission,
             MultiplayerAdmission::PeerWaitingForSnapshot
         );
-        assert!(timeline.multiplayer_admission_paused(11));
+        assert!(timeline.multiplayer.admission_paused(11));
     }
 
     #[test]
@@ -4145,8 +3910,12 @@ mod tests {
     #[should_panic(expected = "cannot cross more than one sound boundary")]
     fn timeline_rejects_a_second_pending_sound_boundary() {
         let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
-        timeline.queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
-        timeline.queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
+        timeline
+            .lifecycle
+            .queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
+        timeline
+            .lifecycle
+            .queue_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
     }
 
     #[test]
@@ -4230,7 +3999,9 @@ mod tests {
     #[test]
     fn graphical_execution_trace_keeps_original_refresh_sound_post_initialize_tail() {
         let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
-        timeline.begin_execution_trace(FrameContractStage::NetworkIngress);
+        timeline
+            .lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::NetworkIngress);
         for stage in [
             FrameContractStage::TimelineBegin,
             FrameContractStage::InputAndMenus,
@@ -4244,15 +4015,17 @@ mod tests {
             FrameContractStage::Audio,
             FrameContractStage::Presentation,
         ] {
-            timeline.trace(stage);
+            timeline.lifecycle.trace(stage);
         }
         let mut dispatched = false;
-        timeline.cross_post_initialize(|| dispatched = true);
-        timeline.trace(FrameContractStage::RecorderCommit);
-        timeline.trace(FrameContractStage::Pacing);
+        timeline
+            .lifecycle
+            .cross_post_initialize(|| dispatched = true);
+        timeline.lifecycle.trace(FrameContractStage::RecorderCommit);
+        timeline.lifecycle.trace(FrameContractStage::Pacing);
 
         assert!(dispatched);
-        let stages = timeline.execution_trace();
+        let stages = timeline.lifecycle.execution_trace();
         assert_eq!(
             stages,
             &[
@@ -4287,24 +4060,28 @@ mod tests {
     #[test]
     fn headless_execution_trace_keeps_post_initialize_before_frame_zero_commit() {
         let mut timeline = timeline_for_trace_test(FrameContract::Headless);
-        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline
+            .lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::TimelineBegin);
         for stage in [
             FrameContractStage::PreTickCommands,
             FrameContractStage::Simulation,
             FrameContractStage::HostRpcAndTimelineCommit,
             FrameContractStage::ModalDrain,
         ] {
-            timeline.trace(stage);
+            timeline.lifecycle.trace(stage);
         }
         let mut dispatched = false;
-        timeline.cross_post_initialize(|| dispatched = true);
+        timeline
+            .lifecycle
+            .cross_post_initialize(|| dispatched = true);
         let mut frame = MissionFrame::new(0);
         timeline.finish_recording(&mut frame);
-        timeline.trace(FrameContractStage::Presentation);
-        timeline.trace(FrameContractStage::Pacing);
+        timeline.lifecycle.trace(FrameContractStage::Presentation);
+        timeline.lifecycle.trace(FrameContractStage::Pacing);
 
         assert!(dispatched);
-        let stages = timeline.execution_trace();
+        let stages = timeline.lifecycle.execution_trace();
         assert_eq!(
             stages,
             &[
@@ -4403,13 +4180,15 @@ mod tests {
     #[test]
     fn real_recorder_finalization_seam_emits_the_commit_stage() {
         let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
-        timeline.begin_execution_trace(FrameContractStage::ModalDrain);
+        timeline
+            .lifecycle_mut()
+            .begin_execution_trace(FrameContractStage::ModalDrain);
         let mut frame = MissionFrame::new(0);
 
         timeline.finish_recording(&mut frame);
 
         assert_eq!(
-            timeline.execution_trace(),
+            timeline.lifecycle.execution_trace(),
             [
                 FrameContractStage::ModalDrain,
                 FrameContractStage::RecorderCommit,

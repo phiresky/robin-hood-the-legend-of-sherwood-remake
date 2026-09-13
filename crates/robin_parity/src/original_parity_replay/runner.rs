@@ -190,13 +190,18 @@ async fn capture_full_frame_zero_screenshot(
     .map_err(|error| {
         TraceRunError::Input(format!("construct frame-zero game arguments: {error}"))
     })?;
-    let mut game_args = robin_rs::main_entry::MissionLaunch::from(game_args);
-    game_args.mission_start_map_output = Some(output_path.clone());
-    game_args.mission_start_map_frame = 0;
-    game_args.mission_start_viewport_capture = true;
-    game_args.mission_start_legacy_save = initial_save;
-    game_args.preserve_forced_mission_campaign = true;
-    game_args.fast_forward = true;
+    let game_args = robin_rs::main_entry::LaunchConfig::from(robin_rs::main_entry::CliArgs {
+        fast_forward: true,
+        ..game_args
+    })
+    .with_mission_start_capture(robin_rs::main_entry::MissionStartCapture {
+        map_output: Some(output_path.clone()),
+        map_frame: 0,
+        viewport_capture: true,
+        legacy_save: initial_save,
+        preserve_forced_mission_campaign: true,
+        ..Default::default()
+    });
 
     Ok(
         match robin_rs::main_entry::run_rust_game(

@@ -305,7 +305,10 @@ impl ReplayRecordingControl {
             if replay.frame_count() == 0 {
                 return Ok(());
             }
-            if let Some(input) = source.archive_input(&replay)? {
+            if let Some(input) = source
+                .archive_input(&replay)
+                .map_err(|error| error.to_string())?
+            {
                 recorder
                     .persist_ranked_input(&input)
                     .map_err(|error| format!("{error:#}"))?;

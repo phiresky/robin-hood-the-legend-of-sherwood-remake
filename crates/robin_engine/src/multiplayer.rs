@@ -789,6 +789,41 @@ pub enum NetMsg {
     LeaderboardCoSignResponse(LeaderboardCoSignResponse),
 }
 
+/// Typed payload of [`NetEvent::Fatal`].
+///
+/// The engine does not know the transport's error types, so the event carries
+/// the transport's own error behind a shared trait object. `Display` is the
+/// transport error's message; callers that need the category downcast with
+/// [`NetFatal::downcast_ref`]. `Arc` keeps `NetEvent: Clone` and lets the event
+/// cross from the I/O thread to the game loop.
+///
+/// Not serde: `NetEvent` never goes on the wire.
+#[derive(Clone, Debug)]
+pub struct NetFatal(Arc<dyn std::error::Error + Send + Sync + 'static>);
+
+impl NetFatal {
+    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self(Arc::new(error))
+    }
+
+    /// The transport error, when it has type `E`.
+    pub fn downcast_ref<E: std::error::Error + 'static>(&self) -> Option<&E> {
+        self.0.downcast_ref::<E>()
+    }
+}
+
+impl std::fmt::Display for NetFatal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for NetFatal {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
 /// One incoming wire event ready for the game loop.
 #[derive(Clone, Debug)]
 pub enum NetEvent {
@@ -825,7 +860,7 @@ pub enum NetEvent {
     /// A bounded sequential content segment ready for durable staging.
     ContentChunk(ContentChunk),
     /// Unrecoverable transport/session compatibility failure.
-    Fatal(String),
+    Fatal(NetFatal),
     /// Authoritative initial-state snapshot from the host.
     InitialSnapshot {
         frame: u32,

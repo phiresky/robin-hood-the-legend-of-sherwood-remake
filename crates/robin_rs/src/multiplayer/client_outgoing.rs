@@ -1,16 +1,20 @@
 //! Shared client publication policy, independent of stream implementation.
 
-use super::{NetEvent, NetMsg, NetOutbound, SharedClientLeaderboardCoSignState};
+use super::{MultiplayerError, NetEvent, NetMsg, NetOutbound, SharedClientLeaderboardCoSignState};
 use crate::leaderboard_ranked_session::{
     CampaignContinuationReceiptSelectionResponseV1, decode_canonical_ranked_wire_document,
     decode_ranked_wire_document,
 };
 use robin_run_protocol::{ParticipantSignatureV1, PublicKey32};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
-#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
-pub(super) enum ClientProtocolError {
+/// Why a local client publication was refused before reaching the wire.
+///
+/// Not serde: carries co-sign and ranked-document failures as sources.
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum ClientProtocolError {
     #[error("client attempted a host-only multiplayer publication")]
     HostOnly,
     #[error("client queued content-admission traffic after gameplay began")]
@@ -21,13 +25,18 @@ pub(super) enum ClientProtocolError {
     NotRanked,
     #[error("full-snapshot resynchronization requested: {0}")]
     Reconnect(String),
+    /// The continuation document is not bound to this client's durable
+    /// identity.
     #[error("{0}")]
-    Protocol(String),
+    ForeignIdentity(&'static str),
+    /// Co-sign trust state, local delivery or document decoding failed.
+    #[error(transparent)]
+    Rejected(#[from] Arc<MultiplayerError>),
 }
 
-impl From<String> for ClientProtocolError {
-    fn from(message: String) -> Self {
-        Self::Protocol(message)
+impl From<MultiplayerError> for ClientProtocolError {
+    fn from(error: MultiplayerError) -> Self {
+        Self::Rejected(Arc::new(error))
     }
 }
 
@@ -107,13 +116,17 @@ pub(super) fn prepare(
             let decoded = decode_ranked_wire_document::<
                 CampaignContinuationReceiptSelectionResponseV1,
             >(selection.as_bytes())
-            .map_err(|error| format!("invalid continuation receipt selection: {error}"))?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("invalid continuation receipt selection", error)
+            })?;
             let local = authority.durable_public_key.ok_or_else(|| {
-                "continuation receipt selection has no durable identity".to_owned()
+                MultiplayerError::Identity(
+                    "continuation receipt selection has no durable identity".into(),
+                )
             })?;
             if decoded.responder_public_key() != local {
-                return Err(ClientProtocolError::Protocol(
-                    "continuation receipt selection is controlled by another identity".into(),
+                return Err(ClientProtocolError::ForeignIdentity(
+                    "continuation receipt selection is controlled by another identity",
                 ));
             }
             NetMsg::RankedContinuationReceiptSelection(selection)
@@ -122,16 +135,18 @@ pub(super) fn prepare(
             let decoded = decode_canonical_ranked_wire_document::<ParticipantSignatureV1>(
                 signature.as_bytes(),
             )
-            .map_err(|error| format!("invalid continuation preflight signature: {error}"))?;
-            let local = authority
-                .durable_public_key
-                .ok_or_else(|| "continuation preflight has no durable identity".to_owned())?;
+            .map_err(|error| {
+                MultiplayerError::ranked_document("invalid continuation preflight signature", error)
+            })?;
+            let local = authority.durable_public_key.ok_or_else(|| {
+                MultiplayerError::Identity("continuation preflight has no durable identity".into())
+            })?;
             if decoded.public_key != local
                 || decoded.public_key.is_zero()
                 || decoded.signature.is_zero()
             {
-                return Err(ClientProtocolError::Protocol(
-                    "continuation preflight signature uses invalid identity material".into(),
+                return Err(ClientProtocolError::ForeignIdentity(
+                    "continuation preflight signature uses invalid identity material",
                 ));
             }
             NetMsg::RankedContinuationPreflightSignature(signature)

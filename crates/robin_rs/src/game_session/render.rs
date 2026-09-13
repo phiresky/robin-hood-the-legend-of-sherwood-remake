@@ -2,6 +2,7 @@
 //! Houses `RenderContext` (the bundle of GPU + tooltip resources passed
 //! into `render_frame`) and the rewind-icon HUD glyph.
 
+use super::MissionError;
 use super::selected_pc_profile_indices;
 use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerTooltipTracker};
 use crate::game::Game;
@@ -114,6 +115,33 @@ impl HudTooltipUpdate {
     }
 }
 
+/// Mission frontend state the fixed-tick HUD preparation reads or ages.
+pub(super) struct FixedTickHudFrontend<'a> {
+    pub(super) presentation: &'a super::interactive::MissionPresentation,
+    pub(super) hud: &'a mut super::interactive::MissionHud,
+    pub(super) input: &'a super::interactive::MissionInput,
+    pub(super) ui: &'a mut super::interactive::MissionUi,
+    pub(super) has_hud_fonts: bool,
+}
+
+/// Frontend resources the per-frame cursor update reads or animates.
+pub(super) struct CursorFrontend<'a> {
+    pub(super) renderer: &'a crate::renderer::Renderer,
+    pub(super) cursor_res: &'a mut robin_assets::resource_manager::ResourceManager,
+    pub(super) cursor_renderer: &'a mut crate::cursor::CursorRenderer,
+    pub(super) threaded_input: &'a crate::input::ThreadedInput,
+    pub(super) portrait_cache: &'a crate::ui_panel::PortraitCache,
+    /// Last uploaded cursor resource id, so unchanged cursors are not re-uploaded.
+    pub(super) last_cursor_id: &'a mut i32,
+}
+
+/// Zoom-HUD inputs sampled once at the prepare boundary for the overlay pass.
+#[derive(Clone, Copy)]
+struct ZoomOverlayInputs {
+    presentation: crate::presentation::ZoomPresentation,
+    mouse: engine_coordinates::ScreenPoint,
+}
+
 /// Advance host-owned HUD state once at the live 25 Hz boundary, before any
 /// capture or display-refresh draw borrows it. This boundary intentionally is
 /// not keyed by the engine frame: paused frames must still age hover timers
@@ -123,12 +151,15 @@ pub(super) fn prepare_fixed_tick_hud(
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     game: &Game,
-    presentation: &super::interactive::MissionPresentation,
-    hud: &mut super::interactive::MissionHud,
-    input: &super::interactive::MissionInput,
-    ui: &mut super::interactive::MissionUi,
-    has_hud_fonts: bool,
+    frontend: FixedTickHudFrontend<'_>,
 ) {
+    let FixedTickHudFrontend {
+        presentation,
+        hud,
+        input,
+        ui,
+        has_hud_fonts,
+    } = frontend;
     let mp = input.threaded.position();
     let sw = presentation.renderer.screen_width();
     let sh = presentation.renderer.screen_height();
@@ -512,7 +543,7 @@ pub(super) fn drain_screenshot_requests(
     for ss in pending {
         match begin_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
             Ok(capture) => http.submit_screenshot(ss, capture),
-            Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err)),
+            Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err.to_string())),
         }
     }
 }
@@ -543,7 +574,7 @@ fn begin_screenshot_rgba(
     dev: &engine_api::DevState,
     request: &crate::http_server::ScreenshotRequest,
     ctx: &mut RenderContext<'_>,
-) -> Result<crate::renderer::PendingCapture, String> {
+) -> Result<crate::renderer::PendingCapture, MissionError> {
     let scratch_dev = crate::http_server::screenshot::screenshot_dev_state(dev, &request.flags);
 
     if request.full_map {
@@ -678,25 +709,28 @@ fn write_print_screen_png(w: u32, h: u32, rgba: Vec<u8>) {
     }
 }
 
-fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), String> {
+fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result<(), MissionError> {
     if rgba_byte_len(w, h) != Some(rgba.len()) {
-        return Err(format!(
+        return Err(MissionError::render(format!(
             "invalid RGBA buffer for {}x{} PNG: got {} bytes",
             w,
             h,
             rgba.len()
-        ));
+        )));
     }
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create {}: {err:#}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|err| {
+            MissionError::render(format!("failed to create {}: {err:#}", parent.display()))
+        })?;
     }
-    let file = std::fs::File::create(path)
-        .map_err(|err| format!("failed to create {}: {err:#}", path.display()))?;
-    encode_rgba_png(std::io::BufWriter::new(file), w, h, rgba)
-        .map_err(|err| format!("failed to encode {}: {err:#}", path.display()))
+    let file = std::fs::File::create(path).map_err(|err| {
+        MissionError::render(format!("failed to create {}: {err:#}", path.display()))
+    })?;
+    encode_rgba_png(std::io::BufWriter::new(file), w, h, rgba).map_err(|err| {
+        MissionError::render(format!("failed to encode {}: {err:#}", path.display()))
+    })
 }
 
 fn encode_rgba_png(
@@ -725,7 +759,7 @@ pub(super) fn drain_wide_print_screen(
     let capture = begin_wide_map_rgba(engine, display, host, assets, dev, ctx.draw_hud, ctx);
     Box::pin(async move {
         let captured = match capture {
-            Ok(capture) => capture.await.map_err(|error| error.to_string()),
+            Ok(capture) => capture.await.map_err(MissionError::from),
             Err(error) => Err(error),
         };
         match captured {
@@ -755,11 +789,11 @@ pub(super) fn capture_screenshot_to_path(
     ctx: &mut RenderContext<'_>,
     request: &crate::http_server::ScreenshotRequest,
     path: &std::path::Path,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>>>> {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MissionError>>>> {
     let capture = begin_screenshot_rgba(engine, display, host, assets, dev, request, ctx);
     let path = path.to_owned();
     Box::pin(async move {
-        let (w, h, rgba) = capture?.await.map_err(|error| error.to_string())?;
+        let (w, h, rgba) = capture?.await?;
         write_rgba_png(&path, w, h, &rgba)
     })
 }
@@ -772,14 +806,14 @@ fn begin_wide_map_rgba(
     dev: &engine_api::DevState,
     draw_hud: bool,
     ctx: &mut RenderContext<'_>,
-) -> Result<crate::renderer::PendingCapture, String> {
+) -> Result<crate::renderer::PendingCapture, MissionError> {
     let (viewport, level_w, level_h) = wide_map_viewport(&host.frontend.viewport)?;
     let render_h = viewport.screen_size.y as u32;
     let gpu_limit = ctx.renderer.gpu.device.limits().max_texture_dimension_2d;
     if level_w > gpu_limit || render_h > gpu_limit {
-        return Err(format!(
+        return Err(MissionError::render(format!(
             "capture {level_w}x{render_h} exceeds GPU texture limit {gpu_limit}"
-        ));
+        )));
     }
     let draw = host.draw();
     let capture_view = draw.with_viewport(&viewport);
@@ -858,15 +892,17 @@ fn crop_wide_capture(
 
 fn wide_map_viewport(
     live: &crate::host::ViewportState,
-) -> Result<(crate::host::ViewportState, u32, u32), String> {
+) -> Result<(crate::host::ViewportState, u32, u32), MissionError> {
     let level_w = live.level_size.x.ceil() as u32;
     let level_h = live.level_size.y.ceil() as u32;
     if level_w == 0 || level_h == 0 {
-        return Err("level size is empty".to_owned());
+        return Err(MissionError::render("level size is empty"));
     }
     let render_h = level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32);
     if level_w > u16::MAX as u32 || render_h > u16::MAX as u32 {
-        return Err(format!("level {level_w}x{level_h} exceeds renderer limits"));
+        return Err(MissionError::render(format!(
+            "level {level_w}x{level_h} exceeds renderer limits"
+        )));
     }
     let mut viewport = live.clone();
     viewport.view_position = engine_coordinates::MapPoint::ZERO;
@@ -1060,14 +1096,17 @@ pub(super) fn update_mouse_and_cursor(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     external_actions: &mut Vec<engine_api::ExternalAction>,
-    renderer: &crate::renderer::Renderer,
-    cursor_res: &mut robin_assets::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
-    threaded_input: &crate::input::ThreadedInput,
-    portrait_cache: &crate::ui_panel::PortraitCache,
+    cursor: CursorFrontend<'_>,
     shift_held: bool,
-    last_cursor_id: &mut i32,
 ) {
+    let CursorFrontend {
+        renderer,
+        cursor_res,
+        cursor_renderer,
+        threaded_input,
+        portrait_cache,
+        last_cursor_id,
+    } = cursor;
     let mouse_screen = threaded_input.position();
     let portrait_hit = hit_test_portrait_detailed(
         &engine.presentation_view(),
@@ -1296,8 +1335,10 @@ fn render_frame_with_hud(
             assets,
             dev,
             &presentation,
-            zoom_presentation,
-            zoom_mouse,
+            ZoomOverlayInputs {
+                presentation: zoom_presentation,
+                mouse: zoom_mouse,
+            },
             ctx,
         );
     }
@@ -1525,6 +1566,33 @@ fn render_world_pass(
     render_door_overlays(host, engine, assets, renderer, physical_shift_held);
 }
 
+/// Shared read-only HUD inputs of one [`render_overlay_pass`], copied out of
+/// its [`RenderContext`] so the per-widget draw helpers below can borrow them
+/// while the pass keeps the mutable renderer.
+///
+/// Not serde: a frame-scoped bundle of borrowed draw resources.
+#[derive(Clone, Copy)]
+struct OverlayHudInputs<'a> {
+    cursor_renderer: &'a crate::cursor::CursorRenderer,
+    hud_tooltips: HudTooltipPresentation,
+    portrait_cache: &'a crate::ui_panel::PortraitCache,
+    menu_resources: Option<&'a IngameMenuResources>,
+    hud_fonts: Option<&'a crate::hud_text::HudFonts>,
+    threaded_input: &'a crate::input::ThreadedInput,
+    sherwood_layout: &'a sherwood_hud::SherwoodHudLayout,
+    sherwood_enable: SherwoodButtonEnable,
+    sherwood_sprites: &'a sherwood_hud::SherwoodButtonSprites,
+    zoom_layout: &'a zoom_hud::ZoomHudLayout,
+    zoom_sprites: &'a zoom_hud::ZoomButtonSprites,
+    corner_layout: &'a corner_hud::CornerHudLayout,
+    corner_sprites: &'a corner_hud::CornerButtonSprites,
+    stature_layout: &'a stature_hud::StatureHudLayout,
+    stature_sprites: &'a stature_hud::StatureSprites,
+    game: &'a Game,
+    display_info_elapsed_secs: u32,
+    local_seat: robin_engine::player_command::PlayerId,
+}
+
 fn render_overlay_pass(
     engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
@@ -1532,36 +1600,44 @@ fn render_overlay_pass(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     presentation: &FramePresentationInputs,
-    zoom_presentation: crate::presentation::ZoomPresentation,
-    zoom_mouse: engine_coordinates::ScreenPoint,
+    zoom: ZoomOverlayInputs,
     ctx: &mut RenderContext<'_>,
 ) {
     let renderer = &mut *ctx.renderer;
     let cursor_renderer = ctx.cursor_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
     let console_overlay = ctx.console_overlay;
-    let hud_tooltips = ctx.hud_tooltips;
     let mouse_trail_renderer = ctx.mouse_trail_renderer;
     let portrait_cache = ctx.portrait_cache;
     let menu_resources = ctx.menu_resources;
     let hud_fonts = ctx.hud_fonts;
     let short_briefing_strings = ctx.short_briefing_strings;
     let threaded_input = ctx.threaded_input;
-    let sherwood_layout = ctx.sherwood_layout;
-    let sherwood_enable = ctx.sherwood_enable;
-    let sherwood_sprites = ctx.sherwood_sprites;
-    let zoom_layout = ctx.zoom_layout;
-    let zoom_sprites = ctx.zoom_sprites;
-    let corner_layout = ctx.corner_layout;
-    let corner_sprites = ctx.corner_sprites;
-    let stature_layout = ctx.stature_layout;
-    let stature_sprites = ctx.stature_sprites;
     let pause_menu = ctx.pause_menu;
     let game = ctx.game;
     let shift_held = ctx.shift_held;
     let rewind_active = ctx.rewind_active;
-    let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
     let local_seat = host.local_seat;
+    let hud = OverlayHudInputs {
+        cursor_renderer,
+        hud_tooltips: ctx.hud_tooltips,
+        portrait_cache,
+        menu_resources,
+        hud_fonts,
+        threaded_input,
+        sherwood_layout: ctx.sherwood_layout,
+        sherwood_enable: ctx.sherwood_enable,
+        sherwood_sprites: ctx.sherwood_sprites,
+        zoom_layout: ctx.zoom_layout,
+        zoom_sprites: ctx.zoom_sprites,
+        corner_layout: ctx.corner_layout,
+        corner_sprites: ctx.corner_sprites,
+        stature_layout: ctx.stature_layout,
+        stature_sprites: ctx.stature_sprites,
+        game,
+        display_info_elapsed_secs: ctx.display_info_elapsed_secs,
+        local_seat,
+    };
     // ── GPU phase: multi-selection rubber band box ──
     crate::game_render::draw_multi_selection_box(host, engine, renderer);
 
@@ -1624,87 +1700,7 @@ fn render_overlay_pass(
     // Top-of-screen icon strips rebuilt each frame from campaign
     // state.
     //
-    {
-        let campaign = engine.campaign();
-        let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
-        let blinking = engine.active_blinking_blazons();
-        if let Some(bb) = blazon_bar::build_blazon_bar_state(
-            campaign,
-            &assets.profile_manager,
-            men_to_blazon,
-            blinking,
-        ) {
-            crate::ui_panel::draw_blazon_bar(renderer, portrait_cache, &bb);
-
-            // Per-slot hover tooltip with the standard hover timer.
-            let mp = threaded_input.position();
-            if let Some(slot_idx) = hud_tooltips.blazon
-                && let Some(kind) = crate::ui_panel::blazon_bar_slot_kinds(&bb)
-                    .get(slot_idx)
-                    .copied()
-                && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
-            {
-                let mt_id = crate::ui_panel::blazon_slot_tooltip_mt_id(kind);
-                let text = resources.menu_text.get(mt_id);
-                let (cw, ch) = cursor_renderer.current_frame_size();
-                crate::ui_panel::draw_screen_tooltip(
-                    renderer,
-                    &fonts.tooltip_font,
-                    fonts.shadow_font.as_ref(),
-                    &text,
-                    mp.x as i32,
-                    mp.y as i32,
-                    (cw as i32, ch as i32),
-                );
-            }
-        }
-        let mission_team = campaign.mission_team_profile_indices();
-        let selected = selected_pc_profile_indices(engine, local_seat);
-        // Original game behavior creates the
-        // requirements widget only in Sherwood. Outside Sherwood the
-        // top information bar may contain blazons, but never mission-team
-        // character/action requirements.
-        if game.is_sherwood
-            && let Some(next_idx) = campaign.next_mission_idx
-            && let Some(req) = build_requirements_state(
-                campaign,
-                &assets.profile_manager,
-                next_idx,
-                &mission_team,
-                &selected,
-            )
-        {
-            crate::ui_panel::draw_requirements_bar(
-                renderer,
-                portrait_cache,
-                &assets.profile_manager,
-                &req,
-            );
-
-            // Hover-tooltip per slot type.  The hover pipeline keys
-            // the delay on which widget owns the mouse; we reproduce
-            // that with a slot-index tracker and paint once it
-            // crosses the idle threshold.
-            let mp = threaded_input.position();
-            if let Some(slot_idx) = hud_tooltips.requirements
-                && let Some(slot) = req.slots.get(slot_idx)
-                && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
-            {
-                let mt_id = crate::ui_panel::requirements_slot_tooltip_mt_id(slot);
-                let text = resources.menu_text.get(mt_id);
-                let (cw, ch) = cursor_renderer.current_frame_size();
-                crate::ui_panel::draw_screen_tooltip(
-                    renderer,
-                    &fonts.tooltip_font,
-                    fonts.shadow_font.as_ref(),
-                    &text,
-                    mp.x as i32,
-                    mp.y as i32,
-                    (cw as i32, ch as i32),
-                );
-            }
-        }
-    }
+    hud.draw_top_icon_strips(engine, assets, renderer);
 
     // Minimap is only created in non-Sherwood missions.  In Sherwood
     // the top-right scroll slot is replaced by the campaign-map /
@@ -1719,171 +1715,19 @@ fn render_overlay_pass(
     // for resolution-dependent positioning and the `sherwood_enable`
     // mask to gate widget state.
     if game.is_sherwood {
-        let mp = threaded_input.position();
-        let hovered_btn =
-            sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
-        let hover = sherwood_hud::SherwoodHoverState {
-            hovered: hovered_btn,
-            mouse_pressed: host.frontend.input.left_mouse_down(),
-        };
-        sherwood_hud::draw_with_sprites(
-            renderer,
-            sherwood_layout,
-            sherwood_enable,
-            hover,
-            sherwood_sprites,
-            engine.frame_counter(),
-        );
-
-        // Per-button hover tooltip (Start/Quit mission).  The actual
-        // text swaps with mode (Sherwood vs in-mission, regular vs
-        // men-to-blazon) — `sherwood_button_tooltip_mt_id` owns that
-        // 3-way switch.
-        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
-            let (cw, ch) = cursor_renderer.current_frame_size();
-            let is_sherwood = game.is_sherwood;
-            let men_to_blazon = game.is_men_to_blazon_conversion();
-            sherwood_hud::draw_tooltip(
-                renderer,
-                hud_tooltips.sherwood,
-                |btn| {
-                    sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
-                        .map(|mt_id| resources.menu_text.get(mt_id))
-                },
-                sherwood_hud::TooltipPlacement {
-                    font: &fonts.tooltip_font,
-                    shadow: fonts.shadow_font.as_ref(),
-                    mouse: (mp.x as i32, mp.y as i32),
-                    cursor_size: (cw as i32, ch as i32),
-                },
-            );
-        }
+        hud.draw_sherwood_hud_buttons(host, engine, renderer);
     }
 
     // Zoom HUD buttons (ZoomUp / ZoomDown) on the lower panel. All button
     // and tooltip decisions were prepared in the update phase above; this
     // complete area now only consumes immutable presentation data.
-    {
-        let hover = ZoomHoverState {
-            hovered: zoom_presentation.hovered.map(Into::into),
-            mouse_pressed: zoom_presentation.mouse_pressed,
-        };
-        zoom_hud::draw_with_sprites(
-            renderer,
-            zoom_layout,
-            zoom_presentation.button_enable(),
-            hover,
-            zoom_sprites,
-        );
-
-        if let (Some(tooltip), Some(resources), Some(fonts)) =
-            (zoom_presentation.ready_tooltip, menu_resources, hud_fonts)
-        {
-            let btn = tooltip.into();
-            let text = resources
-                .menu_text
-                .get(zoom_hud::zoom_button_tooltip_mt_id(btn));
-            if !text.is_empty() {
-                let (cw, ch) = cursor_renderer.current_frame_size();
-                crate::ui_panel::draw_screen_tooltip(
-                    renderer,
-                    &fonts.tooltip_font,
-                    fonts.shadow_font.as_ref(),
-                    &text,
-                    zoom_mouse.x as i32,
-                    zoom_mouse.y as i32,
-                    (cw as i32, ch as i32),
-                );
-            }
-        }
-    }
+    hud.draw_zoom_hud_buttons(zoom, renderer);
 
     // Corner HUD buttons (Clock / Sight / QuickStart) — added to the
     // panel in non-Sherwood missions only.  Hidden entirely during
     // Sherwood, where the Sherwood HUD owns this real-estate.
     if !game.is_sherwood {
-        let corner_enable = CornerButtonEnable::from_engine(engine);
-        let mp = threaded_input.position();
-        let hovered_btn = corner_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
-        let hover = CornerHoverState {
-            hovered: hovered_btn,
-            mouse_pressed: host.frontend.input.left_mouse_down(),
-        };
-        corner_hud::draw_with_sprites(
-            renderer,
-            corner_layout,
-            corner_enable,
-            hover,
-            corner_sprites,
-        );
-
-        // Stature (up/down arrow) widgets on the lower panel.  Driven
-        // live off `PresentationView::retrieve_stature(None)` — we poll the
-        // sim directly each frame.
-        //
-        // The focus-latch overlay (`with_focus_latch`) keeps the
-        // initiating arrow visually pressed while the sim's stature
-        // transition is running, and dims the opposite arrow.  The
-        // latch is set when the player issues StandUp/CrouchDown
-        // (keyboard or widget click) — see
-        // `input_dispatch_stature_commands` below — and auto-clears
-        // when the aggregate stature shifts.
-        let stature = engine.retrieve_stature(None);
-        let stature_enable =
-            StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
-        let stature_hovered = stature_layout.hit_test(mp.x as i32, mp.y as i32, stature_enable);
-        let stature_hover = StatureHoverState {
-            hovered: stature_hovered,
-            mouse_pressed: host.frontend.input.left_mouse_down(),
-        };
-        stature_hud::draw_with_sprites(
-            renderer,
-            stature_layout,
-            stature_enable,
-            stature_hover,
-            stature_sprites,
-        );
-
-        // Hover tooltip for the arrow widgets ("Crouch"/"Stand up").
-        // Uses the geometric hit-test so the tooltip still appears
-        // when the arrow is disabled (hover is tied to the widget
-        // rect, not its enable state).
-        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
-            let (cw, ch) = cursor_renderer.current_frame_size();
-            stature_hud::draw_tooltip(
-                renderer,
-                hud_tooltips.stature,
-                |btn| {
-                    let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
-                    resources.menu_text.get(mt_id)
-                },
-                stature_hud::TooltipPlacement {
-                    font: &fonts.tooltip_font,
-                    shadow: fonts.shadow_font.as_ref(),
-                    mouse: (mp.x as i32, mp.y as i32),
-                    cursor_size: (cw as i32, ch as i32),
-                },
-            );
-        }
-
-        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
-            && let Some(btn) = hud_tooltips.corner
-        {
-            let mt_id = corner_hud::corner_button_tooltip_mt_id(btn);
-            let text = resources.menu_text.get(mt_id);
-            if !text.is_empty() {
-                let (cw, ch) = cursor_renderer.current_frame_size();
-                crate::ui_panel::draw_screen_tooltip(
-                    renderer,
-                    &fonts.tooltip_font,
-                    fonts.shadow_font.as_ref(),
-                    &text,
-                    mp.x as i32,
-                    mp.y as i32,
-                    (cw as i32, ch as i32),
-                );
-            }
-        }
+        hud.draw_corner_and_stature_huds(host, engine, renderer);
     }
 
     // ── GPU phase: hovered-player info popup ──
@@ -1904,129 +1748,11 @@ fn render_overlay_pass(
     // both the action and its current state/target. Only the selected
     // portrait shows action buttons, so
     // `hit_test_portrait_detailed` already gates on that.
-    {
-        let mp = threaded_input.position();
-        let sw = renderer.screen_width();
-        let sh = renderer.screen_height();
-        let hovered_hit =
-            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y);
-        if hud_tooltips.pc_action.is_some()
-            && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
-        {
-            let text = match hit.area {
-                PortraitHitArea::AlliedAction(_) | PortraitHitArea::Pin => {
-                    allied_portrait_tooltip(engine, local_seat, hit)
-                }
-                PortraitHitArea::ActionButton(btn) => {
-                    let pc_id = match hit.target {
-                        PortraitTarget::Pc(pc_id) => Some(pc_id),
-                        _ => None,
-                    };
-                    let action = pc_id
-                        .and_then(|pc_id| engine.get_entity(pc_id))
-                        .and_then(engine_element::Entity::pc_data)
-                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
-                        .and_then(|profile| profile.actions.get(btn as usize))
-                        .copied();
-                    action
-                        .map(|action| {
-                            let mut text = crate::ui_panel::action_button_tooltip_mt_id(action)
-                                .and_then(|mt_id| {
-                                    menu_resources.map(|resources| resources.menu_text.get(mt_id))
-                                })
-                                .unwrap_or_default();
-                            if let Some((_key, extension)) =
-                                crate::ui_panel::item_action_tooltip_extension(
-                                    action,
-                                    engine.item_gameplay(),
-                                    host.frontend
-                                        .preferences()
-                                        .gameplay_config()
-                                        .item_previews
-                                        .effective_for_original_parity(
-                                            engine.uses_original_rng_replay(),
-                                        ),
-                                )
-                            {
-                                if !text.is_empty() {
-                                    text.push_str(" - ");
-                                }
-                                text.push_str(extension);
-                            }
-                            text
-                        })
-                        .unwrap_or_default()
-                }
-                _ => String::new(),
-            };
-            if !text.is_empty() {
-                let (cw, ch) = cursor_renderer.current_frame_size();
-                crate::ui_panel::draw_screen_tooltip(
-                    renderer,
-                    &fonts.tooltip_font,
-                    fonts.shadow_font.as_ref(),
-                    &text,
-                    mp.x as i32,
-                    mp.y as i32,
-                    (cw as i32, ch as i32),
-                );
-            }
-        }
-    }
+    hud.draw_portrait_action_tooltip(host, engine, assets, renderer);
 
     // ── GPU phase: HUD text ──
     if let Some(fonts) = hud_fonts {
-        crate::hud_text::render_hud_text(
-            host.frontend
-                .resources
-                .frame_holder()
-                .sprite_streaming_status(),
-            engine,
-            local_seat,
-            host.viewport(),
-            assets,
-            portrait_cache,
-            renderer,
-            fonts,
-        );
-
-        // ── GPU phase: ransom / amulet counters ──
-        // Renders ransom and amulet values in the top-left corner
-        // with a drop-shadow background font.
-        render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
-        render_mission_countdown(presentation, engine, renderer, fonts);
-
-        crate::achievement_hud::render_trackers(
-            engine,
-            local_seat,
-            host.frontend.preferences().gameplay_config(),
-            renderer,
-            fonts,
-        );
-
-        // Dev-only EntityId overlay — draws each entity's ID under its
-        // feet.  Driven by the `/screenshot?entity_ids` HTTP flag.
-        if dev.debug.entity_ids {
-            crate::hud_text::render_entity_id_overlay(engine, host.viewport(), renderer, fonts);
-        }
-
-        // Dev-only AI speech-log overlay — draws recent accepted
-        // remarks as `(prefix) Remark` lines in a top-centred band.
-        // Gated on `host.frontend.diagnostics().info_displayed()`.
-        if host.frontend.diagnostics().info_displayed() {
-            render_display_info_overlay(host, renderer, fonts, display_info_elapsed_secs);
-            crate::hud_text::render_screen_remarks(engine, renderer, fonts);
-        }
-
-        // AI log dump for the selected NPC.  Logged via
-        // `tracing::trace!` rather than rendered on-screen as titbits.
-
-        // Transient centered-banner message driven by
-        // Message display / `message_delay`. Renders while the
-        // delay is non-zero; main loop decrements after render.
-        if ctx.game.message_delay > 0 && !ctx.game.message_text.is_empty() {
-            crate::hud_text::render_transient_message(renderer, fonts, &ctx.game.message_text);
-        }
+        hud.draw_hud_text_layers(host, engine, assets, dev, presentation, fonts, renderer);
     }
 
     // ── GPU phase: pause overlay ──
@@ -2115,6 +1841,482 @@ fn render_overlay_pass(
     // this function returns, so a `/screenshot` HTTP request can read
     // pixels from the composed offscreen target before `present()`
     // clears it.
+}
+
+impl OverlayHudInputs<'_> {
+    /// Blazon-bar / requirements icon strips of [`render_overlay_pass`].
+    fn draw_top_icon_strips(
+        &self,
+        engine: &PresentationView<'_>,
+        assets: &engine_api::LevelAssets,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            cursor_renderer,
+            hud_tooltips,
+            portrait_cache,
+            menu_resources,
+            hud_fonts,
+            threaded_input,
+            game,
+            local_seat,
+            ..
+        } = *self;
+        let campaign = engine.campaign();
+        let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
+        let blinking = engine.active_blinking_blazons();
+        if let Some(bb) = blazon_bar::build_blazon_bar_state(
+            campaign,
+            &assets.profile_manager,
+            men_to_blazon,
+            blinking,
+        ) {
+            crate::ui_panel::draw_blazon_bar(renderer, portrait_cache, &bb);
+
+            // Per-slot hover tooltip with the standard hover timer.
+            let mp = threaded_input.position();
+            if let Some(slot_idx) = hud_tooltips.blazon
+                && let Some(kind) = crate::ui_panel::blazon_bar_slot_kinds(&bb)
+                    .get(slot_idx)
+                    .copied()
+                && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
+            {
+                let mt_id = crate::ui_panel::blazon_slot_tooltip_mt_id(kind);
+                let text = resources.menu_text.get(mt_id);
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    mp.x as i32,
+                    mp.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
+        }
+        let mission_team = campaign.mission_team_profile_indices();
+        let selected = selected_pc_profile_indices(engine, local_seat);
+        // Original game behavior creates the
+        // requirements widget only in Sherwood. Outside Sherwood the
+        // top information bar may contain blazons, but never mission-team
+        // character/action requirements.
+        if game.is_sherwood
+            && let Some(next_idx) = campaign.next_mission_idx
+            && let Some(req) = build_requirements_state(
+                campaign,
+                &assets.profile_manager,
+                next_idx,
+                &mission_team,
+                &selected,
+            )
+        {
+            crate::ui_panel::draw_requirements_bar(
+                renderer,
+                portrait_cache,
+                &assets.profile_manager,
+                &req,
+            );
+
+            // Hover-tooltip per slot type.  The hover pipeline keys
+            // the delay on which widget owns the mouse; we reproduce
+            // that with a slot-index tracker and paint once it
+            // crosses the idle threshold.
+            let mp = threaded_input.position();
+            if let Some(slot_idx) = hud_tooltips.requirements
+                && let Some(slot) = req.slots.get(slot_idx)
+                && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
+            {
+                let mt_id = crate::ui_panel::requirements_slot_tooltip_mt_id(slot);
+                let text = resources.menu_text.get(mt_id);
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    mp.x as i32,
+                    mp.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
+        }
+    }
+
+    /// Sherwood lower-panel buttons and their hover tooltip.
+    fn draw_sherwood_hud_buttons(
+        &self,
+        host: &HostDraw<'_>,
+        engine: &PresentationView<'_>,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            cursor_renderer,
+            hud_tooltips,
+            menu_resources,
+            hud_fonts,
+            threaded_input,
+            sherwood_layout,
+            sherwood_enable,
+            sherwood_sprites,
+            game,
+            ..
+        } = *self;
+        let mp = threaded_input.position();
+        let hovered_btn =
+            sherwood_layout.hit_test_geometric(mp.x as i32, mp.y as i32, sherwood_enable);
+        let hover = sherwood_hud::SherwoodHoverState {
+            hovered: hovered_btn,
+            mouse_pressed: host.frontend.input.left_mouse_down(),
+        };
+        sherwood_hud::draw_with_sprites(
+            renderer,
+            sherwood_layout,
+            sherwood_enable,
+            hover,
+            sherwood_sprites,
+            engine.frame_counter(),
+        );
+
+        // Per-button hover tooltip (Start/Quit mission).  The actual
+        // text swaps with mode (Sherwood vs in-mission, regular vs
+        // men-to-blazon) — `sherwood_button_tooltip_mt_id` owns that
+        // 3-way switch.
+        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
+            let (cw, ch) = cursor_renderer.current_frame_size();
+            let is_sherwood = game.is_sherwood;
+            let men_to_blazon = game.is_men_to_blazon_conversion();
+            sherwood_hud::draw_tooltip(
+                renderer,
+                hud_tooltips.sherwood,
+                |btn| {
+                    sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
+                        .map(|mt_id| resources.menu_text.get(mt_id))
+                },
+                sherwood_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
+            );
+        }
+    }
+
+    /// Zoom HUD buttons and their prepared tooltip.
+    fn draw_zoom_hud_buttons(
+        &self,
+        zoom: ZoomOverlayInputs,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            cursor_renderer,
+            menu_resources,
+            hud_fonts,
+            zoom_layout,
+            zoom_sprites,
+            ..
+        } = *self;
+        let ZoomOverlayInputs {
+            presentation: zoom_presentation,
+            mouse: zoom_mouse,
+        } = zoom;
+        let hover = ZoomHoverState {
+            hovered: zoom_presentation.hovered.map(Into::into),
+            mouse_pressed: zoom_presentation.mouse_pressed,
+        };
+        zoom_hud::draw_with_sprites(
+            renderer,
+            zoom_layout,
+            zoom_presentation.button_enable(),
+            hover,
+            zoom_sprites,
+        );
+
+        if let (Some(tooltip), Some(resources), Some(fonts)) =
+            (zoom_presentation.ready_tooltip, menu_resources, hud_fonts)
+        {
+            let btn = tooltip.into();
+            let text = resources
+                .menu_text
+                .get(zoom_hud::zoom_button_tooltip_mt_id(btn));
+            if !text.is_empty() {
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    zoom_mouse.x as i32,
+                    zoom_mouse.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
+        }
+    }
+
+    /// Non-Sherwood corner buttons, stature arrows and their tooltips.
+    fn draw_corner_and_stature_huds(
+        &self,
+        host: &HostDraw<'_>,
+        engine: &PresentationView<'_>,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            cursor_renderer,
+            hud_tooltips,
+            menu_resources,
+            hud_fonts,
+            threaded_input,
+            corner_layout,
+            corner_sprites,
+            stature_layout,
+            stature_sprites,
+            game,
+            ..
+        } = *self;
+        let corner_enable = CornerButtonEnable::from_engine(engine);
+        let mp = threaded_input.position();
+        let hovered_btn = corner_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
+        let hover = CornerHoverState {
+            hovered: hovered_btn,
+            mouse_pressed: host.frontend.input.left_mouse_down(),
+        };
+        corner_hud::draw_with_sprites(
+            renderer,
+            corner_layout,
+            corner_enable,
+            hover,
+            corner_sprites,
+        );
+
+        // Stature (up/down arrow) widgets on the lower panel.  Driven
+        // live off `PresentationView::retrieve_stature(None)` — we poll the
+        // sim directly each frame.
+        //
+        // The focus-latch overlay (`with_focus_latch`) keeps the
+        // initiating arrow visually pressed while the sim's stature
+        // transition is running, and dims the opposite arrow.  The
+        // latch is set when the player issues StandUp/CrouchDown
+        // (keyboard or widget click) — see
+        // `input_dispatch_stature_commands` below — and auto-clears
+        // when the aggregate stature shifts.
+        let stature = engine.retrieve_stature(None);
+        let stature_enable =
+            StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
+        let stature_hovered = stature_layout.hit_test(mp.x as i32, mp.y as i32, stature_enable);
+        let stature_hover = StatureHoverState {
+            hovered: stature_hovered,
+            mouse_pressed: host.frontend.input.left_mouse_down(),
+        };
+        stature_hud::draw_with_sprites(
+            renderer,
+            stature_layout,
+            stature_enable,
+            stature_hover,
+            stature_sprites,
+        );
+
+        // Hover tooltip for the arrow widgets ("Crouch"/"Stand up").
+        // Uses the geometric hit-test so the tooltip still appears
+        // when the arrow is disabled (hover is tied to the widget
+        // rect, not its enable state).
+        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
+            let (cw, ch) = cursor_renderer.current_frame_size();
+            stature_hud::draw_tooltip(
+                renderer,
+                hud_tooltips.stature,
+                |btn| {
+                    let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
+                    resources.menu_text.get(mt_id)
+                },
+                stature_hud::TooltipPlacement {
+                    font: &fonts.tooltip_font,
+                    shadow: fonts.shadow_font.as_ref(),
+                    mouse: (mp.x as i32, mp.y as i32),
+                    cursor_size: (cw as i32, ch as i32),
+                },
+            );
+        }
+
+        if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
+            && let Some(btn) = hud_tooltips.corner
+        {
+            let mt_id = corner_hud::corner_button_tooltip_mt_id(btn);
+            let text = resources.menu_text.get(mt_id);
+            if !text.is_empty() {
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    mp.x as i32,
+                    mp.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
+        }
+    }
+
+    /// Portrait action-button hover tooltip.
+    fn draw_portrait_action_tooltip(
+        &self,
+        host: &HostDraw<'_>,
+        engine: &PresentationView<'_>,
+        assets: &engine_api::LevelAssets,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            cursor_renderer,
+            hud_tooltips,
+            portrait_cache,
+            menu_resources,
+            hud_fonts,
+            threaded_input,
+            local_seat,
+            ..
+        } = *self;
+        let mp = threaded_input.position();
+        let sw = renderer.screen_width();
+        let sh = renderer.screen_height();
+        let hovered_hit =
+            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y);
+        if hud_tooltips.pc_action.is_some()
+            && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
+        {
+            let text = match hit.area {
+                PortraitHitArea::AlliedAction(_) | PortraitHitArea::Pin => {
+                    allied_portrait_tooltip(engine, local_seat, hit)
+                }
+                PortraitHitArea::ActionButton(btn) => {
+                    let pc_id = match hit.target {
+                        PortraitTarget::Pc(pc_id) => Some(pc_id),
+                        _ => None,
+                    };
+                    let action = pc_id
+                        .and_then(|pc_id| engine.get_entity(pc_id))
+                        .and_then(engine_element::Entity::pc_data)
+                        .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                        .and_then(|profile| profile.actions.get(btn as usize))
+                        .copied();
+                    action
+                        .map(|action| {
+                            let mut text = crate::ui_panel::action_button_tooltip_mt_id(action)
+                                .and_then(|mt_id| {
+                                    menu_resources.map(|resources| resources.menu_text.get(mt_id))
+                                })
+                                .unwrap_or_default();
+                            if let Some((_key, extension)) =
+                                crate::ui_panel::item_action_tooltip_extension(
+                                    action,
+                                    engine.item_gameplay(),
+                                    host.frontend
+                                        .preferences()
+                                        .gameplay_config()
+                                        .item_previews
+                                        .effective_for_original_parity(
+                                            engine.uses_original_rng_replay(),
+                                        ),
+                                )
+                            {
+                                if !text.is_empty() {
+                                    text.push_str(" - ");
+                                }
+                                text.push_str(extension);
+                            }
+                            text
+                        })
+                        .unwrap_or_default()
+                }
+                _ => String::new(),
+            };
+            if !text.is_empty() {
+                let (cw, ch) = cursor_renderer.current_frame_size();
+                crate::ui_panel::draw_screen_tooltip(
+                    renderer,
+                    &fonts.tooltip_font,
+                    fonts.shadow_font.as_ref(),
+                    &text,
+                    mp.x as i32,
+                    mp.y as i32,
+                    (cw as i32, ch as i32),
+                );
+            }
+        }
+    }
+
+    /// HUD text, counters, trackers, dev overlays and the transient banner.
+    fn draw_hud_text_layers(
+        &self,
+        host: &HostDraw<'_>,
+        engine: &PresentationView<'_>,
+        assets: &engine_api::LevelAssets,
+        dev: &engine_api::DevState,
+        presentation: &FramePresentationInputs,
+        fonts: &crate::hud_text::HudFonts,
+        renderer: &mut crate::renderer::Renderer,
+    ) {
+        let Self {
+            portrait_cache,
+            menu_resources,
+            game,
+            display_info_elapsed_secs,
+            local_seat,
+            ..
+        } = *self;
+        crate::hud_text::render_hud_text(
+            host.frontend
+                .resources
+                .frame_holder()
+                .sprite_streaming_status(),
+            engine,
+            local_seat,
+            host.viewport(),
+            assets,
+            portrait_cache,
+            renderer,
+            fonts,
+        );
+
+        // ── GPU phase: ransom / amulet counters ──
+        // Renders ransom and amulet values in the top-left corner
+        // with a drop-shadow background font.
+        render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
+        render_mission_countdown(presentation, engine, renderer, fonts);
+
+        crate::achievement_hud::render_trackers(
+            engine,
+            local_seat,
+            host.frontend.preferences().gameplay_config(),
+            renderer,
+            fonts,
+        );
+
+        // Dev-only EntityId overlay — draws each entity's ID under its
+        // feet.  Driven by the `/screenshot?entity_ids` HTTP flag.
+        if dev.debug.entity_ids {
+            crate::hud_text::render_entity_id_overlay(engine, host.viewport(), renderer, fonts);
+        }
+
+        // Dev-only AI speech-log overlay — draws recent accepted
+        // remarks as `(prefix) Remark` lines in a top-centred band.
+        // Gated on `host.frontend.diagnostics().info_displayed()`.
+        if host.frontend.diagnostics().info_displayed() {
+            render_display_info_overlay(host, renderer, fonts, display_info_elapsed_secs);
+            crate::hud_text::render_screen_remarks(engine, renderer, fonts);
+        }
+
+        // AI log dump for the selected NPC.  Logged via
+        // `tracing::trace!` rather than rendered on-screen as titbits.
+
+        // Transient centered-banner message driven by
+        // Message display / `message_delay`. Renders while the
+        // delay is non-zero; main loop decrements after render.
+        if game.message_delay > 0 && !game.message_text.is_empty() {
+            crate::hud_text::render_transient_message(renderer, fonts, &game.message_text);
+        }
+    }
 }
 
 /// Draw the rewind HUD indicator: two left-pointing triangles forming

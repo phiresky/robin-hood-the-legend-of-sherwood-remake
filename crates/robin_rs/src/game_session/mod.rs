@@ -5,6 +5,8 @@ mod bootstrap;
 pub(crate) use bootstrap::export_official_mission_headless;
 mod debriefing;
 mod dispatch;
+mod error;
+pub(crate) use error::MissionError;
 mod event_hud;
 mod flow;
 mod frame_perf;
@@ -85,8 +87,9 @@ use modal_state::{
 #[cfg(test)]
 use mouse_input::allied_portrait_center;
 use mouse_input::{
-    dispatch_corner_button_left_click, dispatch_corner_button_right_click, handle_mouse_input,
-    handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
+    MouseCtx, SherwoodCtx, SherwoodModalResources, dispatch_corner_button_left_click,
+    dispatch_corner_button_right_click, handle_mouse_input, handle_pause_menu_events,
+    handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
     request_sherwood_trading_panel, sherwood_trading_access,
 };
 use multiplayer::{drain_mission_network, setup_multiplayer_session};
@@ -111,8 +114,8 @@ use runtime::{
     MissionPresentationPhase, MissionRuntime, MissionWorld,
 };
 use tick::{
-    dismiss_pending_modals, drain_steps, modal_state_pending, post_render_engine_cleanup,
-    pre_render_engine_setup, sync_render_camera,
+    StepUiGates, dismiss_pending_modals, drain_steps, modal_state_pending,
+    post_render_engine_cleanup, pre_render_engine_setup, sync_render_camera,
 };
 
 use crate::app_effect::{AppEffect, SoundMode};
@@ -134,7 +137,7 @@ use crate::main_entry::{
     RustCallbacks, SaveBannerKind, SaveLoadRequest, current_mission_id, execute_app_effects,
     perform_pending_save_load, validated_save_reload_target,
 };
-use crate::multiplayer::matchmaking::current_epoch_ms;
+use crate::multiplayer::current_epoch_ms;
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
 use crate::stature_hud::{StatureButton, StatureEnable, StatureHudLayout};
@@ -161,7 +164,7 @@ pub(crate) struct MissionOutcome {
     pub(crate) campaign: Campaign,
     pub(crate) rng_seed: u64,
     pub(crate) sim_config: engine_api::SimConfig,
-    pub(crate) result: Result<GameCode, String>,
+    pub(crate) result: Result<GameCode, MissionError>,
     pub(crate) transition: Option<crate::main_entry::PendingLevelLoad>,
 }
 
@@ -188,7 +191,7 @@ impl MissionOutcome {
         campaign: Campaign,
         rng_seed: u64,
         sim_config: engine_api::SimConfig,
-        result: Result<GameCode, String>,
+        result: Result<GameCode, MissionError>,
     ) -> Self {
         Self {
             campaign,
@@ -203,6 +206,8 @@ impl MissionOutcome {
 /// Consuming result of the outer mission-selection loop.
 pub(crate) struct SessionOutcome {
     pub(crate) campaign: Campaign,
+    /// The menu-facing boundary: mission errors are rendered to text here,
+    /// exactly once.
     pub(crate) result: Result<SessionResult, String>,
 }
 
@@ -226,7 +231,7 @@ pub(crate) async fn run_mission_headless(
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
-    args: &crate::main_entry::MissionLaunch,
+    args: crate::main_entry::MissionRequest,
     rng_seed: u64,
     sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
@@ -252,15 +257,13 @@ async fn run_mission_headless_body(
     profiles: &engine_profiles::ProfileManager,
     mission_idx: usize,
     location: MissionLocation,
-    args: &crate::main_entry::MissionLaunch,
+    mut args: crate::main_entry::MissionRequest,
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
-    // Direct headless restart must carry launch policy without mutating the
-    // caller's original arguments.
-    let mut session_args = args.clone();
-    let args = &mut session_args;
-    if let Some(error) = unprepared_replay_launch_error(args) {
+    // Direct headless restarts derive each attempt's launch from the request
+    // this loop owns; the caller's launch is never patched.
+    if let Some(error) = unprepared_replay_launch_error(&args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
     let mission_name = campaign.missions[mission_idx]
@@ -269,12 +272,13 @@ async fn run_mission_headless_body(
         .clone();
     let has_decoded_saved_world = pending_decoded_saved_world(callbacks);
     let archive_restored = args
+        .content
         .resolved_mission_assets
         .as_ref()
         .is_some_and(|resolved| resolved.is_archive());
     if !archive_restored
         && let Err(error) = ensure_shipping_mission(
-            args,
+            &args,
             &mission_name,
             &campaign,
             profiles,
@@ -297,14 +301,14 @@ async fn run_mission_headless_body(
             profiles,
             mission_idx,
             location,
-            args,
+            &args,
             rng_seed,
             sim_config,
         )
         .await
         {
             HeadlessBuildOutcome::Ready(mut mission) => {
-                let outcome = mission.run(args).await;
+                let outcome = mission.run(&args).await;
                 mission.finish(outcome)
             }
             HeadlessBuildOutcome::Finished(outcome) => outcome,
@@ -312,16 +316,16 @@ async fn run_mission_headless_body(
         if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
             return outcome;
         }
-        args.mission_restart = true;
         let outcome_sim_config = outcome.sim_config;
         campaign = outcome.campaign;
         match prepare_direct_restart(
             &mut campaign,
-            args,
+            args.restarting(),
             replay_restart.as_ref(),
             outcome_sim_config,
         ) {
-            Ok((seed, config)) => {
+            Ok((next, seed, config)) => {
+                args = next;
                 rng_seed = seed;
                 sim_config = config;
             }
@@ -342,10 +346,9 @@ pub(crate) async fn run_session(
     campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-    args: &crate::main_entry::MissionLaunch,
+    session_args: crate::main_entry::MissionRequest,
     initial_load: Option<(crate::savegame::SlotName, u32)>,
 ) -> SessionOutcome {
-    let session_args = args.clone();
     let mut callbacks =
         match RustCallbacks::new_for_window(application_context.clone(), window).await {
             Ok(Some(callbacks)) => callbacks,
@@ -362,7 +365,7 @@ pub(crate) async fn run_session(
             Err(error) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err(error),
+                    result: Err(error.to_string()),
                 };
             }
         };
@@ -373,93 +376,155 @@ pub(crate) async fn run_session(
             campaign,
             profiles,
             application_context,
-            args,
-            initial_load,
             session_args,
+            initial_load,
         )
         .await
     })
     .await
 }
 
+/// Queue the Load of the save selected before this session started. `Err` is
+/// the menu-visible failure text.
+fn queue_selected_initial_load(
+    callbacks: &mut RustCallbacks,
+    name: &crate::savegame::SlotName,
+    mission_id: u32,
+) -> Result<(), String> {
+    let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
+        return Err(format!("selected save {} no longer exists", name.as_str()));
+    };
+    let slot = match callbacks.save_manager.slot_handle(slot) {
+        Ok(slot) => slot,
+        Err(error) => {
+            return Err(format!("selected save is unavailable: {error:#}"));
+        }
+    };
+    callbacks.queue_operation(SaveLoadRequest::Load {
+        slot: Some(slot),
+        mission_id,
+    });
+    Ok(())
+}
+
+/// Preflight the session's initial Load and resolve the save's exact mission
+/// assets. `Err` is the menu-visible failure text.
+async fn preflight_initial_load(
+    save_manager: &crate::savegame::SaveGameManager,
+    application_context: &ApplicationContext,
+    profiles: &mut engine_profiles::ProfileManager,
+    slot: Option<crate::savegame::SlotHandle>,
+    mission_id: u32,
+) -> Result<
+    (
+        crate::main_entry::PreparedLoad,
+        usize,
+        std::sync::Arc<crate::mission_asset_restore::ResolvedMissionAssets>,
+    ),
+    String,
+> {
+    let load = match crate::main_entry::PreparedLoad::preflight(save_manager, slot) {
+        Ok(Some(result)) => result,
+        Ok(None) => {
+            return Err("requested save slot has no loadable payload".to_string());
+        }
+        Err(error) => {
+            return Err(format!("save preflight failed: {error:#}"));
+        }
+    };
+    let save = load.save();
+    if mission_id != save.header.mission_id {
+        return Err(format!(
+            "save preflight failed: selected mission id {mission_id} differs from decoded header {}",
+            save.header.mission_id
+        ));
+    }
+    let (target_idx, _location, resolved) =
+        match prepare_cold_save_mission(application_context, profiles, save).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                return Err(format!("save preflight failed: {error}"));
+            }
+        };
+    Ok((load, target_idx, resolved))
+}
+
+/// ARES 9 means the campaign was just completed: play the outro cinematic
+/// once and bump ARES to 10.
+async fn play_campaign_outro_once(
+    application_context: &ApplicationContext,
+    window: &mut GameWindow,
+    campaign: &mut Campaign,
+) {
+    if campaign.get_ares() == 9 {
+        // Campaign just completed — play the outro cinematic
+        // and bump ARES to 10.
+        tracing::info!("Campaign complete — playing outro cinematic");
+        if let Err(e) = crate::video_player::play_video(
+            application_context,
+            window,
+            "Data/Cinematics/Outro.ogg",
+        )
+        .await
+        {
+            tracing::warn!("Outro video error: {e}");
+        }
+        campaign.set_ares(10);
+    }
+}
+
+/// `session_args` is this session's launch. Every outer-mission transition
+/// below derives the next launch from it by value (content replaced as a unit,
+/// restart evidence, host session continuation); what carries over between
+/// campaign missions is spelled out at each transition.
 async fn run_session_body(
     callbacks: &mut RustCallbacks,
     window: &mut GameWindow,
     mut campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-    args: &crate::main_entry::MissionLaunch,
+    mut session_args: crate::main_entry::MissionRequest,
     initial_load: Option<(crate::savegame::SlotName, u32)>,
-    mut session_args: crate::main_entry::MissionLaunch,
 ) -> SessionOutcome {
-    if let Some((name, mission_id)) = initial_load {
-        let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
-            return SessionOutcome {
-                campaign,
-                result: Err(format!("selected save {} no longer exists", name.as_str())),
-            };
+    if let Some((name, mission_id)) = initial_load
+        && let Err(result) = queue_selected_initial_load(callbacks, &name, mission_id)
+    {
+        return SessionOutcome {
+            campaign,
+            result: Err(result),
         };
-        let slot = match callbacks.save_manager.slot_handle(slot) {
-            Ok(slot) => slot,
-            Err(error) => {
-                return SessionOutcome {
-                    campaign,
-                    result: Err(format!("selected save is unavailable: {error:#}")),
-                };
-            }
-        };
-        callbacks.queue_operation(SaveLoadRequest::Load {
-            slot: Some(slot),
-            mission_id,
-        });
     }
-    if args.replay_data.is_some() || args.replay.is_some() {
+    if session_args.replay_data.is_some() || session_args.replay.is_some() {
         return SessionOutcome {
             campaign,
             result: Err("replay missions must bypass campaign selection and launch directly from their header".to_string()),
         };
     }
     let mut authoritative_rng_seed = 0;
-    let mut authoritative_sim_config = setup::initial_sim_config(args);
+    let mut authoritative_sim_config = setup::initial_sim_config(&session_args.config);
     let mut preselected_mission = None;
     if let Some(SaveLoadRequest::Load { slot, mission_id }) = callbacks.take_initial_request() {
-        let load = match crate::main_entry::PreparedLoad::preflight(&callbacks.save_manager, slot) {
-            Ok(Some(result)) => result,
-            Ok(None) => {
+        let (load, target_idx, resolved) = match preflight_initial_load(
+            &callbacks.save_manager,
+            application_context,
+            profiles,
+            slot,
+            mission_id,
+        )
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(result) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err("requested save slot has no loadable payload".to_string()),
-                };
-            }
-            Err(error) => {
-                return SessionOutcome {
-                    campaign,
-                    result: Err(format!("save preflight failed: {error:#}")),
+                    result: Err(result),
                 };
             }
         };
         let save = load.save();
-        if mission_id != save.header.mission_id {
-            return SessionOutcome {
-                campaign,
-                result: Err(format!(
-                    "save preflight failed: selected mission id {mission_id} differs from decoded header {}",
-                    save.header.mission_id
-                )),
-            };
-        }
-        let (target_idx, _location, resolved) =
-            match prepare_cold_save_mission(application_context, profiles, save).await {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    return SessionOutcome {
-                        campaign,
-                        result: Err(format!("save preflight failed: {error}")),
-                    };
-                }
-            };
-        clear_ambient_custom_launch(&mut session_args);
-        session_args.resolved_mission_assets = Some(resolved);
+        // The save's exact assets replace the launch's content for the session.
+        session_args =
+            session_args.with_content(crate::main_entry::MissionContent::exact_assets(resolved));
         (authoritative_rng_seed, authoritative_sim_config) = save.engine.mission_start_simulation();
         campaign = save.engine.campaign().clone();
         preselected_mission = Some(target_idx);
@@ -468,7 +533,11 @@ async fn run_session_body(
     let mut replay_restart: Option<crate::replay_service::PendingReplay> = None;
     loop {
         let pending_replay = choose_pending_replay(
-            args.global_options.replay_launches().take_pending(),
+            session_args
+                .config
+                .global_options
+                .replay_launches()
+                .take_pending(),
             &mut replay_restart,
         );
         let mut mission_args_storage = None;
@@ -481,8 +550,8 @@ async fn run_session_body(
             // The persisted replay descriptor is the next mission's sole
             // asset authority. Release a live/save overlay before resolving
             // and mounting it so two archives can never compete in SbFile.
-            session_args.resolved_mission_assets = None;
-            clear_ambient_custom_launch(&mut session_args);
+            // The session keeps no custom content for later campaign missions.
+            session_args = session_args.with_content(crate::main_entry::MissionContent::default());
             let prepared = match prepare_replay_launch(
                 application_context,
                 profiles,
@@ -496,7 +565,7 @@ async fn run_session_body(
                 Err(error) => {
                     return SessionOutcome {
                         campaign,
-                        result: Err(error),
+                        result: Err(error.to_string()),
                     };
                 }
             };
@@ -555,17 +624,19 @@ async fn run_session_body(
             callbacks,
             campaign,
             profiles,
-            mission_idx,
-            location,
+            MissionStart {
+                mission_idx,
+                location,
+                rng_seed: authoritative_rng_seed,
+                sim_config: authoritative_sim_config,
+            },
             mission_args,
-            authoritative_rng_seed,
-            authoritative_sim_config,
             MultiplayerSetupFailurePolicy::ReturnToMenu,
         )
         .await;
         // This evidence belongs to the just-consumed reconstruction, not the
         // next campaign mission. Only LevelRestart below installs it again.
-        session_args.mission_restart = false;
+        session_args = session_args.after_attempt();
         campaign = mission_outcome.campaign;
         authoritative_rng_seed = mission_outcome.rng_seed;
         authoritative_sim_config = mission_outcome.sim_config;
@@ -574,7 +645,7 @@ async fn run_session_body(
             Err(error) => {
                 return SessionOutcome {
                     campaign,
-                    result: Err(error),
+                    result: Err(error.to_string()),
                 };
             }
         };
@@ -587,21 +658,7 @@ async fn run_session_body(
                 };
             }
             GameCode::LevelSucceeded | GameCode::LevelInterrupted if campaign.get_ares() >= 9 => {
-                if campaign.get_ares() == 9 {
-                    // Campaign just completed — play the outro cinematic
-                    // and bump ARES to 10.
-                    tracing::info!("Campaign complete — playing outro cinematic");
-                    if let Err(e) = crate::video_player::play_video(
-                        application_context,
-                        window,
-                        "Data/Cinematics/Outro.ogg",
-                    )
-                    .await
-                    {
-                        tracing::warn!("Outro video error: {e}");
-                    }
-                    campaign.set_ares(10);
-                }
+                play_campaign_outro_once(application_context, window, &mut campaign).await;
                 tracing::info!("Returning to main menu (ARES={})", campaign.get_ares());
                 return SessionOutcome {
                     campaign,
@@ -635,8 +692,8 @@ async fn run_session_body(
                     replay_for_restart.is_some(),
                 );
                 replay_restart = replay_for_restart;
-                session_args.mp_continue_session = session_args.server;
-                session_args.mission_restart = true;
+                // Same mission again: content and lease are kept.
+                session_args = session_args.continuing_host_session().restarting();
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
             }
@@ -662,8 +719,8 @@ async fn run_session_body(
                 // owns its archive/cache lifetime. Drop that owner before
                 // mounting the next exact descriptor so two same-path custom
                 // missions can never overlap.
-                session_args.resolved_mission_assets = None;
-                clear_ambient_custom_launch(&mut session_args);
+                session_args =
+                    session_args.with_content(crate::main_entry::MissionContent::default());
                 let (idx, _location, resolved) = match prepare_cold_save_mission(
                     application_context,
                     profiles,
@@ -679,7 +736,8 @@ async fn run_session_body(
                         };
                     }
                 };
-                session_args.resolved_mission_assets = Some(resolved);
+                session_args = session_args
+                    .with_content(crate::main_entry::MissionContent::exact_assets(resolved));
                 tracing::info!(
                     "Cross-mission load: switching to mission id={} (idx={}) and applying slot {:?}",
                     req.mission_id(),
@@ -694,17 +752,30 @@ async fn run_session_body(
                 // Queue the Load again so the first frame of the
                 // new mission applies the save to its fresh engine.
                 callbacks.queue_operation(SaveLoadRequest::ApplyLoad(req.into_load()));
-                session_args.mp_continue_session = session_args.server;
+                session_args = session_args.continuing_host_session();
                 continue;
             }
             _ => {}
         }
         // Only LevelRestart re-enters the same exact mission. Every other
         // completed mission releases its process-local overlay/cache owner
-        // before campaign selection can inspect another profile.
-        session_args.resolved_mission_assets = None;
-        session_args.mp_continue_session = session_args.server;
+        // before campaign selection can inspect another profile. The rest of
+        // the launch content (custom-mission path, Lua/distributed package
+        // handoff) carries over to the next campaign mission, as it always has.
+        session_args = session_args
+            .releasing_asset_lease()
+            .continuing_host_session();
     }
+}
+
+/// Which mission to construct and the deterministic simulation it starts
+/// with. Restart and replay admission replace all four together.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MissionStart {
+    pub(crate) mission_idx: usize,
+    pub(crate) location: MissionLocation,
+    pub(crate) rng_seed: u64,
+    pub(crate) sim_config: engine_api::SimConfig,
 }
 
 pub(crate) async fn run_mission(
@@ -712,25 +783,11 @@ pub(crate) async fn run_mission(
     callbacks: &mut RustCallbacks,
     campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
-    mission_idx: usize,
-    location: MissionLocation,
-    args: crate::main_entry::MissionLaunch,
-    rng_seed: u64,
-    sim_config: engine_api::SimConfig,
+    start: MissionStart,
+    args: crate::main_entry::MissionRequest,
 ) -> MissionOutcome {
     retirement::run(callbacks, async move |callbacks| {
-        run_mission_body(
-            window,
-            callbacks,
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            args,
-            rng_seed,
-            sim_config,
-        )
-        .await
+        run_mission_body(window, callbacks, campaign, profiles, start, args).await
     })
     .await
 }
@@ -740,12 +797,15 @@ async fn run_mission_body(
     callbacks: &mut RustCallbacks,
     mut campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
-    mut mission_idx: usize,
-    mut location: MissionLocation,
-    mut args: crate::main_entry::MissionLaunch,
-    mut rng_seed: u64,
-    mut sim_config: engine_api::SimConfig,
+    start: MissionStart,
+    mut args: crate::main_entry::MissionRequest,
 ) -> MissionOutcome {
+    let MissionStart {
+        mut mission_idx,
+        mut location,
+        mut rng_seed,
+        mut sim_config,
+    } = start;
     if let Some(error) = unprepared_replay_launch_error(&args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
@@ -753,21 +813,22 @@ async fn run_mission_body(
         .replay_data
         .as_ref()
         .map(|_| (campaign.clone(), rng_seed, sim_config));
-    let mut pending_replay = args.global_options.replay_launches().take_pending();
+    let mut pending_replay = args.config.global_options.replay_launches().take_pending();
     loop {
         match prepare_pending_direct_replay(
             &mut pending_replay,
             &callbacks.application_context(),
             profiles,
-            &mut args,
+            args,
         )
         .await
         {
-            Ok(Some(prepared)) => {
+            Ok((next, Some(prepared))) => {
+                args = next;
                 (campaign, mission_idx, location, rng_seed, sim_config) = prepared;
                 replay_restart = Some((campaign.clone(), rng_seed, sim_config));
             }
-            Ok(None) => {}
+            Ok((next, None)) => args = next,
             Err(error) => {
                 return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
             }
@@ -777,21 +838,23 @@ async fn run_mission_body(
             callbacks,
             campaign,
             profiles,
-            mission_idx,
-            location,
+            MissionStart {
+                mission_idx,
+                location,
+                rng_seed,
+                sim_config,
+            },
             &args,
-            rng_seed,
-            sim_config,
             MultiplayerSetupFailurePolicy::Fatal,
         )
         .await;
         if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
             return outcome;
         }
-        args.mission_restart = true;
+        args = args.restarting();
         let outcome_sim_config = outcome.sim_config;
         campaign = outcome.campaign;
-        pending_replay = args.global_options.replay_launches().take_pending();
+        pending_replay = args.config.global_options.replay_launches().take_pending();
         if pending_replay.is_some() {
             // A newly admitted replay owns the next cold construction. Do not
             // restore the previous mission checkpoint or reuse its selection.
@@ -799,11 +862,12 @@ async fn run_mission_body(
         }
         match prepare_direct_restart(
             &mut campaign,
-            &mut args,
+            args,
             replay_restart.as_ref(),
             outcome_sim_config,
         ) {
-            Ok((seed, config)) => {
+            Ok((next, seed, config)) => {
+                args = next;
                 rng_seed = seed;
                 sim_config = config;
             }
@@ -819,11 +883,8 @@ async fn run_mission_with_seed(
     callbacks: &mut RustCallbacks,
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
-    mission_idx: usize,
-    location: MissionLocation,
-    args: &crate::main_entry::MissionLaunch,
-    rng_seed: u64,
-    sim_config: engine_api::SimConfig,
+    start: MissionStart,
+    args: &crate::main_entry::MissionRequest,
     multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
 ) -> MissionOutcome {
     let outcome = match InteractiveMissionBuilder::build(
@@ -831,11 +892,8 @@ async fn run_mission_with_seed(
         callbacks,
         campaign,
         profiles,
-        mission_idx,
-        location,
+        start,
         args,
-        rng_seed,
-        sim_config,
         multiplayer_setup_failure_policy,
     )
     .await
@@ -850,7 +908,9 @@ async fn run_mission_with_seed(
     let outcome = {
         let mut outcome = outcome;
         if let Err(error) = crate::replay_archive::retire_browser_mission().await {
-            outcome.result = Err(format!("retire browser replay: {error:#}"));
+            outcome.result = Err(MissionError::replay(format!(
+                "retire browser replay: {error:#}"
+            )));
             outcome.transition = None;
         }
         outcome
@@ -868,31 +928,31 @@ mod required_state_tests {
             ..initial
         };
         for headless in [false, true] {
-            let mut args = crate::main_entry::MissionLaunch::from(crate::main_entry::CliArgs {
-                server: true,
-                headless,
-                ..Default::default()
-            });
+            let launch = || {
+                crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig::from(
+                    crate::main_entry::CliArgs {
+                        server: true,
+                        headless,
+                        ..Default::default()
+                    },
+                ))
+            };
             let mut campaign = Campaign::default();
-            assert!(
-                super::prepare_direct_restart(&mut campaign, &mut args, None, changed).is_err()
-            );
-            assert!(!args.mp_continue_session);
+            assert!(super::prepare_direct_restart(&mut campaign, launch(), None, changed).is_err());
             campaign.snapshot_preselected_with_simulation(11, initial);
-            let (seed, config) =
-                super::prepare_direct_restart(&mut campaign, &mut args, None, changed).unwrap();
+            let (args, seed, config) =
+                super::prepare_direct_restart(&mut campaign, launch(), None, changed).unwrap();
             assert_eq!(seed, 11);
             assert_eq!(config.enable_unbinding, changed.enable_unbinding);
-            assert!(args.mp_continue_session);
+            assert!(args.multiplayer.continue_session);
 
-            args.mp_continue_session = false;
             let replay = (Campaign::default(), 23, initial);
-            let (seed, config) =
-                super::prepare_direct_restart(&mut campaign, &mut args, Some(&replay), changed)
+            let (args, seed, config) =
+                super::prepare_direct_restart(&mut campaign, launch(), Some(&replay), changed)
                     .unwrap();
             assert_eq!(seed, 23);
             assert_eq!(config.enable_unbinding, initial.enable_unbinding);
-            assert!(!args.mp_continue_session);
+            assert!(!args.multiplayer.continue_session);
             assert_eq!(
                 serde_json::to_value(&campaign).unwrap(),
                 serde_json::to_value(&replay.0).unwrap()
@@ -902,32 +962,26 @@ mod required_state_tests {
 
     #[test]
     fn direct_restart_adapter_restores_checkpoint_before_admitting_continuation() {
-        let mut args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+            cli: crate::main_entry::CliArgs {
                 server: true,
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
         let mut campaign = Campaign::default();
-        assert!(!super::restore_direct_restart_boundary(
-            &mut campaign,
-            &mut args
-        ));
-        assert!(!args.mp_continue_session);
+        let (args, restored) = super::restore_direct_restart_boundary(&mut campaign, args);
+        assert!(!restored);
+        assert!(!args.multiplayer.continue_session);
         campaign.snapshot_with_simulation(7, robin_engine::engine::SimConfig::default());
-        assert!(!super::restore_direct_restart_boundary(
-            &mut campaign,
-            &mut args
-        ));
-        assert!(!args.mp_continue_session);
+        let (args, restored) = super::restore_direct_restart_boundary(&mut campaign, args);
+        assert!(!restored);
+        assert!(!args.multiplayer.continue_session);
         campaign
             .snapshot_preselected_with_simulation(11, robin_engine::engine::SimConfig::default());
-        assert!(super::restore_direct_restart_boundary(
-            &mut campaign,
-            &mut args
-        ));
-        assert!(args.mp_continue_session);
+        let (args, restored) = super::restore_direct_restart_boundary(&mut campaign, args);
+        assert!(restored);
+        assert!(args.multiplayer.continue_session);
         assert_eq!(campaign.restart_simulation_checkpoint().0, 11);
     }
 
@@ -937,32 +991,38 @@ mod required_state_tests {
             for restored in [false, true] {
                 for replay in [false, true] {
                     for headless in [false, true] {
-                        let mut args = crate::main_entry::MissionLaunch {
-                            config: crate::main_entry::CliArgs {
-                                server,
-                                headless,
-                                replay: replay.then(|| "recorded.rhrec".into()),
+                        let args = crate::main_entry::MissionRequest::from(
+                            crate::main_entry::LaunchConfig {
+                                cli: crate::main_entry::CliArgs {
+                                    server,
+                                    headless,
+                                    replay: replay.then(|| "recorded.rhrec".into()),
+                                    ..Default::default()
+                                },
                                 ..Default::default()
                             },
-                            ..Default::default()
-                        };
-                        super::carry_direct_restart_multiplayer_continuation(&mut args, restored);
-                        assert_eq!(args.mp_continue_session, server && restored && !replay);
+                        );
+                        let args =
+                            super::carry_direct_restart_multiplayer_continuation(args, restored);
+                        assert_eq!(
+                            args.multiplayer.continue_session,
+                            server && restored && !replay
+                        );
                     }
                 }
             }
         }
         // Ineligible transitions do not revoke already-established policy.
-        let mut args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+            cli: crate::main_entry::CliArgs {
                 server: true,
                 ..Default::default()
             },
-            mp_continue_session: true,
             ..Default::default()
-        };
-        super::carry_direct_restart_multiplayer_continuation(&mut args, false);
-        assert!(args.mp_continue_session);
+        })
+        .with_session_continuation(true);
+        let args = super::carry_direct_restart_multiplayer_continuation(args, false);
+        assert!(args.multiplayer.continue_session);
     }
 
     use super::{
@@ -987,7 +1047,9 @@ mod required_state_tests {
         );
         let expected = context.active_profile_snapshot().unwrap_err();
         assert_eq!(
-            validate_cold_save_spellforge_preference(&context, "NestedMission", true).unwrap_err(),
+            validate_cold_save_spellforge_preference(&context, "NestedMission", true)
+                .unwrap_err()
+                .to_string(),
             format!("read Spellforge gameplay preference: {expected}")
         );
     }
@@ -1016,8 +1078,9 @@ mod required_state_tests {
         )
         .unwrap();
 
-        let error =
-            validate_cold_save_spellforge_preference(&context, "NestedMission", true).unwrap_err();
+        let error = validate_cold_save_spellforge_preference(&context, "NestedMission", true)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("disabled in Gameplay settings"));
         assert!(
             !context
@@ -1303,10 +1366,16 @@ mod required_state_tests {
                 engine_campaign,
                 index as u64,
                 robin_engine::engine::SimConfig::default(),
-                outcome.clone(),
+                outcome
+                    .clone()
+                    .map_err(crate::game_session::MissionError::launch),
             );
 
-            assert_eq!(actual.result, outcome, "{path}");
+            assert_eq!(
+                actual.result.as_ref().map_err(ToString::to_string),
+                outcome.as_ref().map_err(Clone::clone),
+                "{path}"
+            );
             assert_eq!(
                 actual.campaign.values[CampaignValue::Custom20],
                 marker,
@@ -1323,28 +1392,26 @@ mod required_state_tests {
     #[test]
     fn pending_direct_replay_absent_preserves_ordinary_launch() {
         let mut profiles = ProfileManager::new();
-        let mut args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
+        let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+            cli: crate::main_entry::CliArgs {
                 start_paused: true,
                 custom_mission: Some("ordinary-custom-mission".into()),
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
         let mut pending = None;
-        assert!(
-            pollster::block_on(prepare_pending_direct_replay(
-                &mut pending,
-                &crate::host::ApplicationContext::default(),
-                &mut profiles,
-                &mut args,
-            ))
-            .unwrap()
-            .is_none()
-        );
+        let (args, prepared) = pollster::block_on(prepare_pending_direct_replay(
+            &mut pending,
+            &crate::host::ApplicationContext::default(),
+            &mut profiles,
+            args,
+        ))
+        .unwrap();
+        assert!(prepared.is_none());
         assert!(args.start_paused);
         assert_eq!(
-            args.custom_mission.as_deref(),
+            args.content.custom_mission.as_deref(),
             Some(std::path::Path::new("ordinary-custom-mission"))
         );
         assert!(args.replay_data.is_none());
@@ -1355,16 +1422,17 @@ mod required_state_tests {
     fn pending_direct_replay_replaces_selection_and_releases_previous_lease_once() {
         let context = crate::host::ApplicationContext::default();
         let (mut profiles, mut data) = replay_fixture(Some(0));
-        let mut args = pollster::block_on(prepare_replay_launch(
+        let args = pollster::block_on(prepare_replay_launch(
             &context,
             &mut profiles,
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             data.clone(),
             true,
         ))
         .unwrap()
         .launch;
-        let old_lease = std::sync::Arc::downgrade(args.resolved_mission_assets.as_ref().unwrap());
+        let old_lease =
+            std::sync::Arc::downgrade(args.content.resolved_mission_assets.as_ref().unwrap());
         profiles.missions.push(MissionProfile {
             id: 18,
             mission_filename: "MissionB".into(),
@@ -1393,11 +1461,14 @@ mod required_state_tests {
             data,
             paused: false,
         });
-        let (campaign, index, location, seed, config) = pollster::block_on(
-            prepare_pending_direct_replay(&mut pending, &context, &mut profiles, &mut args),
-        )
-        .unwrap()
+        let (args, prepared) = pollster::block_on(prepare_pending_direct_replay(
+            &mut pending,
+            &context,
+            &mut profiles,
+            args,
+        ))
         .unwrap();
+        let (campaign, index, location, seed, config) = prepared.unwrap();
         assert!(pending.is_none());
         assert!(old_lease.upgrade().is_none());
         assert_eq!(index, 1);
@@ -1411,49 +1482,47 @@ mod required_state_tests {
             args.replay_data.as_ref().unwrap().header().mission_id,
             "MissionB"
         );
-        let lease = std::sync::Arc::clone(args.resolved_mission_assets.as_ref().unwrap());
-        assert!(
-            pollster::block_on(prepare_pending_direct_replay(
-                &mut pending,
-                &context,
-                &mut profiles,
-                &mut args,
-            ))
-            .unwrap()
-            .is_none()
-        );
+        let lease = std::sync::Arc::clone(args.content.resolved_mission_assets.as_ref().unwrap());
+        let (args, prepared) = pollster::block_on(prepare_pending_direct_replay(
+            &mut pending,
+            &context,
+            &mut profiles,
+            args,
+        ))
+        .unwrap();
+        assert!(prepared.is_none());
         assert!(std::sync::Arc::ptr_eq(
             &lease,
-            args.resolved_mission_assets.as_ref().unwrap()
+            args.content.resolved_mission_assets.as_ref().unwrap()
         ));
     }
 
     #[test]
     fn pending_direct_replay_same_mission_restores_recorded_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let mut args = crate::main_entry::MissionLaunch::default();
+        let args = crate::main_entry::MissionRequest::default();
         let mut pending = Some(crate::replay_service::PendingReplay { data, paused: true });
-        let (campaign, index, _, seed, config) = pollster::block_on(prepare_pending_direct_replay(
+        let (args, prepared) = pollster::block_on(prepare_pending_direct_replay(
             &mut pending,
             &crate::host::ApplicationContext::default(),
             &mut profiles,
-            &mut args,
+            args,
         ))
-        .unwrap()
         .unwrap();
+        let (campaign, index, _, seed, config) = prepared.unwrap();
         assert_eq!(campaign.current_mission_idx, Some(0));
         assert_eq!(index, 0);
         assert_eq!(seed, 0x2020);
         assert!(config.highlander2);
         assert!(args.start_paused);
-        assert!(args.resolved_mission_assets.is_some());
+        assert!(args.content.resolved_mission_assets.is_some());
         assert!(pending.is_none());
     }
 
     #[test]
     fn pending_direct_replay_rejection_is_consumed_without_fallback() {
         let (mut profiles, data) = replay_fixture(None);
-        let mut args = crate::main_entry::MissionLaunch::default();
+        let args = crate::main_entry::MissionRequest::default();
         let mut pending = Some(crate::replay_service::PendingReplay {
             data,
             paused: false,
@@ -1462,13 +1531,13 @@ mod required_state_tests {
             &mut pending,
             &crate::host::ApplicationContext::default(),
             &mut profiles,
-            &mut args,
+            args,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("pending direct-mission replay launch failed"));
         assert!(error.contains("has no current mission"));
         assert!(pending.is_none());
-        assert!(args.resolved_mission_assets.is_none());
     }
 
     #[test]
@@ -1492,16 +1561,17 @@ mod required_state_tests {
             let spec = path.to_str().unwrap();
             let error = crate::replay_format::load_replay_spec(spec).unwrap_err();
             assert!(error.to_string().contains(expected), "{name}: {error}");
-            let args = crate::main_entry::MissionLaunch {
-                config: crate::main_entry::CliArgs {
+            let args = crate::main_entry::MissionRequest::from(crate::main_entry::LaunchConfig {
+                cli: crate::main_entry::CliArgs {
                     replay: Some(spec.to_owned()),
                     ..Default::default()
                 },
                 ..Default::default()
-            };
+            });
             assert!(
                 super::unprepared_replay_launch_error(&args)
                     .unwrap()
+                    .to_string()
                     .contains("before canonical decode")
             );
         }
@@ -1510,7 +1580,7 @@ mod required_state_tests {
     #[test]
     fn replay_preparation_restores_all_frame_zero_metadata() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let args = crate::main_entry::MissionLaunch {
+        let args = crate::main_entry::MissionRequest {
             mission_restart: true,
             ..Default::default()
         };
@@ -1549,11 +1619,12 @@ mod required_state_tests {
         let (mut profiles, data) = replay_fixture(None);
         let error = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             data,
             false,
         )
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("has no current mission"));
     }
 
@@ -1568,7 +1639,7 @@ mod required_state_tests {
             ..
         } = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             data,
             false,
         )
@@ -1614,7 +1685,7 @@ mod required_state_tests {
 
         let super::PreparedReplayLaunch { mission_idx, .. } = prepare_replay_mission(
             &mut profiles,
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             data,
             false,
         )
@@ -1702,11 +1773,12 @@ mod required_state_tests {
         let error = pollster::block_on(prepare_replay_launch(
             &application_context,
             &mut profiles,
-            &crate::main_entry::MissionLaunch::default(),
+            &crate::main_entry::MissionRequest::default(),
             data,
             false,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("disabled in Gameplay settings"), "{error}");
         assert!(
@@ -1722,10 +1794,14 @@ mod required_state_tests {
     #[test]
     fn current_replay_rejects_original_parity_capture_before_resolution() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let args = crate::main_entry::MissionLaunch {
-            mission_start_legacy_save: Some(vec![0; 4]),
-            ..Default::default()
-        };
+        let args = crate::main_entry::MissionRequest::from(
+            crate::main_entry::LaunchConfig::default().with_mission_start_capture(
+                crate::main_entry::MissionStartCapture {
+                    legacy_save: Some(vec![0; 4]),
+                    ..Default::default()
+                },
+            ),
+        );
 
         let error = pollster::block_on(prepare_replay_launch(
             &crate::host::ApplicationContext::default(),
@@ -1734,7 +1810,8 @@ mod required_state_tests {
             data,
             false,
         ))
-        .unwrap_err();
+        .unwrap_err()
+        .to_string();
 
         assert!(error.contains("Original parity"), "{error}");
     }

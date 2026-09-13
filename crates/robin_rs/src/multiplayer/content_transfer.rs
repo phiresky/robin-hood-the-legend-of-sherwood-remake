@@ -1,9 +1,13 @@
 //! Shared sequential content-transfer validation, independent of stream and clock.
 
-use super::{NetEvent, NetMsg, NetOutbound};
+use super::{MultiplayerError, NetEvent, NetMsg, NetOutbound};
 use robin_engine::multiplayer::{
     ContentChunk, ContentReject, ContentRequest, DISTRIBUTED_MOD_CHUNK_LIMIT, DistributedModOffer,
 };
+
+fn mismatch(message: String) -> MultiplayerError {
+    MultiplayerError::ContentMismatch(message.into())
+}
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) enum ContentDecision {
@@ -15,7 +19,7 @@ impl ContentDecision {
     pub(super) fn decode(
         offer: &DistributedModOffer,
         decision: NetOutbound,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, MultiplayerError> {
         match decision {
             NetOutbound::ContentRequest(ContentRequest {
                 full_mod_sha256,
@@ -28,18 +32,18 @@ impl ContentDecision {
             NetOutbound::ContentRequest(ContentRequest {
                 full_mod_sha256,
                 resume_offset,
-            }) => Err(format!(
+            }) => Err(mismatch(format!(
                 "invalid content request for {} at offset {resume_offset}; offered {} with {} bytes",
                 robin_engine::spellforge::hex_hash(&full_mod_sha256),
                 robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
                 offer.encoded_bytes
-            )),
+            ))),
             NetOutbound::ContentReject(ContentReject {
                 full_mod_sha256,
                 reason,
             }) if full_mod_sha256 == offer.full_mod_sha256 => Ok(Self::Reject { reason }),
-            other => Err(format!(
-                "expected local ContentRequest/ContentReject, got {other:?}"
+            other => Err(MultiplayerError::LocalState(
+                format!("expected local ContentRequest/ContentReject, got {other:?}").into(),
             )),
         }
     }
@@ -66,11 +70,11 @@ impl ContentDecision {
     }
 
     /// Called only after the decision has been sent, including a rejection.
-    pub(super) fn resume_offset(self) -> Result<u64, String> {
+    pub(super) fn resume_offset(self) -> Result<u64, MultiplayerError> {
         match self {
             Self::Request { resume_offset } => Ok(resume_offset),
-            Self::Reject { reason } => Err(format!(
-                "local player declined exact host content: {reason}"
+            Self::Reject { reason } => Err(MultiplayerError::ContentDeclined(
+                format!("local player declined exact host content: {reason}").into(),
             )),
         }
     }
@@ -82,7 +86,7 @@ pub(super) fn accept_chunk(
     offer: &DistributedModOffer,
     received: u64,
     message: Option<NetMsg>,
-) -> Result<(u64, NetEvent), String> {
+) -> Result<(u64, NetEvent), MultiplayerError> {
     let Some(NetMsg::ContentChunk(ContentChunk {
         full_mod_sha256,
         offset,
@@ -90,9 +94,9 @@ pub(super) fn accept_chunk(
         bytes,
     })) = message
     else {
-        return Err(format!(
+        return Err(mismatch(format!(
             "expected sequential ContentChunk at offset {received}, got {message:?}"
-        ));
+        )));
     };
     if full_mod_sha256 != offer.full_mod_sha256
         || total_bytes != offer.encoded_bytes
@@ -100,23 +104,23 @@ pub(super) fn accept_chunk(
         || bytes.is_empty()
         || bytes.len() > DISTRIBUTED_MOD_CHUNK_LIMIT
     {
-        return Err(format!(
+        return Err(mismatch(format!(
             "invalid distributed-mod chunk: hash={} offset={offset} total={total_bytes} bytes={}; expected hash={} offset={received} total={} and 1..={} bytes",
             robin_engine::spellforge::hex_hash(&full_mod_sha256),
             bytes.len(),
             robin_engine::spellforge::hex_hash(&offer.full_mod_sha256),
             offer.encoded_bytes,
             DISTRIBUTED_MOD_CHUNK_LIMIT
-        ));
+        )));
     }
     let end = received
         .checked_add(bytes.len() as u64)
-        .ok_or_else(|| "distributed-mod chunk offset overflow".to_owned())?;
+        .ok_or_else(|| mismatch("distributed-mod chunk offset overflow".to_owned()))?;
     if end > offer.encoded_bytes {
-        return Err(format!(
+        return Err(mismatch(format!(
             "distributed-mod chunk ends at {end}, beyond offered {} bytes",
             offer.encoded_bytes
-        ));
+        )));
     }
     Ok((
         end,
@@ -213,7 +217,7 @@ mod tests {
             matches!(rejected.message(&offer), NetMsg::ContentReject(ContentReject { reason, .. }) if reason == "declined")
         );
         assert_eq!(
-            rejected.resume_offset().unwrap_err(),
+            rejected.resume_offset().unwrap_err().to_string(),
             "local player declined exact host content: declined"
         );
     }

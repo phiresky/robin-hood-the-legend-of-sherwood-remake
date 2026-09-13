@@ -209,13 +209,7 @@ macro_rules! frame_append_batch {
             }
         }
 
-        impl<'de> Deserialize<'de> for $name<'_> {
-            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
-                Err(serde::de::Error::custom(
-                    "frame append authority cannot be deserialized",
-                ))
-            }
-        }
+        robin_util::deny_deserialize!($name<'_>, "frame append authority cannot be deserialized");
 
         impl std::ops::Deref for $name<'_> {
             type Target = $batch;

@@ -17,7 +17,7 @@ pub(super) struct StateHashSample {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub(super) struct MultiplayerTiming {
+pub(in crate::game_session) struct MultiplayerTiming {
     schedule: Option<HostFrameSchedule>,
     last_sample_frame: Option<u32>,
     pending_hash: Option<StateHashSample>,
@@ -26,11 +26,11 @@ pub(super) struct MultiplayerTiming {
 }
 
 impl MultiplayerTiming {
-    pub(super) fn schedule_frame(&self) -> Option<u32> {
+    pub(in crate::game_session) fn schedule_frame(&self) -> Option<u32> {
         self.schedule.map(|sample| sample.frame)
     }
 
-    pub(super) fn deadline_ms(&self, local_frame: u32) -> Option<i64> {
+    pub(in crate::game_session) fn deadline_ms(&self, local_frame: u32) -> Option<i64> {
         let sample = self.schedule?;
         Some(
             i64::from(sample.deadline_ms)
@@ -53,7 +53,11 @@ impl MultiplayerTiming {
         true
     }
 
-    pub(super) fn sample_hash(&mut self, frame: u32, compute: impl FnOnce() -> u64) {
+    pub(in crate::game_session) fn sample_hash(
+        &mut self,
+        frame: u32,
+        compute: impl FnOnce() -> u64,
+    ) {
         if frame.is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL)
             && self.last_sample_frame != Some(frame)
         {
@@ -78,11 +82,11 @@ impl MultiplayerTiming {
         self.pending_hash = None;
     }
 
-    pub(super) fn clock_ahead_log_due(&mut self, now_ms: u32) -> bool {
+    pub(in crate::game_session) fn clock_ahead_log_due(&mut self, now_ms: u32) -> bool {
         log_due(&mut self.last_clock_ahead_log_ms, now_ms)
     }
 
-    pub(super) fn sleep_correction_log_due(&mut self, now_ms: u32) -> bool {
+    pub(in crate::game_session) fn sleep_correction_log_due(&mut self, now_ms: u32) -> bool {
         log_due(&mut self.last_sleep_correction_log_ms, now_ms)
     }
 }

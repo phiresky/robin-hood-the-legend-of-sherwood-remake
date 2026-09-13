@@ -1,5 +1,7 @@
 //! Ordered multiplayer admission, independent of timeline and history owners.
-use crate::game_session::multiplayer::{MultiplayerAdmissionEvent, MultiplayerSessionError};
+use crate::game_session::multiplayer::{
+    MultiplayerAdmissionEvent, MultiplayerSessionError, SessionProtocolFailure,
+};
 use serde::{Deserialize, Serialize};
 
 /// The transport owns handshakes and wire delivery; this state machine owns
@@ -7,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// it in `TimelineRuntime` also keeps snapshot adoption ahead of replay and
 /// rollback frame capture for both graphical and true-headless drivers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::game_session) enum MultiplayerAdmission {
+pub(crate) enum MultiplayerAdmission {
     NotRequired,
     HostWaitingForBegin,
     HostWaitingForResyncBegin { snapshot_frame: u32 },
@@ -69,9 +71,7 @@ impl MultiplayerAdmission {
                 start_epoch_ms,
             },
             (state, event) => {
-                return Err(MultiplayerSessionError::Protocol(format!(
-                    "invalid multiplayer admission ordering: state {state:?}, event {event:?}"
-                )));
+                return Err(SessionProtocolFailure::AdmissionOrdering { state, event }.into());
             }
         };
         Ok(())

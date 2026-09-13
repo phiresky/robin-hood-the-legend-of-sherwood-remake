@@ -1,6 +1,5 @@
 //! Complete ownership and policy for a loaded true-headless mission.
 
-use super::drain_steps;
 use super::modal_state::ActiveModal;
 use super::multiplayer::drain_mission_network;
 use super::runtime::{
@@ -8,7 +7,8 @@ use super::runtime::{
     MissionIngress, MissionRuntime, TickPolicy,
 };
 use super::session_policy::SessionModalScheduler;
-use crate::multiplayer::matchmaking::current_epoch_ms;
+use super::{StepUiGates, drain_steps};
+use crate::multiplayer::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ impl HeadlessMission {
     /// input-device, menu, or native-audio shims.
     pub(super) async fn run(
         &mut self,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
     ) -> Result<HeadlessMissionOutcome, super::multiplayer::MultiplayerSessionError> {
         loop {
             let frame_result = self.run_frame(args)?;
@@ -100,7 +100,7 @@ impl HeadlessMission {
     /// the outer driver.
     pub(super) fn run_frame(
         &mut self,
-        args: &crate::main_entry::MissionLaunch,
+        args: &crate::main_entry::MissionRequest,
     ) -> Result<HeadlessFrameResult, super::multiplayer::MultiplayerSessionError> {
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
@@ -130,10 +130,16 @@ impl HeadlessMission {
             && self
                 .runtime
                 .timeline
+                .replay()
                 .playback()
                 .is_some_and(|player| !player.is_finished())
         {
-            let player = self.runtime.timeline.playback().expect("active replay");
+            let player = self
+                .runtime
+                .timeline
+                .replay()
+                .playback()
+                .expect("active replay");
             let ordinal = player.current_frame();
             let loads_state = player.load_back_for_frame(ordinal).is_some();
             self.modals
@@ -146,11 +152,12 @@ impl HeadlessMission {
             }
         }
 
-        if self.policy.auto_dismiss_modals && self.runtime.timeline.playback().is_none() {
+        if self.policy.auto_dismiss_modals && self.runtime.timeline.replay().playback().is_none() {
             let _ = self.runtime.world.dismiss_pending_modals();
         }
         self.runtime
             .timeline
+            .lifecycle_mut()
             .trace(FrameContractStage::PreTickCommands);
         {
             let MissionRuntime {
@@ -170,7 +177,10 @@ impl HeadlessMission {
         super::frame_perf::record(super::frame_perf::Phase::Simulation, simulation_start);
         self.runtime.drain_host_rpc(&mut frame);
         self.drain_headless_modals(&mut frame);
-        self.runtime.timeline.trace(FrameContractStage::ModalDrain);
+        self.runtime
+            .timeline
+            .lifecycle_mut()
+            .trace(FrameContractStage::ModalDrain);
 
         // Original ordering differs here: graphical crosses this boundary
         // after presentation, but headless must do so before frame-zero
@@ -181,7 +191,7 @@ impl HeadlessMission {
         let timeline_advances = frame.timeline_advances(!paused);
         self.commit_simulation_history(&mut frame, timeline_advances);
         self.finish_frame_recording(&mut frame);
-        if let Some(player) = self.runtime.timeline.playback() {
+        if let Some(player) = self.runtime.timeline.replay().playback() {
             self.modals.checkpoint(
                 player.current_frame(),
                 &self.runtime.world.view().host.effects,
@@ -192,17 +202,19 @@ impl HeadlessMission {
         let replay_finished = self
             .runtime
             .timeline
+            .replay()
             .playback()
             .is_some_and(|player| player.is_finished());
         if replay_finished {
             tracing::info!("headless replay finished");
         }
 
-        self.runtime.timeline.begin_presentation();
+        self.runtime.timeline.lifecycle_mut().begin_presentation();
         self.runtime
             .timeline
+            .lifecycle_mut()
             .trace(FrameContractStage::Presentation);
-        let replaying = self.runtime.timeline.playback().is_some();
+        let replaying = self.runtime.timeline.replay().playback().is_some();
         if replaying && let Some(code) = tick_exit_code {
             super::session_policy::validate_replay_terminal(code, frame.post_commands())
                 .expect("invalid replay terminal");
@@ -218,22 +230,32 @@ impl HeadlessMission {
             (None, None)
         };
         if exit_code.is_some() {
-            self.runtime.timeline.trace(FrameContractStage::Exit);
+            self.runtime
+                .timeline
+                .lifecycle_mut()
+                .trace(FrameContractStage::Exit);
         }
-        self.runtime.timeline.trace(FrameContractStage::Pacing);
+        self.runtime
+            .timeline
+            .lifecycle_mut()
+            .trace(FrameContractStage::Pacing);
         let world_view = self.runtime.world.view();
         let host_deadline_ms = if world_view.host.transport.net().is_some()
             && world_view.host.transport.local_seat()
                 != robin_engine::player_command::PlayerId::HOST
         {
-            self.runtime.timeline.host_frame_deadline_ms()
+            self.runtime
+                .timeline
+                .multiplayer()
+                .timing()
+                .deadline_ms(self.runtime.timeline.frame_number())
         } else {
             None
         };
-        let outcome = self.runtime.timeline.plan_frame_outcome(
+        let outcome = self.runtime.timeline.lifecycle().plan_frame_outcome(
             crate::window::process_uptime_ms(),
             FramePacing {
-                fast_forward_requested: args.fast_forward,
+                fast_forward_requested: args.config.cli.fast_forward,
                 headless: true,
                 engine_fast_forward: world_view.manager.engine.is_fast_forward(),
                 slow_motion: world_view.host.frontend.slow_motion,
@@ -242,9 +264,12 @@ impl HeadlessMission {
             exit_code,
         );
         if let FrameOutcome::Continue { sleep_ms } = outcome {
-            self.runtime
-                .timeline
-                .publish_multiplayer_timing(&world_view.host.transport, sleep_ms);
+            let clock_frame = self.runtime.timeline.frame_number();
+            self.runtime.timeline.multiplayer_mut().publish_timing(
+                &world_view.host.transport,
+                clock_frame,
+                sleep_ms,
+            );
         }
 
         let result = HeadlessFrameResult {
@@ -258,7 +283,7 @@ impl HeadlessMission {
 
     fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
         use super::session_policy::ModalDecisionSource;
-        let replaying = self.runtime.timeline.playback().is_some();
+        let replaying = self.runtime.timeline.replay().playback().is_some();
         let source = if replaying {
             ModalDecisionSource::Recorded
         } else {
@@ -350,18 +375,23 @@ impl HeadlessMission {
             world.mutation(),
             timeline,
             &mut control.manual_pause,
-            &mut active_modal,
-            None,
-            None,
-            None,
-            Some(&mut self.modals),
+            StepUiGates {
+                active_modal: &mut active_modal,
+                terminal_debriefing: None,
+                terminal_save_manager: None,
+                mission_ui_block_reason: None,
+                session_modals: Some(&mut self.modals),
+            },
             |_| Ok(()),
         );
     }
 
     fn finish_frame_recording(&mut self, frame: &mut super::runtime::MissionFrame) {
-        if self.runtime.timeline.is_recording() {
-            self.runtime.timeline.begin_recording(frame, true);
+        if self.runtime.timeline.replay().is_recording() {
+            self.runtime
+                .timeline
+                .replay_mut()
+                .begin_recording(frame, true);
         }
         self.runtime.timeline.finish_recording(frame);
     }
@@ -511,7 +541,7 @@ mod tests {
         for _ in 0..3 {
             assert_eq!(
                 mission
-                    .run_frame(&crate::main_entry::MissionLaunch::default())
+                    .run_frame(&crate::main_entry::MissionRequest::default())
                     .expect("network drain succeeds")
                     .exit,
                 None
@@ -519,7 +549,7 @@ mod tests {
         }
         assert_eq!(
             mission
-                .run_frame(&crate::main_entry::MissionLaunch::default())
+                .run_frame(&crate::main_entry::MissionRequest::default())
                 .expect("network drain succeeds")
                 .exit,
             Some(super::HeadlessFrameExit::ReplayComplete)
@@ -585,7 +615,7 @@ mod tests {
         };
 
         mission
-            .run_frame(&crate::main_entry::MissionLaunch::default())
+            .run_frame(&crate::main_entry::MissionRequest::default())
             .expect("network drain succeeds");
         assert!(
             !mission
@@ -602,14 +632,16 @@ mod tests {
         let checkpoint = mission
             .runtime
             .timeline
-            .reconstruct_history_fixture(&assets, 0)
+            .history_mut()
+            .reconstruct_fixture(&assets, 0)
             .expect("frame-0 pre-command checkpoint");
         assert_eq!(robin_engine::replay::state_hash(&checkpoint), initial_hash);
         assert_eq!(
             mission
                 .runtime
                 .timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .commands_for(0)
                 .map(|commands| commands.len()),
             Some(1)
@@ -706,7 +738,8 @@ mod tests {
             mission
                 .runtime
                 .timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .commands_for(0)
                 .is_some()
         );
@@ -714,7 +747,8 @@ mod tests {
             mission
                 .runtime
                 .timeline
-                .retained_history()
+                .history()
+                .buffer()
                 .commands_for(1)
                 .is_some()
         );

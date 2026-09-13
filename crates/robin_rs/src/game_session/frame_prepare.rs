@@ -79,7 +79,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
     /// Consume each phase's output before entering the next boundary. Only
     /// this coordinator borrows the entire mission and service collection.
-    pub(super) async fn run(self) -> Result<FramePreparation, String> {
+    pub(super) async fn run(self) -> Result<FramePreparation, MissionError> {
         let InteractiveMission {
             runtime,
             frontend,
@@ -113,10 +113,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline,
             frontend,
             campaign_transition,
-            services.window,
-            services.callbacks,
-            services.profiles,
-            services.args,
+            operation::OperationServices {
+                window: &mut *services.window,
+                callbacks: &mut *services.callbacks,
+                profiles: services.profiles,
+                args: &services.args.config.cli,
+            },
             input,
         )
         .await?

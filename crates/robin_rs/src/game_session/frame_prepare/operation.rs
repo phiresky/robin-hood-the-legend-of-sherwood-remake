@@ -90,7 +90,7 @@ fn suppress_load_requests_during_playback(
     runtime: &crate::game_session::runtime::TimelineRuntime,
     callbacks: &mut RustCallbacks,
 ) {
-    if runtime.playback().is_some()
+    if runtime.replay().playback().is_some()
         && callbacks
             .pending_request()
             .is_some_and(|request| !request.writes_save_payload())
@@ -102,6 +102,29 @@ fn suppress_load_requests_during_playback(
     }
 }
 
+/// Browser startup-save policy: an initial autosave thumbnail may be deferred
+/// unless the page URL requests `startup-save=blocking`.
+#[cfg(target_arch = "wasm32")]
+fn startup_save_query_allows_deferral() -> bool {
+    let search = web_sys::window()
+        .expect("browser window")
+        .location()
+        .search()
+        .expect("startup save query");
+    let query =
+        web_sys::UrlSearchParams::new_with_str(&search).expect("startup save query parameters");
+    query.get("startup-save").as_deref() != Some("blocking")
+}
+
+/// The four process services save/load needs, borrowed individually out of
+/// `MissionServices` so the phase never receives the whole service bag.
+pub(super) struct OperationServices<'a> {
+    pub(super) window: &'a mut GameWindow,
+    pub(super) callbacks: &'a mut RustCallbacks,
+    pub(super) profiles: &'a engine_profiles::ProfileManager,
+    pub(super) args: &'a crate::main_entry::CliArgs,
+}
+
 /// Save/load may replace engine state and render a thumbnail, but receives no
 /// pause/stepping control or leaderboard ownership and no process service bag.
 pub(super) async fn process_operation_and_save(
@@ -109,12 +132,15 @@ pub(super) async fn process_operation_and_save(
     runtime: &mut TimelineRuntime,
     frontend: &mut InteractiveFrontend,
     campaign_transition: &mut Option<crate::main_entry::PendingLevelLoad>,
-    window: &mut GameWindow,
-    callbacks: &mut RustCallbacks,
-    profiles: &engine_profiles::ProfileManager,
-    args: &crate::main_entry::CliArgs,
+    services: OperationServices<'_>,
     prepared: InputPrepared,
-) -> Result<ControlFlow<FrameControl, SavesPrepared>, String> {
+) -> Result<ControlFlow<FrameControl, SavesPrepared>, MissionError> {
+    let OperationServices {
+        window,
+        callbacks,
+        profiles,
+        args,
+    } = services;
     let PreparationPhaseState {
         mut frame,
         mp_clock_pause,
@@ -140,7 +166,9 @@ pub(super) async fn process_operation_and_save(
     let presentation = &mut frontend.presentation;
 
     // ── Process game operations (save/load/quit/win/lose) ──
-    runtime.trace(FrameContractStage::OperationAndSave);
+    runtime
+        .lifecycle_mut()
+        .trace(FrameContractStage::OperationAndSave);
     //
     // The Game state machine queues save/load intents on the
     // callbacks; `perform_pending_save_load` then flushes them to
@@ -153,7 +181,7 @@ pub(super) async fn process_operation_and_save(
     let autosave_allowed = crate::autosave::session_allows_autosave(
         callbacks.autosave_enabled(),
         host.transport.net().is_some(),
-        runtime.playback().is_some(),
+        runtime.replay().playback().is_some(),
         args.headless,
     );
     let snapshot_available = callbacks
@@ -180,16 +208,7 @@ pub(super) async fn process_operation_and_save(
         callbacks.pending_request().is_some(),
         lifecycle_autosave,
         exit_code.is_some(),
-    ) && {
-        let search = web_sys::window()
-            .expect("browser window")
-            .location()
-            .search()
-            .expect("startup save query");
-        let query =
-            web_sys::UrlSearchParams::new_with_str(&search).expect("startup save query parameters");
-        query.get("startup-save").as_deref() != Some("blocking")
-    };
+    ) && startup_save_query_allows_deferral();
     #[cfg(target_arch = "wasm32")]
     let mut deferred_thumbnail = None;
     let pending_thumbnail = if (callbacks
@@ -206,13 +225,15 @@ pub(super) async fn process_operation_and_save(
             assets,
             dev,
             &mut frame.stage_external_actions(),
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &input.threaded,
-            &presentation.sprites.portrait_cache,
+            crate::game_session::render::CursorFrontend {
+                renderer: &presentation.renderer,
+                cursor_res: &mut resources.cursor,
+                cursor_renderer: &mut presentation.sprites.cursor_renderer,
+                threaded_input: &input.threaded,
+                portrait_cache: &presentation.sprites.portrait_cache,
+                last_cursor_id: &mut hud.last_cursor_id,
+            },
             shift_held,
-            &mut hud.last_cursor_id,
         );
         let display_snapshot = host.frontend.presentation.engine_display.clone();
         presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
@@ -321,9 +342,11 @@ pub(super) async fn process_operation_and_save(
     )
     .await;
     if save_load.processed() {
-        runtime.reset_rollback_checker();
+        runtime.history_mut().reset_checker();
     }
-    runtime.synchronize_save_boundary(&mut frame, &manager.engine);
+    runtime
+        .replay_mut()
+        .synchronize_save_boundary(&mut frame, &manager.engine);
     if let Some(event) = save_load.event.take() {
         runtime.note_save_load_event(
             host.application_context().recording_index(),
@@ -340,7 +363,7 @@ pub(super) async fn process_operation_and_save(
     // campaign/RNG/SimConfig checkpoint.
     if save_load.restart_requested() {
         game.operation.set(GameCode::LevelRestart);
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             GameCode::LevelRestart,
         ))));
@@ -355,7 +378,7 @@ pub(super) async fn process_operation_and_save(
     if let Some(transition) = save_load.take_transition() {
         *campaign_transition = Some(transition);
         game.operation.set(GameCode::LevelLoad);
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             GameCode::LevelLoad,
         ))));
@@ -368,13 +391,13 @@ pub(super) async fn process_operation_and_save(
     // variant succeeds, threading the slot type back out of the
     // save-I/O layer.
     if let Some(sync) = save_load.restore() {
-        runtime.note_state_restored();
+        runtime.lifecycle_mut().note_state_restored();
         game.apply_post_load_sync(sync.is_continue);
         game.post_load_resolution_resync();
     }
 
     if let Some(exit_code) = exit_code {
-        runtime.trace(FrameContractStage::Exit);
+        runtime.lifecycle_mut().trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
             exit_code,
         ))));

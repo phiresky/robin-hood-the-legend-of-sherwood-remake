@@ -6,6 +6,7 @@ use super::{
     GameIdentitySigner, LeaderboardSigningError, canonical, invalid_claim, verify_typed_signature,
 };
 use crate::leaderboard_ranked_session::{OfficialRankedSessionSetupV1, RankedSessionHost};
+use robin_run_protocol::DomainSignedClaim as _;
 use robin_run_protocol::{
     CampaignContinuationAuthorizationClaimV1, CampaignContinuationAuthorizationV1,
     CampaignContinuationPreflightRequestClaimV1, FreshRunPreflightRequestClaimV1,
@@ -13,7 +14,6 @@ use robin_run_protocol::{
     ReplaySessionGenesisClaimV1, ReplaySessionGenesisV1, SubmissionEnvelopeV1, SubmissionOfferV1,
     SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1, Validate,
 };
-use robin_run_protocol::DomainSignedClaim as _;
 #[cfg(feature = "multiplayer")]
 use robin_run_protocol::{NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1};
 

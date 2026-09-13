@@ -69,14 +69,16 @@ pub(super) fn route(
     engine: &engine_api::Engine,
     game: &crate::game::Game,
     profiles: &ProfileManager,
-) -> Result<LoadRoute, String> {
+) -> Result<LoadRoute, crate::game_session::MissionError> {
     let active_mission_id = current_mission_id(engine.campaign(), profiles);
     let active_spellforge_package = engine.spellforge_package();
     match validated_save_reload_target(
         save.save(),
         profiles,
         active_mission_id,
-        game.mission_assets()?,
+        // TODO(10/F11): leaf returns String (`Game::mission_assets`).
+        game.mission_assets()
+            .map_err(crate::game_session::MissionError::save)?,
         active_spellforge_package.as_deref(),
     )? {
         Some(target_mission_id) => Ok(LoadRoute::OtherMission {

@@ -120,15 +120,16 @@ pub(super) fn handle_hold_to_rewind(
     // consecutive rewind steps reuse earlier replay work instead
     // of re-ticking from a snapshot each frame.
     if rewind_held {
-        timeline.begin_rewind_session();
+        timeline.history_mut().begin_rewind_session();
     } else {
-        timeline.end_rewind_session();
+        timeline.history_mut().end_rewind_session();
     }
     let mut rewind_active = false;
     if rewind_held
         && timeline.current_frame().previous().is_some()
         && timeline
-            .retained_history()
+            .history()
+            .buffer()
             .oldest_reachable_frame()
             .is_some_and(|f| f < timeline.frame_number())
     {
@@ -144,9 +145,19 @@ pub(super) fn handle_hold_to_rewind(
     rewind_active
 }
 
+/// This frame's polled events and translated keyboard actions, as seen by
+/// the console overlay.
+pub(super) struct ConsoleOverlayInput<'a> {
+    pub(super) events: &'a [GameEvent],
+    pub(super) kb_actions: &'a [GameAction],
+}
+
 /// Handle the in-game console overlay's per-frame event dispatch:
 /// feed events through the console, drain auto-close / CAMPAIGN load
 /// requests, reset text input state on visibility transitions.
+///
+/// `ConsoleOverlayInput` carries this frame's polled events and translated
+/// keyboard actions.
 ///
 /// When visible, the console captures keyboard events so they
 /// don't leak into the game (typing "FREEZE" mustn't trigger
@@ -159,11 +170,11 @@ pub(super) fn handle_console_overlay_events(
     assets: &engine_api::LevelAssets,
     host: &mut Host,
     dev: &mut engine_api::DevState,
-    events: &[GameEvent],
-    kb_actions: &[GameAction],
+    input: ConsoleOverlayInput<'_>,
     input_translator: &mut InputTranslator,
     frame: &mut super::runtime::MissionFrame,
 ) {
+    let ConsoleOverlayInput { events, kb_actions } = input;
     // ── In-game console overlay event handling ──
     // When visible, the console captures keyboard events so they
     // don't leak into the game (typing "FREEZE" mustn't trigger

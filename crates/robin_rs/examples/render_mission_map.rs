@@ -116,14 +116,17 @@ fn run() -> anyhow::Result<i32> {
         launcher_args.push(OsString::from("--proto"));
         launcher_args.push(OsString::from(proto));
     }
-    let mut game_args = robin_rs::main_entry::MissionLaunch::from(
-        robin_rs::main_entry::try_parse_cli_from(launcher_args)?,
-    );
-    game_args.mission_start_map_output = Some(output.clone());
-    game_args.mission_start_map_frame = args.frame;
-    game_args.mission_start_reveal_all = args.reveal_all;
-    game_args.mission_start_fog_of_war = args.fog_of_war;
-    game_args.fast_forward = true;
+    let game_args = robin_rs::main_entry::LaunchConfig::from(robin_rs::main_entry::CliArgs {
+        fast_forward: true,
+        ..robin_rs::main_entry::try_parse_cli_from(launcher_args)?
+    })
+    .with_mission_start_capture(robin_rs::main_entry::MissionStartCapture {
+        map_output: Some(output.clone()),
+        map_frame: args.frame,
+        reveal_all: args.reveal_all,
+        fog_of_war: args.fog_of_war,
+        ..Default::default()
+    });
 
     let (campaign, profiles, application_context) =
         robin_rs::main_entry::rust_init_with_data_dir(data_dir.as_deref())?;
