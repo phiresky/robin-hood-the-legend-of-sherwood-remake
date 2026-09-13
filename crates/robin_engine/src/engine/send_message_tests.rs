@@ -17,5 +17,6 @@ use helpers::*;
 
 mod actor_state;
 mod message_ordering;
+mod persistence_goldens;
 mod sequence_dispatch;
 mod vm_driver;
