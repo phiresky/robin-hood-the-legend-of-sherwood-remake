@@ -12,7 +12,7 @@
 
 ## Service and deployment guides
 
-- [Highscores, replay verification, operator releases, VPS and browser deployment](../crates/robin_highscores/README.md) is the consolidated service and deployment guide.
+- [Highscores, replay verification, ranked authority authoring, VPS and browser deployment](../crates/robin_highscores/README.md) is the consolidated service and deployment guide; the operations scripts live in `crates/robin_highscores/ops/`.
 
 These documents describe operations; reading or testing a deployment command
 does not by itself authorize publishing a release or modifying a live service.
