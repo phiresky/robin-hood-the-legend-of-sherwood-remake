@@ -148,7 +148,7 @@ pub enum ObjectId {
 /// Unique identifier for an entity in the game world.
 ///
 /// Each variant stores a 0-based index into the engine's entity table.  The
-/// variant mirrors the concrete [`crate::element::Entity`] variant at that
+/// variant mirrors the concrete engine entity variant at that
 /// slot, making type mismatches visible in debug output and serialized state
 /// while still retaining the raw table index needed by script handles.
 #[derive(

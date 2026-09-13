@@ -1,4 +1,4 @@
-use robin_engine::spellforge::{
+use robin_script_types::spellforge::{
     SPELLFORGE_CONTRACT_VERSION, SpellforgeGuestErrorKind, SpellforgePackage, SpellforgeScriptMode,
 };
 use robin_spellforge::{compute_package_sha256, spellforge_vm_abi, validate_package};

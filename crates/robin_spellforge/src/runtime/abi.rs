@@ -22,7 +22,7 @@ pub fn spellforge_vm_abi() -> &'static str {
     ABI.get_or_init(|| {
         format!(
             "{SPELLFORGE_VM_ABI_SCHEME}{}",
-            robin_engine::spellforge::hex_hash(&spellforge_vm_abi_digest())
+            robin_script_types::spellforge::hex_hash(&spellforge_vm_abi_digest())
         )
     })
 }

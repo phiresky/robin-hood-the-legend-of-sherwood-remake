@@ -1,0 +1,15 @@
+[package]
+name = "robin_asset_codecs"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+bytemuck = { workspace = true, features = ["derive"] }
+foldhash = "0.2"
+smallvec = { workspace = true, features = ["union"] }
+
+[lints]
+workspace = true

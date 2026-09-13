@@ -43,6 +43,7 @@ name = "script_manager_integration"
 required-features = ["engine-adapters"]
 
 [dependencies]
+robin_asset_codecs.workspace = true
 robin_content.workspace = true
 robin_util.workspace = true
 robin_data_io.workspace = true
@@ -53,11 +54,6 @@ anyhow.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 flate2 = "1"
 crc32fast = "1.5"
-# Fast non-cryptographic hasher for the sprite codec's context maps (hot
-# path: several map lookups per decoded tile).
-foldhash = "0.2"
-# Most adaptive contexts contain only a few symbols; keep them inline.
-smallvec = { workspace = true, features = ["union"] }
 bitcode.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2.workspace = true
