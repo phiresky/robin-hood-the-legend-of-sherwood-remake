@@ -4079,36 +4079,38 @@ fn unique_gate_endpoint_sector(
 mod ai_view_position_sector_tests {
     use super::*;
     use crate::coordinates::MapPoint;
-    use crate::fast_find_grid::{GridSector, SectorIndex};
+    use crate::engine::test_support::square_sector;
+    use crate::fast_find_grid::SectorIndex;
     use crate::gate::Door;
     use crate::sector::SectorNumber;
-
-    fn square_sector(number: i16, layer: u16, min: f32, max: f32) -> GridSector {
-        crate::engine::test_support::square_sector(
-            number,
-            layer,
-            MapPoint::new(min, min),
-            MapPoint::new(max, max),
-        )
-    }
 
     #[test]
     fn entity_view_recovers_duplicate_public_goal_for_exact_gate_route() {
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(8, 8);
         engine.world.fast_grid_mut().allocate_layers(3);
-        let wrong = engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(88, 2, 300.0, 350.0), 2);
-        let goal = engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(88, 2, 100.0, 200.0), 2);
-        let source = engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(77, 2, 10.0, 60.0), 2);
+        let wrong = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(300.0, 300.0),
+                MapPoint::new(350.0, 350.0),
+            ),
+            2,
+        );
+        let goal = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            2,
+        );
+        let source = engine.world.fast_grid_mut().add_sector(
+            square_sector(77, 2, MapPoint::new(10.0, 10.0), MapPoint::new(60.0, 60.0)),
+            2,
+        );
         assert_ne!(wrong, goal);
 
         let _legacy_null_slot =
@@ -4288,14 +4290,24 @@ mod ai_view_position_sector_tests {
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(8, 8);
         engine.world.fast_grid_mut().allocate_layers(3);
-        engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(88, 2, 250.0, 300.0), 2);
-        engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(88, 2, 350.0, 400.0), 2);
+        engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(250.0, 250.0),
+                MapPoint::new(300.0, 300.0),
+            ),
+            2,
+        );
+        engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                88,
+                2,
+                MapPoint::new(350.0, 350.0),
+                MapPoint::new(400.0, 400.0),
+            ),
+            2,
+        );
         let mut element = crate::element::ElementData::default();
         element.set_position_map(MapPoint::new(150.0, 150.0));
         element.set_layer(2);
@@ -4308,14 +4320,24 @@ mod ai_view_position_sector_tests {
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(8, 8);
         engine.world.fast_grid_mut().allocate_layers(3);
-        let wrong = engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(58, 2, 300.0, 350.0), 2);
-        let endpoint = engine
-            .world
-            .fast_grid_mut()
-            .add_sector(square_sector(58, 2, 100.0, 200.0), 2);
+        let wrong = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                58,
+                2,
+                MapPoint::new(300.0, 300.0),
+                MapPoint::new(350.0, 350.0),
+            ),
+            2,
+        );
+        let endpoint = engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                58,
+                2,
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(200.0, 200.0),
+            ),
+            2,
+        );
         assert_ne!(wrong, endpoint);
         engine.script_domains.interactables.doors.push(Door {
             sector_out: SectorNumber::new(58),

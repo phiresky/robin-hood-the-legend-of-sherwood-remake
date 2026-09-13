@@ -2,6 +2,15 @@
 pub(crate) mod actors;
 pub(crate) mod asm;
 
+/// Mission script containing only an empty `StartUp` class.
+pub(crate) fn empty_mission_script() -> crate::engine::types::MissionScript {
+    crate::engine::types::MissionScript::from_scb(crate::scb::ScbFile {
+        version: crate::scb::SCB_VERSION,
+        classes: vec![asm::empty_startup_class("test.scs".into())],
+    })
+    .expect("minimal StartUp script must load")
+}
+
 /// Axis-aligned walkable test geometry, with stable counter-clockwise vertices.
 pub(crate) fn square_sector(
     number: i16,

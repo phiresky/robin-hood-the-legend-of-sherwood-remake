@@ -7151,6 +7151,7 @@ mod owner_boundary_position_tests {
 #[cfg(test)]
 mod script_context_tests {
     use super::*;
+    use crate::engine::test_support::empty_mission_script;
     use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
     #[test]
@@ -7189,22 +7190,6 @@ mod script_context_tests {
             activate(&mut engine).is_err(),
             "parity mode must dispatch the original VM"
         );
-    }
-
-    fn empty_mission_script() -> MissionScript {
-        let startup = ClassEntry {
-            source_file: "script_context_test.scs".into(),
-            class_name: "StartUp".into(),
-            size_of_member_variables: 0,
-            member_variables: Vec::new(),
-            functions: Vec::new(),
-            quads: Vec::new(),
-        };
-        MissionScript::from_scb(ScbFile {
-            version: SCB_VERSION,
-            classes: vec![startup],
-        })
-        .expect("minimal StartUp script must load")
     }
 
     #[test]
