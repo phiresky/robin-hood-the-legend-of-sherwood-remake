@@ -31,8 +31,7 @@ fn look_there_broadcast_skips_attacking_chief_and_reacts_on_eligible_member() {
         .unwrap()
         .patrol_chief = Some(chief_id);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine
         .get_entity_mut(source_id)
         .and_then(Entity::ai_controller_mut)
@@ -119,8 +118,7 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
         pc.pc.life_points = 100;
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     let profile = std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)

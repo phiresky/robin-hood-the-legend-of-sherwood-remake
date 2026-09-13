@@ -272,7 +272,7 @@ mod suite {
         use crate::order::Order;
         use crate::sector::{LiftType, SectorNumber, SectorType};
         use crate::sequence::SequenceElement;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut engine = EngineInner::new();
         let start = MapPoint::new(1_760.418_7, 1_011.022);
@@ -292,7 +292,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
             sound_ids: vec![0; 8],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
             element: {
@@ -424,7 +424,7 @@ mod suite {
         };
         use crate::order::Order;
         use crate::sequence::SequenceElement;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut engine = EngineInner::new();
         let start = MapPoint::new(697.114_87, 1_420.993_2);
@@ -442,7 +442,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
             sound_ids: vec![0; 8],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
             element: {
@@ -569,7 +569,7 @@ mod suite {
         use crate::order::Order;
         use crate::sequence::SequenceElement;
         use crate::sight_obstacle::SightObstacle;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(30, 30);
@@ -590,7 +590,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
             sound_ids: vec![0; 8],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
             element: {
@@ -912,7 +912,7 @@ mod suite {
         };
         use crate::order::Order;
         use crate::sequence::{SequenceElement, SequencePriority};
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
         let mut engine = EngineInner::new();
         let position = MapPoint::new(100.0, 100.0);
@@ -929,7 +929,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
             sound_ids: vec![0; 3],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[transition as usize] = 0;
 
         let mut element = {

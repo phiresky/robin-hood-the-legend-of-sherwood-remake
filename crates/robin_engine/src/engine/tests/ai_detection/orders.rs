@@ -7,8 +7,7 @@ fn actor_owner_envelope_closes_each_legacy_slot_before_the_next_owner() {
     let mut engine = EngineInner::new();
     let pc = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let npc = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
 
@@ -149,8 +148,7 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     // The listening animation deliberately ignores the sprite's completion
     // state until the 25-frame timer expires. Use a one-frame row here so a
     // generic ability tick would expose early order advancement immediately.
-    let mut conversion =
-        vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[OrderType::Listening as usize] = 0;
     engine
         .get_entity_mut(listener)
@@ -353,8 +351,7 @@ fn production_listen_creation_order_runs_heard_before_later_reveal() {
     };
     engine.set_actors_frozen(true);
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
     let ((), heard) = crate::engine::ai::capture_heard_callbacks(|| {
@@ -395,8 +392,7 @@ fn tiredness_recovery_uses_original_creation_order_cadence() {
     let mut engine = EngineInner::new();
     let restored = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
     let aligned = engine.add_test_entity(make_test_pc(crate::element::Posture::Upright));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     std::sync::Arc::make_mut(&mut assets.profile_manager)
         .characters
         .get_mut(0)
@@ -466,8 +462,7 @@ fn patrol_direction_macro_effect_closes_at_the_chief_owner_boundary() {
     let mut engine = EngineInner::new();
     let chief = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
     let member = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     for id in [chief, member] {
         let Entity::Soldier(soldier) = engine.get_entity_mut(id).unwrap() else {
@@ -569,8 +564,7 @@ fn civilian_timer_retained_self_and_macro_boundaries_launch_orders_immediately()
     pc.element.active = true;
     pc.element.set_position_map(MapPoint::new(100.0, 0.0));
     pc.pc.life_points = 100;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let timer_ai = engine
         .get_entity_mut(timer_owner)
@@ -694,8 +688,7 @@ fn successful_patrol_dispatch_closes_chief_actor_boundary_before_returning() {
         chief.patrol = vec![subordinate_id];
     }
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine
         .get_entity_mut(subordinate_id)
         .and_then(Entity::ai_controller_mut)
@@ -758,7 +751,6 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
             make_test_ai_soldier(Camp::Lacklandists)
         };
         let npc_id = engine.add_test_entity(entity);
-        let mut assets = LevelAssets::new();
         // Install the active soldier profile before marking the actor
         // unconscious; the fixture intentionally skips unconscious soldiers.
         engine
@@ -766,7 +758,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
             .unwrap()
             .element_data_mut()
             .active = true;
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         if !civilian {
             std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
         }
@@ -871,8 +863,7 @@ fn playable_rescue_pc_without_command_interface_still_sees_blips() {
         .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
     pc.element.set_position_map(MapPoint::new(0.0, 0.0));
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     crate::sight_obstacle::begin_parity_visibility_capture();
     crate::sim_rng::with_seed(0xA013_B11F, |sim| engine.tick_enemy_ai(sim, &assets));
@@ -916,8 +907,7 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
         pc.element
             .set_position(crate::coordinates::WorldPoint3D::new(5_000.0, 0.0, 0.0));
         pc.element.set_position_map(MapPoint::new(5_000.0, 0.0));
-        let mut assets = LevelAssets::new();
-        complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
 
         let mut spawned = None;
         crate::sim_rng::with_seed(0x0B0A_00CB, |sim| {

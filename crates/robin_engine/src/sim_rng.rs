@@ -859,7 +859,7 @@ mod tests {
 
         let vm = ScriptVmDiagnosticContext {
             vm_key: "Global".into(),
-            class_name: "StartUp".into(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.into(),
             method_name: "Hourglass".into(),
             native_max: Some(3),
         };

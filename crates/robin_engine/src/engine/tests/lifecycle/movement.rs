@@ -102,11 +102,10 @@ fn hourglass_phase_trace_locks_entity_npc_path_sequence_and_deferred_order() {
 fn hourglass_phase_trace_stops_after_the_locked_mission_gate() {
     let mut display = HostDisplayState::default();
     let mut dev = DevState::default();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     let pending_victim =
         engine.add_test_entity(make_test_soldier(crate::element::Posture::Upright));
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.set_engine_locked(true);
     let pending_owner = EntityId::Pc(crate::entity_id::PcId(319));
     let pending_sequence = engine.orders.sequence_manager.launch_element(
@@ -158,7 +157,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
     use crate::element::{ActionState, Command, Posture};
     use crate::order::{Order, OrderType};
     use crate::sequence::SequenceElement;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     let sim = crate::sim_rng::test_context();
     let assets = LevelAssets::new();
@@ -184,7 +183,7 @@ fn move_ok_bored_exit_transition_uses_generic_actor_execute() {
         offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
         sound_ids: vec![0; 3],
     };
-    let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
     conversion[transition as usize] = 0;
     engine
         .get_entity_mut(owner)

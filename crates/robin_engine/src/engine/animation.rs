@@ -3589,7 +3589,7 @@ mod shoulder_idle_initialization_tests {
     use crate::element::{ActorPc, ElementData, ElementKind, Entity, HumanData, PcData, Posture};
     use crate::order::Order;
     use crate::sequence::{SequenceElement, SequencePriority};
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     #[test]
     fn waiting_carrying_on_shoulders_initialization_idles_carried_once() {
@@ -3608,7 +3608,7 @@ mod shoulder_idle_initialization_tests {
             human: HumanData::default(),
             pc: PcData::default(),
         });
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::WaitingCarryingOnShoulders as usize] = 0;
         let script = SpriteScript {
             action_id: OrderType::WaitingCarryingOnShoulders as u16,
@@ -3720,7 +3720,7 @@ mod shoulder_idle_initialization_tests {
             pc: PcData::default(),
         };
         climber.human.carrier = Some(helper_id);
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::WaitingOnShoulders as usize] = 100;
         let script = SpriteScript {
             action_id: OrderType::WaitingOnShoulders as u16,

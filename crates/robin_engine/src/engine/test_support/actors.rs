@@ -104,6 +104,12 @@ impl TestActor {
         self
     }
 
+    /// `set_position_map(pos)` only; the world position keeps its default.
+    pub(crate) fn map_position(mut self, pos: crate::coordinates::MapPoint) -> Self {
+        self.entity.element_data_mut().set_position_map(pos);
+        self
+    }
+
     pub(crate) fn sector(mut self, sector: u16) -> Self {
         self.entity
             .element_data_mut()

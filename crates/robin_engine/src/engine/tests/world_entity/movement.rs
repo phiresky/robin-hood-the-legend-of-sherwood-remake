@@ -12,8 +12,7 @@ fn owner_walk_observes_live_geometry_in_original_creation_order() {
         BTreeMap::from([(later, 30), (owner, 20), (earlier, 10)]),
         31,
     );
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     for (id, x) in [(earlier, 10.0), (owner, 30.0), (later, 50.0)] {
         let entity = engine.get_entity_mut(id).unwrap();
         entity.element_data_mut().active = true;
@@ -145,7 +144,6 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     use crate::order::{AiOrderIntent, OrderType};
 
     let sim = crate::sim_rng::test_context();
-    let mut assets = LevelAssets::new();
     let mut engine = EngineInner::new();
     engine.feedback.cutscene_camera.level_size = crate::coordinates::MapSize::new(500.0, 500.0);
     let mut soldier_entity = make_test_soldier(Posture::Upright);
@@ -165,7 +163,7 @@ fn attentive_barrier_constructs_following_move_at_same_owner_boundary() {
     movement.after_attentive_mode = true;
     enemy.base.outbox.actor.orders.push(movement);
     let owner = engine.add_test_entity(soldier_entity);
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine.drain_direct_ai_owner_boundary_mode(
         &sim,
@@ -737,14 +735,9 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "pending_lift_roof_wait_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "pending_lift_roof_wait_test.scs".into(),
+            )],
         })
         .expect("minimal mission enables roof-wait tick construction"),
     );
@@ -835,8 +828,7 @@ fn avenger_roof_wait_uses_selected_pass_door_position_and_preserves_ordinary_fal
     owner.base.timer_is_running = true;
     owner.base.substate_at_last_timer_launch = Substate::AttackingRunningToLadder;
     owner.base.when_does_timer_ring = 30;
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert_eq!(
         tick.avenger_wait_position_for(target_id.index()),
@@ -1009,14 +1001,9 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     engine.scripts.mission = Some(
         crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
             version: crate::scb::SCB_VERSION,
-            classes: vec![crate::scb::ClassEntry {
-                source_file: "seek_area_selected_pass_door_test.scs".into(),
-                class_name: "StartUp".into(),
-                size_of_member_variables: 0,
-                member_variables: Vec::new(),
-                functions: Vec::new(),
-                quads: Vec::new(),
-            }],
+            classes: vec![crate::engine::test_support::asm::empty_startup_class(
+                "seek_area_selected_pass_door_test.scs".into(),
+            )],
         })
         .expect("minimal mission exposes the installed test door"),
     );
@@ -1050,8 +1037,7 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
         "fixture must model a selected legacy PassDoor without a runtime choreography latch"
     );
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let tick = engine.build_npc_tick_data(&sim, owner_id, &assets);
     assert_eq!(tick.visible_seeking_friends, 0);
     assert!(!tick.friend_seek_clears_help_flag);
@@ -1109,8 +1095,7 @@ fn optical_ai_position_follows_carrier_but_detects_target_stored_world_point() {
         false,
     );
 
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let (ai_position, optical_point) = engine.enemy_optical_geometry_for_test(&assets, target);
     assert_eq!(ai_position.x, 321.25);

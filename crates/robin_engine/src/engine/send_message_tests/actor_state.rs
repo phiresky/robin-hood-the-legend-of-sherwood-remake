@@ -3,8 +3,7 @@ use super::*;
 #[test]
 fn set_actor_location_honolulu_finishes_before_same_callback_unlock() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     engine
         .call_script_vm(
@@ -183,8 +182,7 @@ fn set_actor_location_preserves_authored_sparse_sector_identity() {
 #[test]
 fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callback() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let life = engine
         .call_script_vm(
@@ -232,8 +230,7 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
 #[test]
 fn persistent_setters_preserve_narrowing_and_death_processing() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     // The VM hands the trailing arguments to the native through a
     // signed-byte read, so every script constant above 127 already arrives
@@ -342,7 +339,6 @@ fn scripted_invulnerable_life_setter_forces_literal_one_hundred() {
 #[test]
 fn scripted_pc_concussion_and_ko_unselect_immediately() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
-    let mut assets = LevelAssets::new();
     let make_pc = || {
         let mut entity = Entity::Pc(crate::element::ActorPc {
             element: {
@@ -372,16 +368,13 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
         };
         entity.element_data_mut().sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![row]),
-            std::sync::Arc::new(vec![
-                crate::sprite_script::UNMAPPED;
-                crate::sprite_script::NONANIMATION_END
-            ]),
+            std::sync::Arc::new(crate::engine::test_support::unmapped_conversion()),
         );
         entity
     };
     let persistent_pc = engine.add_test_entity(make_pc());
     let posture_pc = engine.add_test_entity(make_pc());
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     let persistent_handle = ScriptHandleCodec::actor_handle(persistent_pc);
     let posture_handle = ScriptHandleCodec::actor_handle(posture_pc);
     engine.players.seats[0].selection = vec![persistent_pc, posture_pc];
@@ -413,8 +406,7 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
 #[test]
 fn posture_wait_uses_real_instruction_path_before_callback_resumes() {
     let (mut engine, receiver, handle) = engine_with_receiver();
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     let posture = engine
         .call_script_vm(

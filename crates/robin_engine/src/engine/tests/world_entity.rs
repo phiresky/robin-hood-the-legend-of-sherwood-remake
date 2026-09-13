@@ -359,8 +359,7 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let officer_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
 
     for (id, x) in [(charly_id, 0.0), (officer_id, 200.0)] {
         let Entity::Soldier(soldier) = engine
@@ -599,8 +598,7 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
     let soldier_id =
         engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
-    let mut assets = LevelAssets::new();
-    complete_test_runtime_fixture(&mut engine, &mut assets);
+    let mut assets = engine.test_runtime_assets();
     for (id, rank, x) in [
         (officer_id, ProfileRank::Officer, 0.0),
         (soldier_id, ProfileRank::Soldier, 40.0),

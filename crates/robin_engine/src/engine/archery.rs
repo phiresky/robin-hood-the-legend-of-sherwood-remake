@@ -5560,9 +5560,9 @@ mod tests {
     fn purse_publication_assets() -> LevelAssets {
         use crate::element::{Animation, ObjectType};
         use crate::sprite::Sprite;
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[Animation::ObjectFlying as usize] = 16;
         let script = SpriteScript {
             action_id: Animation::ObjectFlying as u16,
@@ -5865,9 +5865,9 @@ mod tests {
     }
 
     fn bind_arrow_warning_sprite(entity: &mut Entity) {
-        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+        use crate::sprite_script::SpriteScript;
 
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::WaitingShield as usize] = 0;
         conversion[OrderType::LoweringShield as usize] = 0;
         let script = SpriteScript {
@@ -5939,8 +5939,7 @@ mod tests {
         let target_id = engine.add_test_entity(target);
         assert!(shooter_id.index() < target_id.index());
 
-        let mut assets = LevelAssets::new();
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let mut assets = engine.test_runtime_assets();
         let profiles = Arc::make_mut(&mut assets.profile_manager);
         profiles.soldiers[0].hth_weapon_id = 1;
         profiles.hth_weapons[0].shield = shield_weapon;

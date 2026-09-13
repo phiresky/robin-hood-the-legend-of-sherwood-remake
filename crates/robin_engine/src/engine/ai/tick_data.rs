@@ -1977,11 +1977,10 @@ mod observation_tests {
     #[test]
     fn observation_metrics_preserve_views_hash_and_rng() {
         let mut engine = EngineInner::new();
-        let mut assets = LevelAssets::new();
         engine.add_test_entity(crate::engine::tests::scenarios::make_test_ai_soldier(
             crate::element::Camp::Lacklandists,
         ));
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let assets = engine.test_runtime_assets();
         let hash = crate::replay::state_hash(&engine);
         let sim = engine.control.simulation_context();
         let seed = sim.seed();

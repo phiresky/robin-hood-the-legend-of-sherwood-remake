@@ -5,11 +5,12 @@ mod suite {
         ActionState, ActiveDoorPass, ActorData, ActorPc, ActorSoldier, AiBrain, Camp, Command,
         ElementData, ElementKind, Entity, HumanData, NpcData, PcData, Posture, SoldierData,
     };
+    use crate::engine::test_support::unmapped_conversion;
     use crate::order::{AiOrderIntent, Order};
     use crate::sequence::{
         MoveFlags, Sequence, SequenceElement, SequenceElementData, SequencePriority, SequenceState,
     };
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     #[test]
     fn perform_seek_registers_enter_swordfight_before_outer_terminal_provoke() {
@@ -229,7 +230,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 8],
             sound_ids: vec![0; 8],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[transition as usize] = 0;
         let start = MapPoint::new(100.0, 100.0);
         let goal = MapPoint::new(108.0, 106.0);
@@ -442,7 +443,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
             sound_ids: vec![0; 2],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[action as usize] = 0;
 
         // The opponent lies in sector 0. The translated door step, however,
@@ -563,7 +564,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 4],
             sound_ids: vec![0; 4],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[transition as usize] = 0;
 
         let mut element = {
@@ -791,7 +792,7 @@ mod suite {
         scripts.extend(vec![script(stop_transition); 16]);
         scripts.extend(vec![script(start_transition); 16]);
         scripts.extend(vec![moving_script; 16]);
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[stop_transition as usize] = 0;
         conversion[start_transition as usize] = 16;
         conversion[OrderType::RunningUpright as usize] = 32;
@@ -1756,7 +1757,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
             sound_ids: vec![0; 2],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[transition as usize] = 0;
 
         let mut element = {
@@ -1868,7 +1869,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
             sound_ids: vec![0],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[transition as usize] = 0;
 
         let mut element = {
@@ -2073,7 +2074,7 @@ mod suite {
             offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
             sound_ids: vec![0; 2],
         };
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = unmapped_conversion();
         conversion[transition as usize] = 0;
         conversion[OrderType::TransitionWaitingUprightWalkingUpright as usize] = 16;
 

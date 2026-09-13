@@ -166,8 +166,7 @@ fn due_scroll_self_deactivation_keeps_entry_active_animation_order() {
         .scroll_instances
         .insert(handle, instance);
 
-    let mut assets = LevelAssets::new();
-    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    let assets = engine.test_runtime_assets();
     engine.attach_script_bindings(&assets);
 
     engine.tick_actor_owner_envelopes(&crate::sim_rng::test_context(), &assets);

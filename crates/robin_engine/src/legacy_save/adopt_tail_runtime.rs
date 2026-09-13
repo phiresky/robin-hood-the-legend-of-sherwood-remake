@@ -325,7 +325,7 @@ mod tests {
     fn global_vm_fixture() -> (EngineInner, LevelAssets, LegacyVmMemberSection) {
         let class = ClassEntry {
             source_file: "fixture.sc".to_owned(),
-            class_name: "StartUp".to_owned(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.to_owned(),
             size_of_member_variables: 8,
             member_variables: vec![
                 MemberVariable {
@@ -356,7 +356,7 @@ mod tests {
         let mut engine = EngineInner::new();
         engine.scripts.install_mission(mission);
         let saved = LegacyVmMemberSection {
-            class_name: "StartUp".to_owned(),
+            class_name: crate::engine::test_support::asm::STARTUP_CLASS.to_owned(),
             members: vec![
                 super::super::payload_vm::LegacyVmMemberState {
                     schema: LegacyVmMemberSchema {

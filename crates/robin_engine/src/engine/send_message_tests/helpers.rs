@@ -11,6 +11,7 @@
 
 use crate::element::{Entity, SoldierData};
 use crate::engine::EngineInner;
+use crate::engine::test_support::actors::TestActor;
 use crate::engine::test_support::asm;
 pub(super) use crate::engine::test_support::asm::{
     q_aff0_iconstant as integer_constant, q_aff1_get_param as get_param,
@@ -52,20 +53,12 @@ pub(super) fn scripted_receiver() -> Entity {
 }
 
 pub(super) fn scripted_soldier(script_class: &str) -> Entity {
-    let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
-        SoldierData::default().cached_camp,
-    );
-    entity.position_iface_mut().clear_pathfinder_index();
-    entity.element_data_mut().active = true;
-    entity
-        .actor_data_mut()
-        .expect("script actor fixture")
-        .script_class = script_class.into();
-    entity
-        .npc_data_mut()
-        .expect("script soldier fixture")
-        .life_points = 50;
-    entity
+    TestActor::soldier(crate::element::Posture::Upright)
+        .camp(SoldierData::default().cached_camp)
+        .enemy_ai(Default::default())
+        .script_class(script_class)
+        .life_points(50)
+        .build()
 }
 
 pub(super) fn bind_script_actor(

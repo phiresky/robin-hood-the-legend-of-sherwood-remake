@@ -652,11 +652,11 @@ mod tests {
     use crate::position_interface::SectorHandle;
     use crate::sequence::{SequenceElement, SequencePriority};
     use crate::sprite::Sprite;
-    use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+    use crate::sprite_script::SpriteScript;
 
     #[test]
     fn patch_animation_reset_preserves_original_first_tick_sentinel() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::PATCH_TRANSITION as usize] = 0;
         let script = SpriteScript {
             frame_ids: vec![11, 22],
@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn inactive_patch_fx_still_snapshots_explicit_transition_frame() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::PATCH_TRANSITION as usize] = 0;
         let script = SpriteScript {
             frame_ids: vec![11, 22],
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn elevated_patch_fx_snapshots_at_projected_position() {
-        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
         conversion[OrderType::PATCH_TRANSITION as usize] = 0;
         let script = SpriteScript {
             frame_ids: vec![11, 22],
