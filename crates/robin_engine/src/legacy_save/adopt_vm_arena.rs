@@ -17,14 +17,12 @@ use crate::{
 
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    payload_base::LegacyElementRef,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
     post_grid::LegacyFastFindGridState,
     post_hiking::LegacyHikingGuideState,
+    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
 };
-
-const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LegacyVmArenaOwner {
@@ -80,7 +78,7 @@ pub enum LegacyVmArenaError {
         count: usize,
     },
     #[error(
-        "serialized VM owner {owner:?} location member {member:?} requires unrepresentable script handle index {index}"
+        "serialized VM owner {owner:?} member {member:?} requires unrepresentable script handle index {index}"
     )]
     HandleOverflow {
         owner: LegacyVmArenaOwner,
@@ -302,26 +300,26 @@ impl LegacyVmArenaPlan {
             let bits = match (&saved_member.schema.kind, &saved_member.value) {
                 (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
                 (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
-                    resolve_entity_handle(
+                    super::vm_schema::resolve_entity_handle(
                         engine,
                         entities,
-                        owner,
-                        &saved_member.schema.name,
-                        "Actor",
                         *reference,
                         Entity::is_actor,
-                    )?
+                    )
+                    .map_err(|error| {
+                        entity_handle_error(error, owner, &saved_member.schema.name, "Actor")
+                    })?
                 }
                 (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
-                    resolve_entity_handle(
+                    super::vm_schema::resolve_entity_handle(
                         engine,
                         entities,
-                        owner,
-                        &saved_member.schema.name,
-                        "Scroll",
                         *reference,
                         |entity| matches!(entity, Entity::Scroll(_)),
-                    )?
+                    )
+                    .map_err(|error| {
+                        entity_handle_error(error, owner, &saved_member.schema.name, "Scroll")
+                    })?
                 }
                 (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
                     let storage_index =
@@ -384,27 +382,28 @@ impl LegacyVmArenaPlan {
     }
 }
 
-fn resolve_entity_handle(
-    engine: &EngineInner,
-    entities: &LegacyEntityFixups,
+fn entity_handle_error(
+    error: EntityHandleError,
     owner: LegacyVmArenaOwner,
     member: &str,
     member_kind: &'static str,
-    reference: LegacyElementRef,
-    predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<u32, LegacyVmArenaError> {
-    let Some(entity_id) = entities.resolve_element(reference)? else {
-        return Ok(0);
-    };
-    if !engine.world.entities.get(entity_id).is_some_and(predicate) {
-        return Err(LegacyVmArenaError::WrongEntity {
+) -> LegacyVmArenaError {
+    match error {
+        EntityHandleError::Reference(error) => LegacyVmArenaError::Reference(error),
+        EntityHandleError::WrongEntity(entity_id) => LegacyVmArenaError::WrongEntity {
             owner,
             member_kind,
             member: member.to_owned(),
             entity_id,
-        });
+        },
+        // This adopter previously had no range check here; an out-of-range
+        // entity index would have hit `ScriptHandleCodec::encode`'s assert.
+        EntityHandleError::IndexOverflow(index) => LegacyVmArenaError::HandleOverflow {
+            owner,
+            member: member.to_owned(),
+            index,
+        },
     }
-    Ok(ScriptHandleCodec::actor_handle(entity_id) as u32)
 }
 
 struct LegacyVmArenaBuilder<'a> {

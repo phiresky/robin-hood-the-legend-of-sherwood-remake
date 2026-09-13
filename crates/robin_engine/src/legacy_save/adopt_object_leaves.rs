@@ -24,14 +24,13 @@ use crate::{
 use super::{
     adopt::{LegacyEntityFixups, LegacySaveAdoptError},
     adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaPlan},
-    payload_base::{LegacyElementRef, LegacyFxPayload},
+    payload_base::LegacyFxPayload,
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_nonactors::LegacyObjectPayload,
     payload_objects::{LegacyObjectItemPayload, LegacyProjectilePayload},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
+    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
 };
-
-const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 /// Serialized object fields that Original overwrites before consulting them,
 /// or which have no gameplay reader after construction.
@@ -1181,28 +1180,35 @@ pub(crate) fn preflight_vm(
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
             (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
-                vm_entity_handle(
+                super::vm_schema::resolve_entity_handle(
                     engine,
                     entities,
-                    owner_kind,
-                    creation_order,
-                    &saved_member.schema.name,
-                    "Actor",
                     *reference,
                     Entity::is_actor,
-                )?
+                )
+                .map_err(|error| {
+                    vm_entity_handle_error(
+                        error,
+                        owner_kind,
+                        creation_order,
+                        &saved_member.schema.name,
+                        "Actor",
+                    )
+                })?
             }
             (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
-                vm_entity_handle(
-                    engine,
-                    entities,
-                    owner_kind,
-                    creation_order,
-                    &saved_member.schema.name,
-                    "Scroll",
-                    *reference,
-                    |entity| matches!(entity, Entity::Scroll(_)),
-                )?
+                super::vm_schema::resolve_entity_handle(engine, entities, *reference, |entity| {
+                    matches!(entity, Entity::Scroll(_))
+                })
+                .map_err(|error| {
+                    vm_entity_handle_error(
+                        error,
+                        owner_kind,
+                        creation_order,
+                        &saved_member.schema.name,
+                        "Scroll",
+                    )
+                })?
             }
             (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
                 let storage_index = location_prefix
@@ -1290,39 +1296,29 @@ pub(crate) fn preflight_vm(
     Ok(Some(heap))
 }
 
-fn vm_entity_handle(
-    engine: &EngineInner,
-    entities: &LegacyEntityFixups,
+fn vm_entity_handle_error(
+    error: EntityHandleError,
     owner_kind: LegacyVmOwnerKind,
     creation_order: u32,
     member: &str,
     member_kind: &'static str,
-    reference: LegacyElementRef,
-    predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<u32, LegacyObjectLeafAdoptError> {
-    let Some(entity_id) = entities.resolve_element(reference)? else {
-        return Ok(0);
-    };
-    let runtime = engine.world.entities.get(entity_id);
-    if !runtime.is_some_and(predicate) {
-        return Err(LegacyObjectLeafAdoptError::VmWrongEntity {
+) -> LegacyObjectLeafAdoptError {
+    match error {
+        EntityHandleError::Reference(error) => LegacyObjectLeafAdoptError::Reference(error),
+        EntityHandleError::WrongEntity(entity_id) => LegacyObjectLeafAdoptError::VmWrongEntity {
             owner_kind: owner_kind.name(),
             creation_order,
             member_kind,
             member: member.to_owned(),
             entity_id,
-        });
-    }
-    let index = entity_id.index() as usize;
-    if index > HANDLE_INDEX_MAX {
-        return Err(LegacyObjectLeafAdoptError::VmHandleOverflow {
+        },
+        EntityHandleError::IndexOverflow(index) => LegacyObjectLeafAdoptError::VmHandleOverflow {
             owner_kind: owner_kind.name(),
             creation_order,
             member: member.to_owned(),
             index,
-        });
+        },
     }
-    Ok(ScriptHandleCodec::actor_handle(entity_id) as u32)
 }
 
 fn require_kind(

@@ -1,7 +1,50 @@
 //! Schema checks shared by each independently staged VM heap adopter.
 
+use super::adopt::{LegacyEntityFixups, LegacySaveAdoptError};
+use super::payload_base::LegacyElementRef;
 use super::payload_vm::{LegacyVmMemberKind, LegacyVmMemberSchema};
+use crate::element::{Entity, EntityId};
+use crate::engine::EngineInner;
+use crate::natives::ScriptHandleCodec;
 use crate::scb::{MemberVariable, TypeTag};
+
+/// Largest index representable in a script handle's 28-bit payload.
+pub(super) const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
+
+/// Failure of [`resolve_entity_handle`]; callers wrap it with their
+/// owner/stage context.
+pub(super) enum EntityHandleError {
+    Reference(LegacySaveAdoptError),
+    /// The reference resolved to a missing entity or one failing the
+    /// member's class predicate.
+    WrongEntity(EntityId),
+    IndexOverflow(usize),
+}
+
+/// Resolve a saved `Actor`/`Scroll` VM member to its script handle bits:
+/// creation-order lookup, then class predicate, then handle-range check.
+/// A null reference encodes as 0.
+pub(super) fn resolve_entity_handle(
+    engine: &EngineInner,
+    entities: &LegacyEntityFixups,
+    reference: LegacyElementRef,
+    predicate: impl FnOnce(&Entity) -> bool,
+) -> Result<u32, EntityHandleError> {
+    let Some(entity_id) = entities
+        .resolve_element(reference)
+        .map_err(EntityHandleError::Reference)?
+    else {
+        return Ok(0);
+    };
+    if !engine.world.entities.get(entity_id).is_some_and(predicate) {
+        return Err(EntityHandleError::WrongEntity(entity_id));
+    }
+    let index = entity_id.index() as usize;
+    if index > HANDLE_INDEX_MAX {
+        return Err(EntityHandleError::IndexOverflow(index));
+    }
+    Ok(ScriptHandleCodec::actor_handle(entity_id) as u32)
+}
 
 /// Compare the saved member with the initialized compiled schema. Callers add
 /// their owner/stage context without duplicating the binary type mapping.

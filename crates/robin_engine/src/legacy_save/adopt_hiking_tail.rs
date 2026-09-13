@@ -15,7 +15,6 @@ use crate::{
     element::{Entity, EntityId},
     engine::{EngineInner, LevelAssets},
     natives::{ComputedScriptLocation, ScriptHandleCodec},
-    scb::TypeTag,
 };
 
 use super::{
@@ -25,9 +24,8 @@ use super::{
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberValue},
     post_hiking::{LegacyHikingGuideState, LegacyProjectileTrajectorySection},
     post_tail::{LegacyEnginePostTitbitsTail, LegacyPendingShieldState},
+    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
 };
-
-const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Debug, Error)]
 pub enum LegacyHikingTailAdoptError {
@@ -374,17 +372,16 @@ fn preflight_waypoints(
                     runtime_member,
                 )?;
                 let address = saved_member.schema.address as usize;
-                let end = address.saturating_add(4);
-                if end > heap.len() {
-                    return Err(LegacyHikingTailAdoptError::WaypointHeapRange {
+                let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
+                    LegacyHikingTailAdoptError::WaypointHeapRange {
                         path: path_index,
                         waypoint: waypoint_index,
                         member: saved_member.schema.name.clone(),
                         heap_len: heap.len(),
                         address,
                         end,
-                    });
-                }
+                    }
+                })?;
                 let field = format!(
                     "hiking_guide.paths[{path_index}].waypoints[{waypoint_index}].{}",
                     saved_member.schema.name
@@ -414,40 +411,14 @@ fn validate_schema(
     saved: &LegacyVmMemberSchema,
     runtime: &crate::scb::MemberVariable,
 ) -> Result<(), LegacyHikingTailAdoptError> {
-    let expected = if runtime.ty.tag == TypeTag::NativeType {
-        match runtime.ty.native_type_name.as_str() {
-            "Actor" => LegacyVmMemberKind::ActorRef,
-            "Scroll" => LegacyVmMemberKind::ScrollRef,
-            "Location" => LegacyVmMemberKind::Location,
-            other => {
-                return Err(LegacyHikingTailAdoptError::WaypointSchemaMismatch {
-                    path,
-                    waypoint,
-                    member,
-                    detail: format!("runtime class uses unsupported native type {other:?}"),
-                });
-            }
-        }
-    } else {
-        LegacyVmMemberKind::Raw32 {
-            tag: runtime.ty.tag,
-        }
-    };
-    if saved.name != runtime.name
-        || i32::try_from(saved.address).ok() != Some(runtime.address)
-        || saved.kind != expected
-    {
-        return Err(LegacyHikingTailAdoptError::WaypointSchemaMismatch {
+    super::vm_schema::check_member_schema(saved, runtime).map_err(|detail| {
+        LegacyHikingTailAdoptError::WaypointSchemaMismatch {
             path,
             waypoint,
             member,
-            detail: format!(
-                "saved ({:?}, {}, {:?}) != runtime ({:?}, {}, {:?})",
-                saved.name, saved.address, saved.kind, runtime.name, runtime.address, expected
-            ),
-        });
-    }
-    Ok(())
+            detail,
+        }
+    })
 }
 
 fn convert_member(
@@ -462,18 +433,15 @@ fn convert_member(
 ) -> Result<u32, LegacyHikingTailAdoptError> {
     match (kind, value) {
         (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => Ok(*bits),
-        (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => resolve_handle(
-            engine,
-            entities,
-            field,
-            *reference,
-            "Actor",
-            Entity::is_actor,
-        ),
+        (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
+            super::vm_schema::resolve_entity_handle(engine, entities, *reference, Entity::is_actor)
+                .map_err(|error| entity_handle_error(error, field, "Actor"))
+        }
         (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
-            resolve_handle(engine, entities, field, *reference, "Scroll", |entity| {
+            super::vm_schema::resolve_entity_handle(engine, entities, *reference, |entity| {
                 matches!(entity, Entity::Scroll(_))
             })
+            .map_err(|error| entity_handle_error(error, field, "Scroll"))
         }
         (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
             let slot = location_prefix.checked_add(locations.len()).ok_or(
@@ -542,26 +510,25 @@ fn convert_member(
     }
 }
 
-fn resolve_handle(
-    engine: &EngineInner,
-    entities: &LegacyEntityFixups,
+fn entity_handle_error(
+    error: EntityHandleError,
     field: &str,
-    reference: LegacyElementRef,
     expected: &'static str,
-    predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<u32, LegacyHikingTailAdoptError> {
-    let Some(entity) = resolve_typed(engine, entities, field, reference, expected, predicate)?
-    else {
-        return Ok(0);
-    };
-    let index = entity.index() as usize;
-    if index > HANDLE_INDEX_MAX {
-        return Err(LegacyHikingTailAdoptError::HandleIndexOverflow {
+) -> LegacyHikingTailAdoptError {
+    match error {
+        EntityHandleError::Reference(error) => LegacyHikingTailAdoptError::EntityReference(error),
+        EntityHandleError::WrongEntity(entity_id) => LegacyHikingTailAdoptError::WrongEntityClass {
             field: field.to_owned(),
-            index,
-        });
+            entity_id,
+            expected,
+        },
+        EntityHandleError::IndexOverflow(index) => {
+            LegacyHikingTailAdoptError::HandleIndexOverflow {
+                field: field.to_owned(),
+                index,
+            }
+        }
     }
-    Ok(ScriptHandleCodec::actor_handle(entity) as u32)
 }
 
 fn resolve_typed(
@@ -599,7 +566,7 @@ mod tests {
     use super::*;
     use crate::{
         legacy_save::payload_base::LegacyPoint3,
-        scb::{MemberVariable, ScType},
+        scb::{MemberVariable, ScType, TypeTag},
     };
 
     fn empty_fixups() -> LegacyEntityFixups {

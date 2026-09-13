@@ -23,9 +23,8 @@ use super::{
         LegacyVmMemberKind, LegacyVmMemberSchema, LegacyVmMemberSection, LegacyVmMemberValue,
     },
     post_tail::{LegacyScriptGlobals, LegacyTimerSequenceState},
+    vm_schema::{EntityHandleError, HANDLE_INDEX_MAX},
 };
-
-const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Debug, Error)]
 pub enum LegacyTailRuntimeAdoptError {
@@ -276,24 +275,19 @@ fn preflight_global_vm(
         let bits = match (&saved_member.schema.kind, &saved_member.value) {
             (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
             (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
-                resolve_entity_handle(
+                super::vm_schema::resolve_entity_handle(
                     engine,
                     entities,
-                    saved_member.schema.name.as_str(),
                     *reference,
-                    "Actor",
                     Entity::is_actor,
-                )?
+                )
+                .map_err(|error| entity_handle_error(error, &saved_member.schema.name, "Actor"))?
             }
             (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
-                resolve_entity_handle(
-                    engine,
-                    entities,
-                    saved_member.schema.name.as_str(),
-                    *reference,
-                    "Scroll",
-                    |entity| matches!(entity, Entity::Scroll(_)),
-                )?
+                super::vm_schema::resolve_entity_handle(engine, entities, *reference, |entity| {
+                    matches!(entity, Entity::Scroll(_))
+                })
+                .map_err(|error| entity_handle_error(error, &saved_member.schema.name, "Scroll"))?
             }
             (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
                 let storage_index = preserved_location_prefix
@@ -373,39 +367,27 @@ fn validate_member_schema(
         .map_err(|detail| LegacyTailRuntimeAdoptError::GlobalVmSchemaMismatch { index, detail })
 }
 
-fn resolve_entity_handle(
-    engine: &EngineInner,
-    entities: &LegacyEntityFixups,
+fn entity_handle_error(
+    error: EntityHandleError,
     member: &str,
-    reference: super::payload_base::LegacyElementRef,
     kind: &'static str,
-    predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<u32, LegacyTailRuntimeAdoptError> {
-    let Some(entity_id) = entities.resolve_element(reference)? else {
-        return Ok(0);
-    };
-    let entity = engine.world.entities.get(entity_id).ok_or_else(|| {
-        LegacyTailRuntimeAdoptError::WrongEntityClass {
-            kind,
-            member: member.to_owned(),
-            entity_id,
+) -> LegacyTailRuntimeAdoptError {
+    match error {
+        EntityHandleError::Reference(error) => LegacyTailRuntimeAdoptError::EntityReference(error),
+        EntityHandleError::WrongEntity(entity_id) => {
+            LegacyTailRuntimeAdoptError::WrongEntityClass {
+                kind,
+                member: member.to_owned(),
+                entity_id,
+            }
         }
-    })?;
-    if !predicate(entity) {
-        return Err(LegacyTailRuntimeAdoptError::WrongEntityClass {
-            kind,
-            member: member.to_owned(),
-            entity_id,
-        });
+        EntityHandleError::IndexOverflow(index) => {
+            LegacyTailRuntimeAdoptError::HandleIndexOverflow {
+                member: member.to_owned(),
+                index,
+            }
+        }
     }
-    let index = entity_id.index() as usize;
-    if index > HANDLE_INDEX_MAX {
-        return Err(LegacyTailRuntimeAdoptError::HandleIndexOverflow {
-            member: member.to_owned(),
-            index,
-        });
-    }
-    Ok(ScriptHandleCodec::actor_handle(entity_id) as u32)
 }
 
 #[cfg(test)]
