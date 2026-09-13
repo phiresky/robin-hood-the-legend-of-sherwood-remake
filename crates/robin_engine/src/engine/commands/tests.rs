@@ -1,5 +1,9 @@
+use super::combat::legacy_random_input_sword_seek_distance;
+use super::interaction_route::{interaction_distance, target_interaction_assert_source_sector};
+use super::object_use::determine_use_command;
+use super::quick_actions::quick_action_tail_command;
 use super::*;
-use crate::coordinates::WorldPoint3D;
+use crate::coordinates::{MapPoint, WorldPoint3D};
 use crate::element::{
     ActorCivilian, ActorData, ActorPc, ActorSoldier, Camp, ElementBonus, ElementData, ElementKind,
     ElementNet, ElementProjectile, ElementScroll, ElementTarget, Entity, FxData, HumanData,
@@ -8,10 +12,16 @@ use crate::element::{
 };
 use crate::engine::MissionScript;
 use crate::engine::ScrollStatus;
+use crate::engine::{HostDisplayState, InputState};
 use crate::macro_store::{QaReplayCommand, QuickActionStep};
+use crate::player_command::{CompositeSwordTechnique, GestureQuality};
 use crate::profiles::{Action, CharacterProfile, ProfileManager};
+use crate::sequence::{
+    Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
+};
 use crate::sprite::Sprite;
 use crate::sprite_script::{SpriteScript, UNMAPPED};
+use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
 
 #[test]
 fn campaign_mutations_are_host_authoritative() {

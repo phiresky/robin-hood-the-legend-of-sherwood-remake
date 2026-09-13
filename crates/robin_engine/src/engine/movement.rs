@@ -3083,10 +3083,17 @@ impl PendingPathRequestQueue {
                 sequence_id: processed.request.seq_id,
                 element_index: processed.request.elem_idx,
                 in_flight: true,
-                // Original's diagnostic in-flight slot represents a failed
-                // completed search with an empty waypoint list. This is only
-                // the parity projection; `processed.waypoints` retains None
-                // so the scheduler still dispatches its real failure outcome.
+                // Parity projection only (consumed by the original-state
+                // snapshot in `tick.rs` / `movement.rs::parity_state`
+                // callers, not by the scheduler). The original keeps a
+                // diagnostic in-flight slot whose waypoint list is always
+                // an array: a failed completed search stores an EMPTY list
+                // there, never "no list". `processed.waypoints == None` is
+                // this port's failed-search marker, so the documented legacy
+                // shape of that state is `Some(vec![])`, and the runtime
+                // `None` is untouched so the scheduler still dispatches its
+                // real failure outcome. Projecting `None` here would change
+                // the snapshot shape (`null` vs `[]`) against original traces.
                 waypoints: Some(processed.waypoints.clone().unwrap_or_default()),
             });
         }
@@ -7079,9 +7086,12 @@ impl EngineInner {
             // and executed its one entry-latched order choice for this
             // owner slot. The successor becomes observable immediately and
             // executes at the actor's next update; never recurse into a
-            // second Execute in the same slot. The returned resumed-successor
-            // list is deliberately not executed recursively here.
-            let _ = self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
+            // second Execute in the same slot. The returned list of resumed
+            // cross-owner successors `(sequence, element)` is therefore not
+            // needed here: those successors are already re-queued on their
+            // owners by the dispatch itself and run at their own owner slots.
+            let _resumed_cross_successors =
+                self.dispatch_condolations_for_owner_boundary(sim, owner, assets);
         }
 
         self.drain_script_synchronous_actions(sim, assets, &mut Vec::new())
@@ -11108,7 +11118,12 @@ impl EngineInner {
                             order_id: order.order_id,
                         })
                 });
-            let _ = self.tick_entity_movement_owner(sim, assets, owner, selected);
+            // The returned `MovementOwnerMotion` (explicit execute motion +
+            // terminal order pops) is only meaningful inside a live actor
+            // slot, where the coordinator folds it into the actor's explicit
+            // execute motion and batches the pops (`tick.rs`). This
+            // test-only wrapper has no enclosing slot, so it is dropped.
+            let _motion = self.tick_entity_movement_owner(sim, assets, owner, selected);
         }
     }
 
@@ -12899,29 +12914,4 @@ mod drunken_turn_timing_tests {
 }
 
 #[cfg(test)]
-#[path = "movement/tests/orphaned_sword_movement.rs"]
-mod orphaned_sword_movement_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/owner_phases.rs"]
-mod movement_owner_phase_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/movement_transition_state.rs"]
-mod movement_transition_state_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/arrival_snap.rs"]
-mod arrival_snap_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/aligned_transition_deviation.rs"]
-mod aligned_transition_deviation_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/path_request_timing.rs"]
-mod path_request_timing_tests;
-
-#[cfg(test)]
-#[path = "movement/tests/line_jump.rs"]
-mod line_jump_tests;
+mod tests;

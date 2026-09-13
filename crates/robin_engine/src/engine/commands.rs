@@ -17,34 +17,14 @@ mod quick_actions;
 mod seat_lifecycle;
 mod selection;
 
-#[cfg(test)]
-use combat::legacy_random_input_sword_seek_distance;
 pub(crate) use interaction_route::command_action_distance_animation;
-#[cfg(test)]
-use interaction_route::{interaction_distance, target_interaction_assert_source_sector};
-#[cfg(test)]
-use object_use::determine_use_command;
 pub(super) use object_use::is_pc_takable;
 pub use object_use::{coin_pickup_target, object_pickup_command};
-#[cfg(test)]
-use quick_actions::quick_action_tail_command;
 
 use super::{CameraDisplayState, EngineInner, LevelAssets};
-#[cfg(test)]
-use super::{HostDisplayState, InputState};
-#[cfg(test)]
-use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
-#[cfg(test)]
-use crate::player_command::{CompositeSwordTechnique, GestureQuality};
 use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
-#[cfg(test)]
-use crate::sequence::{
-    Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
-};
 use crate::titbit::QuickAction;
-#[cfg(test)]
-use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
 
 /// Interpretation of adjacency inside one already-resolved command batch.
 ///
@@ -125,7 +105,9 @@ impl EngineInner {
         self.feedback.cutscene_camera.display = camera;
     }
 
-    fn apply_commands_authoritative(
+    /// `pub(super)` so the test-only batch adapters in
+    /// `engine::test_support` can drive the same authoritative dispatcher.
+    pub(super) fn apply_commands_authoritative(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         camera: &mut CameraDisplayState,
@@ -192,103 +174,6 @@ impl EngineInner {
             return Err(RecordedInteractionIdentityError::MissingTarget);
         }
         Ok(())
-    }
-
-    /// Apply a batch of player commands for the current frame.
-    /// Per-frame scroll dedupe (`frame_scrolled`) is reset at the end
-    /// of `perform_hourglass` (after `tick_display_state`), not here —
-    /// the live game pushes scroll commands via `apply_command`
-    /// (singular) one-at-a-time during input handling, while the
-    /// rollback path calls `apply_commands` in a batch; both paths
-    /// must dedupe identically, and the display-state tick still needs
-    /// to see which directions were pressed this frame.
-    #[cfg(test)]
-    pub(crate) fn apply_commands(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        commands: &[PlayerInput],
-    ) {
-        self.apply_commands_with_mode(
-            sim,
-            display,
-            input,
-            assets,
-            commands,
-            SelectionCommandBatchMode::InferNestedSelection,
-        );
-    }
-
-    #[cfg(test)]
-    pub(crate) fn apply_commands_with_mode(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        commands: &[PlayerInput],
-        mode: SelectionCommandBatchMode,
-    ) {
-        let event_start = self.feedback.pending_side_effects.host_events.len();
-        let mut camera = self.feedback.cutscene_camera.display.clone();
-        self.apply_commands_authoritative(sim, &mut camera, assets, commands, mode);
-        self.feedback.cutscene_camera.display = camera;
-        for event in self.feedback.pending_side_effects.host_events[event_start..]
-            .iter()
-            .cloned()
-        {
-            display.apply_host_event(input, event);
-        }
-    }
-
-    /// Apply a batch of commands tagged as issued by the local seat.
-    /// Convenience wrapper around [`Self::apply_commands`] for the
-    /// single-player input pipeline: each raw [`PlayerCommand`] is
-    /// stamped with [`crate::player_command::PlayerId::HOST`] before
-    /// dispatch.  Live multiplayer pipelines should build
-    /// [`PlayerInput`]s with their `Host::local_seat` and call
-    /// [`Self::apply_commands`] directly so the seat tag is
-    /// data-driven.
-    #[cfg(test)]
-    pub(crate) fn apply_local_commands(
-        &mut self,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        commands: &[PlayerCommand],
-    ) {
-        let sim = self.control.simulation_context();
-        let commands = commands
-            .iter()
-            .cloned()
-            .map(PlayerInput::host)
-            .collect::<Vec<_>>();
-        self.apply_commands(&sim, display, input, assets, &commands);
-    }
-
-    /// Apply a single [`PlayerCommand`] as if it came from
-    /// [`crate::player_command::PlayerId::HOST`].
-    ///
-    /// Test adapter over the same authoritative batch dispatcher used by
-    /// [`crate::engine::Engine::advance_frame`].
-    #[cfg(test)]
-    pub(crate) fn apply_command(
-        &mut self,
-        sim: &crate::sim_rng::SimulationContext,
-        display: &mut HostDisplayState,
-        input: &mut InputState,
-        assets: &LevelAssets,
-        cmd: &PlayerCommand,
-    ) {
-        self.apply_commands(
-            sim,
-            display,
-            input,
-            assets,
-            &[PlayerInput::host(cmd.clone())],
-        );
     }
 
     fn apply_command_for_seat_with_replay_context(
