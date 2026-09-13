@@ -169,6 +169,13 @@ codegen-backend = "cranelift"
 [profile.dev.package."*"]
 opt-level = 3
 
+# Proc macros execute again on incremental rebuilds. Optimize their host code
+# and parsing dependencies with LLVM while keeping game code on Cranelift.
+# This also covers build scripts and is inherited by the test/dev-opt1 profiles.
+[profile.dev.build-override]
+opt-level = 3
+codegen-backend = "llvm"
+
 # crc32fast 1.5.1 runtime-dispatches to a VPCLMULQDQ path whose intrinsics
 # cranelift cannot compile yet (it aborts with "llvm.x86.pclmulqdq.256 is
 # not yet supported" the moment that path runs on AVX-512 hardware).
@@ -204,16 +211,9 @@ codegen-backend = "llvm"
 [profile.test.package.curve25519-dalek]
 codegen-backend = "llvm"
 
-# No `[profile.<dev|dev-opt1>.package.<workspace member>]` overrides: the
-# `"*"` pattern above already excludes workspace members, so members build at
-# the profile's own opt-level (dev 0, dev-opt1 1). Evidence (2026-09-13,
-# `cargo build --unit-graph -Z unstable-options -p robin_rs --bin robin
-# --profile <p>`, with vs. without the former 10+10 member blocks): `dev`
-# 0 of 464 units differ; `dev-opt1` differs only in 4 host units — the build
-# scripts of robin_rs/robin_replay_format/robin_spellforge and the
-# robin_state_hash_derive proc-macro drop from opt-level 1 to the
-# build-override default 0. Every lib/bin unit keeps the same opt-level,
-# debuginfo and codegen backend, so runtime code is unchanged.
+# The `"*"` package override excludes workspace members: runtime members keep
+# the profile's opt-level (dev 0, dev-opt1 1). Host tools, including the
+# robin_state_hash_derive proc macro, use the optimized build override above.
 
 # rilua's native I/O compatibility path calls C `fprintf("%.14g", f64)`.
 # Cranelift deliberately rejects floating-point C variadic arguments because
