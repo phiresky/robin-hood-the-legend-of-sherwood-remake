@@ -56,34 +56,6 @@ pub enum AiBrain {
     Friendly(Box<FriendlyAi>),
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum PersistedAiBrain {
-    None,
-    Enemy(Box<crate::ai::persisted::PersistedEnemyAi>),
-    Friendly(Box<crate::ai::persisted::PersistedFriendlyAi>),
-}
-
-impl PersistedAiBrain {
-    pub(crate) fn capture(value: &AiBrain) -> Self {
-        match value {
-            AiBrain::None => Self::None,
-            AiBrain::Enemy(value) => Self::Enemy(Box::new(
-                crate::ai::persisted::PersistedEnemyAi::capture(value),
-            )),
-            AiBrain::Friendly(value) => Self::Friendly(Box::new(
-                crate::ai::persisted::PersistedFriendlyAi::capture(value),
-            )),
-        }
-    }
-    pub(crate) fn into_runtime(self) -> AiBrain {
-        match self {
-            Self::None => AiBrain::None,
-            Self::Enemy(value) => AiBrain::Enemy(Box::new(value.into_runtime())),
-            Self::Friendly(value) => AiBrain::Friendly(Box::new(value.into_runtime())),
-        }
-    }
-}
-
 impl AiBrain {
     /// Access the base `AiController` (common to both enemy and friendly).
     pub fn base(&self) -> Option<&AiController> {

@@ -63,9 +63,7 @@ pub use objects::*;
 pub use pc::*;
 
 mod entity;
-mod persisted;
 mod traits;
-pub(crate) use persisted::*;
 pub use traits::{Actor, Element, Human};
 
 /// Re-export: `OrderType` is the canonical animation-type enum.
@@ -2173,52 +2171,6 @@ pub enum Entity {
     Scroll(ElementScroll),
     Projectile(ElementProjectile),
     Net(ElementNet),
-}
-
-/// Entity save projection retains sparse identity and enum layout while NPC
-/// brains reconstruct their runtime-only continuation bookkeeping.
-#[derive(Clone, Serialize, Deserialize)]
-pub(crate) enum PersistedEntity {
-    Pc(PersistedActorPc),
-    Soldier(PersistedActorSoldier),
-    Civilian(PersistedActorCivilian),
-    Fx(PersistedElementFx),
-    Target(PersistedElementTarget),
-    Bonus(PersistedElementBonus),
-    Scroll(PersistedElementScroll),
-    Projectile(PersistedElementProjectile),
-    Net(PersistedElementNet),
-}
-
-impl PersistedEntity {
-    pub(crate) fn capture(value: &Entity) -> Self {
-        match value {
-            Entity::Pc(value) => Self::Pc(PersistedActorPc::capture(value)),
-            Entity::Soldier(value) => Self::Soldier(PersistedActorSoldier::capture(value)),
-            Entity::Civilian(value) => Self::Civilian(PersistedActorCivilian::capture(value)),
-            Entity::Fx(value) => Self::Fx(PersistedElementFx::capture(value)),
-            Entity::Target(value) => Self::Target(PersistedElementTarget::capture(value)),
-            Entity::Bonus(value) => Self::Bonus(PersistedElementBonus::capture(value)),
-            Entity::Scroll(value) => Self::Scroll(PersistedElementScroll::capture(value)),
-            Entity::Projectile(value) => {
-                Self::Projectile(PersistedElementProjectile::capture(value))
-            }
-            Entity::Net(value) => Self::Net(PersistedElementNet::capture(value)),
-        }
-    }
-    pub(crate) fn into_runtime(self) -> Entity {
-        match self {
-            Self::Pc(value) => Entity::Pc(value.into_runtime()),
-            Self::Soldier(value) => Entity::Soldier(value.into_runtime()),
-            Self::Civilian(value) => Entity::Civilian(value.into_runtime()),
-            Self::Fx(value) => Entity::Fx(value.into_runtime()),
-            Self::Target(value) => Entity::Target(value.into_runtime()),
-            Self::Bonus(value) => Entity::Bonus(value.into_runtime()),
-            Self::Scroll(value) => Entity::Scroll(value.into_runtime()),
-            Self::Projectile(value) => Entity::Projectile(value.into_runtime()),
-            Self::Net(value) => Entity::Net(value.into_runtime()),
-        }
-    }
 }
 
 /// Concrete original-game entity kind selected by the entity/object discriminants.

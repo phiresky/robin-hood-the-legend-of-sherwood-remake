@@ -100,7 +100,7 @@ pub(crate) struct WorldState {
 /// independently of raw rollback cloning and the native wire codec.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PersistedWorldState {
-    entities: crate::entities::PersistedEntities,
+    entities: Entities,
 
     pc_ids: Vec<EntityId>,
 
@@ -145,7 +145,7 @@ impl PersistedWorldState {
             original_repulsive_point_counter: _,
         } = value;
         Self {
-            entities: crate::entities::PersistedEntities::capture(&value.entities),
+            entities: value.entities.clone(),
             pc_ids: value.pc_ids.clone(),
             original_pc_registry_ids: value.original_pc_registry_ids.clone(),
             fast_grid: crate::fast_find_grid::FastFindGridSnapshot::capture(&value.fast_grid),
@@ -163,7 +163,7 @@ impl PersistedWorldState {
 
     pub(crate) fn into_runtime(self) -> WorldState {
         WorldState {
-            entities: self.entities.into_runtime(),
+            entities: self.entities,
             pc_ids: self.pc_ids,
             original_pc_registry_ids: self.original_pc_registry_ids,
             fast_grid: std::sync::Arc::new(self.fast_grid.into_runtime()),

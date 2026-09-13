@@ -486,19 +486,6 @@ pub struct SpriteSnapshot {
     center: SpriteAnchor,
 }
 
-impl SpriteSnapshot {
-    pub(crate) fn capture(value: &Sprite) -> Self {
-        // Typed wire adapter, not its binary encoder. Both disk and
-        // save-marker reconstruction share the same resource-free owner.
-        // `from_snapshot`'s struct literal is the exhaustive field guard.
-        <Sprite as crate::bitcode_adapters::NativeBitcode>::to_wire(value)
-    }
-
-    pub(crate) fn into_runtime(self) -> Sprite {
-        Sprite::from_snapshot(self)
-    }
-}
-
 impl crate::bitcode_adapters::NativeBitcode for Sprite {
     type Wire = SpriteSnapshot;
 

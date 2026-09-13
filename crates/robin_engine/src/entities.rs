@@ -47,33 +47,6 @@ pub struct Entities {
     generations: Vec<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub(crate) struct PersistedEntities(Vec<Option<crate::element::PersistedEntity>>);
-
-impl PersistedEntities {
-    pub(crate) fn capture(value: &Entities) -> Self {
-        let Entities { slots, .. } = value;
-        Self(
-            slots
-                .iter()
-                .map(|slot| slot.as_ref().map(crate::element::PersistedEntity::capture))
-                .collect(),
-        )
-    }
-
-    pub(crate) fn into_runtime(self) -> Entities {
-        Entities {
-            slots: self
-                .0
-                .into_iter()
-                .map(|slot| slot.map(crate::element::PersistedEntity::into_runtime))
-                .collect(),
-            generations: Vec::new(),
-        }
-    }
-}
-
 impl Entities {
     pub fn new() -> Self {
         Self::default()
@@ -770,14 +743,6 @@ mod generation_tests {
         let entities =
             Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
         let restored = serde_json::from_value(serde_json::to_value(&entities).unwrap()).unwrap();
-        assert_restored_append_generations(restored);
-    }
-
-    #[test]
-    fn append_after_persisted_restore_keeps_generations_aligned() {
-        let entities =
-            Entities::from_legacy_slots(vec![Some(Entity::Scroll(ElementScroll::default())), None]);
-        let restored = PersistedEntities::capture(&entities).into_runtime();
         assert_restored_append_generations(restored);
     }
 }

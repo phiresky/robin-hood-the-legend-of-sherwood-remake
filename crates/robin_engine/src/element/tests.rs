@@ -616,11 +616,8 @@ fn explicit_posture_apis_preserve_legacy_state_hash_and_wire_bytes() {
 fn saved_posture_sources_remain_independent_until_explicit_v48_restore() {
     let element = ElementData::from_initial_posture(Posture::Dead);
     let sprite_posture = element.sprite.position_iface.v48_serialized_state().posture;
-    let saved = PersistedElementData::capture(&element);
-    let encoded = serde_json::to_vec(&saved).expect("encode element save projection");
-    let saved: PersistedElementData =
-        serde_json::from_slice(&encoded).expect("decode element save projection");
-    let mut restored = saved.into_runtime();
+    let encoded = serde_json::to_vec(&element).expect("encode element save");
+    let mut restored: ElementData = serde_json::from_slice(&encoded).expect("decode element save");
     assert_eq!(restored.posture(), Posture::Dead);
     assert_eq!(
         restored
