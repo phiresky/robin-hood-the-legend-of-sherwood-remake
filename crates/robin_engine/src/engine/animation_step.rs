@@ -780,12 +780,8 @@ impl ActorAnimationStepCtx<'_> {
         // Read the actor's current in-progress sequence element
         // and its front order.  All animation driving flows off
         // this — dispatch is on the current element's front
-        // order.
-        //
-        // Disjoint-borrow: `self.orders.sequence_manager` is a field of
-        // `self` distinct from `self.world.entities`, so the compiler
-        // accepts holding `&self.orders.sequence_manager` while iterating
-        // mutable occupied entity slots.
+        // order. The step context borrows the order domain beside the
+        // actor's entity, so no engine-wide borrow is involved.
         let order_snapshot = self
             .orders
             .sequence_manager

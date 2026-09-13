@@ -955,11 +955,7 @@ impl EngineInner {
             member.soldier_data().is_some_and(|soldier| soldier.rider),
             member_element.direction(),
             self.entity_data_in_building_sector(member_element),
-            crate::sight_obstacle::ObstacleList {
-                static_obstacles: &assets.environment.static_sight_obstacles,
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            },
+            self.world.sight_obstacles(assets),
         )
     }
 
@@ -1196,12 +1192,10 @@ impl EngineInner {
             self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
         self.refresh_selected_default_wait_identity(npc_id, &mut ctx);
 
-        // Split borrow: the AI tick below reads `self.ai.global` / `self.world.fast_grid`
-        // alongside the mutable entity, so the arena lookup stays explicit here.
-        let entity = self
-            .world
-            .entities
-            .expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
+        // The AI tick below reads the AI domain and the world's spatial grid
+        // beside the mutable entity.
+        let (entities, _, fast_grid) = self.world.entities_mut_with_sight(assets);
+        let entity = entities.expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
 
         match entity {
             Entity::Pc(_) | Entity::Soldier(_) => {
@@ -1211,12 +1205,7 @@ impl EngineInner {
                         panic!("periodic soldier {} has no enemy AI", npc_id.index())
                     })
                     .the_16th_frame_before_stuck(
-                        crate::ai_enemy::ThinkEnv::new(
-                            sim,
-                            &ctx,
-                            &tick_data,
-                            Some(&self.world.fast_grid),
-                        ),
+                        crate::ai_enemy::ThinkEnv::new(sim, &ctx, &tick_data, Some(fast_grid)),
                         frame_phase,
                         &self.ai.global,
                         is_idle,
@@ -1600,18 +1589,10 @@ impl EngineInner {
         });
         let ctx = self.ambush_point_context(npc_id);
 
-        // Build the obstacle view from individual disjoint fields
-        // so the borrow checker can split it from the mut borrow
-        // on `self.world.entities` below.
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
         let ambush_points = self.ai.global.ambush_points.as_slice();
+        let (entities, sight_obstacles, _) = self.world.entities_mut_with_sight(assets);
 
-        self.world
-            .entities
+        entities
             .expect_enemy_ai_mut(npc_id, format_args!("ambush-refresh NPC before apply"))
             .refresh_ambush_points(&ctx, eyes, ambush_points, sight_obstacles);
         self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);

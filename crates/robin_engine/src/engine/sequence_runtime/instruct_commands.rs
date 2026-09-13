@@ -822,17 +822,11 @@ impl EngineInner {
                 .element_impossible(seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
         };
-        // Disjoint-field obstacle list so the headroom
-        // ray-cast inside `begin_climb_on_shoulders`
-        // can run alongside the `&mut self.world.entities`
-        // borrow.
-        let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        // The headroom ray-cast inside `begin_climb_on_shoulders` reads the
+        // sight obstacles beside the mutable entity table.
+        let (entities, obstacles, _) = self.world.entities_mut_with_sight(assets);
         match abilities::begin_climb_on_shoulders(
-            &mut self.world.entities,
+            entities,
             &mut self.orders.sequence_manager,
             owner,
             helper_id,

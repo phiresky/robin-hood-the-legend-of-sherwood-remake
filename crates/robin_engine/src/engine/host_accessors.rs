@@ -286,20 +286,13 @@ impl EngineInner {
             .set_sprite_data(half_w, half_h, frame_sizes, per_frame_offsets);
     }
 
-    /// Combined static + dynamic sight obstacles. Static come from
-    /// `LevelAssets::static_sight_obstacles` (Arc-shared, populated at
-    /// level load); dynamic are this frame's shields. Returns a
-    /// `ObstacleList` view that exposes the flat global indexing used
-    /// by patches and per-actor obstacle references.
+    /// Combined static + dynamic sight obstacles; see
+    /// [`WorldState::sight_obstacles`](super::state::WorldState::sight_obstacles).
     pub fn sight_obstacles<'a>(
         &'a self,
         assets: &'a LevelAssets,
     ) -> crate::sight_obstacle::ObstacleList<'a> {
-        crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        }
+        self.world.sight_obstacles(assets)
     }
 
     /// Mutator for the runtime active flag on a static sight obstacle.
@@ -1056,35 +1049,15 @@ impl EngineInner {
         }
     }
 
-    /// Mutate a campaign value with the usual addition side effects.
-    /// In addition to the raw field write, RANSOM credits to the
-    /// per-mission collected-money counter and (for positive deltas
-    /// after the first frame) emits the `CashWon` jingle; SCORE credits
-    /// to the per-mission added-score counter.  Other campaign values
-    /// have no extra side effects.
+    /// Mutate a campaign value with the usual addition side effects; see
+    /// [`MissionDomain::add_campaign_value`](super::state::MissionDomain::add_campaign_value).
     pub(crate) fn add_campaign_value(&mut self, name: crate::campaign::CampaignValue, amount: i32) {
-        Self::add_campaign_value_to(
-            &mut self.mission_domain.campaign,
-            &mut self.mission_domain.mission_stat,
+        self.mission_domain.add_campaign_value(
             &mut self.feedback.pending_side_effects,
             self.control.frame_counter,
             name,
             amount,
         );
-    }
-
-    /// [`Self::add_campaign_value`] over explicitly borrowed domains, shared
-    /// with the quit-mission borrow splitter (`QuitMissionContext`).
-    pub(super) fn add_campaign_value_to(
-        campaign: &mut crate::campaign::Campaign,
-        mission_stat: &mut MissionStat,
-        side_effects: &mut SideEffects,
-        frame_counter: u32,
-        name: crate::campaign::CampaignValue,
-        amount: i32,
-    ) {
-        campaign.values[name] += amount;
-        Self::apply_value_add_side_effects(mission_stat, side_effects, frame_counter, name, amount);
     }
 
     /// Force a campaign value with the usual assignment side effects.
@@ -1102,32 +1075,6 @@ impl EngineInner {
             old,
             value,
         );
-    }
-
-    fn apply_value_add_side_effects(
-        mission_stat: &mut MissionStat,
-        side_effects: &mut SideEffects,
-        frame_counter: u32,
-        name: crate::campaign::CampaignValue,
-        amount: i32,
-    ) {
-        // Credit the mission-stat counters unconditionally for
-        // RANSOM/SCORE — only the CashWon jingle is gated on
-        // `amount > 0 && frame_counter > 0`.
-        match name {
-            crate::campaign::CampaignValue::Ransom => {
-                mission_stat.add_collected_money(amount);
-                if amount > 0 && frame_counter > 0 {
-                    side_effects
-                        .sounds
-                        .push(SoundCommand::Jingle(crate::sound::Jingle::CashWon));
-                }
-            }
-            crate::campaign::CampaignValue::Score => {
-                mission_stat.add_score(amount);
-            }
-            _ => {}
-        }
     }
 
     #[cfg(test)]

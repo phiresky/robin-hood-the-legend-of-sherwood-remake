@@ -1499,11 +1499,7 @@ impl EngineInner {
         let difficulty_factor = crate::player_profile::DifficultyRules::percent_as_f32(
             sim.config().difficulty.rules().blip_detection_range_percent,
         );
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let sight_obstacles = self.world.sight_obstacles(assets);
 
         let mut detecting_pc = None;
         let pc_ids = self.world.original_pc_registry().to_vec();
@@ -2384,25 +2380,13 @@ impl EngineInner {
             );
 
         // -- Mutating pass: update detectable list + suspects --
-        // `&self.sight_obstacles` and `self.world.entities.get_mut(...)`
-        // are disjoint fields on `self`, so the split borrow is
-        // valid.
         let mut aggregate = super::post_detection::EnemyDetectionAggregate::default();
         let mut enemy_stimuli: Vec<crate::ai::Stimulus> = Vec::new();
         let mut reveal_targets: Vec<EntityId> = Vec::new();
         let mut achievement_observed_pcs: Vec<EntityId> = Vec::new();
         {
-            // Build the obstacle view from individual disjoint
-            // fields so the borrow checker can split it from the
-            // mut borrows of `ai_global` / `entities` below. Going
-            // through `engine.sight_obstacles(assets)` would be a
-            // method-level borrow of `self`, not field-level.
-            let sight_obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-                dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-                static_active: &self.world.static_sight_obstacle_active,
-            };
-            let npc = self.world.entities.expect_ai_actor_data_mut(
+            let (entities, sight_obstacles, fast_grid) = self.world.entities_mut_with_sight(assets);
+            let npc = entities.expect_ai_actor_data_mut(
                 npc_id,
                 format_args!("Enemy optical observer during its Enemy optical scan"),
             );
@@ -2558,7 +2542,7 @@ impl EngineInner {
                 original_creation_order,
                 golden_eye,
                 sight_obstacles: &sight_obstacles,
-                fast_grid: &self.world.fast_grid,
+                fast_grid,
             };
 
             for det in detectables.iter_mut() {
@@ -3229,11 +3213,7 @@ impl EngineInner {
             self.world.weather.ambiance,
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
+        let sight_obstacles = self.world.sight_obstacles(assets);
         let target_obstacle = target_obstacle_handle.map(|handle| {
             sight_obstacles.get(usize::from(handle)).unwrap_or_else(|| {
                 panic!(
@@ -3458,18 +3438,9 @@ impl EngineInner {
         // Pull the obstacle view + NPC mut borrow for the rest of the
         // function. Detection refresh belongs to NPC actors and is
         // therefore shared by soldiers and civilians in the Original.
-        let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
-            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
-            static_active: &self.world.static_sight_obstacle_active,
-        };
         let _ai_global = &mut self.ai.global;
-        let Some(npc) = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_actor_data_mut)
-        else {
+        let (entities, sight_obstacles, fast_grid) = self.world.entities_mut_with_sight(assets);
+        let Some(npc) = entities.get_mut(npc_id).and_then(Entity::ai_actor_data_mut) else {
             return;
         };
 
@@ -3495,7 +3466,7 @@ impl EngineInner {
             original_creation_order,
             golden_eye,
             sight_obstacles: &sight_obstacles,
-            fast_grid: &self.world.fast_grid,
+            fast_grid,
         };
 
         // ── BODY pass ───────────────────────────────────────
