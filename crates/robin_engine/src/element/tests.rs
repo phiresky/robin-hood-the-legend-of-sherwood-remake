@@ -1345,3 +1345,143 @@ fn entity_is_vip_reads_enemy_ai_flag_only_for_soldiers() {
     });
     assert!(!fx.is_vip());
 }
+
+/// SHA-256 digests of the bitcode bytes, the JSON string and the `StateHash`
+/// byte stream (native-endian writes, recorded on a little-endian host).
+fn human_golden_digests(human: &HumanData) -> [String; 3] {
+    use robin_util::state_hash::StateHash;
+    use sha2::Digest;
+
+    struct ByteRecorder(Vec<u8>);
+    impl std::hash::Hasher for ByteRecorder {
+        fn finish(&self) -> u64 {
+            unreachable!("state-hash byte recorder is never finished")
+        }
+        fn write(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    let sha = |bytes: &[u8]| hex::encode(sha2::Sha256::digest(bytes));
+    let mut recorder = ByteRecorder(Vec::new());
+    human.state_hash(&mut recorder);
+    [
+        sha(&bitcode::encode(human)),
+        sha(serde_json::to_string(human).unwrap().as_bytes()),
+        sha(&recorder.0),
+    ]
+}
+
+fn golden_human_fixture() -> HumanData {
+    use crate::entity_id::{PcId, SoldierId};
+
+    let mut shield = HumanShieldState {
+        top_plane: HumanPlaneState {
+            normal: WorldPoint3D::new(0.0, 0.0, 1.0),
+            az: 1.5,
+            d: -2.0,
+            ..HumanPlaneState::default()
+        },
+        box_3d: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        on_ground: true,
+        ..HumanShieldState::default()
+    };
+    shield.points[1] = HumanShieldPointState {
+        obstacle: [0.5, 1.5, 2.5, 3.5],
+        polygon: MapPoint::new(8.0, 9.0),
+    };
+    shield.ground_box.bounds_are_set = true;
+    shield.ground_box.bottom_right = MapPoint::new(30.0, 31.0);
+
+    HumanData {
+        carrier: Some(EntityId::Pc(PcId(3))),
+        concussion_of_the_brain: 11,
+        concussion_healing_timeout: 12,
+        tiredness: 13,
+        unconscious: true,
+        already_detectable_body: true,
+        detectable_list_index: 14,
+        sword_strike_boredom: vec![1, 2, 3],
+        stuck_under_nets_counter: 15,
+        hollow_man: true,
+        opponents: SwordfightOpponents::from_pairs([
+            (
+                EntityId::Soldier(SoldierId(21)),
+                Some(JumpLineIndex::new(35).unwrap()),
+            ),
+            (EntityId::Pc(PcId(22)), None),
+            (
+                EntityId::Soldier(SoldierId(23)),
+                Some(JumpLineIndex::new(2).unwrap()),
+            ),
+        ]),
+        smalltalk_initiative: true,
+        received_smalltalk_initiative: true,
+        smalltalk_hint: SmalltalkHint::Legs,
+        smalltalk_hint_opponent: Some(EntityId::Soldier(SoldierId(24))),
+        relative_fighting_ability: 16,
+        small_repulsive_radius: true,
+        last_is_lying_for_corpse_intersection: Some(true),
+        killed_by_accident: true,
+        parry_counter: 17,
+        invulnerable: true,
+        last_motion_was_step_back_in_combat: true,
+        running_hulk: 18,
+        time_hulk: 19,
+        hulk_level: 20,
+        hulk_direction: true,
+        hulk_speed: 0.75,
+        repulsive_point: HumanRepulsivePointState {
+            position: MapPoint::new(1.0, 2.0),
+            concave: true,
+            limit_left: MapPoint::new(3.0, 4.0),
+            limit_right: MapPoint::new(5.0, 6.0),
+            action_radius: 7.0,
+            force_a: 8.0,
+            force_b: 9.0,
+            radius: 10.0,
+            id: 42,
+            affects_pcs: true,
+            affects_soldiers: false,
+            affects_civilians: true,
+            affects_animals: false,
+        },
+        building_sector: SectorHandle::new(7),
+        produced_noise_first_word: 3.25,
+        shield,
+        sword_sweep: HumanSwordSweepState {
+            victims: vec![EntityId::Pc(PcId(5)), EntityId::Soldier(SoldierId(6))],
+            initial_angle: 0.5,
+            current_angle: 1.0,
+            final_angle: 1.5,
+        },
+        pending_shoots: vec![
+            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(4), 2),
+            crate::sequence::SequenceElementRef::new(crate::sequence::SequenceId(9), 0),
+        ],
+    }
+}
+
+/// Save (JSON), native snapshot (bitcode) and state-hash encodings of
+/// `HumanData` are frozen; the digests were recorded from the hand-written
+/// `HumanDataWireRef` serializer before it was replaced by
+/// `#[serde(into, try_from)]`.
+#[test]
+fn human_data_encodings_match_golden_digests() {
+    const GOLDEN: [&str; 3] = [
+        "a345fdbeef1bcbcb73438cea08f98ac7a1e3ff2854d4d6cd536fcd9c02ec7a5b",
+        "eeda54a748e35f4dd3e7832493ef4ea7dbef53349ac5c5ebc01648a33e206e98",
+        "6a3bfa3bc9246a58205abe81f5ccb062bb711cea51e1b23af7bf9f61ff01b400",
+    ];
+
+    let human = golden_human_fixture();
+    assert_eq!(human_golden_digests(&human), GOLDEN);
+
+    let json = serde_json::to_string(&human).unwrap();
+    let from_json: HumanData = serde_json::from_str(&json).unwrap();
+    assert_eq!(from_json.opponents, human.opponents);
+    assert_eq!(human_golden_digests(&from_json), GOLDEN);
+
+    let from_bitcode: HumanData = bitcode::decode(&bitcode::encode(&human)).unwrap();
+    assert_eq!(human_golden_digests(&from_bitcode), GOLDEN);
+}
