@@ -1,5 +1,13 @@
 use super::*;
 use crate::main_entry::PendingLuaMission;
+use robin_engine::natives::{ScriptEffects, ScriptState};
+use robin_engine::spellforge::{SPELLFORGE_CONTRACT_VERSION, SpellforgeScriptMode};
+use robin_lua::{MissionLuaState, register_natives};
+use robin_spellforge::{compute_package_sha256, spellforge_vm_abi};
+use std::collections::BTreeMap;
+
+mod legacy_vm;
+use legacy_vm::{LegacyEventError, LegacyStartupError, LegacyVmSession};
 
 fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
     use std::io::Write as _;
@@ -14,7 +22,7 @@ fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
     writer.finish().unwrap();
 }
 
-fn session_with_script(source: &str) -> LuaSession {
+fn session_with_script(source: &str) -> LegacyVmSession {
     let tempdir = tempfile::tempdir().expect("tempdir");
     fs::write(tempdir.path().join("test_mission.lua"), source).expect("write script");
     let mut state = MissionLuaState::new(tempdir.path()).expect("new Lua state");
@@ -29,11 +37,13 @@ fn session_with_script(source: &str) -> LuaSession {
         sha256: [0; 32],
     };
     package.sha256 = compute_package_sha256(&package);
-    LuaSession {
+    LegacyVmSession {
         _tempdir: tempdir,
         state,
-        mission_basename: "test_mission".to_owned(),
-        runtime: Arc::new(SpellforgeRuntime51::new(package).expect("runtime")),
+        session: LuaSession {
+            mission_basename: "test_mission".to_owned(),
+            runtime: Arc::new(SpellforgeRuntime51::new(package).expect("runtime")),
+        },
     }
 }
 
@@ -227,7 +237,7 @@ fn event_returns_are_checked_table_driven() {
             "BadReturn",
             &[],
         ),
-        Err(LuaSessionError::UnexpectedEventReturn { actual, .. }) if actual == "table"
+        Err(LegacyEventError::UnexpectedEventReturn { actual, .. }) if actual == "table"
     ));
     #[cfg(target_pointer_width = "64")]
     assert!(matches!(
@@ -239,7 +249,7 @@ fn event_returns_are_checked_table_driven() {
             "WideIntegerReturn",
             &[],
         ),
-        Err(LuaSessionError::EventIntegerOutOfRange {
+        Err(LegacyEventError::EventIntegerOutOfRange {
             value: 2_147_483_648,
             ..
         })
@@ -281,7 +291,7 @@ fn event_lua_errors_are_not_replaced_with_zero() {
             &[],
         )
         .unwrap_err();
-    assert!(matches!(err, LuaSessionError::Event { .. }));
+    assert!(matches!(err, LegacyEventError::Event { .. }));
     assert!(err.to_string().contains("deliberate failure"));
 }
 
@@ -330,9 +340,9 @@ fn required_startup_event_error_aborts_the_startup_pair() {
     });
     assert!(matches!(
         err,
-        SpellforgeSessionError::RequiredEvent {
+        LegacyStartupError::RequiredEvent {
             event: "Initialize",
-            source: LuaSessionError::Event { .. },
+            source: LegacyEventError::Event { .. },
             ..
         }
     ));
@@ -353,7 +363,7 @@ fn required_startup_rejects_a_missing_script_effects() {
     let session = session_with_script("function Initialize() end");
     assert!(matches!(
         session.run_required_startup_events(None, 0),
-        Err(SpellforgeSessionError::MissingScriptEffects {
+        Err(LegacyStartupError::MissingScriptEffects {
             event: "Initialize",
             ..
         })

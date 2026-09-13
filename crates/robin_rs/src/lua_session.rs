@@ -13,28 +13,17 @@
 //! driver. The host session installs a versioned package/runtime attachment;
 //! timer, victory, finalize, and every per-entity callback then pass through
 //! the same yield/resume path as SCB.
-//! The optional native Lua VM exists only in the comparison/unwind test harness.
+//! The optional native Lua VM exists only in the comparison/unwind test
+//! harness (`tests/legacy_vm.rs`); nothing in this file depends on it.
 
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use robin_engine::natives::{ScriptEffects, ScriptState};
 use robin_engine::spellforge::SpellforgePackage;
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use robin_engine::spellforge::{SPELLFORGE_CONTRACT_VERSION, SpellforgeScriptMode};
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use robin_lua::{MissionLuaError, MissionLuaState, register_natives};
 use robin_spellforge::{
     ARCHIVE_BYTE_LIMIT, SpellforgePackageError, SpellforgeRuntime51, build_package_from_archives,
 };
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use robin_spellforge::{compute_package_sha256, spellforge_vm_abi};
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-use tempfile::TempDir;
 
 use crate::main_entry::CliArgs;
 use crate::main_menu::custom_missions::CustomMissionLaunch;
@@ -42,21 +31,10 @@ use crate::main_menu::custom_missions::CustomMissionLaunch;
 /// One mission's worth of Lua state, attached to a launched custom
 /// Spellforge mission for as long as the session runs.
 pub struct LuaSession {
-    /// Tempdir holding the extracted `.lua` files. Lives at least as
-    /// long as `state` so `require()` lookups stay valid; dropped on
-    /// session teardown.
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    _tempdir: TempDir,
-    /// Legacy direct-call interpreter retained only for focused host/native
-    /// adapter tests. Live missions never load their package into this second
-    /// VM; all bootstrap and event code runs exactly once in `runtime`.
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    state: MissionLuaState,
     /// Bare basename of the mission script — the `.lua` filename without the
     /// extension. Used in diagnostics around the engine-owned runtime.
     mission_basename: String,
-    /// Engine-facing deterministic runtime. The legacy direct state above is
-    /// retained for developer tools/tests; live mission events use this one
+    /// Engine-facing deterministic runtime. Live mission events use this one
     /// through `LevelAssets` so saves, rollback and networking share a tape.
     runtime: Arc<SpellforgeRuntime51>,
 }
@@ -71,12 +49,6 @@ pub enum LuaSessionError {
     NoLuaCompanion { zip: PathBuf, rhm_entry: String },
     #[error("writing {0}: {1}")]
     WriteFile(PathBuf, #[source] std::io::Error),
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error("lua: {0}")]
-    Lua(#[from] MissionLuaError),
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error("mlua: {0}")]
-    Mlua(#[from] mlua::Error),
     #[error("invalid Spellforge contract: {0}")]
     Contract(String),
     #[error("invalid Spellforge package: {0}")]
@@ -86,32 +58,6 @@ pub enum LuaSessionError {
         path: PathBuf,
         bytes: u64,
         limit: usize,
-    },
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error("Lua event `{event}` failed for mission `{mission}`: {source}")]
-    Event {
-        mission: String,
-        event: String,
-        #[source]
-        source: mlua::Error,
-    },
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error(
-        "Lua event `{event}` for mission `{mission}` returned Lua {actual}; expected an integer, integral number, boolean, or nil"
-    )]
-    UnexpectedEventReturn {
-        mission: String,
-        event: String,
-        actual: String,
-    },
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error(
-        "Lua event `{event}` for mission `{mission}` returned integer {value}, which is outside the signed 32-bit game ABI range"
-    )]
-    EventIntegerOutOfRange {
-        mission: String,
-        event: String,
-        value: i64,
     },
 }
 
@@ -134,22 +80,6 @@ pub enum SpellforgeSessionError {
     RequiredSessionMissing { mission: String },
     #[error("vanilla mission `{mission}` unexpectedly carried a Spellforge package")]
     UnexpectedPackage { mission: String },
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error(
-        "required Spellforge event `{event}` for mission `{mission}` has no mission-script ScriptEffects"
-    )]
-    MissingScriptEffects {
-        mission: String,
-        event: &'static str,
-    },
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    #[error("required Spellforge event `{event}` failed for mission `{mission}`: {source}")]
-    RequiredEvent {
-        mission: String,
-        event: &'static str,
-        #[source]
-        source: LuaSessionError,
-    },
 }
 
 /// Spellforge's package/tape contract supports every native launch mode. Keep
@@ -175,31 +105,11 @@ impl LuaSession {
         };
         robin_spellforge::validate_package(&package)
             .map_err(|error| startup(LuaSessionError::Contract(error.to_string())))?;
-        #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-        let (tempdir, state) = {
-            let tempdir = TempDir::with_prefix("robin-lua-replay-").map_err(|error| {
-                startup(LuaSessionError::WriteFile(
-                    PathBuf::from("<tempdir>"),
-                    error,
-                ))
-            })?;
-            write_test_package(tempdir.path(), &package).map_err(&startup)?;
-            let mut state = MissionLuaState::new(tempdir.path())
-                .map_err(|source| startup(LuaSessionError::Lua(source)))?;
-            register_natives(&mut state).map_err(|source| {
-                startup(LuaSessionError::Lua(MissionLuaError::Runtime(source)))
-            })?;
-            (tempdir, state)
-        };
         let runtime = Arc::new(
             SpellforgeRuntime51::new(package)
                 .map_err(|error| startup(LuaSessionError::Contract(error.to_string())))?,
         );
         Ok(Self {
-            #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-            _tempdir: tempdir,
-            #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-            state,
             mission_basename,
             runtime,
         })
@@ -235,15 +145,6 @@ impl LuaSession {
             shared_archive.as_deref(),
         )?;
 
-        #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-        let (tempdir, state) = {
-            let tempdir = TempDir::with_prefix("robin-lua-mission-")
-                .map_err(|e| LuaSessionError::WriteFile(PathBuf::from("<tempdir>"), e))?;
-            write_test_package(tempdir.path(), &package)?;
-            let mut state = MissionLuaState::new(tempdir.path())?;
-            register_natives(&mut state)?;
-            (tempdir, state)
-        };
         // Do not load mission source into the legacy direct-call VM here.
         // Doing so would execute top-level Lua twice and make native launch
         // acceptance depend on a second dialect that browser builds do not
@@ -255,10 +156,6 @@ impl LuaSession {
         );
 
         Ok(Some(Self {
-            #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-            _tempdir: tempdir,
-            #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-            state,
             mission_basename,
             runtime,
         }))
@@ -292,158 +189,6 @@ impl LuaSession {
     pub fn runtime(&self) -> Arc<dyn robin_engine::spellforge::SpellforgeRuntime> {
         self.runtime.clone()
     }
-
-    /// Look up a top-level event function on the Lua globals and
-    /// call it with the engine's [`ScriptEffects`] attached. No-op (with
-    /// a `debug!`) if the script didn't define it — Spellforge
-    /// missions cherry-pick which events they override, and missing
-    /// ones are perfectly valid.
-    ///
-    /// Returns the integer-compatible result of the Lua call. A missing
-    /// function or no explicit return is a successful no-op; a Lua failure
-    /// or incompatible return is preserved as a typed [`LuaSessionError`].
-    ///
-    /// TODO(parity): The Spellforge DLL's `luaRun` implementation is not in
-    /// the available material; verify its accepted event return conversions if that
-    /// source becomes available. Runtime errors must remain errors regardless.
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    pub fn run_event(
-        &self,
-        host: &mut ScriptEffects,
-        script_state: &mut ScriptState,
-        script_domains: &mut robin_engine::engine::ScriptDomains,
-        capabilities: &robin_engine::natives::NativeSessionCapabilities<'_>,
-        event_name: &str,
-        args: &[i32],
-    ) -> Result<i32, LuaSessionError> {
-        self.run_event_with_bindings(
-            host,
-            script_state,
-            script_domains,
-            robin_engine::natives::AttachedScriptBindings::empty_ref(),
-            capabilities,
-            event_name,
-            args,
-        )
-    }
-
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    fn run_event_with_bindings(
-        &self,
-        host: &mut ScriptEffects,
-        script_state: &mut ScriptState,
-        script_domains: &mut robin_engine::engine::ScriptDomains,
-        bindings: &robin_engine::natives::AttachedScriptBindings,
-        capabilities: &robin_engine::natives::NativeSessionCapabilities<'_>,
-        event_name: &str,
-        args: &[i32],
-    ) -> Result<i32, LuaSessionError> {
-        let result = self.state.with_host_state_and_bindings(
-            host,
-            script_state,
-            script_domains,
-            bindings,
-            capabilities,
-            |lua| {
-                let globals = lua.globals();
-                let v: mlua::Value = globals.get(event_name)?;
-                let Some(func) = (match &v {
-                    mlua::Value::Function(f) => Some(f.clone()),
-                    _ => None,
-                }) else {
-                    tracing::debug!(
-                        "LuaSession[{}]: no global function `{event_name}`",
-                        self.mission_basename
-                    );
-                    return Ok(None);
-                };
-                // Variadic call — `mlua::Variadic` lets us pass a
-                // slice without knowing arity statically. Convert i32
-                // args once.
-                let mut variadic: mlua::Variadic<mlua::Value> = mlua::Variadic::new();
-                for a in args {
-                    variadic.push(mlua::Value::Integer((*a).into()));
-                }
-                let ret: mlua::MultiValue = func.call(variadic)?;
-                Ok(ret.into_iter().next())
-            },
-        );
-
-        let returned = result.map_err(|source| LuaSessionError::Event {
-            mission: self.mission_basename.clone(),
-            event: event_name.to_owned(),
-            source,
-        })?;
-        match returned {
-            None | Some(mlua::Value::Nil) => Ok(0),
-            Some(mlua::Value::Integer(value)) => {
-                i32::try_from(value).map_err(|_| LuaSessionError::EventIntegerOutOfRange {
-                    mission: self.mission_basename.clone(),
-                    event: event_name.to_owned(),
-                    value,
-                })
-            }
-            Some(mlua::Value::Number(value))
-                if value.is_finite()
-                    && value.fract() == 0.0
-                    && value >= i32::MIN as f64
-                    && value <= i32::MAX as f64 =>
-            {
-                Ok(value as i32)
-            }
-            Some(mlua::Value::Boolean(value)) => Ok(i32::from(value)),
-            Some(value) => Err(LuaSessionError::UnexpectedEventReturn {
-                mission: self.mission_basename.clone(),
-                event: event_name.to_owned(),
-                actual: value.type_name().to_owned(),
-            }),
-        }
-    }
-
-    /// Dispatch the required Spellforge startup pair in order. The caller
-    /// supplies the engine's live script host with its authoritative
-    /// simulation context attached. Failure stops startup immediately and is returned
-    /// with both mission and event context.
-    #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-    pub fn run_required_startup_events(
-        &self,
-        native_parts: Option<(
-            &mut ScriptEffects,
-            &mut ScriptState,
-            &mut robin_engine::engine::ScriptDomains,
-            &robin_engine::natives::AttachedScriptBindings,
-            &robin_engine::natives::NativeSessionCapabilities<'_>,
-        )>,
-        initialization_seed: i32,
-    ) -> Result<(), SpellforgeSessionError> {
-        let Some((host, script_state, script_domains, bindings, capabilities)) = native_parts
-        else {
-            return Err(SpellforgeSessionError::MissingScriptEffects {
-                mission: self.mission_basename.clone(),
-                event: "Initialize",
-            });
-        };
-        for (event, args) in [
-            ("Initialize", std::slice::from_ref(&initialization_seed)),
-            ("PostInitialize", &[][..]),
-        ] {
-            self.run_event_with_bindings(
-                host,
-                script_state,
-                script_domains,
-                bindings,
-                capabilities,
-                event,
-                args,
-            )
-            .map_err(|source| SpellforgeSessionError::RequiredEvent {
-                mission: self.mission_basename.clone(),
-                event,
-                source,
-            })?;
-        }
-        Ok(())
-    }
 }
 
 fn bounded_archive_bytes(path: &Path, bytes: &[u8]) -> Result<Vec<u8>, LuaSessionError> {
@@ -473,22 +218,6 @@ fn read_archive_bytes(path: &Path) -> Result<Vec<u8>, LuaSessionError> {
     bounded_archive_bytes(path, &bytes)
 }
 
-#[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
-fn write_test_package(
-    directory: &Path,
-    package: &SpellforgePackage,
-) -> Result<(), LuaSessionError> {
-    for (relative, bytes) in &package.files {
-        let path = directory.join(relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| LuaSessionError::WriteFile(parent.to_path_buf(), error))?;
-        }
-        fs::write(&path, bytes).map_err(|error| LuaSessionError::WriteFile(path, error))?;
-    }
-    Ok(())
-}
-
 /// Find the newest `lib_*.zip` under `<mods_root>/lib/` — matches
 /// what [`crate::mod_pack::mount_for_launch`] uses, so the Lua
 /// session and the SbFile overlay see the same shared library.
@@ -509,5 +238,7 @@ fn find_shared_lib_zip(mods_root: &Path) -> Option<PathBuf> {
     entries.pop()
 }
 
+/// All tests, including the legacy `robin_lua` direct-call VM harness
+/// (`tests/legacy_vm.rs`), live behind this single gate.
 #[cfg(all(test, feature = "lua", not(target_arch = "wasm32")))]
 mod tests;
