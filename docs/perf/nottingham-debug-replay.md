@@ -76,3 +76,39 @@ creation-order position projections, entity removal, and deterministic replay
 hashes; replacing these observations with a single stale tick-start snapshot
 would change gameplay semantics. PostInitialize is a secondary measured cost.
 No performance implementation changes were made during this investigation.
+
+## Historical 2,000-entry visibility cache
+
+A separate investigation checked original-code removal commit
+`8c648bba9d582afe36ef42eaa9ec6059cd025162`, "Remove lossy visibility result cache".
+At its parent `50bad923`, `RHfastfindgrid.h:137–154` defines a 2,000-entry
+direct-mapped array of key/result/used fields. Both `IsReachable` overloads in
+`RHfastfindgrid.cpp:5784–6218` share it.
+
+The key reduces the endpoints to their component sums `sx`, `sy`, `sz`, then
+computes `sx + 7*sy² + 3*sz³` in floating point. Values above 4,000,000,000 are
+repeatedly divided by 123.4 before conversion to `ULONG`. The slot is key modulo
+2,000. Hits compare that key alone; misses replace the slot. Distinct rays with
+the same midpoint therefore alias even before floating-point rounding. Neither
+query obstacle type nor obstacle-list identity participates in the key, and
+there is no expiry or obstacle-change invalidation. The removal explicitly
+cites aliased rays and stale visibility after obstacle changes.
+
+A similar capacity could be used for exact memoization, but the old lossy
+semantics should not be restored. Even outside Original parity, hidden cache
+history can affect cold/warm replay, rollback, load, and multiplayer results.
+An exact version should compare ordered endpoint bits and query mask, scoped
+to an immutable obstacle view or complete obstacle identity/generation. A hash
+collision must be a miss. Invalidation must cover changes within a tick.
+Bypass it in Original parity as requested; parity query capture is ordered and
+cannot silently lose hit events if that restriction is ever relaxed.
+
+The Rust seam is `sight_obstacle.rs::is_reachable_3d`; this is distinct from
+AI observation construction and the existing viewer/frame view-radius cache.
+The follow-up perf sample showed no significant self samples in ray/visibility
+functions in this early replay interval, so this is a lower-priority candidate
+than the measured 81 ms/tick entity-view construction cost. TODO: measure
+exact-ray repetition and potential saved time before implementing it; verify
+same-midpoint rays, mask changes, within-tick obstacle toggles, collisions, and
+cached/uncached replay equivalence. The removal commit contains no measured
+speedup or specific failing replay, so neither is inferred here.
