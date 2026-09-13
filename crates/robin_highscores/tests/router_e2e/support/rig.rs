@@ -754,11 +754,13 @@ impl TestRig {
                 self.build.verifier.sha256.into_bytes(),
                 Digest32::digest_bytes(b"substituted-router-e2e-job-config"),
                 &result,
-                &self.loaded_build,
-                &self.content,
-                None,
-                &self.published_ruleset,
-                competition.then(|| self.competition.as_ref().unwrap()),
+                robin_highscores::db::AcceptanceManifests {
+                    build_manifest: &self.loaded_build,
+                    content_manifest: &self.content,
+                    campaign_content_manifest: None,
+                    published_ruleset: &self.published_ruleset,
+                    competition_manifest: competition.then(|| self.competition.as_ref().unwrap()),
+                },
             )
             .await;
         assert!(matches!(
@@ -773,11 +775,13 @@ impl TestRig {
                 self.build.verifier.sha256.into_bytes(),
                 Digest32::digest_bytes(b"router-e2e-job-config"),
                 &result,
-                &self.loaded_build,
-                &self.content,
-                None,
-                &self.published_ruleset,
-                competition.then(|| self.competition.as_ref().unwrap()),
+                robin_highscores::db::AcceptanceManifests {
+                    build_manifest: &self.loaded_build,
+                    content_manifest: &self.content,
+                    campaign_content_manifest: None,
+                    published_ruleset: &self.published_ruleset,
+                    competition_manifest: competition.then(|| self.competition.as_ref().unwrap()),
+                },
             )
             .await
             .unwrap();
@@ -1257,11 +1261,13 @@ impl TestRig {
                 self.build.verifier.sha256.into_bytes(),
                 Digest32::digest_bytes(b"router-e2e-campaign-job-config"),
                 &result,
-                &self.loaded_build,
-                content,
-                self.campaign_content.as_ref(),
-                &self.published_ruleset,
-                None,
+                robin_highscores::db::AcceptanceManifests {
+                    build_manifest: &self.loaded_build,
+                    content_manifest: content,
+                    campaign_content_manifest: self.campaign_content.as_ref(),
+                    published_ruleset: &self.published_ruleset,
+                    competition_manifest: None,
+                },
             )
             .await
             .unwrap();

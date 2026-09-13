@@ -8,6 +8,7 @@
 - [Game data distributions](DATADIRS.md)
 - [Multiplayer](MULTIPLAYER.md), [campaign history](CAMPAIGN_HISTORY.md), and [Spellforge](SPELLFORGE.md)
 - [New features and remaining product work](NEW_FEATURES.md)
+- [Argument bundling candidates](SIGNATURE_BUNDLING_CANDIDATES.md)
 - [Android build and packaging](../android/README.md)
 
 ## Service and deployment guides

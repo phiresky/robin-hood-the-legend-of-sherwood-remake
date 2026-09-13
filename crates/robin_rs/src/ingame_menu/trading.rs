@@ -10,7 +10,7 @@ use robin_engine::trading::{
 };
 
 use super::layout::{
-    MENU_W, MenuTransform, TextAlign, VAlign, draw_screen_background,
+    MENU_W, MenuRect, MenuTransform, TextAlign, VAlign, draw_screen_background,
     render_clipped_text_in_box_font, render_text_virt_font,
 };
 use super::resources::{
@@ -489,10 +489,12 @@ impl TradingModalState {
                     font,
                     transform,
                     &self.status,
-                    ROW_X,
-                    342,
-                    ROW_W,
-                    48,
+                    MenuRect {
+                        x: ROW_X,
+                        y: 342,
+                        w: ROW_W,
+                        h: 48,
+                    },
                     TextAlign::Left,
                     VAlign::Top,
                 );

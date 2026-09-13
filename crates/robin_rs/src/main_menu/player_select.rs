@@ -462,14 +462,18 @@ impl SelectPlayerState {
                     renderer,
                     transform,
                     surf,
-                    LIST_RECT.x,
-                    row_y,
-                    self.profile_field_w,
-                    self.profile_field_h,
-                    0,
-                    0,
-                    self.profile_field_w,
-                    self.profile_field_h,
+                    MenuRect {
+                        x: LIST_RECT.x,
+                        y: row_y,
+                        w: self.profile_field_w,
+                        h: self.profile_field_h,
+                    },
+                    MenuRect {
+                        x: 0,
+                        y: 0,
+                        w: self.profile_field_w,
+                        h: self.profile_field_h,
+                    },
                     true,
                 );
             } else {

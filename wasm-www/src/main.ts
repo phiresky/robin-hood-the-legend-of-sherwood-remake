@@ -21,7 +21,7 @@ import {
     wasInvitationRedeemed,
 } from './multiplayer_identity.js';
 import {
-    applyPreparedReplay, prepareReplayWithRuntime, replayFromQuery, type PreparedReplay,
+    applyPreparedReplay, prepareReplayWithRuntime, replayFromQuery, replayRuntimeOverride, type PreparedReplay,
     installShareButton,
     validateReplayInWorker,
     type RobinRpc,
@@ -110,7 +110,6 @@ const BINARIES_BASE = import.meta.env.DEV
     : window.location.origin;
 const WASM_BUILDS_BASE = `${BINARIES_BASE}/wasm`;
 const HASH_RE = /^[0-9a-f]{7,40}$/i;
-const COMPACT_REPLAY_RE = /^rhrec-([0-9a-f]{7,40})-/i;
 
 const logEl = document.querySelector<HTMLDivElement>('#log');
 if (logEl === null) {
@@ -214,17 +213,6 @@ function installFullscreenButton(button: HTMLButtonElement | null): void {
     });
 }
 
-function replayBuildHash(replay: string): string {
-    const compact = COMPACT_REPLAY_RE.exec(replay);
-    if (compact !== null) {
-        return compact[1] ?? '';
-    }
-    if (HASH_RE.test(replay)) {
-        return replay;
-    }
-    throw new Error('replay= must be an rhrec compact replay or a git hash');
-}
-
 async function resolveBuild(ticket: VerifiedBrowserJoinTicket | undefined, signal: AbortSignal): Promise<BuildSelection> {
     if (ticket !== undefined) {
         return { short: ticket.payload.engine_version.slice(0, 12), source: 'multiplayer' };
@@ -238,10 +226,10 @@ async function resolveBuild(ticket: VerifiedBrowserJoinTicket | undefined, signa
         };
     }
 
-    const replay = pageParams.get('replay');
-    if (replay !== null && replay.length > 0) {
-        const hash = replayBuildHash(replay);
-        return { short: hash, source: 'replay' };
+    // A compact recording's hash is provenance: it plays on the latest runtime.
+    const replayOverride = replayRuntimeOverride(pageParams.get('replay'));
+    if (replayOverride !== undefined) {
+        return { short: replayOverride, source: 'replay' };
     }
 
     const latest = await fetchJson<BuildManifest>(`${WASM_BUILDS_BASE}/latest.json`, signal);

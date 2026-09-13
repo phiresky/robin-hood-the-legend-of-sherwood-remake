@@ -15,7 +15,7 @@
 //! before construction, but attacker-controlled collection lengths can still
 //! amplify a small valid payload into substantial typed heap/work before the
 //! post-decode structural limits can inspect it. The ranked server therefore
-//! runs [`decode_compact_for_build`] under its verifier's address-space,
+//! runs [`decode_compact_bounded`] under its verifier's address-space,
 //! CPU and wall-time limits. Do not move that call into an unsandboxed request
 //! handler. Browser public playback must run this decoder in the separately
 //! built replay-admission wasm inside a Dedicated Worker; that artifact owns a
@@ -36,7 +36,10 @@ use serde::ser::{
 use std::fmt;
 use std::io::Read as _;
 
-/// Short source identity embedded in compact artifacts made by this build.
+/// Short source provenance embedded in compact artifacts made by this build.
+/// It is not a compatibility gate: decoders accept any well-formed recorded
+/// hash and preserve it; replay schema and network protocol versions decide
+/// compatibility.
 pub const ENGINE_VERSION_HASH: &str = env!("ROBIN_GIT_HASH");
 
 pub const COMPACT_PREFIX: &str = "rhrec-";
@@ -271,10 +274,6 @@ pub enum FormatError {
         "unsupported replay schema version {version}; supported version is {REPLAY_SCHEMA_VERSION}"
     )]
     UnsupportedVersion { version: u32 },
-    #[error("replay engine version `{recorded}` does not match required build `{required}`")]
-    EngineVersionMismatch { recorded: String, required: String },
-    #[error("this build has no durable source identity; production replay admission is disabled")]
-    BuildIdentityUnavailable,
     #[error("typed replay budget traversal failed: {0}")]
     TypedBudget(String),
 }
@@ -362,53 +361,33 @@ pub fn encode_compact(data: &ReplayData, hash: &str) -> Result<String, FormatErr
 /// Decode a trusted compact replay while still enforcing canonical bytes and
 /// the current replay schema. This lane does not apply public resource limits.
 pub fn decode_compact(text: &str) -> Result<(String, ReplayData), FormatError> {
-    decode_compact_inner(text, None, None)
+    decode_compact_inner(text, None)
 }
 
-/// Decode under explicit limits. This must execute inside a resource-limited
-/// worker when `text` came from an untrusted submitter.
+/// Decode the current replay schema under explicit limits. This does not
+/// create a sandbox: it must execute inside a resource-limited worker when
+/// `text` came from an untrusted submitter.
+///
+/// The returned recorded source hash is provenance, not a compatibility gate;
+/// re-encoding with it reproduces the canonical bytes. Ranked admission
+/// additionally checks the signed replay schema and network protocol against
+/// the selected verifier build manifest.
+///
+/// Policies in use:
+/// - public/ranked admission: [`DEFAULT_REPLAY_ADMISSION_LIMITS`];
+/// - local/browser playback in the isolated replay worker (bounded for a
+///   384-MiB worker while fitting the engine's maximum valid 16-MiB canonical
+///   Spellforge package): [`LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS`].
 pub fn decode_compact_bounded(
     text: &str,
     limits: &ReplayAdmissionLimits,
 ) -> Result<(String, ReplayData), FormatError> {
-    decode_compact_inner(text, Some(limits), None)
-}
-
-/// Decode a production artifact that must have been recorded by
-/// `required_hash`, under explicit limits.
-///
-/// This does not create a sandbox: callers must already run inside the
-/// documented resource-limited admission worker. The build hash is rejected
-/// before base64/zstd work.
-///
-/// Policies in use:
-/// - public/ranked admission of this build:
-///   `(text, &DEFAULT_REPLAY_ADMISSION_LIMITS, ENGINE_VERSION_HASH)`;
-/// - local/browser playback in the isolated replay worker (bounded for a
-///   384-MiB worker while fitting the engine's maximum valid 16-MiB canonical
-///   Spellforge package): `(text, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-///   ENGINE_VERSION_HASH)`;
-/// - server installations routing several approved build hashes pass the
-///   selected build's hash in that build's sandbox.
-///
-/// A build without durable source identity (`ENGINE_VERSION_HASH ==
-/// "unknown"`) cannot admit production replays.
-pub fn decode_compact_for_build(
-    text: &str,
-    limits: &ReplayAdmissionLimits,
-    required_hash: &str,
-) -> Result<(String, ReplayData), FormatError> {
-    if required_hash == "unknown" {
-        return Err(FormatError::BuildIdentityUnavailable);
-    }
-    validate_version_hash(required_hash)?;
-    decode_compact_inner(text, Some(limits), Some(required_hash))
+    decode_compact_inner(text, Some(limits))
 }
 
 fn decode_compact_inner(
     text: &str,
     limits: Option<&ReplayAdmissionLimits>,
-    required_hash: Option<&str>,
 ) -> Result<(String, ReplayData), FormatError> {
     let unbounded_limits;
     let parse_limits = if let Some(limits) = limits {
@@ -443,15 +422,6 @@ fn decode_compact_inner(
         &unbounded_limits
     };
     let preflight = preflight_compact_transport(text, parse_limits)?;
-    if let Some(required_hash) = required_hash
-        && preflight.version_hash != required_hash
-    {
-        return Err(FormatError::EngineVersionMismatch {
-            recorded: preflight.version_hash.to_owned(),
-            required: required_hash.to_owned(),
-        });
-    }
-
     let compressed = BASE64.decode(preflight.base64_payload.as_bytes())?;
     if let Some(limits) = limits {
         check_limit(
@@ -982,19 +952,6 @@ pub fn validate_replay_data(data: &ReplayData) -> Result<(), FormatError> {
     data.validate_layout().map_err(FormatError::InvalidLayout)
 }
 
-pub fn validate_engine_hash(hash: &str) -> Result<(), FormatError> {
-    if ENGINE_VERSION_HASH == "unknown" {
-        return Err(FormatError::BuildIdentityUnavailable);
-    }
-    if hash != ENGINE_VERSION_HASH {
-        return Err(FormatError::EngineVersionMismatch {
-            recorded: hash.to_owned(),
-            required: ENGINE_VERSION_HASH.to_owned(),
-        });
-    }
-    Ok(())
-}
-
 fn validate_version_hash(hash: &str) -> Result<(), FormatError> {
     if hash.len() != VERSION_HASH_BYTES
         || !hash
@@ -1488,7 +1445,7 @@ mod tests {
         assert!(raw.len() <= LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_decompressed_bytes);
 
         let compact = encode_file(&file);
-        let error = decode_compact_for_build(&compact, &DEFAULT_REPLAY_ADMISSION_LIMITS, TEST_HASH)
+        let error = decode_compact_bounded(&compact, &DEFAULT_REPLAY_ADMISSION_LIMITS)
             .expect_err("public lane should reject the maximum package by size");
         assert!(
             matches!(
@@ -1503,7 +1460,7 @@ mod tests {
             ),
             "public lane should reject at a byte-size boundary, got {error:?}"
         );
-        decode_compact_for_build(&compact, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS, TEST_HASH)
+        decode_compact_bounded(&compact, &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS)
             .expect("local isolated-worker limits must fit a max-valid Spellforge package");
     }
 
@@ -2254,12 +2211,18 @@ mod tests {
     }
 
     #[test]
-    fn required_build_is_rejected_before_payload_decode() {
-        let malformed_payload = format!("rhrec-{TEST_HASH}-AA");
-        let error =
-            decode_compact_for_build(&malformed_payload, &Default::default(), "abcdef012345")
-                .unwrap_err();
-        assert!(matches!(error, FormatError::EngineVersionMismatch { .. }));
+    fn admission_and_playback_accept_other_commits_without_rewriting_provenance() {
+        let file = sample_file();
+        let compact = encode_file(&file);
+        assert_ne!(TEST_HASH, ENGINE_VERSION_HASH);
+        for limits in [
+            &DEFAULT_REPLAY_ADMISSION_LIMITS,
+            &LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
+        ] {
+            let (hash, replay) = decode_compact_bounded(&compact, limits).unwrap();
+            assert_eq!(hash, TEST_HASH);
+            assert_eq!(encode_compact(&replay, &hash).unwrap(), compact);
+        }
     }
 
     #[test]

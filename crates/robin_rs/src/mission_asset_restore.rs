@@ -156,6 +156,22 @@ pub fn resolve_built_in_mission_assets(
     Ok(ResolvedMissionAssets::built_in(descriptor))
 }
 
+/// Exact archive bytes and their selection metadata, as handed to
+/// [`retain_live_mission_assets`] by a live launcher.
+///
+/// Not serde: this is a per-call bundle that borrows the caller's selection
+/// strings and carries exact in-memory archive bytes with no persisted form.
+pub(crate) struct LiveArchiveAssets<'a> {
+    pub mission_basename: &'a str,
+    pub map_filename: &'a str,
+    pub rhm_entry: &'a str,
+    pub requires_spellforge: bool,
+    pub mission_archive: Arc<[u8]>,
+    pub shared_archive: Option<Arc<[u8]>>,
+    pub installed: Option<InstalledArchiveLocator>,
+    pub distributed_cache: Option<DistributedCacheIdentity>,
+}
+
 /// Admit and retain exact archive bytes selected by a live launcher.
 ///
 /// Unlike cold restoration this function never resolves a path or cache key:
@@ -164,16 +180,19 @@ pub fn resolve_built_in_mission_assets(
 /// boundary: no caller can substitute bytes or metadata after admission. The
 /// returned package is derived from those same bytes, not supplied by callers.
 pub(crate) fn retain_live_mission_assets(
-    mission_basename: &str,
-    map_filename: &str,
-    rhm_entry: &str,
-    requires_spellforge: bool,
-    mission_archive: Arc<[u8]>,
-    shared_archive: Option<Arc<[u8]>>,
-    installed: Option<InstalledArchiveLocator>,
-    distributed_cache: Option<DistributedCacheIdentity>,
+    live: LiveArchiveAssets<'_>,
     files: Arc<robin_engine::sbfile::SbFileSystem>,
 ) -> Result<(ResolvedMissionAssets, Option<SpellforgePackage>), String> {
+    let LiveArchiveAssets {
+        mission_basename,
+        map_filename,
+        rhm_entry,
+        requires_spellforge,
+        mission_archive,
+        shared_archive,
+        installed,
+        distributed_cache,
+    } = live;
     let admitted = validate_mission_archives(
         &mission_archive,
         shared_archive.as_deref(),

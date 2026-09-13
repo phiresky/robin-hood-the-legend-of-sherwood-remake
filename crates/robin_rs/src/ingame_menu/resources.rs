@@ -2128,10 +2128,12 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
                 origin_y: 0,
             },
             &portrait,
-            0,
-            0,
-            3,
-            2,
+            super::layout::MenuRect {
+                x: 0,
+                y: 0,
+                w: 3,
+                h: 2,
+            },
             100,
         );
         // Legacy menu uploads expand RGB565 by shifting (max 248/252),

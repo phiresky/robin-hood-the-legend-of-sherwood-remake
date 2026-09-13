@@ -11,7 +11,9 @@ use robin_engine::mission_assets::{DistributedCacheIdentity, InstalledArchiveLoc
 use robin_engine::spellforge::SpellforgePackage;
 
 use crate::distributed_mod::{DISTRIBUTED_MOD_SCHEMA_VERSION, ValidatedDistributedMod};
-use crate::mission_asset_restore::{ResolvedMissionAssets, retain_live_mission_assets};
+use crate::mission_asset_restore::{
+    LiveArchiveAssets, ResolvedMissionAssets, retain_live_mission_assets,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
@@ -67,44 +69,29 @@ pub fn prepare_distributed_custom_mission(
         .as_ref()
         .map(Arc::clone);
     prepare_archive_assets(
-        &manifest.mission_basename,
-        &manifest.map_filename,
-        &manifest.mission_rhm_entry,
-        manifest.requires_spellforge,
-        mission_archive,
-        shared_archive,
-        installed,
-        Some(DistributedCacheIdentity {
-            schema_version: manifest.schema_version,
-            full_mod_sha256: manifest.full_mod_sha256,
-            encoded_bytes,
-        }),
+        LiveArchiveAssets {
+            mission_basename: &manifest.mission_basename,
+            map_filename: &manifest.map_filename,
+            rhm_entry: &manifest.mission_rhm_entry,
+            requires_spellforge: manifest.requires_spellforge,
+            mission_archive,
+            shared_archive,
+            installed,
+            distributed_cache: Some(DistributedCacheIdentity {
+                schema_version: manifest.schema_version,
+                full_mod_sha256: manifest.full_mod_sha256,
+                encoded_bytes,
+            }),
+        },
         files,
     )
 }
 
 fn prepare_archive_assets(
-    mission_basename: &str,
-    map_filename: &str,
-    rhm_entry: &str,
-    requires_spellforge: bool,
-    mission_archive: Arc<[u8]>,
-    shared_archive: Option<Arc<[u8]>>,
-    installed: Option<InstalledArchiveLocator>,
-    distributed_cache: Option<DistributedCacheIdentity>,
+    live: LiveArchiveAssets<'_>,
     files: Arc<robin_engine::sbfile::SbFileSystem>,
 ) -> Result<PreparedLiveMissionAssets, String> {
-    let (resolved, spellforge_package) = retain_live_mission_assets(
-        mission_basename,
-        map_filename,
-        rhm_entry,
-        requires_spellforge,
-        mission_archive,
-        shared_archive,
-        installed,
-        distributed_cache,
-        files,
-    )?;
+    let (resolved, spellforge_package) = retain_live_mission_assets(live, files)?;
     Ok(PreparedLiveMissionAssets {
         resolved: Arc::new(resolved),
         spellforge_package,
@@ -176,18 +163,20 @@ mod tests {
                 .then(|| zip_bytes(&[("lib/common.lua", b"return 7".to_vec())]).into());
             let before = MISSION_ARCHIVE_ADMISSIONS.get();
             let prepared = prepare_archive_assets(
-                "H01_Lin",
-                "lincoln",
-                selected,
-                requires_spellforge,
-                bytes.clone(),
-                shared.clone(),
-                Some(InstalledArchiveLocator {
-                    root: robin_engine::mission_assets::InstalledModsRoot::ConfiguredMods,
-                    mission_relative_path: "mission.zip".into(),
-                    shared_relative_path: shared.as_ref().map(|_| "shared.zip".into()),
-                }),
-                None,
+                LiveArchiveAssets {
+                    mission_basename: "H01_Lin",
+                    map_filename: "lincoln",
+                    rhm_entry: selected,
+                    requires_spellforge,
+                    mission_archive: bytes.clone(),
+                    shared_archive: shared.clone(),
+                    installed: Some(InstalledArchiveLocator {
+                        root: robin_engine::mission_assets::InstalledModsRoot::ConfiguredMods,
+                        mission_relative_path: "mission.zip".into(),
+                        shared_relative_path: shared.as_ref().map(|_| "shared.zip".into()),
+                    }),
+                    distributed_cache: None,
+                },
                 files.clone(),
             )
             .unwrap();
@@ -225,14 +214,16 @@ mod tests {
         corrupt[payload] ^= 1; // Stored entry now disagrees with its ZIP CRC.
         for (archive, map) in [(corrupt, "lincoln"), (bytes, "wrong_map")] {
             let error = prepare_archive_assets(
-                "H01_Lin",
-                map,
-                selected,
-                false,
-                archive.into(),
-                None,
-                None,
-                None,
+                LiveArchiveAssets {
+                    mission_basename: "H01_Lin",
+                    map_filename: map,
+                    rhm_entry: selected,
+                    requires_spellforge: false,
+                    mission_archive: archive.into(),
+                    shared_archive: None,
+                    installed: None,
+                    distributed_cache: None,
+                },
                 files.clone(),
             )
             .unwrap_err(); // Missing locator would also invalidate a descriptor.

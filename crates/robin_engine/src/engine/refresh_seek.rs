@@ -771,9 +771,7 @@ impl crate::engine::EngineInner {
                     "entity-target seek-refresh owner {owner:?} has no positive base seek distance"
                 )
             });
-        if self.try_handle_same_sector_actor_seek_wait(
-            sim, assets, owner, seq_id, elem_idx, target, flags,
-        ) {
+        if self.try_handle_same_sector_actor_seek_wait(sim, assets, request) {
             return;
         }
 
@@ -843,12 +841,16 @@ impl crate::engine::EngineInner {
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
-        owner: EntityId,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        target: EntityId,
-        flags: MoveFlags,
+        request: EntitySeekRequest,
     ) -> bool {
+        let EntitySeekRequest {
+            owner,
+            sequence_id: seq_id,
+            element_index: elem_idx,
+            target,
+            flags,
+            ..
+        } = request;
         let (owner_sector, target_sector, target_is_actor) =
             match self.get_entity(owner).zip(self.get_entity(target)) {
                 Some((owner_e, target_e)) => (

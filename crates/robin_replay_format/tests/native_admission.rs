@@ -73,8 +73,11 @@ fn hostile_transport_and_oversized_input_fail_closed() {
         native_admission::validate_in_native_child(&format!("rhrec-{ENGINE_VERSION_HASH}-AA"))
             .is_err()
     );
-    let wrong = compact(replay()).replacen(ENGINE_VERSION_HASH, "000000000000", 1);
-    assert!(native_admission::validate_in_native_child(&wrong).is_err());
+    let malformed_prefix = compact(replay()).replacen(ENGINE_VERSION_HASH, "not-a-commit", 1);
+    assert!(native_admission::validate_in_native_child(&malformed_prefix).is_err());
+    // The recorded source hash is provenance, not a compatibility gate.
+    let other_commit = compact(replay()).replacen(ENGINE_VERSION_HASH, "0123456789ab", 1);
+    native_admission::validate_in_native_child(&other_commit).unwrap();
 }
 
 #[test]

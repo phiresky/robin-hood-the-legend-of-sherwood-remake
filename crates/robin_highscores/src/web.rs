@@ -152,7 +152,6 @@ fn require_multipart_media_type(
 fn preflight_ranked_replay_transport(
     bytes: &[u8],
     artifact: &ArtifactRefV1,
-    required_build_hash: &str,
 ) -> Result<(), ApiError> {
     let actual_bytes = u64::try_from(bytes.len()).map_err(|_| {
         ApiError::PayloadTooLarge("replay byte length does not fit the transport".to_owned())
@@ -206,11 +205,9 @@ fn preflight_ranked_replay_transport(
             "ranked replay base64url text has non-canonical trailing bits".to_owned(),
         ));
     }
-    if preflight.version_hash != required_build_hash {
-        return Err(ApiError::BadRequest(
-            "ranked replay build identity does not match the signed build manifest".to_owned(),
-        ));
-    }
+    // The compact source hash is provenance, not a compatibility gate. The
+    // replay schema and network protocol are bound to the selected verifier
+    // build by the caller before this preflight.
     Ok(())
 }
 
@@ -1718,17 +1715,22 @@ async fn submit(
         );
         return Err(ApiError::Internal);
     }
-    let required_build_hash = build
-        .semantics()
-        .source_commit
-        .get(..robin_replay_format::VERSION_HASH_BYTES)
-        .ok_or_else(|| {
-            tracing::error!(
-                error_code = "submission_build_source_commit_short",
-                "validated build manifest has no compact replay build prefix"
-            );
-            ApiError::Internal
-        })?;
+    // Compatibility is decided by versions, not by the recording's source
+    // commit: the signed replay schema and session network protocol must both
+    // match the verifier build manifest selected by the signed offer.
+    if build.semantics().replay_schema_version != artifacts.replay.replay_schema_version
+        || build.semantics().network_protocol_version
+            != signed
+                .submission
+                .offer
+                .session_genesis
+                .claim
+                .network_protocol_version
+    {
+        return Err(ApiError::BadRequest(
+            "ranked replay and network versions do not match the signed build manifest".to_owned(),
+        ));
+    }
 
     // Read and lexically preflight the only replay field before reserving the
     // upload. This buffer is bounded by the configured canonical replay ceiling;
@@ -1751,11 +1753,7 @@ async fn submit(
     let replay_limit =
         usize::try_from(state.config.max_replay_bytes).map_err(|_| ApiError::Internal)?;
     let replay_bytes = read_bounded_field(replay_field, replay_limit).await?;
-    preflight_ranked_replay_transport(
-        &replay_bytes,
-        &artifacts.replay.artifact,
-        required_build_hash,
-    )?;
+    preflight_ranked_replay_transport(&replay_bytes, &artifacts.replay.artifact)?;
 
     let lease_ttl = Duration::from_secs(
         state
