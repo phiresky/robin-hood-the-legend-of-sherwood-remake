@@ -119,6 +119,50 @@ impl SoundManager {
         // after Pass 1 below resolves the concrete sample and reports its
         // decoded duration to the engine. Mixer completion never mutates sim.
 
+        self.update_jingle_and_dialog_completion(backend, alert_status);
+
+        // ── Start delayed sound sources the engine flagged ─────
+        // Engine ticks the timer down inside `perform_hourglass`,
+        // emits `SoundCommand::PlayDelayedSource(idx)` when it hits
+        // zero, and immediately re-rolls the timer using `sim_rng`.
+        // We just drain the queue and start playback. (Source timer
+        // reset used to live here, driven by audio-backend playback
+        // completion + a host RNG, which broke rollback determinism.)
+        for idx in pending_play_delayed_sources.drain(..) {
+            if !self.is_source_pending(idx)
+                && sources.get(idx).is_some_and(|s| s.is_effectively_active())
+            {
+                self.start_sound_source_pending(idx, sources);
+            }
+        }
+
+        // ── Update channel playing state ──
+        self.update_all_channels_info(backend);
+
+        self.apply_deferred_jingle_and_dialog_cleanup(backend);
+        self.update_music_loop(backend, rng);
+
+        // ── Play queued short FX ──
+        let fx_list = std::mem::take(&mut self.runtime.fx_to_play);
+        for fx in &fx_list {
+            self.play_sound_now(&fx.settings, &fx.params, backend, loader, rng, sources);
+        }
+
+        // ── Process pending sounds ──
+        let resolved_exclamations = self.process_pending_sounds(backend, loader, rng, sources);
+
+        // ── Update cache TTLs ──
+        self.persisted.sound_cache.update_cache_state();
+        resolved_exclamations
+    }
+
+    /// Hourglass phase: start the deferred jingle and poll music/dialog and
+    /// jingle completion.
+    fn update_jingle_and_dialog_completion(
+        &mut self,
+        backend: &mut dyn AudioBackend,
+        alert_status: AlertStatus,
+    ) {
         // Play deferred jingle (queued from script commands)
         if let Some(jingle) = self.runtime.pending_jingle.take() {
             self.play_jingle(jingle, backend);
@@ -143,25 +187,10 @@ impl SoundManager {
             self.runtime.jingle_channel = None;
             self.runtime.stop_jingle = true;
         }
+    }
 
-        // ── Start delayed sound sources the engine flagged ─────
-        // Engine ticks the timer down inside `perform_hourglass`,
-        // emits `SoundCommand::PlayDelayedSource(idx)` when it hits
-        // zero, and immediately re-rolls the timer using `sim_rng`.
-        // We just drain the queue and start playback. (Source timer
-        // reset used to live here, driven by audio-backend playback
-        // completion + a host RNG, which broke rollback determinism.)
-        for idx in pending_play_delayed_sources.drain(..) {
-            if !self.is_source_pending(idx)
-                && sources.get(idx).is_some_and(|s| s.is_effectively_active())
-            {
-                self.start_sound_source_pending(idx, sources);
-            }
-        }
-
-        // ── Update channel playing state ──
-        self.update_all_channels_info(backend);
-
+    /// Hourglass phase: free a finished jingle and halt a finished dialog.
+    fn apply_deferred_jingle_and_dialog_cleanup(&mut self, backend: &mut dyn AudioBackend) {
         // ── Handle deferred cleanup ──
         if self.runtime.stop_jingle {
             backend.free_jingle();
@@ -172,7 +201,15 @@ impl SoundManager {
             self.runtime.has_dialog = false;
             self.runtime.stop_dialog = false;
         }
+    }
 
+    /// Hourglass phase: decay mode weights, pick and start a mission music
+    /// loop, and push the music volume. Draws from `rng` exactly as before.
+    fn update_music_loop(
+        &mut self,
+        backend: &mut dyn AudioBackend,
+        rng: &mut dyn FnMut(u32) -> u32,
+    ) {
         // ── Decay music mode weights ──
         self.persisted.quiet_mode_weight = self.persisted.quiet_mode_weight.saturating_sub(1);
         self.persisted.alert_mode_weight = self.persisted.alert_mode_weight.saturating_sub(1);
@@ -225,19 +262,6 @@ impl SoundManager {
             backend.set_music_volume(self.persisted.geometry_engine.get_volume_for_music(true) / 2);
             self.runtime.update_music = false;
         }
-
-        // ── Play queued short FX ──
-        let fx_list = std::mem::take(&mut self.runtime.fx_to_play);
-        for fx in &fx_list {
-            self.play_sound_now(&fx.settings, &fx.params, backend, loader, rng, sources);
-        }
-
-        // ── Process pending sounds ──
-        let resolved_exclamations = self.process_pending_sounds(backend, loader, rng, sources);
-
-        // ── Update cache TTLs ──
-        self.persisted.sound_cache.update_cache_state();
-        resolved_exclamations
     }
 
     /// Process all pending sounds: expire finished ones, update params, play new.
@@ -249,6 +273,42 @@ impl SoundManager {
         sources: &SoundSourceManager,
     ) -> Vec<ResolvedHostExclamation> {
         let now = backend.get_ticks();
+        let resolved_exclamations = self.expire_pending_sounds(now, loader, rng, sources);
+
+        // Handle finished sounds. Channel cleanup stays host-side
+        // (audio-backend state, not in the rollback hash); the kind-specific
+        // sim transition for finished `Source`-type sounds (Single
+        // `active = false`, Volatile `sources.delete`) now fires from
+        // the sim-side drain in `Engine::perform_hourglass` using
+        // `SoundSimState::playing_sources` scheduled at activation
+        // time. Exclamation finish callbacks are likewise sim-side
+        // from `playing_exclamations`.
+        // We erase pending sounds on logical completion, but do not
+        // halt their mixer channels here. The channel either ends
+        // naturally or is stopped by explicit stop/deactivate paths.
+
+        self.update_pending_sound_params(backend);
+
+        // ── Pass 3: play queued sounds ──
+        let now = backend.get_ticks();
+        for i in 0..self.runtime.pending_sounds.len() {
+            if self.runtime.pending_sounds[i].channel != PendingChannel::Queued {
+                continue;
+            }
+            self.play_queued_pending_sound(i, now, backend, loader, rng, sources);
+        }
+        resolved_exclamations
+    }
+
+    /// Pass 1: initialize lengths (resolving exclamation samples) and remove
+    /// logically finished sounds.
+    fn expire_pending_sounds(
+        &mut self,
+        now: u32,
+        loader: &SampleLoader,
+        rng: &mut dyn FnMut(u32) -> u32,
+        sources: &SoundSourceManager,
+    ) -> Vec<ResolvedHostExclamation> {
         let mut resolved_exclamations = Vec::new();
 
         // ── Pass 1: initialize lengths and remove finished sounds ──
@@ -301,19 +361,11 @@ impl SoundManager {
             }
             !finished
         });
+        resolved_exclamations
+    }
 
-        // Handle finished sounds. Channel cleanup stays host-side
-        // (audio-backend state, not in the rollback hash); the kind-specific
-        // sim transition for finished `Source`-type sounds (Single
-        // `active = false`, Volatile `sources.delete`) now fires from
-        // the sim-side drain in `Engine::perform_hourglass` using
-        // `SoundSimState::playing_sources` scheduled at activation
-        // time. Exclamation finish callbacks are likewise sim-side
-        // from `playing_exclamations`.
-        // We erase pending sounds on logical completion, but do not
-        // halt their mixer channels here. The channel either ends
-        // naturally or is stopped by explicit stop/deactivate paths.
-
+    /// Pass 2: update mixer params of pending sounds if the listen point changed.
+    fn update_pending_sound_params(&mut self, backend: &mut dyn AudioBackend) {
         // ── Pass 2: update params if listen point changed ──
         if self.runtime.update_pending_sounds {
             for i in 0..self.runtime.pending_sounds.len() {
@@ -358,118 +410,120 @@ impl SoundManager {
             }
             self.runtime.update_pending_sounds = false;
         }
+    }
 
-        // ── Pass 3: play queued sounds ──
-        let now = backend.get_ticks();
-        for i in 0..self.runtime.pending_sounds.len() {
-            if self.runtime.pending_sounds[i].channel != PendingChannel::Queued {
-                continue;
-            }
+    /// Pass 3 body: try to start the queued pending sound at index `i`.
+    fn play_queued_pending_sound(
+        &mut self,
+        i: usize,
+        now: u32,
+        backend: &mut dyn AudioBackend,
+        loader: &SampleLoader,
+        rng: &mut dyn FnMut(u32) -> u32,
+        sources: &SoundSourceManager,
+    ) {
+        let settings = &self.runtime.pending_sounds[i].settings;
+        let sound_type = settings.sound_type;
+        let identifier = settings.identifier;
+        let low_priority =
+            sound_type == SoundType::Fx && self.persisted.sound_cache.is_material_fx(identifier);
 
-            let settings = &self.runtime.pending_sounds[i].settings;
-            let sound_type = settings.sound_type;
-            let identifier = settings.identifier;
-            let low_priority = sound_type == SoundType::Fx
-                && self.persisted.sound_cache.is_material_fx(identifier);
-
-            let Some(params) = self
-                .persisted
-                .geometry_engine
-                .get_logical_playing_params(settings, low_priority)
-            else {
-                if sound_type == SoundType::Exclamation {
-                    tracing::trace!(
-                        actor_id = ?self.runtime.pending_sounds[i].actor_id,
-                        identifier = identifier,
-                        "exclamation skipped: no logical playing params"
-                    );
-                }
-                self.runtime.pending_sounds[i].channel = PendingChannel::Inaudible;
-                continue;
-            };
-
-            let speech_variant = self.runtime.pending_sounds[i].speech_variant;
-            let entry_info = Self::get_entry_info(
-                &mut self.persisted.sound_cache,
-                settings,
-                speech_variant,
-                true,
-                loader,
-                rng,
-                sources,
-            );
-            let Some(info) = entry_info else {
-                if sound_type == SoundType::Exclamation {
-                    tracing::trace!(
-                        actor_id = ?self.runtime.pending_sounds[i].actor_id,
-                        identifier = identifier,
-                        "exclamation skipped: no entry_info (sample file missing?)"
-                    );
-                }
-                continue;
-            };
-
-            // Compute play position
-            let start = self.runtime.pending_sounds[i].start_time_ms;
-            let length = self.runtime.pending_sounds[i].length_ms;
-            let elapsed = time_elapsed(start, now);
-            let mut position = if length > 0 {
-                elapsed as f32 / length as f32
-            } else {
-                0.0
-            };
-
-            // Handle looping
-            if self.runtime.pending_sounds[i].settings.sound_type == SoundType::Source
-                && let Some(idx) = self.runtime.pending_sounds[i].source_index
-                && sources
-                    .get(idx)
-                    .is_some_and(|s| s.source_kind == SoundSourceKind::Looped)
-            {
-                position -= position.floor();
-            }
-            position = position.clamp(0.0, 0.999);
-
-            let mut hw_params = params;
-            if self.persisted.use_3d_sound {
-                SoundGeometry::get_3d_playing_params(&mut hw_params);
-            } else {
-                SoundGeometry::get_2d_playing_params(&mut hw_params);
-            }
-
-            let play_result = backend.play_request(PlaybackRequest {
-                asset: &info.file_name,
-                category: playback_category(sound_type),
-                looping: info.loop_sample,
-                fraction: position,
-                volume: hw_params.volume_2d,
-                spatial_position: self.persisted.use_3d_sound.then_some(hw_params.position_3d),
-            });
-
-            if let Some(channel) = play_result {
-                let actor_id = self.runtime.pending_sounds[i].actor_id;
-
-                self.update_channel_info(channel, sound_type, info.cache_key, actor_id);
-
-                self.runtime.pending_sounds[i].channel = PendingChannel::Assigned(channel);
-                if sound_type == SoundType::Exclamation {
-                    tracing::trace!(
-                        actor_id = ?actor_id,
-                        file = info.file_name.as_str(),
-                        channel,
-                        volume_2d = hw_params.volume_2d,
-                        "exclamation playing"
-                    );
-                }
-            } else if sound_type == SoundType::Exclamation {
+        let Some(params) = self
+            .persisted
+            .geometry_engine
+            .get_logical_playing_params(settings, low_priority)
+        else {
+            if sound_type == SoundType::Exclamation {
                 tracing::trace!(
                     actor_id = ?self.runtime.pending_sounds[i].actor_id,
-                    file = info.file_name.as_str(),
-                    "exclamation skipped: backend.play_sound_at returned None"
+                    identifier = identifier,
+                    "exclamation skipped: no logical playing params"
                 );
             }
+            self.runtime.pending_sounds[i].channel = PendingChannel::Inaudible;
+            return;
+        };
+
+        let speech_variant = self.runtime.pending_sounds[i].speech_variant;
+        let entry_info = Self::get_entry_info(
+            &mut self.persisted.sound_cache,
+            settings,
+            speech_variant,
+            true,
+            loader,
+            rng,
+            sources,
+        );
+        let Some(info) = entry_info else {
+            if sound_type == SoundType::Exclamation {
+                tracing::trace!(
+                    actor_id = ?self.runtime.pending_sounds[i].actor_id,
+                    identifier = identifier,
+                    "exclamation skipped: no entry_info (sample file missing?)"
+                );
+            }
+            return;
+        };
+
+        // Compute play position
+        let start = self.runtime.pending_sounds[i].start_time_ms;
+        let length = self.runtime.pending_sounds[i].length_ms;
+        let elapsed = time_elapsed(start, now);
+        let mut position = if length > 0 {
+            elapsed as f32 / length as f32
+        } else {
+            0.0
+        };
+
+        // Handle looping
+        if self.runtime.pending_sounds[i].settings.sound_type == SoundType::Source
+            && let Some(idx) = self.runtime.pending_sounds[i].source_index
+            && sources
+                .get(idx)
+                .is_some_and(|s| s.source_kind == SoundSourceKind::Looped)
+        {
+            position -= position.floor();
         }
-        resolved_exclamations
+        position = position.clamp(0.0, 0.999);
+
+        let mut hw_params = params;
+        if self.persisted.use_3d_sound {
+            SoundGeometry::get_3d_playing_params(&mut hw_params);
+        } else {
+            SoundGeometry::get_2d_playing_params(&mut hw_params);
+        }
+
+        let play_result = backend.play_request(PlaybackRequest {
+            asset: &info.file_name,
+            category: playback_category(sound_type),
+            looping: info.loop_sample,
+            fraction: position,
+            volume: hw_params.volume_2d,
+            spatial_position: self.persisted.use_3d_sound.then_some(hw_params.position_3d),
+        });
+
+        if let Some(channel) = play_result {
+            let actor_id = self.runtime.pending_sounds[i].actor_id;
+
+            self.update_channel_info(channel, sound_type, info.cache_key, actor_id);
+
+            self.runtime.pending_sounds[i].channel = PendingChannel::Assigned(channel);
+            if sound_type == SoundType::Exclamation {
+                tracing::trace!(
+                    actor_id = ?actor_id,
+                    file = info.file_name.as_str(),
+                    channel,
+                    volume_2d = hw_params.volume_2d,
+                    "exclamation playing"
+                );
+            }
+        } else if sound_type == SoundType::Exclamation {
+            tracing::trace!(
+                actor_id = ?self.runtime.pending_sounds[i].actor_id,
+                file = info.file_name.as_str(),
+                "exclamation skipped: backend.play_sound_at returned None"
+            );
+        }
     }
 
     /// Add a sound source to the pending sounds list.
