@@ -127,16 +127,10 @@ pub(crate) fn text(
     if value.chars().any(char::is_control) {
         return Err(ValidationError::ControlCharacter { field });
     }
-    if value.chars().any(|character| {
-        matches!(
-            character,
-            '\u{061c}'
-                | '\u{200e}'
-                | '\u{200f}'
-                | '\u{202a}'..='\u{202e}'
-                | '\u{2066}'..='\u{2069}'
-        )
-    }) {
+    if value
+        .chars()
+        .any(robin_util::display_text::is_unsafe_display_character)
+    {
         return Err(ValidationError::ControlCharacter { field });
     }
     Ok(())
@@ -207,6 +201,18 @@ mod tests {
         for control in ['\u{061c}', '\u{200e}', '\u{202e}', '\u{2066}', '\u{2069}'] {
             assert!(text("test", &format!("Robin{control}Hood"), 100).is_err());
         }
+    }
+
+    #[test]
+    fn public_text_rejects_invisible_formatting_and_accepts_plain_names() {
+        for invisible in ['\u{200b}', '\u{feff}', '\u{2060}'] {
+            assert_eq!(
+                text("test", &format!("Robin{invisible}Hood"), 100),
+                Err(ValidationError::ControlCharacter { field: "test" }),
+                "{invisible:?}"
+            );
+        }
+        assert_eq!(text("test", "Robin Hood", 100), Ok(()));
     }
 
     #[test]
