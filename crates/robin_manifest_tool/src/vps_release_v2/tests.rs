@@ -1140,12 +1140,9 @@ fn inherited_candidate_fd_rejects_closed_reused_wrong_and_identity_mismatch() ->
         "a regular file candidate descriptor was accepted"
     );
     let reusable_candidate = File::open(&fixture.candidate)?;
-    let reused_fd = nix_legacy::fcntl::fcntl(
-        reusable_candidate.as_raw_fd(),
-        nix_legacy::fcntl::FcntlArg::F_DUPFD_CLOEXEC(512),
-    )?;
-    let reused = InheritedFd(reused_fd);
-    nix_legacy::unistd::dup2(wrong.as_raw_fd(), reused.0)?;
+    let mut reused_fd = rustix::io::fcntl_dupfd_cloexec(&reusable_candidate, 512)?;
+    rustix::io::dup2(&wrong, &mut reused_fd)?;
+    let reused = InheritedFd(std::os::fd::IntoRawFd::into_raw_fd(reused_fd));
     assert!(
         pin_inherited_vps_candidate_root_at_with(
             &commit,
@@ -1640,9 +1637,12 @@ fn source_consume_rejects_root_substitution_and_unsafe_topologies() -> Result<()
     );
 
     let fixture = source_consume_fixture()?;
-    nix_legacy::unistd::mkfifo(
+    rustix::fs::mknodat(
+        rustix::fs::CWD,
         &fixture.logical_source.join("special.fifo"),
-        nix_legacy::sys::stat::Mode::S_IRUSR,
+        rustix::fs::FileType::Fifo,
+        rustix::fs::Mode::RUSR,
+        0,
     )?;
     assert!(
         consume_fixture(&fixture).is_err(),

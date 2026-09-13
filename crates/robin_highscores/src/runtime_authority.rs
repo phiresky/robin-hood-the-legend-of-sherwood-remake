@@ -2122,15 +2122,10 @@ mod tests {
         let executable = File::open(std::env::current_exe().unwrap()).unwrap();
         let candidate = File::open(candidate_root.path()).unwrap();
         let nested_mount = File::open(nested_source.path()).unwrap();
-        for fd in [
-            executable.as_raw_fd(),
-            candidate.as_raw_fd(),
-            nested_mount.as_raw_fd(),
-        ] {
-            let flags = nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_GETFD).unwrap();
-            let mut flags = nix_legacy::fcntl::FdFlag::from_bits_truncate(flags);
-            flags.remove(nix_legacy::fcntl::FdFlag::FD_CLOEXEC);
-            nix_legacy::fcntl::fcntl(fd, nix_legacy::fcntl::FcntlArg::F_SETFD(flags)).unwrap();
+        for file in [&executable, &candidate, &nested_mount] {
+            let mut flags = rustix::io::fcntl_getfd(file).unwrap();
+            flags.remove(rustix::io::FdFlags::CLOEXEC);
+            rustix::io::fcntl_setfd(file, flags).unwrap();
         }
 
         for with_nested_mount in [false, true] {
