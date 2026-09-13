@@ -164,7 +164,7 @@ pub enum CanonicalDocumentError {
 }
 
 /// Prefix canonical JSON with an exact protocol domain before signing.
-pub(crate) fn domain_separated_bytes(
+pub fn domain_separated_bytes(
     domain: &'static [u8],
     value: &impl Serialize,
 ) -> Result<Vec<u8>, CanonicalError> {

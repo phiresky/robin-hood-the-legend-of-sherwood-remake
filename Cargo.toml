@@ -19,6 +19,7 @@ members = [
     "crates/robin_lua",
     "crates/robin_ranked_verification",
     "crates/robin_run_protocol",
+    "crates/robin_run_types",
     "crates/robin_spellforge",
     "crates/robin_script_types",
     "crates/robin_util",
@@ -74,6 +75,8 @@ robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # Simulation consumers need wire types, not Ed25519. Authentication callers
 # opt into the protocol's authentication feature in their member manifest.
 robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }
+# Plain run-identity types shared by robin_engine and robin_run_protocol.
+robin_run_types = { path = "crates/robin_run_types" }
 robin_spellforge = { path = "crates/robin_spellforge" }
 robin_script_types = { path = "crates/robin_script_types" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
