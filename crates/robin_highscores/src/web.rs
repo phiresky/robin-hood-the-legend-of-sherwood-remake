@@ -1,5 +1,9 @@
+mod extract;
 mod readiness;
 
+#[cfg(test)]
+use extract::effective_client_ip;
+use extract::{ClientIp, ValidatedJson};
 #[cfg(test)]
 use readiness::backup_age_ms_with_active_release;
 use readiness::{backup_age_ms, ensure_backup_ready};
@@ -19,7 +23,7 @@ use crate::config::{AdmissionProfile, CompetitionConfig, ViewerContentRequiremen
 use crate::db::{BoardComposition, BoardCursor, BoardRow};
 #[cfg(test)]
 use crate::db::{SubmissionUploadIntent, SubmissionUploadReservation};
-use crate::error::ApiError;
+use crate::error::{ApiError, OptionExt as _};
 use crate::identity::validate_username;
 #[cfg(test)]
 use crate::identity::verify_signature;
@@ -31,7 +35,9 @@ use crate::storage_admission::{
 };
 use crate::{CampaignStore, Database, ReplayStore, ServerConfig};
 use axum::body::Body;
-use axum::extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State};
+#[cfg(test)]
+use axum::extract::ConnectInfo;
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
     X_CONTENT_TYPE_OPTIONS,
@@ -78,7 +84,9 @@ use sha2::Digest as _;
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
+#[cfg(test)]
+use std::net::SocketAddr;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,7 +110,7 @@ fn submission_body_limit(config: &ServerConfig) -> Result<usize, ApiError> {
         .checked_add(starting_campaign)
         .and_then(|value| value.checked_add(config.max_metadata_bytes))
         .and_then(|value| value.checked_add(MULTIPART_ENVELOPE_OVERHEAD_BYTES))
-        .ok_or(ApiError::Internal)
+        .or_internal("submission body limit overflows usize")
 }
 
 async fn read_bounded_field(
@@ -1023,7 +1031,7 @@ async fn leaderboard_metadata(
             .manifests
             .rulesets
             .get(&ruleset_digest)
-            .ok_or(ApiError::Internal)?;
+            .or_internal("published ruleset missing from manifest registry")?;
         if !matches!(
             published.operational_status,
             RulesetOperationalStatusV1::Active
@@ -1054,7 +1062,9 @@ async fn leaderboard_metadata(
                     profile
                         .campaign_content_manifest_id
                         .as_deref()
-                        .ok_or(ApiError::Internal)?,
+                        .or_internal(
+                            "campaign admission profile has no campaign content manifest",
+                        )?,
                 )?,
             };
             campaign.categories = vec![BoardCategoryV1::Campaign];
@@ -1111,11 +1121,10 @@ async fn leaderboard_metadata(
 /// authorization.
 async fn fresh_run_preflight_grant(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<FreshRunPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<FreshRunPreflightGrantV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
     request.validate()?;
     verify_request_signature(
         request.claim.host_public_key.as_bytes(),
@@ -1155,11 +1164,11 @@ async fn fresh_run_preflight_grant(
         .manifests
         .rulesets
         .get(&request.claim.ranked_session.ruleset_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("admitted ruleset missing from manifest registry")?;
     let signing_key = ed25519_dalek::SigningKey::from_bytes(
         &state
             .run_preflight_grant_secret_key
-            .ok_or(ApiError::Internal)?,
+            .or_internal("run preflight grant secret key is not loaded")?,
     );
     let authority_public_key = PublicKey32::from_bytes(signing_key.verifying_key().to_bytes());
     if authority_public_key != published.manifest.run_preflight_grant_public_key {
@@ -1173,9 +1182,9 @@ async fn fresh_run_preflight_grant(
                 .config
                 .run_preflight_ttl_seconds
                 .checked_mul(1_000)
-                .ok_or(ApiError::Internal)?,
+                .or_internal("run preflight TTL in milliseconds overflows u64")?,
         )
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run preflight grant expiry overflows u64")?;
     let claim = FreshRunPreflightGrantClaimV1 {
         schema_version: SCHEMA_VERSION_V1,
         grant_id: opaque(&uuid::Uuid::now_v7().to_string())?,
@@ -1217,11 +1226,10 @@ async fn fresh_run_preflight_grant(
 /// predecessor from SQLite and signs the resulting authority grant.
 async fn campaign_continuation_preflight_grant(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<CampaignContinuationPreflightRequestV1>,
 ) -> Result<(StatusCode, Json<CampaignContinuationPreflightGrantV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
     request.validate()?;
     verify_request_signature(
         request.claim.host_public_key.as_bytes(),
@@ -1272,7 +1280,7 @@ async fn campaign_continuation_preflight_grant(
         .manifests
         .rulesets
         .get(&request.claim.ranked_session.ruleset_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("admitted ruleset missing from manifest registry")?;
     let mut predecessor_keys = predecessor
         .participants
         .iter()
@@ -1305,7 +1313,7 @@ async fn campaign_continuation_preflight_grant(
     let signing_key = ed25519_dalek::SigningKey::from_bytes(
         &state
             .run_preflight_grant_secret_key
-            .ok_or(ApiError::Internal)?,
+            .or_internal("run preflight grant secret key is not loaded")?,
     );
     let authority_public_key = PublicKey32::from_bytes(signing_key.verifying_key().to_bytes());
     if authority_public_key != published.manifest.run_preflight_grant_public_key {
@@ -1318,9 +1326,9 @@ async fn campaign_continuation_preflight_grant(
                 .config
                 .run_preflight_ttl_seconds
                 .checked_mul(1_000)
-                .ok_or(ApiError::Internal)?,
+                .or_internal("run preflight TTL in milliseconds overflows u64")?,
         )
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run preflight grant expiry overflows u64")?;
     let claim = CampaignContinuationPreflightGrantClaimV1 {
         schema_version: SCHEMA_VERSION_V1,
         grant_id: opaque(&uuid::Uuid::now_v7().to_string())?,
@@ -1363,11 +1371,10 @@ async fn campaign_continuation_preflight_grant(
 
 async fn competition_run_grant(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<CompetitionRunGrantRequestV1>,
 ) -> Result<(StatusCode, Json<CompetitionRunGrantV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
     request.validate()?;
     verify_request_signature(
         request.claim.host_public_key.as_bytes(),
@@ -1398,7 +1405,7 @@ async fn competition_run_grant(
         .admission_profiles
         .iter()
         .find(|profile| profile.id == competition_config.admission_profile_id)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("competition admission profile missing from config")?;
     let ranked = &request.claim.ranked_session;
     let expected_campaign_content = match competition.content {
         RunContentIdentityV1::Mission { .. } => None,
@@ -1422,7 +1429,7 @@ async fn competition_run_grant(
     let signing_key = ed25519_dalek::SigningKey::from_bytes(
         &state
             .competition_run_grant_secret_key
-            .ok_or(ApiError::Internal)?,
+            .or_internal("competition run grant secret key is not loaded")?,
     );
     let authority_public_key = PublicKey32::from_bytes(signing_key.verifying_key().to_bytes());
     if authority_public_key != competition.competition_run_grant_public_key {
@@ -1482,11 +1489,10 @@ async fn competition_run_grant(
 
 async fn submission_offer(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<SubmissionOfferRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOfferV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Submission).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::Submission).await?;
     request.validate()?;
     if usize::from(request.participant_instance_count) != request.participant_claims.len() {
         return Err(ApiError::BadRequest(
@@ -1539,7 +1545,7 @@ async fn submission_offer(
             .manifests
             .rulesets
             .get(&request.ruleset_manifest_sha256)
-            .ok_or(ApiError::Internal)?;
+            .or_internal("admitted ruleset missing from manifest registry")?;
         if grant.claim.grant_authority_public_key
             != published.manifest.run_preflight_grant_public_key
         {
@@ -1569,7 +1575,7 @@ async fn submission_offer(
             .manifests
             .rulesets
             .get(&request.ruleset_manifest_sha256)
-            .ok_or(ApiError::Internal)?;
+            .or_internal("admitted ruleset missing from manifest registry")?;
         if grant.claim.grant_authority_public_key
             != published.manifest.run_preflight_grant_public_key
         {
@@ -1626,7 +1632,7 @@ async fn submission_offer(
         .manifests
         .content_manifests
         .get(&content_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("admitted content manifest missing from manifest registry")?;
     ranked
         .validate_content_manifest(content_manifest)
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
@@ -1637,9 +1643,10 @@ async fn submission_offer(
         .transpose()?;
     let expected_campaign_content = match request.scope_request {
         ScopeRequestV1::IndividualLevel => None,
-        ScopeRequestV1::CampaignGenesis | ScopeRequestV1::CampaignContinuation { .. } => {
-            Some(campaign_content_manifest_sha256.ok_or(ApiError::Internal)?)
-        }
+        ScopeRequestV1::CampaignGenesis | ScopeRequestV1::CampaignContinuation { .. } => Some(
+            campaign_content_manifest_sha256
+                .or_internal("campaign admission profile has no campaign content manifest")?,
+        ),
     };
     if ranked.starting_campaign_sha256 != starting_state.campaign_sha256()
         || ranked.starting_campaign_byte_length != starting_state.starting_campaign_byte_length()
@@ -1833,7 +1840,7 @@ async fn submit(
             .config
             .upload_timeout_seconds
             .checked_add(30)
-            .ok_or(ApiError::Internal)?,
+            .or_internal("upload timeout plus grace overflows u64")?,
     );
     let ingestion_state = &state;
     let ingestion = |resume_uploaded| {
@@ -1994,11 +2001,10 @@ async fn verify_reserved_upload_storage_identity(
 
 async fn submission_owner_status_challenge(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<SubmissionOwnerStatusChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<SubmissionOwnerStatusChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::OwnerStatus).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::OwnerStatus).await?;
     request.validate()?;
     let issued = state
         .database
@@ -2025,9 +2031,8 @@ async fn submission_owner_status_challenge(
 async fn submission_private_status(
     State(state): State<AppState>,
     Path(submission_id): Path<String>,
-    Json(envelope): Json<SubmissionOwnerStatusEnvelopeV1>,
+    ValidatedJson(envelope): ValidatedJson<SubmissionOwnerStatusEnvelopeV1>,
 ) -> Result<Json<SubmissionOwnerStatusResponseV1>, ApiError> {
-    envelope.validate()?;
     if envelope.challenge.submission_id.as_str() != submission_id {
         return Err(ApiError::Unauthorized);
     }
@@ -2259,7 +2264,7 @@ async fn leaderboard(
         .manifests
         .rulesets
         .get(&digest(&profile.ruleset_id)?)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("profile ruleset missing from manifest registry")?;
     let mut allowed_rulesets = Vec::new();
     for (id, candidate) in &state.config.manifests.rulesets {
         if filter
@@ -2306,7 +2311,7 @@ async fn leaderboard(
     for (offset, row) in rows.iter().enumerate() {
         let position = first_position
             .checked_add(u64::try_from(offset).map_err(|_| ApiError::Internal)?)
-            .ok_or(ApiError::Internal)?;
+            .or_internal("leaderboard position overflows u64")?;
         entries.push(board_entry(
             row,
             position,
@@ -2322,7 +2327,10 @@ async fn leaderboard(
                     filter_sha256: filter_sha,
                     accepted_sequence_watermark,
                     visibility_revision,
-                    metric_value: rows.last().ok_or(ApiError::Internal)?.metric_value,
+                    metric_value: rows
+                        .last()
+                        .or_internal("leaderboard page with a next cursor has no rows")?
+                        .metric_value,
                     position: entry.position,
                     rank: entry.rank,
                     accepted_sequence: i64::try_from(entry.accepted_sequence)
@@ -2415,7 +2423,7 @@ async fn run_detail(
         .manifests
         .builds
         .get(&Digest32::from_bytes(run.build_manifest_id))
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run build manifest missing from manifest registry")?;
     let viewer = viewer_launch(
         &state.config,
         &profile,
@@ -2498,7 +2506,7 @@ async fn run_detail(
         .manifests
         .rulesets
         .get(&detail.ruleset_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run ruleset missing from manifest registry")?;
     if !matches!(
         published.operational_status,
         RulesetOperationalStatusV1::Active
@@ -2514,7 +2522,7 @@ async fn run_detail(
                 .manifests
                 .campaign_content_manifests
                 .get(&digest)
-                .ok_or(ApiError::Internal)
+                .or_internal("run campaign content manifest missing from manifest registry")
         })
         .transpose()?;
     detail
@@ -2556,7 +2564,7 @@ async fn full_campaign_detail(state: &AppState, run_id: &str) -> Result<RunDetai
             .manifests
             .builds
             .get(&Digest32::from_bytes(session.build_manifest_id))
-            .ok_or(ApiError::Internal)?;
+            .or_internal("campaign session build manifest missing from manifest registry")?;
         let verification_proof = session.verification_proof.clone();
         let public_result_sha256 = verification_proof
             .canonical_digest()
@@ -2578,7 +2586,7 @@ async fn full_campaign_detail(state: &AppState, run_id: &str) -> Result<RunDetai
         let verified_kind = verification_proof
             .campaign_session_kind
             .as_ref()
-            .ok_or(ApiError::Internal)?;
+            .or_internal("campaign verification proof has no session kind")?;
         let (session_kind, display_name, mission) = match verified_kind {
             robin_run_protocol::CampaignSessionKindV1::FieldMission { mission_id } => (
                 FullCampaignSessionKindV1::FieldMission {
@@ -2710,7 +2718,7 @@ async fn full_campaign_detail(state: &AppState, run_id: &str) -> Result<RunDetai
         .manifests
         .rulesets
         .get(&detail.ruleset_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run ruleset missing from manifest registry")?;
     if !matches!(
         published.operational_status,
         RulesetOperationalStatusV1::Active
@@ -2722,7 +2730,7 @@ async fn full_campaign_detail(state: &AppState, run_id: &str) -> Result<RunDetai
         .manifests
         .campaign_content_manifests
         .get(&Digest32::from_bytes(run.campaign_content_manifest_id))
-        .ok_or(ApiError::Internal)?;
+        .or_internal("run campaign content manifest missing from manifest registry")?;
     detail
         .validate_against_ruleset(published, Some(campaign_content))
         .map_err(|_error| {
@@ -2871,7 +2879,7 @@ fn ensure_ruleset_is_public(config: &ServerConfig, ruleset: [u8; 32]) -> Result<
         .manifests
         .rulesets
         .get(&Digest32::from_bytes(ruleset))
-        .ok_or(ApiError::Internal)?;
+        .or_internal("ruleset missing from manifest registry")?;
     if !matches!(
         published.operational_status,
         RulesetOperationalStatusV1::Active
@@ -2929,11 +2937,10 @@ async fn replay_response(
 
 async fn username_challenge(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<UsernameChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<UsernameChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::UsernameUpdate).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::UsernameUpdate).await?;
     request.validate()?;
     let challenge = state
         .database
@@ -2959,9 +2966,8 @@ async fn username_challenge(
 async fn update_username(
     State(state): State<AppState>,
     Path(public_key): Path<String>,
-    Json(update): Json<UsernameUpdateEnvelopeV1>,
+    ValidatedJson(update): ValidatedJson<UsernameUpdateEnvelopeV1>,
 ) -> Result<Json<PlayerProfileV1>, ApiError> {
-    update.validate()?;
     let path_key = PublicKey32::from_str(&public_key)
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     if path_key != update.public_key {
@@ -3056,7 +3062,9 @@ async fn player_run_history(
     let has_more = records.len() > usize::from(query.limit);
     records.truncate(usize::from(query.limit));
     let next_cursor = if has_more {
-        let last = records.last().ok_or(ApiError::Internal)?;
+        let last = records
+            .last()
+            .or_internal("player history page with more records has no records")?;
         Some(encode_player_history_cursor(
             &PlayerHistoryCursorToken {
                 player_public_key: key,
@@ -3143,7 +3151,7 @@ async fn player_run_history(
             .manifests
             .rulesets
             .get(&Digest32::from_bytes(best.ruleset_id))
-            .ok_or(ApiError::Internal)?;
+            .or_internal("personal best ruleset missing from manifest registry")?;
         let subject = match best.mission_id {
             Some(mission_id) => LeaderboardSubjectV1::Mission {
                 mission_id,
@@ -3192,11 +3200,10 @@ async fn player_run_history(
 
 async fn deletion_challenge(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
+    client: ClientIp,
     Json(request): Json<DeletionChallengeRequestV1>,
 ) -> Result<(StatusCode, Json<DeletionChallengeV1>), ApiError> {
-    rate_limit_challenge(&state, peer, &headers, ChallengePurpose::Deletion).await?;
+    rate_limit_challenge(&state, &client, ChallengePurpose::Deletion).await?;
     request.validate()?;
     // Do not check target ownership before authentication. A check here would
     // let anyone submit candidate public keys and link an anonymous run to its
@@ -3236,9 +3243,8 @@ async fn deletion_challenge(
 
 async fn deletion_request(
     State(state): State<AppState>,
-    Json(request): Json<DeletionRequestEnvelopeV1>,
+    ValidatedJson(request): ValidatedJson<DeletionRequestEnvelopeV1>,
 ) -> Result<Json<DeletionReceiptV1>, ApiError> {
-    request.validate()?;
     verify_request_signature(
         request.challenge.public_key.as_bytes(),
         request.signature.as_bytes(),
@@ -3259,7 +3265,7 @@ async fn deletion_request(
         .map(|days| {
             days.checked_mul(24 * 60 * 60)
                 .map(Duration::from_secs)
-                .ok_or(ApiError::Internal)
+                .or_internal("tombstone retention in seconds overflows u64")
         })
         .transpose()?;
     let deleted = state
@@ -3286,11 +3292,9 @@ async fn deletion_request(
 
 async fn abuse_report(
     State(state): State<AppState>,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Json(report): Json<AbuseReportV1>,
+    client: ClientIp,
+    ValidatedJson(report): ValidatedJson<AbuseReportV1>,
 ) -> Result<(StatusCode, Json<AbuseReportAcceptedV1>), ApiError> {
-    report.validate()?;
     let (target_kind, target_id) = match &report.target {
         AbuseReportTargetV1::Run { run_id } => ("run", run_id.as_str().to_owned()),
         AbuseReportTargetV1::Player { public_key } => ("player", public_key.to_string()),
@@ -3302,7 +3306,7 @@ async fn abuse_report(
         AbuseReportCategoryV1::Copyright => "copyright",
         AbuseReportCategoryV1::Other => "other",
     };
-    let address = effective_client_ip(&state.config, peer, &headers)?;
+    let address = client.resolve(&state.config)?;
     let active_ruleset_ids = active_ruleset_ids(&state.config);
     let reporter_ip_hash =
         crate::authentication::sign(&state.cursor_hmac_key, address.to_string().as_bytes());
@@ -3499,7 +3503,7 @@ async fn campaign_receipt(
         .manifests
         .rulesets
         .get(&ruleset_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("ruleset missing from manifest registry")?;
     let campaign_content_manifest_sha256 =
         Digest32::from_bytes(private.campaign_content_manifest_id);
     let campaign_content = state
@@ -3507,7 +3511,7 @@ async fn campaign_receipt(
         .manifests
         .campaign_content_manifests
         .get(&campaign_content_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("campaign content manifest missing from manifest registry")?;
     private
         .verification_result
         .validate_campaign_complete_evidence(
@@ -3606,7 +3610,7 @@ async fn starting_state(
                 .manifests
                 .rulesets
                 .get(&digest(&profile.ruleset_id)?)
-                .ok_or(ApiError::Internal)?;
+                .or_internal("profile ruleset missing from manifest registry")?;
             let claims = request
                 .participant_claims
                 .iter()
@@ -3650,7 +3654,9 @@ async fn starting_state(
                         profile
                             .campaign_content_manifest_id
                             .as_deref()
-                            .ok_or(ApiError::Internal)?,
+                            .or_internal(
+                                "campaign admission profile has no campaign content manifest",
+                            )?,
                     )?
                     .into_bytes()
                 || predecessor.rules_config_id != digest(&profile.config_id)?.into_bytes()
@@ -3711,7 +3717,7 @@ fn profile_with_session_config(
                 .manifests
                 .rules_configs
                 .get(&published.manifest.rules_config_sha256)
-                .ok_or(ApiError::Internal)?;
+                .or_internal("baseline rules config missing from manifest registry")?;
             if custom.rules != baseline.rules
                 || custom.replay_schema_version != baseline.replay_schema_version
             {
@@ -3835,7 +3841,7 @@ fn validate_fresh_run_preflight_profile(
             profile
                 .campaign_content_manifest_id
                 .as_deref()
-                .ok_or(ApiError::Internal)?,
+                .or_internal("campaign admission profile has no campaign content manifest")?,
         )?),
     };
     let expected_start = match request.claim.scope {
@@ -3863,7 +3869,7 @@ fn validate_fresh_run_preflight_profile(
         .manifests
         .content_manifests
         .get(&content_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("admitted content manifest missing from manifest registry")?;
     ranked
         .validate_content_manifest(content)
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
@@ -3940,7 +3946,7 @@ fn validate_continuation_preflight_profile(
         .manifests
         .content_manifests
         .get(&content_manifest_sha256)
-        .ok_or(ApiError::Internal)?;
+        .or_internal("admitted content manifest missing from manifest registry")?;
     ranked
         .validate_content_manifest(content)
         .map_err(|error| ApiError::Conflict(error.to_string()))?;
@@ -3948,7 +3954,7 @@ fn validate_continuation_preflight_profile(
         profile
             .campaign_content_manifest_id
             .as_deref()
-            .ok_or(ApiError::Internal)?,
+            .or_internal("campaign admission profile has no campaign content manifest")?,
     )?;
     if request.claim.starting_campaign.media_type != RANKED_CAMPAIGN_MEDIA_TYPE_V1
         || request.claim.starting_campaign.sha256.into_bytes() != predecessor.final_campaign_sha256
@@ -4267,7 +4273,7 @@ fn competition_summary(
         .competitions
         .get(&competition_manifest_sha256)
         .cloned()
-        .ok_or(ApiError::Internal)?;
+        .or_internal("competition manifest missing from manifest registry")?;
     Ok(CompetitionSummaryV1 {
         competition_manifest_sha256,
         state: if now < manifest.starts_at_unix_ms {
@@ -4295,7 +4301,7 @@ fn competition_by_digest(
         .competitions
         .get(&requested)
         .cloned()
-        .ok_or(ApiError::Internal)?;
+        .or_internal("competition manifest missing from manifest registry")?;
     Ok((competition, manifest))
 }
 
@@ -4437,42 +4443,11 @@ fn verify_session_attestations(request: &SubmissionOfferRequestV1) -> Result<(),
 
 async fn rate_limit_challenge(
     state: &AppState,
-    peer: SocketAddr,
-    headers: &HeaderMap,
+    client: &ClientIp,
     purpose: ChallengePurpose,
 ) -> Result<(), ApiError> {
-    let address = effective_client_ip(&state.config, peer, headers)?;
+    let address = client.resolve(&state.config)?;
     state.challenge_rate_limiter.check(address, purpose).await
-}
-
-fn effective_client_ip(
-    config: &crate::config::ServerConfig,
-    peer: SocketAddr,
-    headers: &HeaderMap,
-) -> Result<IpAddr, ApiError> {
-    let trusted = config
-        .trusted_proxy_cidrs
-        .iter()
-        .filter_map(|network| network.parse::<ipnet::IpNet>().ok())
-        .any(|network| network.contains(&peer.ip()));
-    if !trusted {
-        return Ok(peer.ip());
-    }
-    let forwarded = headers
-        .get("x-forwarded-for")
-        .ok_or_else(|| ApiError::BadRequest("trusted proxy omitted X-Forwarded-For".to_owned()))?
-        .to_str()
-        .map_err(|_| {
-            ApiError::BadRequest("trusted proxy sent invalid X-Forwarded-For".to_owned())
-        })?;
-    if forwarded.contains(',') || forwarded.trim() != forwarded {
-        return Err(ApiError::BadRequest(
-            "trusted proxy must supply exactly one canonical X-Forwarded-For address".to_owned(),
-        ));
-    }
-    forwarded
-        .parse::<IpAddr>()
-        .map_err(|_| ApiError::BadRequest("trusted proxy sent invalid X-Forwarded-For".to_owned()))
 }
 
 fn scope_request_name(scope: &ScopeRequestV1) -> &'static str {
@@ -6488,31 +6463,31 @@ mod tests {
 
         let mut config = ServerConfig::default();
         assert_eq!(
-            effective_client_ip(&config, peer, &headers).unwrap(),
+            effective_client_ip(&config, peer, headers.get("x-forwarded-for")).unwrap(),
             peer.ip()
         );
 
         config.trusted_proxy_cidrs = vec!["10.0.0.2/32".to_owned()];
         assert_eq!(
-            effective_client_ip(&config, peer, &headers).unwrap(),
+            effective_client_ip(&config, peer, headers.get("x-forwarded-for")).unwrap(),
             peer.ip()
         );
 
         config.trusted_proxy_cidrs = vec!["10.0.0.1/32".to_owned()];
         assert_eq!(
-            effective_client_ip(&config, peer, &headers).unwrap(),
+            effective_client_ip(&config, peer, headers.get("x-forwarded-for")).unwrap(),
             forwarded
         );
 
         headers.insert("x-forwarded-for", "not-an-address".parse().unwrap());
-        assert!(effective_client_ip(&config, peer, &headers).is_err());
+        assert!(effective_client_ip(&config, peer, headers.get("x-forwarded-for")).is_err());
         headers.remove("x-forwarded-for");
-        assert!(effective_client_ip(&config, peer, &headers).is_err());
+        assert!(effective_client_ip(&config, peer, headers.get("x-forwarded-for")).is_err());
         headers.insert(
             "x-forwarded-for",
             "203.0.113.77, 198.51.100.1".parse().unwrap(),
         );
-        assert!(effective_client_ip(&config, peer, &headers).is_err());
+        assert!(effective_client_ip(&config, peer, headers.get("x-forwarded-for")).is_err());
     }
 
     #[tokio::test]

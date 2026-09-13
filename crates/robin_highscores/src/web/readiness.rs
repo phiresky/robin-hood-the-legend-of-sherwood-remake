@@ -2,7 +2,7 @@
 
 use super::AppState;
 use crate::backup::{BackupReleaseIdentityV2, BackupStatusV4, load_backup_release_identity};
-use crate::error::ApiError;
+use crate::error::{ApiError, OptionExt as _};
 use tokio::io::AsyncReadExt as _;
 
 pub(super) async fn ensure_backup_ready(state: &AppState) -> Result<(), ApiError> {
@@ -12,7 +12,7 @@ pub(super) async fn ensure_backup_ready(state: &AppState) -> Result<(), ApiError
     ) {
         let maximum = maximum_hours
             .checked_mul(60 * 60 * 1_000)
-            .ok_or(ApiError::Internal)?;
+            .or_internal("maximum backup age in milliseconds overflows u64")?;
         if age > maximum {
             tracing::error!(age, maximum, "most recent verified backup is stale");
             return Err(ApiError::Unavailable);

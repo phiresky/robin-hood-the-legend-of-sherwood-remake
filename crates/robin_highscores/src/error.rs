@@ -203,6 +203,31 @@ impl From<crate::campaign_store::CampaignStoreError> for ApiError {
     }
 }
 
+/// Turns a missing value that the service's own invariants guarantee (a
+/// registry entry validated at startup, a checked arithmetic result, a
+/// non-empty page) into `ApiError::Internal`, logging which invariant broke.
+pub(crate) trait OptionExt<T> {
+    fn or_internal(self, context: &'static str) -> Result<T, ApiError>;
+}
+
+impl<T> OptionExt<T> for Option<T> {
+    #[track_caller]
+    fn or_internal(self, context: &'static str) -> Result<T, ApiError> {
+        match self {
+            Some(value) => Ok(value),
+            None => {
+                let location = std::panic::Location::caller();
+                tracing::error!(
+                    context,
+                    %location,
+                    "internal invariant violated: required value is missing"
+                );
+                Err(ApiError::Internal)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
