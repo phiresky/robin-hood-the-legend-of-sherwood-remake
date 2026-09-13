@@ -6,14 +6,15 @@
 //! refactor accidentally adds mutable dereferencing, exposes the wrapped
 //! value, or gives host code owned or mutable `EngineInner` access.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use syn::visit::{self, Visit};
 use syn::{Fields, Item, ItemImpl, ReturnType, Type, UseTree, Visibility};
+
+mod support;
+#[path = "support/syntax.rs"]
+mod syntax;
 
 #[test]
 fn architecture_contracts_share_one_parsed_source_inventory() {
@@ -78,10 +79,8 @@ fn production_entity_publication_has_no_fixture_behavior() {
     }
     let mut guard = PublicationGuard { methods: 0 };
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    collect_rust_files(&manifest.join("src/engine"), &mut files);
-    for path in files {
-        guard.visit_file(&parse_rust_path(&path));
+    for file in support::rust_sources(&manifest.join("src/engine")).iter() {
+        guard.visit_file(&syntax::parse(file));
     }
     assert_eq!(
         guard.methods, 2,
@@ -90,8 +89,7 @@ fn production_entity_publication_has_no_fixture_behavior() {
 }
 
 fn parse_rust(relative_path: &str) -> Rc<syn::File> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
-    parse_rust_path(&path)
+    syntax::parse_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path))
 }
 
 fn achievement_tracking_collections_are_owned_by_the_aggregate() {
@@ -111,38 +109,6 @@ fn achievement_tracking_collections_are_owned_by_the_aggregate() {
             .all(|field| matches!(field.vis, Visibility::Inherited)),
         "achievement evidence must change through named tracking operations"
     );
-}
-
-fn parse_rust_path(path: &Path) -> Rc<syn::File> {
-    // syn nodes carry thread-local spans. Keep the cache in the single source
-    // inventory test rather than forcing them into a cross-thread global.
-    thread_local! {
-        static SOURCES: RefCell<HashMap<PathBuf, Rc<syn::File>>> = RefCell::new(HashMap::new());
-    }
-    SOURCES.with_borrow_mut(|sources| {
-        Rc::clone(sources.entry(path.to_path_buf()).or_insert_with(|| {
-            let source = fs::read_to_string(path)
-                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-            Rc::new(
-                syn::parse_file(&source)
-                    .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display())),
-            )
-        }))
-    })
-}
-
-fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
-    let entries = fs::read_dir(directory)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", directory.display()));
-    for entry in entries {
-        let path = entry.expect("directory entry should be readable").path();
-        if path.is_dir() {
-            collect_rust_files(&path, files);
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
-            files.push(path);
-        }
-    }
-    files.sort();
 }
 
 fn path_ends_with(ty: &Type, expected: &str) -> bool {
@@ -191,14 +157,12 @@ fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
 
     let forbidden_mutable_projection_traits = ["DerefMut", "AsMut", "BorrowMut", "IndexMut"];
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut source_files = Vec::new();
-    collect_rust_files(&manifest.join("src"), &mut source_files);
     let mut offenders = Vec::new();
     let mut api_exposures = Vec::new();
-    for path in source_files {
-        let syntax = parse_rust_path(&path);
+    for file in support::rust_sources(&manifest.join("src")).iter() {
+        let syntax = syntax::parse(file);
         let mut visitor = EngineImplVisitor {
-            path: &path,
+            path: &file.path,
             forbidden_traits: &forbidden_mutable_projection_traits,
             trait_offenders: &mut offenders,
             api_exposures: &mut api_exposures,
@@ -218,15 +182,12 @@ fn engine_has_one_private_inner_owner_and_no_ownership_escape() {
 
 fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut source_files = Vec::new();
-    collect_rust_files(&manifest.join("src"), &mut source_files);
-
     let mut mutable_engine_methods = Vec::new();
     let mut mutable_inner_methods = Vec::new();
-    for path in source_files {
-        let syntax = parse_rust_path(&path);
+    for file in support::rust_sources(&manifest.join("src")).iter() {
+        let syntax = syntax::parse(file);
         let mut visitor = PublicMutableMethodVisitor {
-            path: &path,
+            path: &file.path,
             mutable_engine_methods: &mut mutable_engine_methods,
             mutable_inner_methods: &mut mutable_inner_methods,
         };
@@ -301,19 +262,16 @@ fn parity_reconstruction_opener_requires_explicit_tooling_feature() {
 
 fn engine_inner_is_a_borrow_only_projection() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut source_files = Vec::new();
-    collect_rust_files(&manifest.join("src"), &mut source_files);
-
     let mut offenders = Vec::new();
-    for path in source_files {
-        let syntax = parse_rust_path(&path);
+    for file in support::rust_sources(&manifest.join("src")).iter() {
+        let syntax = syntax::parse(file);
         let mut visitor = EngineInnerOwnershipVisitor {
-            path: &path,
+            path: &file.path,
             offenders: &mut offenders,
         };
         visitor.visit_file(&syntax);
         let mut capability_visitor = PublicEngineInnerCapabilityVisitor {
-            path: &path,
+            path: &file.path,
             offenders: &mut offenders,
         };
         capability_visitor.visit_file(&syntax);
@@ -660,15 +618,12 @@ fn engine_inner_guards_detect_mutation_and_ownership_escapes() {
 
 fn legacy_hourglass_adapters_are_test_only_and_use_explicit_input() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut source_files = Vec::new();
-    collect_rust_files(&manifest.join("src"), &mut source_files);
-
     let mut adapters = Vec::new();
     let mut offenders = Vec::new();
-    for path in source_files {
-        let syntax = parse_rust_path(&path);
+    for file in support::rust_sources(&manifest.join("src")).iter() {
+        let syntax = syntax::parse(file);
         let mut visitor = HourglassAdapterVisitor {
-            path: &path,
+            path: &file.path,
             adapters: &mut adapters,
             offenders: &mut offenders,
         };
@@ -1047,26 +1002,29 @@ fn host_guard_allows_only_shared_readonly_engine_inner_projections() {
 
 fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    for relative in [
+    let trees = [
         "../robin_rs/src",
         "../robin_rs/examples",
         "../robin_rs/tests",
-    ] {
-        let directory = manifest.join(relative);
-        if directory.is_dir() {
-            collect_rust_files(&directory, &mut files);
-        }
-    }
-    assert!(!files.is_empty(), "found no host-crate Rust targets");
+    ]
+    .into_iter()
+    .map(|relative| manifest.join(relative))
+    .filter(|directory| directory.is_dir())
+    .map(|directory| support::rust_sources(&directory))
+    .collect::<Vec<_>>();
+    assert!(
+        trees.iter().any(|files| !files.is_empty()),
+        "found no host-crate Rust targets"
+    );
 
     let mut offenders = Vec::new();
-    for path in files {
-        let syntax = parse_rust_path(&path);
+    for file in trees.iter().flat_map(|files| files.iter()) {
+        let path = &file.path;
+        let syntax = syntax::parse(file);
         if source_has_forbidden_engine_inner_use(&syntax) {
             offenders.push(
                 path.strip_prefix(manifest.join("../.."))
-                    .unwrap_or(&path)
+                    .unwrap_or(path)
                     .display()
                     .to_string(),
             );
