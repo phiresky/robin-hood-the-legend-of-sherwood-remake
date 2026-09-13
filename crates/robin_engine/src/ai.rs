@@ -14,25 +14,6 @@ use crate::coordinates::MapPoint;
 use crate::element::EntityId;
 use crate::order::AiOrderIntent;
 
-/// Score a building-door candidate exactly like Original
-/// Nearest-door selection narrows maximum norm to 16 bits, then applies both penalties with
-/// wrapping 16-bit arithmetic.
-pub(crate) fn legacy_nearest_door_distance(
-    dx: f32,
-    dy: f32,
-    sector_changes: bool,
-    layer_changes: bool,
-) -> u16 {
-    let mut distance = dx.abs().max(dy.abs()) as u16;
-    if sector_changes {
-        distance = distance.wrapping_add(500);
-    }
-    if layer_changes {
-        distance = distance.wrapping_add(300);
-    }
-    distance
-}
-
 pub(crate) mod parity_trace;
 mod types;
 pub(crate) use types::optional_ai_handle;

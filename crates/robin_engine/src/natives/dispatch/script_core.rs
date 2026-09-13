@@ -263,14 +263,14 @@ impl NativeContext<'_, '_> {
                 match code {
                     31 => {
                         self.apply_script_selection(0, true);
-                        self.emit_barrier(DeferredCommand::SelectPC {
+                        self.script_effects_mut().emit_barrier(DeferredCommand::SelectPC {
                             actor: 0,
                             select: true,
                         });
                     }
                     0 => {
                         self.apply_script_selection(0, false);
-                        self.emit_barrier(DeferredCommand::SelectPC {
+                        self.script_effects_mut().emit_barrier(DeferredCommand::SelectPC {
                             actor: 0,
                             select: false,
                         });
@@ -341,7 +341,7 @@ impl NativeContext<'_, '_> {
             // avoid needing engine access.
             FreezeAll => {
                 let freeze = stack.pop_i32() != 0;
-                self.emit_barrier(DeferredCommand::FreezeAll { freeze });
+                self.script_effects_mut().emit_barrier(DeferredCommand::FreezeAll { freeze });
                 0
             }
 

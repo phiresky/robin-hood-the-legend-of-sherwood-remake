@@ -3929,7 +3929,7 @@ impl EnemyAi {
                 }
                 let dx = (door.point_out.x - ctx.position.x).abs();
                 let dy = (door.point_out.y - ctx.position.y).abs();
-                let distance = crate::ai::legacy_nearest_door_distance(
+                let distance = super::util::legacy_nearest_door_distance(
                     dx,
                     dy,
                     Some(door.sector_out) != my_sector_num,

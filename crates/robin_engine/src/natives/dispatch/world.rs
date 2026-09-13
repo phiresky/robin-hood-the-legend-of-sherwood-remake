@@ -54,10 +54,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
-                            patch_index,
-                            effects,
-                        });
+                        self.script_effects_mut().emit_barrier(
+                            DeferredCommand::ProcessPatchEffects {
+                                patch_index,
+                                effects,
+                            },
+                        );
                     }
                 }
                 1
@@ -75,10 +77,12 @@ impl NativeContext<'_, '_> {
                     if !effects.is_empty()
                         && let Some(patch_index) = crate::patch::PatchIndex::new(patch_index as u32)
                     {
-                        self.emit_barrier(DeferredCommand::ProcessPatchEffects {
-                            patch_index,
-                            effects,
-                        });
+                        self.script_effects_mut().emit_barrier(
+                            DeferredCommand::ProcessPatchEffects {
+                                patch_index,
+                                effects,
+                            },
+                        );
                     }
                 }
                 1
@@ -173,23 +177,27 @@ impl NativeContext<'_, '_> {
 
             // --- sound ---
             SuspendAllSoundSources => {
-                self.emit_sound(SoundCommand::SuspendAll);
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::SuspendAll);
                 1
             }
             ResumeAllSoundSources => {
-                self.emit_sound(SoundCommand::ResumeAll);
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::ResumeAll);
                 1
             }
             ActivateSoundSource => {
                 let ss_h = stack.pop_i32();
                 if ss_h != 0 {
-                    self.emit_sound(SoundCommand::Activate(ss_h));
+                    self.script_effects_mut()
+                        .emit_sound(SoundCommand::Activate(ss_h));
                 }
                 1
             }
             DeactivateSoundSource => {
                 let ss_h = stack.pop_i32();
-                self.emit_sound(SoundCommand::Deactivate(ss_h));
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::Deactivate(ss_h));
                 1
             }
             DestroySoundSource => {
@@ -200,7 +208,8 @@ impl NativeContext<'_, '_> {
                         .expect("DestroySoundSource requires live sound-source state")
                         .delete(index);
                 }
-                self.emit_sound(SoundCommand::Destroy(ss_h));
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::Destroy(ss_h));
                 1
             }
 
@@ -326,10 +335,11 @@ impl NativeContext<'_, '_> {
                 // EngineInner applies positioning (inactive + special layer +
                 // building sector + gate point_in + DisableAllActionsTemp
                 // for PCs) after the script step.
-                self.emit_barrier(DeferredCommand::PutActorInBuilding {
-                    actor: actor_h,
-                    building: bld_h,
-                });
+                self.script_effects_mut()
+                    .emit_barrier(DeferredCommand::PutActorInBuilding {
+                        actor: actor_h,
+                        building: bld_h,
+                    });
                 0
             }
             SetBuildingActive => {
@@ -587,10 +597,11 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.script_domains.scrolls.status.insert(scroll_h, status);
-                self.emit_engine(EngineCommand::SetScrollStatus {
-                    scroll_handle: scroll_h,
-                    status,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::SetScrollStatus {
+                        scroll_handle: scroll_h,
+                        status,
+                    });
                 0
             }
             AttachScrollToNPC => {

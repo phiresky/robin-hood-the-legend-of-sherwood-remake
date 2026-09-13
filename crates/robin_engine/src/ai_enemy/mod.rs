@@ -127,7 +127,9 @@ use util::soldier_detects_position_180;
 
 /// Enemy/soldier AI state. Extends [`AiController`] with villain-specific
 /// fields.
-#[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Debug, Clone, Default, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode,
+)]
 pub struct EnemyAi {
     /// Base AI controller (contains all common state).
     pub base: AiController,
@@ -404,124 +406,6 @@ pub struct EnemyAi {
     pub is_archer_unit: bool,
 }
 
-impl Default for EnemyAi {
-    fn default() -> Self {
-        Self {
-            base: AiController::default(),
-            pending_special_strike: false,
-            missed_pc: None,
-            pc_missed: false,
-            pc_gone_away_in_this_direction: 0,
-            frame_when_missed_charly: 0,
-            heard_nets: Vec::new(),
-            detected_something_there: Position::default(),
-            investigating_distraction: false,
-            last_seek_direction_index: 0,
-            beggar_to_examine: None,
-            beggar_is_npc: false,
-            current_task_priority: task_priority::NONE,
-            minimal_task_priority: task_priority::NONE,
-            new_task_priority: task_priority::NONE,
-            number_of_different_checkpoints: 0,
-            thirsty: true,
-            position_change_locked_for_test: false,
-            other_bodies_to_examine: Vec::new(),
-            beggars_to_control: Vec::new(),
-            positions_of_beggars_to_control: Vec::new(),
-            seen_dead_body: false,
-            seeking_charly: false,
-            my_seek_points: Vec::new(),
-            personal_seek_point_1: None,
-            personal_seek_point_2: None,
-            seek_center: Position::default(),
-            actual_seek_point: None,
-            seek_point_view_directions: Vec::new(),
-            seek_flags: SeekFlags::empty(),
-            old_odds: 0,
-            gather_position: Position::default(),
-            gather_direction: 0,
-            gather_position_instructed: false,
-            search_charly_way: Vec::new(),
-            officers_position: Position::default(),
-            previous_state: AiState::Default as i32,
-            previous_substate: Substate::DefaultOnPost as i32,
-            reported_to_officer: false,
-            missed_soldier_timer: 0,
-            old_money: 0,
-            other_seen_money: Vec::new(),
-            other_seen_ale: Vec::new(),
-            money_fight_enemies: Vec::new(),
-            money_fight_victims: Vec::new(),
-            archer_behind_me: None,
-            shield_bearer_before_me: None,
-            shield_bearer_direction: 0,
-            phalanx_aborted: false,
-            changed_to_alert_path: false,
-            already_seen_bodies: Vec::new(),
-            alerted_us: Vec::new(),
-            pending_alert_soldier_candidates: Vec::new(),
-            pending_group_instruction_candidates: Vec::new(),
-            pending_group_instruction_seek_flags: 0,
-            pending_group_instruction_clear_location_after_accept: false,
-            my_shooting_point: None,
-            my_archery_sector: None,
-            my_archery_sector_index: 0,
-            my_archery_point_index: crate::sector::ArcheryPointIdx::default(),
-            my_archery_point_increment: 0,
-            enemy_seen_below: false,
-            enemy_had_this_elevation: 0,
-            known_enemy_strike_1: None,
-            known_enemy_strike_2: None,
-            known_enemy_strike_3: None,
-            return_to_patrol_point: Position::default(),
-            fleeing_seen_enemy_counter: 0,
-            last_stimulus_dispatched_to_patrol: None,
-            character_id: 0,
-            old_life_points: 0,
-            initial_life_points: 0,
-            list_them: Vec::new(),
-            ambush_point_array_reset: false,
-            ambush_point_status: Vec::new(),
-            forced_next_battle_decision: Decision::None,
-            reset_battle_decision: false,
-            soldier_profile_iq: 50,
-            soldier_profile_courage: 50,
-            soldier_profile_shooting: 50,
-            soldier_profile_vip: false,
-            sword_range: 40, // default before profile lookup
-            hth_weapon_id: 0,
-            sword_is_charge_weapon: false,
-            next_sword_strike_frame: 0,
-            pending_sword_strike_consideration: false,
-            pending_combat_insult_after_strike_consideration: false,
-            soldier_profile_bee_time: 0,
-            soldier_profile_pride: 0,
-            soldier_profile_hearing_factor: 1.0,
-            soldier_profile_rank: ProfileRank::Soldier,
-            soldier_profile_initiative: 50,
-            soldier_profile_beer: 0,
-            ale_reliable_distraction: false,
-            soldier_profile_money: 0,
-            soldier_profile_apple: 0,
-            soldier_profile_whistle: 0,
-            soldier_profile_duty: false,
-            soldier_profile_endurance: 0,
-            is_vip: false,
-            company_number: 0,
-            left_combat_neighbour: None,
-            right_combat_neighbour: None,
-            attentive: false,
-            will_be_attentive: false,
-            forced_attentive: false,
-            guarded_pc: None,
-            my_line_jump: None,
-            tower_guard: false,
-            combat_trainer: false,
-            is_archer_unit: false,
-        }
-    }
-}
-
 impl EnemyAi {
     #[track_caller]
     fn required_primary_target(&self, context: &'static str) -> AiEntityHandle {
@@ -599,6 +483,17 @@ impl EnemyAi {
         Self {
             base,
             reset_battle_decision: true,
+            // Original base-class constructor values that differ from the
+            // zero/empty `Default` of their field types.
+            thirsty: true,
+            previous_state: AiState::Default as i32,
+            previous_substate: Substate::DefaultOnPost as i32,
+            soldier_profile_iq: 50,
+            soldier_profile_courage: 50,
+            soldier_profile_shooting: 50,
+            sword_range: 40, // default before profile lookup
+            soldier_profile_hearing_factor: 1.0,
+            soldier_profile_initiative: 50,
             ..Default::default()
         }
     }

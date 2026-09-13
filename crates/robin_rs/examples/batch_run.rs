@@ -107,7 +107,7 @@ fn run_initialize(file: scb::ScbFile) -> Result<Option<ScriptResult>, String> {
         // and a nested return are not claims of completed initialization.
         status: format!("{stop:?}"),
         execution: Some(ExecutionStats {
-            deferred_commands: context.engine_commands().len(),
+            deferred_commands: context.script_effects().engine_commands().len(),
             ip: activation.ip,
             frames: activation.frames.len(),
         }),

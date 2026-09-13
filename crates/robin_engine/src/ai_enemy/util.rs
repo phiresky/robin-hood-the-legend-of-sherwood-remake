@@ -63,7 +63,7 @@ crate::bitcode_adapters::impl_native_bitcode_flags!(GetNearestFlags, u16);
 
 bitflags! {
     /// Flags controlling how a seek operation is performed.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct SeekFlags: u16 {
         const LOCATION_END              = 0x0001;
         const LOCATION_FIRST            = 0x0002;
@@ -718,6 +718,25 @@ pub(super) fn ai_square_distance_world(
     let dy = (target.y - me.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
     let dz = target.z - me.z;
     dx * dx + dy * dy + dz * dz
+}
+
+/// Score a building-door candidate exactly like Original
+/// Nearest-door selection narrows maximum norm to 16 bits, then applies both penalties with
+/// wrapping 16-bit arithmetic.
+pub(crate) fn legacy_nearest_door_distance(
+    dx: f32,
+    dy: f32,
+    sector_changes: bool,
+    layer_changes: bool,
+) -> u16 {
+    let mut distance = dx.abs().max(dy.abs()) as u16;
+    if sector_changes {
+        distance = distance.wrapping_add(500);
+    }
+    if layer_changes {
+        distance = distance.wrapping_add(300);
+    }
+    distance
 }
 
 #[cfg(test)]

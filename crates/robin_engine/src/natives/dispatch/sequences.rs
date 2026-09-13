@@ -12,7 +12,8 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraTo") {
                     if let Some((x, y)) = self.resolve_location_pos(loc) {
-                        self.emit_engine(EngineCommand::ScrollCameraTo { x, y, speed: 2.0 });
+                        self.script_effects_mut()
+                            .emit_engine(EngineCommand::ScrollCameraTo { x, y, speed: 2.0 });
                     } else {
                         tracing::warn!(target: "script","Script error: ScrollCameraTo unresolved location {loc}");
                     }
@@ -24,7 +25,8 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "ScrollCameraSlowlyTo") {
                     if let Some((x, y)) = self.resolve_location_pos(loc) {
-                        self.emit_engine(EngineCommand::ScrollCameraTo { x, y, speed });
+                        self.script_effects_mut()
+                            .emit_engine(EngineCommand::ScrollCameraTo { x, y, speed });
                     } else {
                         tracing::warn!(target: "script",
                             "Script error: ScrollCameraSlowlyTo unresolved location {loc}"
@@ -37,7 +39,8 @@ impl NativeContext<'_, '_> {
                 let loc = stack.pop_i32();
                 if Self::check_camera_location(loc, "JumpCameraTo") {
                     if let Some((x, y)) = self.resolve_location_pos(loc) {
-                        self.emit_engine(EngineCommand::JumpCameraTo { x, y });
+                        self.script_effects_mut()
+                            .emit_engine(EngineCommand::JumpCameraTo { x, y });
                     } else {
                         tracing::warn!(target: "script","Script error: JumpCameraTo unresolved location {loc}");
                     }
@@ -50,22 +53,26 @@ impl NativeContext<'_, '_> {
                 if zoom != 0.5 && zoom != 1.0 && zoom != 2.0 {
                     tracing::warn!(target: "script","Script error: SetZoomLevel with invalid zoom {zoom}");
                 } else {
-                    self.emit_engine(EngineCommand::SetZoomLevel { zoom });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::SetZoomLevel { zoom });
                 }
                 0
             }
             StartDialog => {
                 let dialog_id = stack.pop_i32();
-                self.emit_engine(EngineCommand::StartDialog { dialog_id });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::StartDialog { dialog_id });
                 0
             }
             DisplayMap => {
                 let show = stack.pop_i32();
-                self.emit_engine(EngineCommand::DisplayMap { show: show != 0 });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::DisplayMap { show: show != 0 });
                 0
             }
             DisplayConsole => {
-                self.emit_engine(EngineCommand::DisplayConsole);
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::DisplayConsole);
                 0
             }
             CustomizeMinimapDisplay => {
@@ -74,20 +81,22 @@ impl NativeContext<'_, '_> {
                 if actor_handle == 0 {
                     tracing::warn!(target: "script","Script error: CustomizeMinimapDisplay called without an actor");
                 } else {
-                    self.emit_engine(EngineCommand::CustomizeMinimapDisplay {
-                        actor_handle,
-                        dot_type,
-                    });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::CustomizeMinimapDisplay {
+                            actor_handle,
+                            dot_type,
+                        });
                 }
                 0
             }
             DefineFlatTrajectoryZone => {
                 let apex_height = stack.pop_i32();
                 let location_handle = stack.pop_i32();
-                self.emit_engine(EngineCommand::DefineFlatTrajectoryZone {
-                    location_handle,
-                    apex_height,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::DefineFlatTrajectoryZone {
+                        location_handle,
+                        apex_height,
+                    });
                 0
             }
             AddShortBriefing => {
@@ -109,21 +118,25 @@ impl NativeContext<'_, '_> {
             }
             ChooseVictoryDefeatText => {
                 let id = stack.pop_i32();
-                self.emit_engine(EngineCommand::ChooseVictoryDefeatText { id });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::ChooseVictoryDefeatText { id });
                 0
             }
             DisplayPopupText => {
                 let text_id = stack.pop_i32();
-                self.emit_engine(EngineCommand::DisplayPopupText { text_id });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::DisplayPopupText { text_id });
                 0
             }
             DisplaySherwoodReport => {
-                self.emit_engine(EngineCommand::DisplaySherwoodReport);
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::DisplaySherwoodReport);
                 0
             }
             FadeToBlack => {
                 let speed = stack.pop_i32();
-                self.emit_engine(EngineCommand::FadeToBlack { speed });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::FadeToBlack { speed });
                 0
             }
             SetOutlineDisplay => {
@@ -131,7 +144,8 @@ impl NativeContext<'_, '_> {
                 let display = val != 0;
                 if self.script_domains.mission_ui.outline_display != display {
                     self.script_domains.mission_ui.outline_display = display;
-                    self.emit_engine(EngineCommand::SetOutlineDisplay { display });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::SetOutlineDisplay { display });
                 }
                 0
             }
@@ -161,9 +175,10 @@ impl NativeContext<'_, '_> {
                 0
             }
             PlayTrapJingle => {
-                self.emit_sound(SoundCommand::PlayJingle(
-                    crate::sound::Jingle::TrapTriggered,
-                ));
+                self.script_effects_mut()
+                    .emit_sound(SoundCommand::PlayJingle(
+                        crate::sound::Jingle::TrapTriggered,
+                    ));
                 0
             }
 
@@ -674,20 +689,21 @@ impl NativeContext<'_, '_> {
                         tracing::warn!("RecordEnterGame: invalid actor handle {actor}");
                         return 0;
                     }
-                    self.emit_engine(EngineCommand::SetActorLocation {
-                        actor_handle: actor,
-                        x: ox,
-                        y: oy,
-                        dest_layer_sector,
-                        // The engine handler probes the
-                        // destination sector's top plane at
-                        // `(dx, dy)` and stamps
-                        // `(ox, oy + elev, elev)` as the 3D
-                        // spawn — so the actor walks in at the
-                        // same altitude as the destination's
-                        // ground slope.
-                        spawn_elevation_probe: Some((dx, dy)),
-                    });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::SetActorLocation {
+                            actor_handle: actor,
+                            x: ox,
+                            y: oy,
+                            dest_layer_sector,
+                            // The engine handler probes the
+                            // destination sector's top plane at
+                            // `(dx, dy)` and stamps
+                            // `(ox, oy + elev, elev)` as the 3D
+                            // spawn — so the actor walks in at the
+                            // same altitude as the destination's
+                            // ground slope.
+                            spawn_elevation_probe: Some((dx, dy)),
+                        });
                 }
 
                 // Always refresh the cached destination on both
@@ -725,7 +741,12 @@ impl NativeContext<'_, '_> {
                     // computes it from the movement vector when
                     // dispatched.
                 }
-                let _ = self.record_element(elem);
+                if self.record_element(elem) == 0 {
+                    tracing::warn!(
+                        target: "script",
+                        "Script error: RecordEnterGame dropped its walk-in element (no active recording session)"
+                    );
+                }
                 // Returns `false` (0) unconditionally; scripts
                 // don't observe it.
                 0
@@ -836,7 +857,12 @@ impl NativeContext<'_, '_> {
                     // walk derives facing from the move vector
                     // when dispatched.
                 }
-                let _ = self.record_element(elem2);
+                if self.record_element(elem2) == 0 {
+                    tracing::warn!(
+                        target: "script",
+                        "Script error: RecordLeaveGame dropped its off-map element (no active recording session)"
+                    );
+                }
                 // Returns `true` (1) unconditionally; scripts
                 // don't observe the value.
                 1
@@ -972,7 +998,8 @@ impl NativeContext<'_, '_> {
                     tracing::warn!(target: "script","Script error (ResetAnim): invalid animation handle {actor}");
                     0
                 } else {
-                    self.emit_barrier(DeferredCommand::ResetSpriteFrame { actor });
+                    self.script_effects_mut()
+                        .emit_barrier(DeferredCommand::ResetSpriteFrame { actor });
                     1
                 }
             }

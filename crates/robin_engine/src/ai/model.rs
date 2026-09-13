@@ -164,35 +164,6 @@ pub fn stimulus_to_ai_event_code(st: StimulusType) -> Option<i32> {
     }
 }
 
-fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
-    let name = format!("{value:?}");
-    let mut out = String::with_capacity(name.len() + 8);
-    let mut prev: Option<char> = None;
-    let mut chars = name.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch.is_uppercase() {
-            let split_before = prev.is_some_and(|p| {
-                p.is_lowercase()
-                    || p.is_ascii_digit()
-                    || chars.peek().is_some_and(|next| next.is_lowercase()) && p.is_uppercase()
-            });
-            if split_before {
-                out.push('-');
-            }
-        } else if ch.is_ascii_digit() && prev.is_some_and(|p| !p.is_ascii_digit()) {
-            out.push('-');
-        }
-
-        for upper in ch.to_uppercase() {
-            out.push(upper);
-        }
-        prev = Some(ch);
-    }
-
-    out
-}
-
 // ---------------------------------------------------------------------------
 // AI Substate — massive enum
 // ---------------------------------------------------------------------------
@@ -216,9 +187,15 @@ fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    strum_macros::IntoStaticStr,
 )]
 #[repr(u32)]
-#[allow(non_camel_case_types)] // preserve original naming for clarity
+#[allow(non_camel_case_types)]
+// preserve original naming for clarity
+// Overlay/log names (`Substate::log_string`). Variants whose original name
+// does not follow the plain SCREAMING-KEBAB split carry an explicit
+// `serialize`; `log_string_tests` pins every variant to the legacy table.
+#[strum(serialize_all = "SCREAMING-KEBAB-CASE", prefix = "SUBSTATE-")]
 pub enum Substate {
     // -- Sleeping substates --
     #[default]
@@ -234,15 +211,23 @@ pub enum Substate {
     // -- Default substates --
     StartDefaultSubstates,
 
+    #[strum(serialize = "DEFAULT-GOTOPOST")]
     DefaultGotoPost,
+    #[strum(serialize = "DEFAULT-GOTOPOST-TURN")]
     DefaultGotoPostTurn,
+    #[strum(serialize = "DEFAULT-GOTOROUTE")]
     DefaultGotoRoute,
+    #[strum(serialize = "DEFAULT-GOTOROUTE-TURN")]
     DefaultGotoRouteTurn,
+    #[strum(serialize = "DEFAULT-ONPOST")]
     DefaultOnPost,
+    #[strum(serialize = "DEFAULT-ONPOST-LOOKING-SIDEWARDS")]
     DefaultOnPostLookingSidewards,
     DefaultEnroute,
     DefaultScriptDriven,
+    #[strum(serialize = "DEFAULT-INMACRO")]
     DefaultInMacro,
+    #[strum(serialize = "DEFAULT-INMACRO-WAITING-FOR-DONE")]
     DefaultInMacroWaitingForDone,
     DefaultHomeSweetHome,
     DefaultLookingOfficerForAdvice,
@@ -261,11 +246,17 @@ pub enum Substate {
     StartWonderingSubstates,
 
     WonderingWatching,
+    #[strum(serialize = "WONDERING-LOOKING-1")]
     WonderingLooking1,
+    #[strum(serialize = "WONDERING-LOOKING-1-SIDEWARDS")]
     WonderingLooking1Sidewards,
+    #[strum(serialize = "WONDERING-LOOKING-2")]
     WonderingLooking2,
+    #[strum(serialize = "WONDERING-LOOKING-2-SIDEWARDS")]
     WonderingLooking2Sidewards,
+    #[strum(serialize = "WONDERING-LOOKING-3")]
     WonderingLooking3,
+    #[strum(serialize = "WONDERING-LOOKING-3-SIDEWARDS")]
     WonderingLooking3Sidewards,
     WonderingWaspInArmour,
     WonderingAppleReactiontime,
@@ -279,6 +270,7 @@ pub enum Substate {
     WonderingBrawlReactiontime,
     WonderingBrawlApproaching,
     WonderingBrawlHitting,
+    #[strum(serialize = "WONDERING-BRAWL-GOTHIT")]
     WonderingBrawlGotHit,
     WonderingBrawlRecovering,
     WonderingWatchingForMoreMoney,
@@ -315,7 +307,9 @@ pub enum Substate {
     SeekingSeekpointPassedAmbushPointRight,
     SeekingSeekpointCheckingAmbushPoint,
     SeekingSeekpointApproachingBeggar,
+    #[strum(serialize = "SEEKING-SEEKPOINT-IDENTIFYING-BEGGAR-1")]
     SeekingSeekpointIdentifyingBeggar1,
+    #[strum(serialize = "SEEKING-SEEKPOINT-IDENTIFYING-BEGGAR-2")]
     SeekingSeekpointIdentifyingBeggar2,
     SeekingJustWatching,
     SeekingJustWatchingSidewards,
@@ -349,12 +343,19 @@ pub enum Substate {
     SeekingNet,
     SeekingTakingNet,
     SeekingBodyLookingDeadBody,
+    #[strum(serialize = "SEEKING-BODY-AWAKENING-SLEEPER")]
     SeekingBodyAwakeningSleeperr,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-1")]
     SeekingOfficerLookingForSoldiers1,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-1-SIDEWARDS")]
     SeekingOfficerLookingForSoldiers1Sidewards,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-2")]
     SeekingOfficerLookingForSoldiers2,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-2-SIDEWARDS")]
     SeekingOfficerLookingForSoldiers2Sidewards,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-3")]
     SeekingOfficerLookingForSoldiers3,
+    #[strum(serialize = "SEEKING-OFFICER-LOOKING-FOR-SOLDIERS-3-SIDEWARDS")]
     SeekingOfficerLookingForSoldiers3Sidewards,
     SeekingRunningToOfficer,
     SeekingRunningToOfficerSeen,
@@ -443,7 +444,9 @@ pub enum Substate {
     AttackingArcherRunOnShootingPath,
     AttackingArcherRunOnShootingPathFinalSprint,
     AttackingArcherRunOnShootingPathTurn,
+    #[strum(serialize = "ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH")]
     AttackingArcherWaitOnArcheryPath,
+    #[strum(serialize = "ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH-BENDING")]
     AttackingArcherWaitOnArcheryPathBending,
     AttackingDoorFightDelay,
     AttackingDoorFightLeaving,
@@ -494,12 +497,14 @@ pub enum Substate {
     AttackingSwordfightStepBack,
     WonderingAppleSauceInTheVisor,
     DefaultPatrolEnrouteRunning,
+    #[strum(serialize = "DEFAULT-GOTOCHIEF")]
     DefaultGotoChief,
     DefaultPatrolChiefReturnToPatrol,
     WonderingApproachingBrawlVictim,
     WonderingAwakenBrawlVictim,
     WonderingOfficerFinishingBrawlWaiting,
     AttackingReturnToOtherPcAfterMenacing,
+    #[strum(serialize = "SEEKING-CHARLY-GET-LECTURE-BY-OFFICER-2")]
     SeekingCharlyGetLectureByOfficer2,
     AttackingRunningToLadder,
     AttackingWaitingAtLadder,
@@ -570,17 +575,19 @@ impl Substate {
         }
     }
 
-    pub fn log_string_from_u16(raw: u16) -> String {
+    pub fn log_string_from_u16(raw: u16) -> &'static str {
         Self::try_from(u32::from(raw))
             .ok()
             .and_then(Self::log_string)
-            .unwrap_or_else(|| "SUBSTATE-???".to_string())
+            .unwrap_or("SUBSTATE-???")
     }
 
-    pub fn log_string(self) -> Option<String> {
+    /// Overlay/log name; `None` for the group markers, the roof-avenger
+    /// substates and the sentinels, which the original overlay never printed.
+    pub fn log_string(self) -> Option<&'static str> {
         use Substate::*;
 
-        let text = match self {
+        match self {
             StartSleepingSubstates
             | EndSleepingSubstates
             | StartDefaultSubstates
@@ -599,38 +606,9 @@ impl Substate {
             | AttackingRunToAvengerOnRoof
             | AttackingWaitForAvengerOnRoof
             | NumberOfSubstates
-            | None => return std::option::Option::None,
-
-            DefaultGotoPost => "SUBSTATE-DEFAULT-GOTOPOST".to_string(),
-            DefaultGotoPostTurn => "SUBSTATE-DEFAULT-GOTOPOST-TURN".to_string(),
-            DefaultGotoRoute => "SUBSTATE-DEFAULT-GOTOROUTE".to_string(),
-            DefaultGotoRouteTurn => "SUBSTATE-DEFAULT-GOTOROUTE-TURN".to_string(),
-            DefaultGotoChief => "SUBSTATE-DEFAULT-GOTOCHIEF".to_string(),
-            DefaultOnPost => "SUBSTATE-DEFAULT-ONPOST".to_string(),
-            DefaultOnPostLookingSidewards => {
-                "SUBSTATE-DEFAULT-ONPOST-LOOKING-SIDEWARDS".to_string()
-            }
-            DefaultInMacro => "SUBSTATE-DEFAULT-INMACRO".to_string(),
-            DefaultInMacroWaitingForDone => "SUBSTATE-DEFAULT-INMACRO-WAITING-FOR-DONE".to_string(),
-            WonderingBrawlGotHit => "SUBSTATE-WONDERING-BRAWL-GOTHIT".to_string(),
-            SeekingBodyAwakeningSleeperr => "SUBSTATE-SEEKING-BODY-AWAKENING-SLEEPER".to_string(),
-            AttackingSwordfight => "SUBSTATE-ATTACKING-SWORDFIGHT".to_string(),
-            AttackingSwordfightSpecialStrike => {
-                "SUBSTATE-ATTACKING-SWORDFIGHT-SPECIAL-STRIKE".to_string()
-            }
-            AttackingSwordfightParade => "SUBSTATE-ATTACKING-SWORDFIGHT-PARADE".to_string(),
-            AttackingQuittingSwordfight => "SUBSTATE-ATTACKING-QUITTING-SWORDFIGHT".to_string(),
-            AttackingSwordfightStepBack => "SUBSTATE-ATTACKING-SWORDFIGHT-STEP-BACK".to_string(),
-            AttackingArcherWaitOnArcheryPath => {
-                "SUBSTATE-ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH".to_string()
-            }
-            AttackingArcherWaitOnArcheryPathBending => {
-                "SUBSTATE-ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH-BENDING".to_string()
-            }
-            other => format!("SUBSTATE-{}", pascal_debug_name_to_hyphen_upper(other)),
-        };
-
-        Some(text)
+            | None => std::option::Option::None,
+            other => Some(other.into()),
+        }
     }
 
     /// Returns `true` if this substate is in the "seek area" group.
@@ -792,24 +770,36 @@ pub enum ProbabilityDistribution {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    strum_macros::IntoStaticStr,
 )]
 #[repr(u32)]
+// Overlay/log names (`StimulusType::log_string`); explicit `serialize`
+// entries keep the original's joined words and digit spellings.
+#[strum(serialize_all = "SCREAMING-KEBAB-CASE")]
 pub enum StimulusType {
     // -- Perception events --
     EventView = 0,
+    #[strum(serialize = "EVENT-OUTOFVIEW")]
     EventOutOfView,
     EventHear,
+    #[strum(serialize = "EVENT-REACHPOINT")]
     EventReachPoint,
+    #[strum(serialize = "EVENT-COULDNT-REACHPOINT")]
     EventCouldntReachPoint,
     EventDone,
     EventImpossible,
     EventTimer,
     EventPcShotAtMe,
+    #[strum(serialize = "EVENT-SEESBODY")]
     EventSeesBody,
+    #[strum(serialize = "EVENT-SEESOBJECT")]
     EventSeesObject,
     EventSeesSoldier,
+    #[strum(serialize = "EVENT-SEESFRIENDINTROUBLE")]
     EventSeesFriendInTrouble,
+    #[strum(serialize = "EVENT-FITAGAIN")]
     EventFitAgain,
+    #[strum(serialize = "EVENT-GOTHIT")]
     EventGotHit,
     EventLoseConsciousness,
     EventMissesCharly,
@@ -821,6 +811,7 @@ pub enum StimulusType {
     EventPanic,
     EventEnterSwordfight,
     EventQuitSwordfight,
+    #[strum(serialize = "EVENT-SWORDSTRIKE")]
     EventSwordStrike,
     EventWasp,
     EventWaspAway,
@@ -836,6 +827,7 @@ pub enum StimulusType {
     CallHey,
     CallHint,
     CallInstruction,
+    #[strum(serialize = "CALL-LOOKTHERE")]
     CallLookThere,
     CallCoordinate,
     CallReport,
@@ -856,16 +848,24 @@ pub enum StimulusType {
     EventAdversaryWeak,
     EventAfterCombatInjury,
     CallCleanUpAfterBrawl,
+    #[strum(serialize = "EVENT-MYTALK-1")]
     EventMyTalk1,
+    #[strum(serialize = "EVENT-MYTALK-2")]
     EventMyTalk2,
+    #[strum(serialize = "EVENT-MYTALK-3")]
     EventMyTalk3,
+    #[strum(serialize = "CALL-YOURTALK-1")]
     CallYourTalk1,
+    #[strum(serialize = "CALL-YOURTALK-2")]
     CallYourTalk2,
+    #[strum(serialize = "CALL-YOURTALK-3")]
     CallYourTalk3,
     EventGoodStrike,
     EventLethalStrike,
     EventEnemyNear,
+    #[strum(serialize = "EVENT-MYTALK-0")]
     EventMyTalk0,
+    #[strum(serialize = "CALL-YOURTALK-0")]
     CallYourTalk0,
     EventStop,
     NoEvent,
@@ -881,81 +881,13 @@ impl StimulusType {
             .unwrap_or("EVENT-???")
     }
 
+    /// Overlay/log name; `None` for the two internal pseudo-stimuli the
+    /// original overlay never printed.
     pub fn log_string(self) -> Option<&'static str> {
-        Some(match self {
-            StimulusType::EventView => "EVENT-VIEW",
-            StimulusType::EventOutOfView => "EVENT-OUTOFVIEW",
-            StimulusType::EventHear => "EVENT-HEAR",
-            StimulusType::EventReachPoint => "EVENT-REACHPOINT",
-            StimulusType::EventCouldntReachPoint => "EVENT-COULDNT-REACHPOINT",
-            StimulusType::EventDone => "EVENT-DONE",
-            StimulusType::EventImpossible => "EVENT-IMPOSSIBLE",
-            StimulusType::EventTimer => "EVENT-TIMER",
-            StimulusType::EventPcShotAtMe => "EVENT-PC-SHOT-AT-ME",
-            StimulusType::EventSeesBody => "EVENT-SEESBODY",
-            StimulusType::EventSeesObject => "EVENT-SEESOBJECT",
-            StimulusType::EventSeesSoldier => "EVENT-SEES-SOLDIER",
-            StimulusType::EventSeesFriendInTrouble => "EVENT-SEESFRIENDINTROUBLE",
-            StimulusType::EventFitAgain => "EVENT-FITAGAIN",
-            StimulusType::EventGotHit => "EVENT-GOTHIT",
-            StimulusType::EventLoseConsciousness => "EVENT-LOSE-CONSCIOUSNESS",
-            StimulusType::EventMissesCharly => "EVENT-MISSES-CHARLY",
-            StimulusType::EventObjectAway => "EVENT-OBJECT-AWAY",
-            StimulusType::EventSeesCharly => "EVENT-SEES-CHARLY",
-            StimulusType::EventSyncCharly => "EVENT-SYNC-CHARLY",
-            StimulusType::EventAfterScriptGoOn => "EVENT-AFTER-SCRIPT-GO-ON",
-            StimulusType::EventReturnToDuty => "EVENT-RETURN-TO-DUTY",
-            StimulusType::EventPanic => "EVENT-PANIC",
-            StimulusType::EventEnterSwordfight => "EVENT-ENTER-SWORDFIGHT",
-            StimulusType::EventQuitSwordfight => "EVENT-QUIT-SWORDFIGHT",
-            StimulusType::EventSwordStrike => "EVENT-SWORDSTRIKE",
-            StimulusType::EventWasp => "EVENT-WASP",
-            StimulusType::EventWaspAway => "EVENT-WASP-AWAY",
-            StimulusType::EventApple => "EVENT-APPLE",
-            StimulusType::EventNet => "EVENT-NET",
-            StimulusType::EventNetAway => "EVENT-NET-AWAY",
-            StimulusType::EventSeesBeggar => "EVENT-SEES-BEGGAR",
-            StimulusType::EventGetArrow => "EVENT-GET-ARROW",
-            StimulusType::EventSeesBrawl => "EVENT-SEES-BRAWL",
-            StimulusType::CallAlert => "CALL-ALERT",
-            StimulusType::CallCombatAlert => "CALL-COMBAT-ALERT",
-            StimulusType::CallHey => "CALL-HEY",
-            StimulusType::CallHint => "CALL-HINT",
-            StimulusType::CallInstruction => "CALL-INSTRUCTION",
-            StimulusType::CallLookThere => "CALL-LOOKTHERE",
-            StimulusType::CallCoordinate => "CALL-COORDINATE",
-            StimulusType::CallReport => "CALL-REPORT",
-            StimulusType::CallGoToOfficer => "CALL-GO-TO-OFFICER",
-            StimulusType::CallMrOfficerIAmBack => "CALL-MR-OFFICER-I-AM-BACK",
-            StimulusType::CallCharlyIsBack => "CALL-CHARLY-IS-BACK",
-            StimulusType::CallPatrolCoordinate => "CALL-PATROL-COORDINATE",
-            StimulusType::CallTowerGuardAlert => "CALL-TOWER-GUARD-ALERT",
-            StimulusType::CallTowerGuardCallsMe => "CALL-TOWER-GUARD-CALLS-ME",
-            StimulusType::CallFinishBrawl => "CALL-FINISH-BRAWL",
-            StimulusType::CallYouJustWait => "CALL-YOU-JUST-WAIT",
-            StimulusType::EventAppleChaseNear => "EVENT-APPLE-CHASE-NEAR",
-            StimulusType::EventDoorCombat => "EVENT-DOOR-COMBAT",
-            StimulusType::EventGaloppLoopEnd => "EVENT-GALOPP-LOOP-END",
-            StimulusType::EventSeesShadow => "EVENT-SEES-SHADOW",
-            StimulusType::EventArrowLaunched => "EVENT-ARROW-LAUNCHED",
-            StimulusType::EventStone => "EVENT-STONE",
-            StimulusType::EventAdversaryWeak => "EVENT-ADVERSARY-WEAK",
-            StimulusType::EventAfterCombatInjury => "EVENT-AFTER-COMBAT-INJURY",
-            StimulusType::CallCleanUpAfterBrawl => "CALL-CLEAN-UP-AFTER-BRAWL",
-            StimulusType::EventMyTalk1 => "EVENT-MYTALK-1",
-            StimulusType::EventMyTalk2 => "EVENT-MYTALK-2",
-            StimulusType::EventMyTalk3 => "EVENT-MYTALK-3",
-            StimulusType::CallYourTalk1 => "CALL-YOURTALK-1",
-            StimulusType::CallYourTalk2 => "CALL-YOURTALK-2",
-            StimulusType::CallYourTalk3 => "CALL-YOURTALK-3",
-            StimulusType::EventGoodStrike => "EVENT-GOOD-STRIKE",
-            StimulusType::EventLethalStrike => "EVENT-LETHAL-STRIKE",
-            StimulusType::EventEnemyNear => "EVENT-ENEMY-NEAR",
-            StimulusType::EventMyTalk0 => "EVENT-MYTALK-0",
-            StimulusType::CallYourTalk0 => "CALL-YOURTALK-0",
-            StimulusType::EventStop => "EVENT-STOP",
-            StimulusType::NoEvent | StimulusType::ForceBattleDecision => return None,
-        })
+        match self {
+            StimulusType::NoEvent | StimulusType::ForceBattleDecision => None,
+            other => Some(other.into()),
+        }
     }
 }
 
@@ -1338,9 +1270,13 @@ pub enum Question {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    Default,
+    strum_macros::IntoStaticStr,
 )]
 #[repr(u32)]
+#[strum(serialize_all = "SCREAMING-KEBAB-CASE", prefix = "DECISION-")]
 pub enum Decision {
+    #[default]
     None = 0,
     PredecisionOffensive,
     PredecisionDefensive,
@@ -1353,7 +1289,9 @@ pub enum Decision {
     Menace,
     Shoot,
     ArcherStepBack,
+    #[strum(serialize = "LOOK-4-HELP")]
     LookForHelp,
+    #[strum(serialize = "LOOK-4-HELP-IF-NOBODY-ELSE-DOES")]
     LookForHelpIfNobodyElseDoes,
     CoverBehindShieldBearer,
     TooProudToAttack,
@@ -1373,31 +1311,15 @@ impl Decision {
             .unwrap_or("DECISION-???")
     }
 
+    /// Overlay/log name; `None` for the undecided and pre-decision markers,
+    /// which the original overlay never printed.
     pub fn log_string(self) -> Option<&'static str> {
-        Some(match self {
+        match self {
             Decision::None | Decision::PredecisionOffensive | Decision::PredecisionDefensive => {
-                return None;
+                None
             }
-            Decision::Cassos => "DECISION-CASSOS",
-            Decision::Fight => "DECISION-FIGHT",
-            Decision::Observe => "DECISION-OBSERVE",
-            Decision::Reserve => "DECISION-RESERVE",
-            Decision::AlertSoldiers => "DECISION-ALERT-SOLDIERS",
-            Decision::RunAndAlertSoldiers => "DECISION-RUN-AND-ALERT-SOLDIERS",
-            Decision::Menace => "DECISION-MENACE",
-            Decision::Shoot => "DECISION-SHOOT",
-            Decision::ArcherStepBack => "DECISION-ARCHER-STEP-BACK",
-            Decision::LookForHelp => "DECISION-LOOK-4-HELP",
-            Decision::LookForHelpIfNobodyElseDoes => "DECISION-LOOK-4-HELP-IF-NOBODY-ELSE-DOES",
-            Decision::CoverBehindShieldBearer => "DECISION-COVER-BEHIND-SHIELD-BEARER",
-            Decision::TooProudToAttack => "DECISION-TOO-PROUD-TO-ATTACK",
-            Decision::TowerGuardAlert => "DECISION-TOWER-GUARD-ALERT",
-            Decision::TowerGuardObserve => "DECISION-TOWER-GUARD-OBSERVE",
-            Decision::ArcherObserve => "DECISION-ARCHER-OBSERVE",
-            Decision::RunToArcheryPoint => "DECISION-RUN-TO-ARCHERY-POINT",
-            Decision::RunForNewArrows => "DECISION-RUN-FOR-NEW-ARROWS",
-            Decision::LastReserve => "DECISION-LAST-RESERVE",
-        })
+            other => Some(other.into()),
+        }
     }
 }
 
@@ -2290,6 +2212,8 @@ pub struct DoorCombatInfo {
     pub adversary: Option<AiEntityHandle>,
 }
 
+#[cfg(test)]
+mod log_string_tests;
 #[cfg(test)]
 mod nullable_stimulus_reference_tests;
 

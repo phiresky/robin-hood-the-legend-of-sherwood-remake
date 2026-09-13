@@ -343,23 +343,6 @@ impl FriendlyAi {
         });
     }
 
-    /// Raw-coordinate panic entry point (tests only).  Production
-    /// code should use [`Self::panic_from_point_at`] so the panic
-    /// center carries a valid sector/level for the multi-level
-    /// door lookup.
-    #[cfg(test)]
-    fn panic_from_point(&mut self, center_x: f32, center_y: f32, runs: u8) {
-        self.panic_from_point_at(
-            Position {
-                x: center_x,
-                y: center_y,
-                sector: None,
-                level: 0,
-            },
-            runs,
-        );
-    }
-
     /// Undirected panic.
     fn panic_undirected(&mut self, runs: u8) {
         let was_already_fleeing = matches!(

@@ -182,10 +182,11 @@ impl NativeContext<'_, '_> {
                 .filter(|e| e.is_pc())
                 .and_then(|_| self.actor_id(actor_handle))
             {
-                self.emit_engine(EngineCommand::HeroSpeak {
-                    pc_id,
-                    expression: crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::HeroSpeak {
+                        pc_id,
+                        expression: crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
+                    });
             }
             tracing::debug!(
                 actor = actor_handle,

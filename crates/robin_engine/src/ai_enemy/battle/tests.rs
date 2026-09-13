@@ -1107,7 +1107,22 @@ fn sleeping_enemy_selection_uses_isometric_get_position_distance() {
     assert!(raw_sq(raw_nearer) < raw_sq(isometric_nearer));
     assert!(isometric_sq(isometric_nearer) < isometric_sq(raw_nearer));
 
-    let _ = sleeping_target_case(raw_nearer, isometric_nearer, 345);
+    let (ai, _ctx) = sleeping_target_case(raw_nearer, isometric_nearer, 345);
+    // The isometric-nearer sleeper (handle 345) wins over the raw-nearer one
+    // (handle 346), and the queued approach walks to its position.
+    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(345)));
+    assert_ne!(ai.base.primary_target, Some(AiEntityHandle::new(346)));
+    let order = ai
+        .base
+        .outbox
+        .actor
+        .orders
+        .last()
+        .expect("isometric selection must queue an approach order");
+    assert_eq!(
+        (order.target_x, order.target_y),
+        (isometric_nearer.x, isometric_nearer.y)
+    );
 }
 
 #[test]
@@ -1125,7 +1140,18 @@ fn sleeping_enemy_selection_keeps_ordinary_nearest_target() {
         ..Position::default()
     };
 
-    let _ = sleeping_target_case(nearest, farther, 346);
+    let (ai, _ctx) = sleeping_target_case(nearest, farther, 346);
+    // Both metrics agree here, so the plain nearest sleeper (handle 346) is
+    // chosen and the approach order targets its position.
+    assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(346)));
+    let order = ai
+        .base
+        .outbox
+        .actor
+        .orders
+        .last()
+        .expect("nearest selection must queue an approach order");
+    assert_eq!((order.target_x, order.target_y), (nearest.x, nearest.y));
 }
 
 #[test]

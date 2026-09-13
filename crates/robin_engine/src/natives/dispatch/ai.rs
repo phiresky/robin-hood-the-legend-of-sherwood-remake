@@ -433,13 +433,14 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 };
-                self.emit_engine(EngineCommand::MakeNoise {
-                    noise_type,
-                    x: origin_x,
-                    y: origin_y,
-                    layer,
-                    sector,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::MakeNoise {
+                        noise_type,
+                        x: origin_x,
+                        y: origin_y,
+                        layer,
+                        sector,
+                    });
                 tracing::debug!(
                     "MakeNoise: scripted {noise_type:?} at ({origin_x},{origin_y}) \
                      layer {layer} sector {}",
@@ -746,10 +747,12 @@ impl NativeContext<'_, '_> {
                 // whole script chunk, by which point later appends would
                 // otherwise widen this pass beyond what it saw.
                 if let Some(member_count) = appended_len {
-                    self.emit_barrier(DeferredCommand::AddAsSubordinateInitialize {
-                        chief: actor,
-                        member_count,
-                    });
+                    self.script_effects_mut().emit_barrier(
+                        DeferredCommand::AddAsSubordinateInitialize {
+                            chief: actor,
+                            member_count,
+                        },
+                    );
                 }
                 0
             }

@@ -509,7 +509,8 @@ impl NativeContext<'_, '_> {
                     .expect("RANSOM campaign mutation requires live mission statistics")
                     .add_collected_money(amount);
                 if amount > 0 && frame_counter > 0 {
-                    self.emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
+                    self.script_effects_mut()
+                        .emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
                 }
             }
             crate::campaign::CampaignValue::Score => {
@@ -538,7 +539,8 @@ impl NativeContext<'_, '_> {
         let old = campaign.values[name];
         campaign.values[name] = value;
         if name == crate::campaign::CampaignValue::Ransom && value > old && frame_counter > 0 {
-            self.emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
+            self.script_effects_mut()
+                .emit_sound(SoundCommand::PlayJingle(crate::sound::Jingle::CashWon));
         }
     }
 
@@ -1352,7 +1354,8 @@ impl NativeContext<'_, '_> {
                             .profile(&profile_manager)
                             .number_of_blazons_to_win;
                         if to_win as i32 <= current_blazons {
-                            self.emit_engine(EngineCommand::Win { show_window: true });
+                            self.script_effects_mut()
+                                .emit_engine(EngineCommand::Win { show_window: true });
                         }
                     }
                     crate::profiles::MissionType::Tactical => {
@@ -1388,7 +1391,8 @@ impl NativeContext<'_, '_> {
         // Information-bar and blazon updates only fire in
         // campaign mode; in single-mission mode the update is skipped.
         if self.campaign.is_some() {
-            self.emit_engine(EngineCommand::UpdateInformationBars);
+            self.script_effects_mut()
+                .emit_engine(EngineCommand::UpdateInformationBars);
         }
     }
 
@@ -1409,7 +1413,8 @@ impl NativeContext<'_, '_> {
                 }
                 if had_campaign {
                     // Refresh the information bars in campaign mode.
-                    self.emit_engine(EngineCommand::UpdateInformationBars);
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::UpdateInformationBars);
                 }
             }
             Some(_) => {
@@ -2470,14 +2475,16 @@ impl NativeContext<'_, '_> {
                     }
                 }
                 // Queue portrait bar update.
-                self.emit_barrier(DeferredCommand::SetPlayable {
-                    actor,
-                    playable: activate,
-                });
+                self.script_effects_mut()
+                    .emit_barrier(DeferredCommand::SetPlayable {
+                        actor,
+                        playable: activate,
+                    });
                 // On deactivate, also queue engine-side cleanup of QA
                 // titbits and macro-store slots.
                 if !activate {
-                    self.emit_barrier(DeferredCommand::ClearAllQuickActionSlots { actor });
+                    self.script_effects_mut()
+                        .emit_barrier(DeferredCommand::ClearAllQuickActionSlots { actor });
                 }
             }
             Action::General => {
@@ -2495,10 +2502,11 @@ impl NativeContext<'_, '_> {
                         entity.element_data_mut().active = activate;
                     }
                 }
-                self.emit_engine(EngineCommand::SetMobileActive {
-                    mobile_index,
-                    active: activate,
-                });
+                self.script_effects_mut()
+                    .emit_engine(EngineCommand::SetMobileActive {
+                        mobile_index,
+                        active: activate,
+                    });
             }
             Action::Invalid => {
                 tracing::warn!(

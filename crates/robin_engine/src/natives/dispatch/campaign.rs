@@ -104,9 +104,10 @@ impl NativeContext<'_, '_> {
                 }
                 // Mark only on the success branch.
                 if added {
-                    self.emit_engine(EngineCommand::MarkPc {
-                        actor_handle: actor,
-                    });
+                    self.script_effects_mut()
+                        .emit_engine(EngineCommand::MarkPc {
+                            actor_handle: actor,
+                        });
                 }
                 0
             }
@@ -490,10 +491,11 @@ impl NativeContext<'_, '_> {
                     return 0;
                 }
                 self.apply_script_selection(actor, select != 0);
-                self.emit_barrier(DeferredCommand::SelectPC {
-                    actor,
-                    select: select != 0,
-                });
+                self.script_effects_mut()
+                    .emit_barrier(DeferredCommand::SelectPC {
+                        actor,
+                        select: select != 0,
+                    });
                 0
             }
             IsPCSelected => {

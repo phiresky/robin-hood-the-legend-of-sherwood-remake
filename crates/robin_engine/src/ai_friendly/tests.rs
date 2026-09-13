@@ -1,5 +1,23 @@
 use super::*;
 
+impl FriendlyAi {
+    /// Raw-coordinate panic entry point (tests only).  Production
+    /// code uses [`Self::panic_from_point_at`] so the panic
+    /// center carries a valid sector/level for the multi-level
+    /// door lookup.
+    fn panic_from_point(&mut self, center_x: f32, center_y: f32, runs: u8) {
+        self.panic_from_point_at(
+            Position {
+                x: center_x,
+                y: center_y,
+                sector: None,
+                level: 0,
+            },
+            runs,
+        );
+    }
+}
+
 #[test]
 fn friendly_ai_defaults() {
     let ai = FriendlyAi::new(99);

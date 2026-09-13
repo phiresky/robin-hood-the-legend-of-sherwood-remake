@@ -1005,7 +1005,7 @@ impl AiController {
                 "[{}]",
                 self.current_substate
                     .log_string()
-                    .unwrap_or_else(|| "SUBSTATE-???".to_string())
+                    .unwrap_or("SUBSTATE-???")
             );
         }
 
