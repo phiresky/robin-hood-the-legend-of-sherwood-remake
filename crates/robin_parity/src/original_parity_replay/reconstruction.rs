@@ -6,14 +6,15 @@ use super::{
     EntityMap, GestureQuality, GroupMoveGoalTranslation, LevelAssets, MapPoint, Path, PathBuf,
     PlayerCommand, ReplayDropAleResolution, ReplayGroupMoveResolution, StorageContext,
     TRACE_NATIVE_SUFFIX, TRACE_SCHEMA_VERSION, TraceCampaign, TraceCommand, TraceElement,
-    TraceEntityKind, TraceFrame, TraceHeader, TraceInitialNpcTransient, TraceStartState,
-    TraceStorageResult, WorldPoint3D, ensure_native_binary_trace, native_binary_trace_path,
+    TraceEntityKind, TraceFrame, TraceHeader, TraceInitialNpcTransient, TraceRunError,
+    TraceRunResult, TraceStartState, TraceStorageResult, WorldPoint3D, ensure_native_binary_trace,
+    native_binary_trace_path,
 };
 
 pub(super) fn apply_initial_npc_transients(
     engine: &mut Engine,
     transients: &[TraceInitialNpcTransient],
-) {
+) -> TraceRunResult<()> {
     let mut runtime_by_creation_order = BTreeMap::new();
     for id in engine.npc_ids() {
         let creation_order = engine.original_creation_order(id);
@@ -40,16 +41,17 @@ pub(super) fn apply_initial_npc_transients(
         let id = runtime_by_creation_order
             .get(&transient.creation_order)
             .copied()
-            .unwrap_or_else(|| {
-                panic!(
+            .ok_or_else(|| {
+                TraceRunError::TraceContent(format!(
                     "schema-{TRACE_SCHEMA_VERSION} NPC transient creation order {} is absent from the Rust engine",
                     transient.creation_order
-                )
-            });
+                ))
+            })?;
         engine
             .parity_replay_setup()
             .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
+    Ok(())
 }
 
 pub(super) fn reconstruct_unrecorded_maximal_visibility(
@@ -81,6 +83,7 @@ pub(super) fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> u
         .filter_map(|id| {
             let entity = engine
                 .get_entity(id)
+                // Invariants: `id` was just enumerated from the engine's NPCs.
                 .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
             let npc = entity
                 .npc_data()
@@ -270,7 +273,7 @@ impl TraceCommand {
         engine: &Engine,
         drop_ale_resolution: Option<ReplayDropAleResolution>,
         group_move_resolution: Option<ReplayGroupMoveResolution>,
-    ) -> Option<PlayerCommand> {
+    ) -> TraceRunResult<Option<PlayerCommand>> {
         assert!(
             drop_ale_resolution.is_none() || matches!(&self, Self::DropAleAt { .. }),
             "DropAle route metadata was attached to a non-DropAle command"
@@ -279,7 +282,7 @@ impl TraceCommand {
             group_move_resolution.is_none() || matches!(&self, Self::GroupMove { .. }),
             "group-move route metadata was attached to a non-group-move command"
         );
-        Some(match self {
+        Ok(Some(match self {
             Self::BoxSelect {
                 first,
                 second,
@@ -291,7 +294,7 @@ impl TraceCommand {
                 // side effects) twice. Keep accepting the gesture metadata,
                 // but replay only the following resolved commands.
                 let _ = (first, second, append);
-                return None;
+                return Ok(None);
             }
             Self::GroupMove {
                 actors,
@@ -309,8 +312,10 @@ impl TraceCommand {
                         group_move_resolution
                             .as_ref()
                             .and_then(|resolution| resolution.unmapped_goal_search_sector),
-                    ) {
+                    )? {
                     GroupMoveGoalTranslation::Runtime(goal, index) => {
+                        // Invariant: the retained topology's runtime sector
+                        // numbers were taken from this engine's own grid.
                         engine
                             .fast_grid()
                             .level
@@ -346,7 +351,7 @@ impl TraceCommand {
                     actors: actors
                         .into_iter()
                         .map(|id| entity_map.translate(id))
-                        .collect(),
+                        .collect::<TraceRunResult<_>>()?,
                     destination,
                     running,
                     show_marker,
@@ -361,19 +366,20 @@ impl TraceCommand {
                             resolution
                                 .recorded_gate_routes
                                 .iter()
-                                .map(|(actor, gates)| {
-                                    (
-                                        entity_map.translate(*actor),
+                                .map(|(actor, gates)| -> TraceRunResult<_> {
+                                    Ok((
+                                        entity_map.translate(*actor)?,
                                         gates
                                             .iter()
                                             .map(|&(gate, direct)| {
-                                                (entity_map.translate_gate(gate), direct)
+                                                Ok((entity_map.translate_gate(gate)?, direct))
                                             })
-                                            .collect(),
-                                    )
+                                            .collect::<TraceRunResult<_>>()?,
+                                    ))
                                 })
-                                .collect()
+                                .collect::<TraceRunResult<_>>()
                         })
+                        .transpose()?
                         .unwrap_or_default(),
                     recorded_failed_gate_routes: group_move_resolution
                         .map(|resolution| {
@@ -381,8 +387,9 @@ impl TraceCommand {
                                 .recorded_failed_gate_routes
                                 .into_iter()
                                 .map(|actor| entity_map.translate(actor))
-                                .collect()
+                                .collect::<TraceRunResult<_>>()
                         })
+                        .transpose()?
                         .unwrap_or_default(),
                 }
             }
@@ -393,9 +400,9 @@ impl TraceCommand {
                 original_command_name,
                 running,
             } => PlayerCommand::LaunchInteraction {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
-                command: command_from_stable_name(&original_command_name),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
+                command: command_from_stable_name(&original_command_name)?,
                 running,
             },
             Self::LaunchSelfAbility {
@@ -403,8 +410,8 @@ impl TraceCommand {
                 original_command: _,
                 original_command_name,
             } => PlayerCommand::LaunchSelfAbility {
-                actor: entity_map.translate(actor),
-                command: command_from_stable_name(&original_command_name),
+                actor: entity_map.translate(actor)?,
+                command: command_from_stable_name(&original_command_name)?,
             },
             Self::LaunchGroundTarget {
                 actor,
@@ -421,14 +428,16 @@ impl TraceCommand {
                     ("throw_purse", 30) => robin_engine::sequence::Field::PurseTarget,
                     ("throw_net", 31) => robin_engine::sequence::Field::NetTarget,
                     ("throw_wasp_nest", 32) => robin_engine::sequence::Field::WaspNestTarget,
-                    (command, field) => panic!(
-                        "unsupported Original ground-target command/field {command:?}/{field}"
-                    ),
+                    (command, field) => {
+                        return Err(TraceRunError::TraceContent(format!(
+                            "unsupported Original ground-target command/field {command:?}/{field}"
+                        )));
+                    }
                 };
                 PlayerCommand::LaunchGroundTarget {
-                    actor: entity_map.translate(actor),
+                    actor: entity_map.translate(actor)?,
                     target_pos: target.into(),
-                    command: command_from_stable_name(&original_command_name),
+                    command: command_from_stable_name(&original_command_name)?,
                     target_field,
                     titbit_layer,
                 }
@@ -438,8 +447,8 @@ impl TraceCommand {
                 target,
                 running,
             } => PlayerCommand::LaunchScrollRead {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
                 running,
             },
             Self::SwordStrike {
@@ -450,29 +459,29 @@ impl TraceCommand {
                 with_seek,
                 seek_distance,
             } => PlayerCommand::SwordStrikeCmd {
-                actor: entity_map.translate(actor),
-                target: entity_map.translate(target),
-                command: command_from_stable_name(&original_command_name),
+                actor: entity_map.translate(actor)?,
+                target: entity_map.translate(target)?,
+                command: command_from_stable_name(&original_command_name)?,
                 composite: None,
                 gesture_quality: GestureQuality::PERFECT,
                 with_seek,
                 seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },
             Self::SelectPc { pc, append } => PlayerCommand::SelectPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
                 append,
             },
             Self::UnselectAllPcs => PlayerCommand::UnselectAllPcs,
             Self::StopPc { pc } => PlayerCommand::StopPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
             },
             Self::SelectAction { pc, action, .. } => PlayerCommand::SelectResolvedAction {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
                 action: action.into(),
             },
             Self::CancelAction { pc, .. } => match pc {
                 Some(pc) => PlayerCommand::CancelAction {
-                    pc_id: entity_map.translate(pc),
+                    pc_id: entity_map.translate(pc)?,
                 },
                 None => PlayerCommand::UnselectAllActions,
             },
@@ -483,13 +492,13 @@ impl TraceCommand {
                 target,
                 original_action: _,
             } => PlayerCommand::PerformResolvedOrientation {
-                pc_id: entity_map.translate(actor),
+                pc_id: entity_map.translate(actor)?,
                 action: action.into(),
                 mouse_map: mouse_map.into(),
                 target: target.into(),
             },
             Self::MakePcFast { entity } => PlayerCommand::MakePcFast {
-                pc_id: entity_map.translate(entity),
+                pc_id: entity_map.translate(entity)?,
             },
             Self::CrouchDown => PlayerCommand::CrouchDown,
             Self::StandUp => PlayerCommand::StandUp,
@@ -514,7 +523,7 @@ impl TraceCommand {
                     })
                     .unwrap_or((false, None, None, None));
                 PlayerCommand::DropAleAt {
-                    actor: entity_map.translate(actor),
+                    actor: entity_map.translate(actor)?,
                     target_pos: target.into(),
                     running,
                     already_authorized,
@@ -527,8 +536,8 @@ impl TraceCommand {
                 actor,
                 protected_pc,
             } => PlayerCommand::ShieldSelectProtected {
-                actor: entity_map.translate(actor),
-                protected_pc: entity_map.translate(protected_pc),
+                actor: entity_map.translate(actor)?,
+                protected_pc: entity_map.translate(protected_pc)?,
             },
             Self::BoxUnselect {
                 first,
@@ -539,7 +548,7 @@ impl TraceCommand {
                 // resolved nested unselect message are both recorded, so
                 // replay only the resolved commands that follow.
                 let _ = (first, second, append);
-                return None;
+                return Ok(None);
             }
             Self::RaiseShieldWithDanger {
                 actor,
@@ -549,8 +558,8 @@ impl TraceCommand {
             } => {
                 let danger_point: WorldPoint3D = danger_point.into();
                 PlayerCommand::RaiseShieldWithDanger {
-                    actor: entity_map.translate(actor),
-                    protected_pc: entity_map.translate(protected_pc),
+                    actor: entity_map.translate(actor)?,
+                    protected_pc: entity_map.translate(protected_pc)?,
                     danger_point,
                     danger_point_layer,
                 }
@@ -571,7 +580,7 @@ impl TraceCommand {
             },
             Self::SelectAllPcs => PlayerCommand::SelectAllPcs,
             Self::UnselectPc { pc } => PlayerCommand::UnselectPc {
-                pc_id: entity_map.translate(pc),
+                pc_id: entity_map.translate(pc)?,
             },
             Self::SelectActionIndex { index } => {
                 // The Original resolves the action-bar shortcut against
@@ -582,22 +591,22 @@ impl TraceCommand {
                         pc_id: *pc_id,
                         action_index: index,
                     },
-                    _ => return None,
+                    _ => return Ok(None),
                 }
             }
             Self::SetLockAlt { on } => PlayerCommand::SetLockAlt(on),
             Self::KeyControl => PlayerCommand::KeyControl,
             Self::KeyReleaseControl => PlayerCommand::KeyReleaseControl,
             Self::StartMacro { pc, slot } => PlayerCommand::StartMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::DeleteMacro { pc, slot } => PlayerCommand::DeleteMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::StartRecordingMacro { pc, slot } => PlayerCommand::StartRecordingMacro {
-                pc: pc.map(|pc| entity_map.translate(pc)),
+                pc: pc.map(|pc| entity_map.translate(pc)).transpose()?,
                 slot,
             },
             Self::ChangeQaMemory { slot } => PlayerCommand::ChangeQaMemory { slot },
@@ -613,20 +622,22 @@ impl TraceCommand {
                 // as this one.
                 match reason.as_str() {
                     "anonymous_archer_contest" | "locked_patch" => {}
-                    other => panic!(
-                        "unsupported refused-action reason {other:?} for {action:?} \
-                         by {actor:?}"
-                    ),
+                    other => {
+                        return Err(TraceRunError::TraceContent(format!(
+                            "unsupported refused-action reason {other:?} for {action:?} \
+                             by {actor:?}"
+                        )));
+                    }
                 }
                 PlayerCommand::HeroSpeak {
-                    pc_id: entity_map.translate(actor),
+                    pc_id: entity_map.translate(actor)?,
                     expression: robin_engine::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                 }
             }
             Self::BeggarDontTalkStamp { entity } => PlayerCommand::BeggarDontTalkStamp {
-                beggar_id: entity_map.translate(entity),
+                beggar_id: entity_map.translate(entity)?,
             },
-        })
+        }))
     }
 }
 
@@ -634,7 +645,7 @@ pub(super) fn trace_sword_seek_distance(with_seek: bool, seek_distance: f32) -> 
     (with_seek && !seek_distance.is_nan()).then_some(seek_distance)
 }
 
-pub(super) fn command_from_stable_name(name: &str) -> Command {
+pub(super) fn command_from_stable_name(name: &str) -> TraceRunResult<Command> {
     let rust_name = match name {
         "camera_jumpto" => "CameraJumpTo".to_owned(),
         // The original game uses the low-level rolling movement and the
@@ -662,8 +673,11 @@ pub(super) fn command_from_stable_name(name: &str) -> Command {
             })
             .collect(),
     };
-    serde_json::from_value(serde_json::Value::String(rust_name))
-        .unwrap_or_else(|_| panic!("unsupported stable original-game command name {name:?}"))
+    serde_json::from_value(serde_json::Value::String(rust_name)).map_err(|_| {
+        TraceRunError::TraceContent(format!(
+            "unsupported stable original-game command name {name:?}"
+        ))
+    })
 }
 
 /// Structural extent of the authoritative Original frame stream.
@@ -732,7 +746,10 @@ impl TraceTimeline {
     }
 }
 
-pub(super) fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
+pub(super) fn cross_post_initialize_frame(
+    engine: &mut Engine,
+    assets: &LevelAssets,
+) -> TraceRunResult<()> {
     engine
         .parity_replay_setup()
         // Schema 16 omits the capture viewport and per-Draw camera position.
@@ -744,7 +761,10 @@ pub(super) fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAss
             assets,
             robin_engine::engine::SimulationFrameInput::no_hourglass().with_post_initialize(true),
         )
-        .unwrap_or_else(|error| panic!("admit Original PostInitialize boundary: {error}"));
+        .map_err(|error| {
+            TraceRunError::Admission(format!("admit Original PostInitialize boundary: {error}"))
+        })?;
+    Ok(())
 }
 
 pub(super) fn register_language_data_paths_for_tool() {
@@ -757,7 +777,7 @@ pub(super) fn register_language_data_paths_for_tool() {
 pub(super) fn restore_campaign(
     trace: &TraceCampaign,
     profiles: &robin_engine::profiles::ProfileManager,
-) -> robin_engine::campaign::Campaign {
+) -> TraceRunResult<robin_engine::campaign::Campaign> {
     use robin_engine::campaign::{Campaign, CampaignValue, PcDescription};
     use robin_engine::mission::{Mission, MissionStatus};
     use robin_engine::pc_status::{HumanStatus, PcStatus, Skill};
@@ -808,16 +828,16 @@ pub(super) fn restore_campaign(
     campaign.missions = trace
         .missions
         .iter()
-        .map(|source| {
+        .map(|source| -> TraceRunResult<_> {
             let profile = profiles
                 .missions
                 .get(source.profile_index as usize)
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    TraceRunError::TraceContent(format!(
                         "campaign mission profile index {} is out of range",
                         source.profile_index
-                    )
-                });
+                    ))
+                })?;
             assert_eq!(profile.id, source.profile_id, "mission profile ID mismatch");
             assert!(
                 profile
@@ -831,22 +851,26 @@ pub(super) fn restore_campaign(
                 source.mission,
                 source.proto_level
             );
-            Mission {
+            Ok(Mission {
                 age: source.age,
                 blazon_price: source.blazon_price,
                 status: match source.status {
                     0 => MissionStatus::Available,
                     1 => MissionStatus::Won,
                     2 => MissionStatus::Lost,
-                    other => panic!("invalid campaign mission status {other}"),
+                    other => {
+                        return Err(TraceRunError::TraceContent(format!(
+                            "invalid campaign mission status {other}"
+                        )));
+                    }
                 },
                 profile_idx: Some(source.profile_index),
                 ares_state_override: (source.ares_state_succeeded != profile.ares_state_succeeded)
                     .then_some(source.ares_state_succeeded),
                 attempt_history: Default::default(),
-            }
+            })
         })
-        .collect();
+        .collect::<TraceRunResult<_>>()?;
     let mission_count = campaign.missions.len();
     let validate_mission_index = |index: usize| {
         assert!(
@@ -882,28 +906,32 @@ pub(super) fn restore_campaign(
         0 => MissionStatus::Available,
         1 => MissionStatus::Won,
         2 => MissionStatus::Lost,
-        other => panic!("invalid last pseudo mission status {other}"),
+        other => {
+            return Err(TraceRunError::TraceContent(format!(
+                "invalid last pseudo mission status {other}"
+            )));
+        }
     };
     campaign.last_pseudo_mission_id = trace.last_pseudo_mission_id;
 
     campaign.characters = trace
         .characters
         .iter()
-        .map(|source| {
+        .map(|source| -> TraceRunResult<_> {
             let profile = profiles
                 .characters
                 .get(source.profile_index as usize)
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    TraceRunError::TraceContent(format!(
                         "campaign character profile index {} is out of range",
                         source.profile_index
-                    )
-                });
+                    ))
+                })?;
             assert_eq!(
                 profile.profile_name, source.profile_name,
                 "character profile name mismatch"
             );
-            PcDescription {
+            Ok(PcDescription {
                 character_profile_idx: Some(CharacterProfileIdx(source.profile_index)),
                 instanced: source.instanced,
                 status: PcStatus {
@@ -932,9 +960,9 @@ pub(super) fn restore_campaign(
                     name_override: None,
                     beam_me_index_in_sherwood: source.status.beam_me_index_in_sherwood,
                 },
-            }
+            })
         })
-        .collect();
+        .collect::<TraceRunResult<_>>()?;
     let character_count = campaign.characters.len();
     let validate_character_index = |index: usize| {
         assert!(
@@ -967,30 +995,36 @@ pub(super) fn restore_campaign(
     campaign.production_sectors = trace
         .production_sectors
         .iter()
-        .map(|source| SectorProduction {
-            prod_type: match source.r#type {
-                0 => Type::MakeArrow,
-                1 => Type::MakePurse,
-                2 => Type::MakeStone,
-                3 => Type::MakeApple,
-                4 => Type::MakeAle,
-                5 => Type::MakeLamblegg,
-                6 => Type::MakePlant,
-                7 => Type::MakeNet,
-                8 => Type::MakeWaspNest,
-                9 => Type::TrainBow,
-                10 => Type::TrainHandToHand,
-                11 => Type::Heal,
-                12 => Type::Relic,
-                other => panic!("invalid campaign production type {other}"),
-            },
-            script_zone: None,
-            speed: source.speed,
-            production_points: Vec::new(),
-            occupants: source
-                .occupants
-                .iter()
-                .map(|occupant| Occupant {
+        .map(|source| -> TraceRunResult<_> {
+            Ok(SectorProduction {
+                prod_type: match source.r#type {
+                    0 => Type::MakeArrow,
+                    1 => Type::MakePurse,
+                    2 => Type::MakeStone,
+                    3 => Type::MakeApple,
+                    4 => Type::MakeAle,
+                    5 => Type::MakeLamblegg,
+                    6 => Type::MakePlant,
+                    7 => Type::MakeNet,
+                    8 => Type::MakeWaspNest,
+                    9 => Type::TrainBow,
+                    10 => Type::TrainHandToHand,
+                    11 => Type::Heal,
+                    12 => Type::Relic,
+                    other => {
+                        return Err(TraceRunError::TraceContent(format!(
+                            "invalid campaign production type {other}"
+                        )));
+                    }
+                },
+                script_zone: None,
+                speed: source.speed,
+                production_points: Vec::new(),
+                occupants: source
+                    .occupants
+                    .iter()
+                    .map(|occupant| {
+                        Occupant {
                     pc_description_idx: validate_character_index(occupant.character_index),
                     x: occupant.x.value(),
                     y: occupant.y.value(),
@@ -998,15 +1032,17 @@ pub(super) fn restore_campaign(
                         robin_engine::position_interface::ObstacleHandle::from_serialized_pointer(
                             occupant.obstacle,
                         ),
-                })
-                .collect(),
-            amount: source.amount,
-            produced_amount: source.produced_amount,
-            max_amount_reached: source.max_amount_reached,
+                }
+                    })
+                    .collect(),
+                amount: source.amount,
+                produced_amount: source.produced_amount,
+                max_amount_reached: source.max_amount_reached,
+            })
         })
-        .collect();
+        .collect::<TraceRunResult<_>>()?;
 
-    campaign
+    Ok(campaign)
 }
 
 #[cfg(not(feature = "client"))]
@@ -1014,19 +1050,21 @@ pub(super) fn initialize_headless_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
     timing: &robin_engine::audio_durations::AudioDurations,
-) -> (Engine, LevelAssets, robin_engine::scb::ScbFile) {
+) -> TraceRunResult<(Engine, LevelAssets, robin_engine::scb::ScbFile)> {
+    // Game-data failures below keep their former `expect` text, including the
+    // error's Debug rendering.
     let mut profile_manager = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
-        .expect("open profile.cpf");
+        .map_err(|error| TraceRunError::Input(format!("open profile.cpf: {error:?}")))?;
     profile_manager
         .load_all_legacy_cpf(&mut cpf)
-        .expect("parse profile.cpf");
+        .map_err(|error| TraceRunError::Input(format!("parse profile.cpf: {error:?}")))?;
     profile_manager.import_beam_mes("Data/Levels");
 
-    let campaign = restore_campaign(&header.campaign, &profile_manager);
-    let mission_idx = campaign
-        .current_mission_idx
-        .expect("recorded campaign has no current mission");
+    let campaign = restore_campaign(&header.campaign, &profile_manager)?;
+    let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
+        TraceRunError::TraceContent("recorded campaign has no current mission".to_owned())
+    })?;
     let current_profile = campaign.missions[mission_idx].profile(&profile_manager);
     assert!(
         current_profile
@@ -1048,13 +1086,16 @@ pub(super) fn initialize_headless_engine(
     // that tool authority once; replay execution must not consult live globals.
     assets.sprite_scriptor = Arc::new(robin_engine::sprite_script::SpriteScriptor::legacy_tool());
     assets.profile_manager = profiles.clone();
-    crate::populate_localized_names(&mut assets)
-        .expect("load localized names for deterministic PC construction");
+    crate::populate_localized_names(&mut assets).map_err(|error| {
+        TraceRunError::Input(format!(
+            "load localized names for deterministic PC construction: {error:?}"
+        ))
+    })?;
 
     let mut frame_holder = robin_assets::frame_holder::FrameHolder::new();
     frame_holder
         .initialize_sprite_bank(".")
-        .expect("initialize sprite bank");
+        .map_err(|error| TraceRunError::Input(format!("initialize sprite bank: {error:?}")))?;
     assets.bank_signature = frame_holder.signature();
 
     let mission_name = campaign.missions[mission_idx]
@@ -1062,14 +1103,19 @@ pub(super) fn initialize_headless_engine(
         .mission_filename
         .clone();
     let script_path = format!("Data/Levels/{mission_name}.scb");
-    let bytes = robin_engine::sbfile::SbFile::read_all(&script_path)
-        .unwrap_or_else(|status| panic!("read mission script {script_path}: status {status}"));
-    let scb = robin_assets::scb::parse_bytes(&bytes).expect("parse mission script");
+    let bytes = robin_engine::sbfile::SbFile::read_all(&script_path).map_err(|status| {
+        TraceRunError::Input(format!(
+            "read mission script {script_path}: status {status}"
+        ))
+    })?;
+    let scb = robin_assets::scb::parse_bytes(&bytes)
+        .map_err(|error| TraceRunError::Input(format!("parse mission script: {error:?}")))?;
     assets.scripts.mission_programs = Arc::new(BTreeMap::from([(
         mission_name,
         Arc::new(
-            robin_engine::script_manager::ScriptProgram::from_scb(scb.clone())
-                .expect("prepare mission script bytecode"),
+            robin_engine::script_manager::ScriptProgram::from_scb(scb.clone()).map_err(
+                |error| TraceRunError::Input(format!("prepare mission script bytecode: {error:?}")),
+            )?,
         ),
     )]));
 
@@ -1079,14 +1125,14 @@ pub(super) fn initialize_headless_engine(
         "Data/Levels",
         &mut |_| {},
     )
-    .expect("load mission");
+    .map_err(|error| TraceRunError::Input(format!("load mission: {error:?}")))?;
     let ambiance = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance);
     let bg_pixel_dims = crate::background_dimensions(
         &loaded.mission.header.map_filename,
         ambiance.directory(),
         "Data/Levels",
     )
-    .expect("read background dimensions");
+    .map_err(|error| TraceRunError::Input(format!("read background dimensions: {error:?}")))?;
 
     let engine = Engine::new(robin_engine::engine::EngineArgs {
         campaign,
@@ -1105,35 +1151,41 @@ pub(super) fn initialize_headless_engine(
             .sim_config
             .to_sim_config(header.synchronous_pathfinding),
     })
-    .expect("initialize engine");
-    crate::populate_sound_duration_tables(&mut assets, &profiles, timing)
-        .expect("load deterministic sound duration tables");
+    .map_err(|error| TraceRunError::Input(format!("initialize engine: {error:?}")))?;
+    crate::populate_sound_duration_tables(&mut assets, &profiles, timing).map_err(|error| {
+        TraceRunError::Input(format!(
+            "load deterministic sound duration tables: {error:?}"
+        ))
+    })?;
     assets.attachments.pixel_opacity = Some(Arc::new(frame_holder));
-    (engine, assets, scb)
+    Ok((engine, assets, scb))
 }
 
 #[cfg(feature = "client")]
 pub(super) fn initialize_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
-) -> (
+) -> TraceRunResult<(
     Engine,
     LevelAssets,
     Host,
     robin_engine::engine::level_loading::PreDecodedBackground,
     robin_engine::scb::ScbFile,
     robin_rs::ingame_menu::resources::MenuText,
-) {
+)> {
+    // Game-data failures below keep their former `expect` text, including the
+    // error's Debug rendering.
     let mut pm = robin_engine::profiles::ProfileManager::new();
     let mut cpf = robin_engine::sbfile::SbFile::open("Data/Configuration/profile.cpf")
-        .expect("open profile.cpf");
-    pm.load_all_legacy_cpf(&mut cpf).expect("parse profile.cpf");
+        .map_err(|error| TraceRunError::Input(format!("open profile.cpf: {error:?}")))?;
+    pm.load_all_legacy_cpf(&mut cpf)
+        .map_err(|error| TraceRunError::Input(format!("parse profile.cpf: {error:?}")))?;
     pm.import_beam_mes("Data/Levels");
 
-    let campaign = restore_campaign(&header.campaign, &pm);
-    let mission_idx = campaign
-        .current_mission_idx
-        .expect("recorded campaign has no current mission");
+    let campaign = restore_campaign(&header.campaign, &pm)?;
+    let mission_idx = campaign.current_mission_idx.ok_or_else(|| {
+        TraceRunError::TraceContent("recorded campaign has no current mission".to_owned())
+    })?;
     let current_profile = campaign.missions[mission_idx].profile(&pm);
     assert!(
         current_profile
@@ -1158,20 +1210,30 @@ pub(super) fn initialize_engine(
     let mut text_res = robin_assets::resource_manager::ResourceManager::legacy_tool();
     text_res
         .attach_resource_file("Data/Text/Level.res")
-        .expect("load Data/Text/Level.res for Original rescue-PC names");
+        .map_err(|error| {
+            TraceRunError::Input(format!(
+                "load Data/Text/Level.res for Original rescue-PC names: {error:?}"
+            ))
+        })?;
     (assets.peasant_firstnames, assets.peasant_surnames) =
-        robin_rs::game_session::load_peasant_name_pool(&mut text_res)
-            .expect("decode localized peasant names");
+        robin_rs::game_session::load_peasant_name_pool(&mut text_res).map_err(|error| {
+            TraceRunError::Input(format!("decode localized peasant names: {error:?}"))
+        })?;
     assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res)
-        .expect("decode localized VIP names");
+        .map_err(|error| TraceRunError::Input(format!("decode localized VIP names: {error:?}")))?;
     let _ = text_res.attach_resource_file("Data/Interface/Start.sxt");
-    let menu_text = robin_rs::ingame_menu::resources::MenuText::load(&mut text_res);
+    // The runner has already installed its datadir and locale mounts; the
+    // presentation locale comes from that same global tool file system.
+    let menu_text = robin_rs::ingame_menu::resources::MenuText::load(
+        &mut text_res,
+        robin_engine::sbfile::SbFile::snapshot_legacy_file_system().presentation_locale(),
+    );
     let mut host = Host::scratch(1024.0, 768.0);
     host.frontend
         .resources
         .frame_holder_before_publication_mut()
         .initialize_sprite_bank(".")
-        .expect("initialize sprite bank");
+        .map_err(|error| TraceRunError::Input(format!("initialize sprite bank: {error:?}")))?;
     assets.bank_signature = host.frontend.resources.frame_holder().signature();
 
     let mission_name = campaign.missions[mission_idx]
@@ -1182,14 +1244,17 @@ pub(super) fn initialize_engine(
     let resolved =
         robin_engine::sbfile::resolve_case_insensitive(std::path::Path::new(&script_path))
             .unwrap_or_else(|| PathBuf::from(&script_path));
-    let bytes = std::fs::read(&resolved)
-        .unwrap_or_else(|e| panic!("read mission script {}: {e}", resolved.display()));
-    let scb = robin_assets::scb::parse_bytes(&bytes).expect("parse mission script");
+    let bytes = std::fs::read(&resolved).map_err(|e| {
+        TraceRunError::Input(format!("read mission script {}: {e}", resolved.display()))
+    })?;
+    let scb = robin_assets::scb::parse_bytes(&bytes)
+        .map_err(|error| TraceRunError::Input(format!("parse mission script: {error:?}")))?;
     assets.scripts.mission_programs = Arc::new(std::collections::BTreeMap::from([(
         mission_name,
         Arc::new(
-            robin_engine::script_manager::ScriptProgram::from_scb(scb.clone())
-                .expect("prepare mission script bytecode"),
+            robin_engine::script_manager::ScriptProgram::from_scb(scb.clone()).map_err(
+                |error| TraceRunError::Input(format!("prepare mission script bytecode: {error:?}")),
+            )?,
         ),
     )]));
 
@@ -1199,7 +1264,7 @@ pub(super) fn initialize_engine(
         "Data/Levels",
         &mut |_| {},
     )
-    .expect("load mission");
+    .map_err(|error| TraceRunError::Input(format!("load mission: {error:?}")))?;
     let ambiance = robin_engine::engine::Ambiance::from_raw(loaded.mission.header.ambiance)
         .directory()
         .to_string();
@@ -1214,8 +1279,8 @@ pub(super) fn initialize_engine(
         &mut |_| {},
         &terrain_files,
     )
-    .expect("decode background map")
-    .expect("mission has no background map");
+    .map_err(|error| TraceRunError::Input(format!("decode background map: {error:?}")))?
+    .ok_or_else(|| TraceRunError::Input("mission has no background map".to_owned()))?;
     let bg_pixel_dims = (background.width as f32, background.height as f32);
 
     let engine = Engine::new(robin_engine::engine::EngineArgs {
@@ -1235,7 +1300,7 @@ pub(super) fn initialize_engine(
             .sim_config
             .to_sim_config(header.synchronous_pathfinding),
     })
-    .expect("initialize engine");
+    .map_err(|error| TraceRunError::Input(format!("initialize engine: {error:?}")))?;
     robin_rs::game_session::setup_mission_audio_for_tool(
         &mut host,
         &engine,
@@ -1248,7 +1313,7 @@ pub(super) fn initialize_engine(
     // intentionally headless, so publish the immutable frame metadata used
     // to project that post-render state without mutating the simulation.
     assets.attachments.pixel_opacity = Some(host.frontend.resources.publish_frame_holder_opacity());
-    (engine, assets, host, background, scb, menu_text)
+    Ok((engine, assets, host, background, scb, menu_text))
 }
 
 /// Opt-in lifecycle diagnostic paired with Original's
@@ -1258,36 +1323,43 @@ pub(super) fn record_arrow_publication_before_compare(
     engine: &Engine,
     frame: &TraceFrame,
     entity_map: &EntityMap,
-) {
+) -> TraceRunResult<()> {
     if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
-        return;
+        return Ok(());
     }
-    let parse_filter = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
+    let parse_filter = |name: &str| -> TraceRunResult<Option<u32>> {
+        std::env::var(name)
+            .ok()
+            .map(|value| {
+                value.parse::<u32>().map_err(|error| {
+                    TraceRunError::Input(format!(
+                        "invalid {name}={value:?} for arrow publication diagnostic: {error}"
+                    ))
+                })
             })
-        })
+            .transpose()
     };
-    if parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
+    if parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")?
         .is_some_and(|value| u64::from(value) != frame.frame_after)
     {
-        return;
+        return Ok(());
     }
     let projectile_filter =
-        parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER");
-    let shooter_filter = parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER");
+        parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER")?;
+    let shooter_filter = parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER")?;
 
     for original in frame.elements.iter().filter(|element| {
         element.kind == TraceEntityKind::Projectile
             && projectile_filter.is_none_or(|value| value == element.creation_order)
     }) {
-        let id = entity_map.translate(original.entity_id);
-        let entity = engine
-            .get_entity(id)
-            .unwrap_or_else(|| panic!("mapped diagnostic projectile {id:?} is missing"));
+        let id = entity_map.translate(original.entity_id)?;
+        let entity = engine.get_entity(id).ok_or_else(|| {
+            TraceRunError::TraceContent(format!("mapped diagnostic projectile {id:?} is missing"))
+        })?;
         let Entity::Projectile(arrow) = entity else {
-            panic!("mapped diagnostic projectile {id:?} changed entity kind");
+            return Err(TraceRunError::TraceContent(format!(
+                "mapped diagnostic projectile {id:?} changed entity kind"
+            )));
         };
         if arrow.object.object_type != robin_engine::element_kinds::ObjectType::Arrow {
             continue;
@@ -1322,4 +1394,5 @@ pub(super) fn record_arrow_publication_before_compare(
             position.z.to_bits(),
         );
     }
+    Ok(())
 }

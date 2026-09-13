@@ -7,7 +7,7 @@ cd -- "$repository"
 
 if (( $# != 1 )); then
     printf 'usage: bash scripts/check-quality.sh SUITE\n' >&2
-    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm browser-audio native-lifecycle tooling web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame fixtures-legacy-linux\n' >&2
+    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm browser-audio native-lifecycle tooling unreferenced-items web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame fixtures-legacy-linux\n' >&2
     exit 2
 fi
 
@@ -99,6 +99,29 @@ case "$1" in
         python3 -m unittest discover -s scripts/validation -p namespace_x11_test.py
         python3 -m unittest discover -s scripts/validation -p runtime_evidence_test.py
         bash scripts/test_parity_orchestration.sh
+        ;;
+    unreferenced-items)
+        # Advisory review queue, never a gate: rust-analyzer cannot see every
+        # macro/feature/callback reference, so this always exits 0 and only
+        # reports a count (or why the scan was unavailable). The full JSON
+        # report is kept only when UNREFERENCED_ITEMS_REPORT names a path.
+        report=${UNREFERENCED_ITEMS_REPORT:-}
+        if [[ -z "$report" ]]; then
+            report=$(mktemp)
+            trap 'rm -f -- "$report"' EXIT
+        fi
+        scan_status=0
+        python3 scripts/find_unreferenced_rust_items.py --json --output "$report" crates \
+            >/dev/null || scan_status=$?
+        if count=$(python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1]))))' \
+            "$report" 2>/dev/null)
+        then
+            printf 'advisory: %s unreferenced Rust functions/methods (review queue, not a failure)\n' \
+                "$count"
+        else
+            printf 'advisory: unreferenced-item scan unavailable (exit %s); is rust-analyzer installed?\n' \
+                "$scan_status"
+        fi
         ;;
     web) pnpm --dir wasm-www verify:web ;;
     editor) pnpm --dir level-editor verify ;;

@@ -1,5 +1,25 @@
 //! Native trace storage, conversion transactions, reblocking and recovery.
-use super::*;
+use super::{
+    BinaryTraceFooter, BinaryTraceHeaderV68, BinaryTraceReader, BinaryTraceRecord, BufRead,
+    BufReader, BufWriter, Digest, Duration, File, Instant, NativeReblockBinding,
+    NativeStoragePolicy, OpenOptions, Path, PathBuf, Read, Seek, SeekFrom, Sha256,
+    TRACE_CONVERSION_QUARANTINE_SUFFIX, TRACE_NATIVE_BLOCK_RECORDS, TRACE_NATIVE_FOOTER_LEN,
+    TRACE_NATIVE_FOOTER_MAGIC, TRACE_NATIVE_LONG_DISTANCE_MATCHING,
+    TRACE_NATIVE_MAX_REBLOCK_WINDOW_LOG, TRACE_NATIVE_MIN_WINDOW_LOG, TRACE_NATIVE_SUFFIX,
+    TRACE_NATIVE_VERSION, TRACE_NATIVE_WINDOW_LOG, TRACE_NATIVE_ZSTD_LEVEL,
+    TRACE_REBLOCK_BINDING_SUFFIX, TRACE_REBLOCK_SOURCE_SUFFIX, TRACE_ZSTD_WINDOW_LOG_MAX,
+    TraceHeader, TraceRngBatch, TraceRngDomain, TraceRngOnly, TraceRngPrefix, TraceStartState,
+    TraceTimeline, VecDeque, VerifiedNativeReadback, Write, absolute_trace_path, bitcode,
+    join_roundtrip_audit_workers, native_binary_trace_path, open_jsonl_trace, parse_trace_frame,
+    sha256_hex, spawn_roundtrip_audit_workers, trace_content_sha256, trace_source_fingerprint,
+    validate_standalone_native_trace, validate_trace_frame_with_legacy_additive_omissions,
+    validate_trace_header, verify_trace_line_roundtrip,
+};
+use fs2::FileExt as _;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt as _;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt as _;
 
 /// Storage and trace-format failures retain their operation/path context until
 /// the command boundary. Conversion callers must not publish on an error.
@@ -24,7 +44,9 @@ impl<T> StorageContext<T> for Option<T> {
 macro_rules! storage_ensure {
     ($condition:expr, $($message:tt)+) => {
         if !$condition {
-            return Err(format!($($message)+));
+            // `.into()` also lifts the message into `TraceRunError::Storage`
+            // when the enclosing function returns `TraceRunResult`.
+            return Err(format!($($message)+).into());
         }
     };
 }
@@ -744,10 +766,12 @@ pub(super) fn update_native_semantic_digest<T: bitcode::Encode + ?Sized>(
     digest.update(encoded);
 }
 
-/// Rewrite an authoritative version-66, version-67, or version-68 native trace
-/// into bounded bitcode blocks and a bounded-window zstd frame. The semantic
-/// record stream, frame count, and final frame are unchanged; legacy inputs
-/// migrate to the current header/footer version through their frozen decoders.
+/// Rewrite an authoritative version-68 native trace into bounded bitcode
+/// blocks and a bounded-window zstd frame. The semantic record stream, frame
+/// count, and final frame are unchanged. Only the current
+/// `TRACE_NATIVE_VERSION` is accepted (see `validate_native_version`); older
+/// native versions are rejected and must be migrated offline with their
+/// original runner.
 ///
 /// A hard-link recovery source is synced before the atomic replacement. If
 /// the process crashes at any later point, rerunning `--reblock` reads that
@@ -791,10 +815,10 @@ pub(super) fn reblock_native_trace(
         (header.version) == (source_footer.version),
         "native parity trace reblock source header/footer versions differ"
     );
-    // The reader has already projected every supported legacy layout into the
-    // current in-memory representation. Reblocking is therefore also the
-    // native-format migration boundary: always emit the current header/footer
-    // version, and compare semantic digests after the same normalization.
+    // The reader only accepts the current native version, so this assignment
+    // is a no-op today; it pins the emitted header/footer to the current
+    // version and keeps the semantic digests compared after the same
+    // normalization.
     header.version = TRACE_NATIVE_VERSION;
     let output_footer = BinaryTraceFooter {
         version: TRACE_NATIVE_VERSION,
@@ -976,8 +1000,8 @@ pub(super) fn digest_and_validate_native_trace_with_version_policy(
         "native parity trace header/footer versions differ"
     );
     // Container versions describe encoding layouts, not replay semantics.
-    // Readers project supported legacy layouts into the current types, so
-    // normalize the header before hashing to compare migrations faithfully.
+    // Readers currently accept only `TRACE_NATIVE_VERSION`; normalizing the
+    // header before hashing keeps digests independent of the container version.
     if normalize_container_version {
         header.version = TRACE_NATIVE_VERSION;
     }

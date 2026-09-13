@@ -107,14 +107,77 @@ class ResultTests(unittest.TestCase):
         result = subprocess.run(["bash", "-c", r'''
             set -euo pipefail
             source "$1"
+            # `! cmd` never trips errexit, so rejections must fail explicitly.
+            reject() {
+                if "$@"; then printf 'accepted: %s\n' "$*" >&2; exit 1; fi
+            }
             [[ $(normalize_bounded_uint 0008 0008) == 8 ]]
             [[ $(normalize_bounded_uint 000 8) == 0 ]]
-            ! normalize_bounded_uint 9 8
-            ! normalize_bounded_uint 18446744073709551616 9223372036854775807
-            ! normalize_bounded_uint '-1' 8
-            ! normalize_bounded_uint '1+1' 8
-            ! sha256_file /nonexistent-parity-fixture
+            reject normalize_bounded_uint 9 8
+            reject normalize_bounded_uint 18446744073709551616 9223372036854775807
+            reject normalize_bounded_uint '-1' 8
+            reject normalize_bounded_uint '1+1' 8
+            reject sha256_file /nonexistent-parity-fixture 2>/dev/null
         ''', "parity-common-test", str(helper)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_shared_runner_bundle_verifier_is_strict(self):
+        helper = Path(__file__).parent / "lib/parity_common.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(["bash", "-c", r'''
+                set -euo pipefail
+                source "$1"
+                make_bundle() {
+                    local b=$1
+                    mkdir -p -- "$b/lib"
+                    for f in original_parity_replay original_parity_replay.remote lib/ld-linux-x86-64.so.2; do
+                        printf '#!/bin/sh\n' >"$b/$f"; chmod +x -- "$b/$f"
+                    done
+                    printf 'NATIVE_CONVERSION_PROTOCOL=2\n' >"$b/PROVENANCE.txt"
+                    printf 'ld => %s/lib/ld-linux-x86-64.so.2 (0x1)\n' "$b" >"$b/LOADER_LIST.txt"
+                    (cd -- "$b" && sha256sum lib/ld-linux-x86-64.so.2 >LIB_SHA256SUMS \
+                        && sha256sum original_parity_replay original_parity_replay.remote \
+                            PROVENANCE.txt LOADER_LIST.txt LIB_SHA256SUMS >SHA256SUMS)
+                }
+                # `! cmd` never trips errexit, so rejections must fail explicitly.
+                reject() {
+                    if "$@"; then printf 'accepted: %s\n' "$*" >&2; exit 1; fi
+                }
+                good="$2/with space/good"; make_bundle "$good"
+                verify_runner_bundle "$good" "$good"
+                verify_runner_bundle_identity "$good" "$(runner_bundle_digest "$good")" \
+                    "$(sha256_file "$good/original_parity_replay")"
+                reject verify_runner_bundle_identity "$good" "$(printf '0%.0s' {1..64})" 2>/dev/null
+                reject verify_runner_bundle "$good" "" 2>/dev/null
+                reject verify_runner_bundle "$good" "$2/elsewhere" 2>/dev/null
+
+                traversal="$2/traversal"; make_bundle "$traversal"
+                printf '%064d  ../outside\n' 0 >>"$traversal/LIB_SHA256SUMS"
+                reject verify_runner_bundle "$traversal" "$traversal" 2>"$2/traversal.err"
+                grep -Fq 'unsafe bundle checksum path: ../outside' "$2/traversal.err"
+
+                dotdot="$2/dotdot"; make_bundle "$dotdot"
+                printf 'libc => %s/lib/../../escape.so (0x2)\n' "$dotdot" >>"$dotdot/LOADER_LIST.txt"
+                reject verify_runner_bundle "$dotdot" "$dotdot" 2>"$2/dotdot.err"
+                grep -Fq 'loader proof resolves outside' "$2/dotdot.err"
+
+                linked="$2/linked"; make_bundle "$linked"
+                ln -s /etc/passwd "$linked/lib/escape"
+                reject verify_runner_bundle "$linked" "$linked" 2>"$2/linked.err"
+                grep -Fq 'contains a symlink' "$2/linked.err"
+
+                mkdir -p -- "$2/audit/logs"
+                : >"$2/audit/logs/k.attempt-0002.log.in-progress"
+                attempt_begin "$2/audit/logs" k 2 "$2/audit/k.status"
+                [[ "$attempt_number" == 3 && "$(cat "$2/audit/k.status")" == $'running\t3\tk.attempt-0003.log' ]]
+                attempt_finish "$2/audit/k.status" 0
+                [[ -f "$2/audit/logs/k.attempt-0003.log" ]]
+                attempt_read_status "$2/audit/k.status"
+                [[ "$attempt_prior_status" == 0 && "$attempt_prior_number" == 3 ]]
+                printf 'extra\n' >>"$2/audit/k.status"
+                ! attempt_read_status "$2/audit/k.status"
+            ''', "parity-common-bundle-test", str(helper), directory],
+                capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

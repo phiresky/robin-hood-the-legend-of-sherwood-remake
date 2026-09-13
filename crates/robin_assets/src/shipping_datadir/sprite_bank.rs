@@ -32,7 +32,9 @@ fn vq_chunks_stuck_error(still_pending: &[SpriteVqChunk]) -> anyhow::Error {
 /// grids are `Arc`-shared with the bank rows) so the decode itself can run on
 /// a rayon worker while the bank stays borrowed on the dispatching thread.
 /// Transient decode state, never serialized — deliberately no serde derives.
-pub(super) struct VqChunkDecodeInputs {
+/// `pub` only because it is `VqCodec::Prepared`; the module is private, so
+/// the type stays unnameable outside `shipping_datadir` (fields are private).
+pub struct VqChunkDecodeInputs {
     /// Per sprite: `(width / 4, height)` — the VQ grid dimensions.
     dims: Vec<(u16, u16)>,
     selfref: Vec<Option<crate::sprite_codec::SelfRef>>,

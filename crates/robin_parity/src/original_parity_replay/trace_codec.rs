@@ -2,7 +2,16 @@
 //!
 //! `trace_model` and `native_model` own the frozen current wire layout.
 //! Older native generations require offline migration before admission.
-use super::*;
+use super::{
+    BinaryTraceHeaderV68, BinaryTraceReader, BinaryTraceRecord, BufRead, BufReader, Digest, File,
+    Path, PathBuf, Read, Seek, Serialize, Sha256, StorageContext, TRACE_NATIVE_SUFFIX,
+    TRACE_NATIVE_VERSION, TRACE_ZSTD_WINDOW_LOG_MAX, TraceHeader, TraceRngOnly, TraceRngPrefix,
+    TraceStorageResult, TraceTimeline, bitcode, conversion_quarantine_path,
+    ensure_native_binary_trace_locked, finish_verified_conversion, lock_native_trace_generation,
+    move_verified_recording_to_quarantine, parse_trace_frame, read_binary_trace_footer,
+    read_binary_trace_header, reject_conversion_symlink, storage_ensure,
+    validate_binary_trace_footer,
+};
 
 pub(super) fn trace_content_sha256(trace_path: &Path) -> TraceStorageResult<String> {
     let mut source = File::open(trace_path).map_err(|error| {

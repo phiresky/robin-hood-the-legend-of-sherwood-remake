@@ -2,6 +2,7 @@
 use super::{
     BTreeSet, Engine, EntityId, EntityMap, LegacyGridSectorAsset, MapPoint, SectorNumber,
     TraceCommand, TraceEntityId, TraceJsonTree, TraceJsonValue, TraceRouteConstructionEvent,
+    TraceRunError, TraceRunResult,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,14 +30,18 @@ pub(super) struct ReplayGroupMoveResolution {
     pub(super) recorded_failed_gate_routes: Vec<TraceEntityId>,
 }
 
-pub(super) fn required_route_construction_ordinal(event: &TraceRouteConstructionEvent) -> u64 {
+pub(super) fn required_route_construction_ordinal(
+    event: &TraceRouteConstructionEvent,
+) -> TraceRunResult<u64> {
     match event
         .draft_diagnostics
         .get("ordinal")
         .map(TraceJsonValue::tree)
     {
-        Some(TraceJsonTree::Unsigned(ordinal)) => ordinal,
-        other => panic!("schema-16 route event lacks an unsigned ordinal: {other:?}"),
+        Some(TraceJsonTree::Unsigned(ordinal)) => Ok(ordinal),
+        other => Err(TraceRunError::TraceContent(format!(
+            "schema-16 route event lacks an unsigned ordinal: {other:?}"
+        ))),
     }
 }
 
@@ -53,7 +58,7 @@ pub(super) fn required_route_construction_ordinal(event: &TraceRouteConstruction
 /// must continue to carry both fields explicitly.
 pub(super) fn restore_legacy_route_construction_diagnostics(
     events: &mut [TraceRouteConstructionEvent],
-) {
+) -> TraceRunResult<()> {
     for (ordinal, event) in events.iter_mut().enumerate() {
         let ordinal = u64::try_from(ordinal).expect("route event count exceeds u64");
         match event
@@ -71,13 +76,18 @@ pub(super) fn restore_legacy_route_construction_diagnostics(
                 recorded, ordinal,
                 "legacy schema-16 route ordinal disagrees with Original append order"
             ),
-            other => panic!("legacy schema-16 route event has an invalid ordinal: {other:?}"),
+            other => {
+                return Err(TraceRunError::TraceContent(format!(
+                    "legacy schema-16 route event has an invalid ordinal: {other:?}"
+                )));
+            }
         }
         event
             .draft_diagnostics
             .entry("result".to_owned())
             .or_insert_with(|| TraceJsonValue::from(TraceJsonTree::String("success".to_owned())));
     }
+    Ok(())
 }
 
 /// Recover whether movement-sequence construction selected its internal
@@ -95,56 +105,57 @@ pub(super) fn resolve_current_group_move_route(
     consumed_route_ordinals: &mut BTreeSet<u64>,
     entity_map: &EntityMap,
     retained_sector_kinds: &[LegacyGridSectorAsset],
-) -> Option<ReplayGroupMoveResolution> {
+) -> TraceRunResult<Option<ReplayGroupMoveResolution>> {
     let TraceCommand::GroupMove {
         actors,
         goal_sector,
         ..
     } = command
     else {
-        return None;
+        return Ok(None);
     };
-    let goal_sector = u16::try_from(*goal_sector)
-        .unwrap_or_else(|_| panic!("schema-16 group-move goal sector is negative: {goal_sector}"));
+    let goal_sector = u16::try_from(*goal_sector).map_err(|_| {
+        TraceRunError::TraceContent(format!(
+            "schema-16 group-move goal sector is negative: {goal_sector}"
+        ))
+    })?;
     let goal_kind = retained_sector_kinds
         .get(usize::from(goal_sector))
-        .unwrap_or_else(|| {
-            panic!(
+        .ok_or_else(|| {
+            TraceRunError::TraceContent(format!(
                 "schema-16 group-move goal sector {goal_sector} is absent from retained Original topology"
-            )
-        });
+            ))
+        })?;
     let goal_door = match goal_kind {
-        LegacyGridSectorAsset::Door { gate_index } => Some(entity_map.translate_gate(*gate_index)),
+        LegacyGridSectorAsset::Door { gate_index } => Some(entity_map.translate_gate(*gate_index)?),
         LegacyGridSectorAsset::NullOrOrdinary
         | LegacyGridSectorAsset::Building
         | LegacyGridSectorAsset::Lift => None,
     };
 
-    let mut matching = route_events
-        .iter()
-        .filter_map(|event| {
-            let ordinal = required_route_construction_ordinal(event);
-            if consumed_route_ordinals.contains(&ordinal)
-                || !actors.contains(&event.actor)
-                || event.goal_sector != goal_sector
-                || event.kind != "move"
-            {
-                return None;
-            }
-            Some((ordinal, event))
-        })
-        .collect::<Vec<_>>();
+    let mut matching = Vec::new();
+    for event in route_events {
+        let ordinal = required_route_construction_ordinal(event)?;
+        if consumed_route_ordinals.contains(&ordinal)
+            || !actors.contains(&event.actor)
+            || event.goal_sector != goal_sector
+            || event.kind != "move"
+        {
+            continue;
+        }
+        matching.push((ordinal, event));
+    }
     // Same-sector moves do not construct a gate route, but retained Original
     // topology still authoritatively identifies whether group movement's
     // selected goal was a door. Do not fall back to Rust's overlapping-polygon
     // hit in that case.
     if matching.is_empty() {
-        return Some(ReplayGroupMoveResolution {
+        return Ok(Some(ReplayGroupMoveResolution {
             door_route: goal_door.is_some(),
             unmapped_goal_search_sector: None,
             recorded_gate_routes: Vec::new(),
             recorded_failed_gate_routes: Vec::new(),
-        });
+        }));
     }
     matching.sort_unstable_by_key(|(ordinal, _)| *ordinal);
     // Group movement executes movement once for each selected actor, and
@@ -159,16 +170,26 @@ pub(super) fn resolve_current_group_move_route(
     let mut actors_with_route = BTreeSet::new();
     matching.retain(|(_, event)| actors_with_route.insert(event.actor));
     if let Some(goal_door) = goal_door {
+        // Same short-circuit order as `Iterator::all`: stop at the first
+        // successful route that does not end at the goal door.
+        let mut all_successful_routes_reach_goal_door = true;
+        for (_, event) in &matching {
+            let successful = matches!(
+                event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
+                Some(TraceJsonTree::String(result)) if result == "success"
+            );
+            let reaches_goal_door = !successful
+                || match event.gates.last() {
+                    Some(gate) => entity_map.translate_gate(gate.gate_id)? == goal_door,
+                    None => false,
+                };
+            if !reaches_goal_door {
+                all_successful_routes_reach_goal_door = false;
+                break;
+            }
+        }
         assert!(
-            matching.iter().all(|(_, event)| {
-                !matches!(
-                    event.draft_diagnostics.get("result").map(TraceJsonValue::tree),
-                    Some(TraceJsonTree::String(result)) if result == "success"
-                ) || event
-                    .gates
-                    .last()
-                    .is_some_and(|gate| entity_map.translate_gate(gate.gate_id) == goal_door)
-            }),
+            all_successful_routes_reach_goal_door,
             "successful door-target group move did not terminate at retained goal door {goal_door}: {matching:?}"
         );
     }
@@ -239,12 +260,12 @@ pub(super) fn resolve_current_group_move_route(
             "schema-16 route ordinal {ordinal} matched twice"
         );
     }
-    Some(ReplayGroupMoveResolution {
+    Ok(Some(ReplayGroupMoveResolution {
         door_route,
         unmapped_goal_search_sector,
         recorded_gate_routes,
         recorded_failed_gate_routes,
-    })
+    }))
 }
 
 /// Recover the goal that Original retained before authorizing a DropAle
@@ -267,28 +288,26 @@ pub(super) fn resolve_current_drop_ale(
     entity_map: &EntityMap,
     same_sector_goal: Option<ReplayDropAleResolution>,
     qa_recording: bool,
-) -> Option<ReplayDropAleResolution> {
+) -> TraceRunResult<Option<ReplayDropAleResolution>> {
     let TraceCommand::DropAleAt { actor, target, .. } = command else {
-        return None;
+        return Ok(None);
     };
 
-    let actor = entity_map.translate(*actor);
-    let matching_events = route_events
-        .iter()
-        .filter_map(|event| {
-            let ordinal = required_route_construction_ordinal(event);
-            if consumed_route_ordinals.contains(&ordinal)
-                || event.kind != "move"
-                || entity_map.translate(event.actor) != actor
-                || event.goal.x.bits != target.x.bits
-                || event.goal.y.bits != target.y.bits
-                || event.source_sector == event.goal_sector
-            {
-                return None;
-            }
-            Some((ordinal, event))
-        })
-        .collect::<Vec<_>>();
+    let actor = entity_map.translate(*actor)?;
+    let mut matching_events = Vec::new();
+    for event in route_events {
+        let ordinal = required_route_construction_ordinal(event)?;
+        if consumed_route_ordinals.contains(&ordinal)
+            || event.kind != "move"
+            || entity_map.translate(event.actor)? != actor
+            || event.goal.x.bits != target.x.bits
+            || event.goal.y.bits != target.y.bits
+            || event.source_sector == event.goal_sector
+        {
+            continue;
+        }
+        matching_events.push((ordinal, event));
+    }
     assert!(
         matching_events.len() <= 1,
         "schema-16 DropAle command matched {} exact route events",
@@ -304,18 +323,25 @@ pub(super) fn resolve_current_drop_ale(
             //
             // TODO(parity-schema): record DropAle's selected target sector,
             // exact arena identity, and layer directly on the command.
-            panic!(
+            return Err(TraceRunError::TraceContent(
                 "schema-16 DropAle recorded as a quick action has no authoritative target-sector identity"
-            );
+                    .to_owned(),
+            ));
         }
         // A cross-sector DropAle must have an authoritative route event. Do
         // not disguise a mismatched/corrupt event as a same-sector command.
-        let has_actor_route = route_events.iter().any(|event| {
-            event.kind == "move"
-                && entity_map.translate(event.actor) == actor
+        // Same short-circuit order as `Iterator::any`.
+        let mut has_actor_route = false;
+        for event in route_events {
+            if event.kind == "move"
+                && entity_map.translate(event.actor)? == actor
                 && event.source_sector != event.goal_sector
-        });
-        return (!has_actor_route).then_some(same_sector_goal).flatten();
+            {
+                has_actor_route = true;
+                break;
+            }
+        }
+        return Ok((!has_actor_route).then_some(same_sector_goal).flatten());
     };
     assert!(
         consumed_route_ordinals.insert(ordinal),
@@ -323,21 +349,21 @@ pub(super) fn resolve_current_drop_ale(
     );
 
     let (goal_sector, goal_sector_index) =
-        entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
-    let recorded_gate_path = recorded_gate_path_from_event(event, entity_map);
-    Some(ReplayDropAleResolution {
+        entity_map.translate_required_drop_ale_goal_sector(event.goal_sector)?;
+    let recorded_gate_path = recorded_gate_path_from_event(event, entity_map)?;
+    Ok(Some(ReplayDropAleResolution {
         goal: (goal_sector, event.goal_level),
         goal_sector_index: Some(goal_sector_index),
         recorded_gate_path: Some(recorded_gate_path),
-    })
+    }))
 }
 
 pub(super) fn recorded_gate_path_from_event(
     event: &TraceRouteConstructionEvent,
     entity_map: &EntityMap,
-) -> robin_engine::gate::RecordedGatePath {
+) -> TraceRunResult<robin_engine::gate::RecordedGatePath> {
     let (source_sector, source_sector_index) =
-        entity_map.translate_required_drop_ale_goal_sector(event.source_sector);
+        entity_map.translate_required_drop_ale_goal_sector(event.source_sector)?;
     let outcome = match event
         .draft_diagnostics
         .get("result")
@@ -352,13 +378,15 @@ pub(super) fn recorded_gate_path_from_event(
                 event
                     .gates
                     .iter()
-                    .map(|gate| robin_engine::gate::GatePathStep {
-                        door_index: robin_engine::gate::DoorIndex::from(
-                            entity_map.translate_gate(gate.gate_id),
-                        ),
-                        direct: gate.direct,
+                    .map(|gate| -> TraceRunResult<_> {
+                        Ok(robin_engine::gate::GatePathStep {
+                            door_index: robin_engine::gate::DoorIndex::from(
+                                entity_map.translate_gate(gate.gate_id)?,
+                            ),
+                            direct: gate.direct,
+                        })
                     })
-                    .collect(),
+                    .collect::<TraceRunResult<_>>()?,
             )
         }
         Some(TraceJsonTree::String(result)) if result == "failure" => {
@@ -368,14 +396,18 @@ pub(super) fn recorded_gate_path_from_event(
             );
             robin_engine::gate::RecordedGateOutcome::Failure
         }
-        other => panic!("schema-16 DropAle route has invalid result: {other:?}"),
+        other => {
+            return Err(TraceRunError::TraceContent(format!(
+                "schema-16 DropAle route has invalid result: {other:?}"
+            )));
+        }
     };
-    robin_engine::gate::RecordedGatePath {
+    Ok(robin_engine::gate::RecordedGatePath {
         source_sector,
         source_sector_index: Some(source_sector_index),
         source_layer: event.source_level,
         outcome,
-    }
+    })
 }
 
 pub(super) fn collect_current_delayed_drop_ale_routes(
@@ -384,7 +416,7 @@ pub(super) fn collect_current_delayed_drop_ale_routes(
     consumed_group_move_route_ordinals: &BTreeSet<u64>,
     entity_map: &EntityMap,
     engine: &mut Engine,
-) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
+) -> TraceRunResult<Vec<robin_engine::engine::RecordedDropAleRoute>> {
     let replay_setup = engine.parity_replay_setup();
     collect_current_delayed_drop_ale_routes_matching(
         route_events,
@@ -401,7 +433,7 @@ pub(super) fn collect_current_delayed_drop_ale_routes_matching(
     consumed_group_move_route_ordinals: &BTreeSet<u64>,
     entity_map: &EntityMap,
     mut has_pending_replay_seek: impl FnMut(EntityId, robin_engine::coordinates::MapPoint) -> bool,
-) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
+) -> TraceRunResult<Vec<robin_engine::engine::RecordedDropAleRoute>> {
     assert!(
         consumed_drop_ale_route_ordinals.is_disjoint(consumed_group_move_route_ordinals),
         "schema-16 route ordinal was consumed independently by DropAle and group-move joins"
@@ -409,7 +441,7 @@ pub(super) fn collect_current_delayed_drop_ale_routes_matching(
     let mut seen_route_ordinals = BTreeSet::new();
     let mut routes = Vec::new();
     for event in route_events {
-        let ordinal = required_route_construction_ordinal(event);
+        let ordinal = required_route_construction_ordinal(event)?;
         if event.kind != "move" || event.source_sector == event.goal_sector {
             continue;
         }
@@ -422,7 +454,7 @@ pub(super) fn collect_current_delayed_drop_ale_routes_matching(
         {
             continue;
         }
-        let actor = entity_map.translate(event.actor);
+        let actor = entity_map.translate(event.actor)?;
         let destination = event.goal.into();
         // A route-construction event is a shared diagnostic stream: ordinary
         // movement and group moves can leave cross-sector entries here too.
@@ -439,17 +471,17 @@ pub(super) fn collect_current_delayed_drop_ale_routes_matching(
             consumed_group_move_route_ordinals,
         );
         let (goal_sector, goal_sector_index) =
-            entity_map.translate_required_drop_ale_goal_sector(event.goal_sector);
+            entity_map.translate_required_drop_ale_goal_sector(event.goal_sector)?;
         routes.push(robin_engine::engine::RecordedDropAleRoute {
             actor,
             destination,
             goal_sector,
             goal_sector_index,
             goal_layer: event.goal_level,
-            recorded_gate_path: recorded_gate_path_from_event(event, entity_map),
+            recorded_gate_path: recorded_gate_path_from_event(event, entity_map)?,
         });
     }
-    routes
+    Ok(routes)
 }
 
 pub(super) fn claim_delayed_drop_ale_route_ordinal(
@@ -480,18 +512,22 @@ pub(super) fn current_drop_ale_same_sector_goal(
     command: &TraceCommand,
     entity_map: &EntityMap,
     engine: &Engine,
-) -> Option<ReplayDropAleResolution> {
+) -> TraceRunResult<Option<ReplayDropAleResolution>> {
     let TraceCommand::DropAleAt { actor, target, .. } = command else {
-        return None;
+        return Ok(None);
     };
-    let actor = entity_map.translate(*actor);
-    let entity = engine
-        .get_entity(actor)
-        .unwrap_or_else(|| panic!("schema-16 DropAle actor {actor:?} is missing"));
+    let actor = entity_map.translate(*actor)?;
+    let entity = engine.get_entity(actor).ok_or_else(|| {
+        TraceRunError::TraceContent(format!("schema-16 DropAle actor {actor:?} is missing"))
+    })?;
     let element = entity.element_data();
-    let sector = element
-        .sector()
-        .unwrap_or_else(|| panic!("schema-16 DropAle actor {actor:?} has no current sector"));
+    let sector = element.sector().ok_or_else(|| {
+        TraceRunError::TraceContent(format!(
+            "schema-16 DropAle actor {actor:?} has no current sector"
+        ))
+    })?;
+    // The remaining panics below are invariants of Rust's own fast grid: a
+    // hit or overlay index it returned must name one of its sectors.
     let target_point: MapPoint = (*target).into();
     let grid = engine.fast_grid();
     let hit = grid.get_sector_screen(target_point, element.position_map());
@@ -528,7 +564,7 @@ pub(super) fn current_drop_ale_same_sector_goal(
         // The old trace did not attest a gate path. Let DropAle's normal live
         // target/route resolver reconstruct it from the already-authorized
         // target point instead of inventing the actor sector as its goal.
-        return None;
+        return Ok(None);
     }
     let public = i16::try_from(sector.get()).unwrap_or_else(|_| {
         panic!(
@@ -536,7 +572,7 @@ pub(super) fn current_drop_ale_same_sector_goal(
             sector.get()
         )
     });
-    Some(ReplayDropAleResolution {
+    Ok(Some(ReplayDropAleResolution {
         goal: (SectorNumber::new(public), element.layer()),
         // Same-sector DropAle has no route event with which to recover a
         // stronger identity. Preserve the actor's current representation so
@@ -544,5 +580,5 @@ pub(super) fn current_drop_ale_same_sector_goal(
         goal_sector_index: sector.arena_index(),
         // Same-sector DropAle never searches gate paths.
         recorded_gate_path: None,
-    })
+    }))
 }

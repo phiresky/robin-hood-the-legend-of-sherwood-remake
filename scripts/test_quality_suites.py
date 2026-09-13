@@ -263,6 +263,17 @@ class QualitySuitesTests(unittest.TestCase):
             self.assertTrue(call[call.index("--config") + 1].endswith('.codegen-backend="llvm"'))
         self.assertEqual(calls[0][-2:], ["--", "--ignored"])
 
+    def test_unreferenced_items_scan_is_advisory_and_never_fails(self):
+        self.environment["RUST_ANALYZER"] = str(self.directory / "missing-rust-analyzer")
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts/check-quality.sh"), "unreferenced-items"],
+            cwd=self.directory, env=self.environment, capture_output=True, text=True,
+            timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("advisory: unreferenced-item scan unavailable", result.stdout)
+        self.assertFalse(self.log.exists())
+
     def test_unknown_suite_fails(self):
         self.run_suite("not-a-suite", expected=2)
         self.assertFalse(self.log.exists())

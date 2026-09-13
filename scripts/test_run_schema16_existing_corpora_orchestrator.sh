@@ -56,12 +56,18 @@ EOF
 cat >"$bundle/PROVENANCE.txt" <<'EOF'
 NATIVE_CONVERSION_PROTOCOL=2
 EOF
-printf 'fake shared object\n' >"$bundle/libfake.so"
-chmod +x -- "$bundle/original_parity_replay" "$bundle/original_parity_replay.remote"
+mkdir -p -- "$bundle/lib"
+printf 'fake shared object\n' >"$bundle/lib/libfake.so"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$bundle/lib/ld-linux-x86-64.so.2"
+printf 'ld-linux.so => %s/lib/ld-linux-x86-64.so.2 (0x0)\nlibfake.so => %s/lib/libfake.so (0x0)\n' \
+    "$(realpath -e -- "$bundle")" "$(realpath -e -- "$bundle")" >"$bundle/LOADER_LIST.txt"
+chmod +x -- "$bundle/original_parity_replay" "$bundle/original_parity_replay.remote" \
+    "$bundle/lib/ld-linux-x86-64.so.2"
 (
     cd -- "$bundle"
-    sha256sum -- original_parity_replay original_parity_replay.remote PROVENANCE.txt >SHA256SUMS
-    sha256sum -- libfake.so >LIB_SHA256SUMS
+    sha256sum -- lib/ld-linux-x86-64.so.2 lib/libfake.so >LIB_SHA256SUMS
+    sha256sum -- original_parity_replay original_parity_replay.remote PROVENANCE.txt \
+        LOADER_LIST.txt LIB_SHA256SUMS >SHA256SUMS
 )
 runner_sha=$(sha256sum -- "$bundle/original_parity_replay")
 runner_sha=${runner_sha%% *}
@@ -187,7 +193,7 @@ expect_failure 'cannot authenticate absent initial seed3 session' \
     run_preflight "$workspace/audits/absent-controller" 0
 
 # Bundle content is checked, not merely the caller-provided trust digest.
-printf 'tampered\n' >>"$bundle/libfake.so"
+printf 'tampered\n' >>"$bundle/lib/libfake.so"
 expect_failure 'runner bundle checksum verification failed' \
     run_preflight "$workspace/audits/tampered-bundle" 1
 
@@ -204,7 +210,6 @@ expect_failure 'runner bundle checksum verification failed' \
     prepass_jobs=5
     p5_gate_attempts=2
     poll_seconds=1
-    write_phase() { :; }
     sleep() { :; }
     append_gate_row() {
         printf 'synthetic\tutc\t1\t1\t0\t0\t0\t1\t1\t0\t0\t0\t1\t1\t0\t0\t%s\n' "$2" >>"$1"

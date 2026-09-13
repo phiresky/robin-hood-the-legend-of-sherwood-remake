@@ -817,16 +817,31 @@ class ReplayStateDatabaseTests(unittest.TestCase):
             "printf reblocked >>\"$2\"\n"
             "printf 'reblocked %s: test fixture\\n' \"$2\" >&2\n"
         )
-        runner.chmod(0o755)
-        wrapper.chmod(0o755)
+        # The fake bundled loader answers `--library-path DIR --list RUNNER` with
+        # objects inside DIR, which the driver's relocation proof requires.
+        loader = bundle / "lib/ld-linux-x86-64.so.2"
+        loader.write_text(
+            "#!/bin/sh\n"
+            "printf '\\tld.so => %s/ld-linux-x86-64.so.2 (0x1)\\n' \"$2\"\n"
+            "printf '\\tlibrary => %s/library (0x2)\\n' \"$2\"\n"
+        )
+        for executable in (runner, wrapper, loader):
+            executable.chmod(0o755)
         (bundle / "lib/library").write_bytes(b"library")
+        (bundle / "PROVENANCE.txt").write_text("NATIVE_CONVERSION_PROTOCOL=2\n")
+        (bundle / "LOADER_LIST.txt").write_text(
+            f"\tld.so => /deployed/bundle/lib/ld-linux-x86-64.so.2 (0x1)\n"
+        )
         (bundle / "LIB_SHA256SUMS").write_text(
+            f"{DB.sha256_file(loader)}  lib/ld-linux-x86-64.so.2\n"
             f"{DB.sha256_file(bundle / 'lib/library')}  lib/library\n"
         )
         (bundle / "SHA256SUMS").write_text(
             f"{DB.sha256_file(runner)}  original_parity_replay\n"
             f"{DB.sha256_file(wrapper)}  original_parity_replay.remote\n"
             f"{DB.sha256_file(bundle / 'LIB_SHA256SUMS')}  LIB_SHA256SUMS\n"
+            f"{DB.sha256_file(bundle / 'PROVENANCE.txt')}  PROVENANCE.txt\n"
+            f"{DB.sha256_file(bundle / 'LOADER_LIST.txt')}  LOADER_LIST.txt\n"
         )
         trust = DB.sha256_bytes(
             ("schema16-runner-bundle-v1\n"

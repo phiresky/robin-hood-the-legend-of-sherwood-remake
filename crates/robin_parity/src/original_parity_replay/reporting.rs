@@ -17,8 +17,8 @@ pub(super) fn structured_divergences(
 use super::{
     BTreeMap, BTreeSet, BufWriter, Engine, EntityId, EntityMap, File, PathBuf, Serialize,
     TRACE_SCHEMA_VERSION, TraceElement, TraceEntityId, TraceEntityKind, TraceFlightStep,
-    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch,
-    TraceVisibilityQuery, VecDeque,
+    TraceFrame, TraceHeader, TraceMovementStep, TracePathEvent, TraceRngBatch, TraceRunError,
+    TraceRunResult, TraceVisibilityQuery, VecDeque,
 };
 use std::io::Write as _;
 
@@ -118,7 +118,7 @@ pub(super) fn write_engine_dump_frame(
     rust_flight_steps: &[robin_engine::movement_diagnostics::ParityFlightStep],
     rust_move_box_extractions: &[robin_engine::movement_diagnostics::ParityMoveBoxExtraction],
     differences: &[String],
-) {
+) -> TraceRunResult<()> {
     let diagnostic_engine = engine.diagnostic_snapshot_without_original_rng_replay();
     let original_entities = options
         .entities
@@ -128,14 +128,14 @@ pub(super) fn write_engine_dump_frame(
                 .elements
                 .iter()
                 .find(|element| element.entity_id == *entity_id)
-                .unwrap_or_else(|| {
-                    panic!(
+                .ok_or_else(|| {
+                    TraceRunError::Input(format!(
                         "manual parity dump requested missing Original entity {entity_id:?} at frame {}",
                         frame.frame_after
-                    )
+                    ))
                 })
         })
-        .collect::<Vec<_>>();
+        .collect::<TraceRunResult<Vec<_>>>()?;
     write_engine_dump_snapshot_frame(
         writer,
         options,
@@ -162,7 +162,7 @@ pub(super) fn write_engine_dump_frame(
         rust_rng_diagnostics,
         differences,
         Some(&original_entities),
-    );
+    )
 }
 
 pub(super) fn write_engine_dump_snapshot_frame(
@@ -191,26 +191,26 @@ pub(super) fn write_engine_dump_snapshot_frame(
     rust_rng_diagnostics: &robin_engine::sim_rng::OriginalRngDiagnostics,
     differences: &[String],
     original_entities: Option<&[&TraceElement]>,
-) {
+) -> TraceRunResult<()> {
     let mapped_entities = options
         .entities
         .iter()
-        .map(|original| {
-            let rust = entity_map.translate(*original);
-            serde_json::json!({
+        .map(|original| -> TraceRunResult<_> {
+            let rust = entity_map.translate(*original)?;
+            Ok(serde_json::json!({
                 "original": original,
                 "rust": {
                     "kind": format!("{:?}", rust.kind()).to_lowercase(),
                     "index": rust.index(),
                 },
-            })
+            }))
         })
-        .collect::<Vec<_>>();
+        .collect::<TraceRunResult<Vec<_>>>()?;
     let selected_rust_indices = options
         .entities
         .iter()
-        .map(|original| entity_map.translate(*original).index() as usize)
-        .collect::<BTreeSet<_>>();
+        .map(|original| Ok(entity_map.translate(*original)?.index() as usize))
+        .collect::<TraceRunResult<BTreeSet<_>>>()?;
     let mut engine_value = robin_util::json_value::to_json_value(diagnostic_engine)
         .expect("serialize diagnostic engine state");
     if !selected_rust_indices.is_empty() {
@@ -263,6 +263,7 @@ pub(super) fn write_engine_dump_snapshot_frame(
             .expect("serialize selected Original parity dump entities");
     }
     write_jsonl_record(writer, &record);
+    Ok(())
 }
 
 pub(super) fn push_rolling_window<T>(frames: &mut VecDeque<T>, frame: T) {
@@ -279,7 +280,7 @@ pub(super) fn write_automatic_rolling_dump(
     header: &TraceHeader,
     entity_map: &EntityMap,
     divergent_frame: u64,
-) -> PathBuf {
+) -> TraceRunResult<PathBuf> {
     assert!(
         !frames.is_empty(),
         "automatic parity dump requires at least one captured frame"
@@ -356,11 +357,11 @@ pub(super) fn write_automatic_rolling_dump(
             &frame.rust_rng_diagnostics,
             &frame.differences,
             None,
-        );
+        )?;
     }
     writer.flush().expect("flush automatic parity dump");
     eprintln!("automatic parity engine dump: {}", path.display());
-    path
+    Ok(path)
 }
 
 pub(super) fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_json::Value) {
@@ -376,41 +377,49 @@ pub(super) fn write_jsonl_record(writer: &mut BufWriter<File>, value: &serde_jso
 /// `pc`, `soldier` or `civilian` and index is the Rust entity index — the same
 /// pair the divergence report prints as `Pc(PcId(103))`. The window is
 /// `PARITY_DEBUG_FROM`..=`PARITY_DEBUG_UNTIL`.
-pub(super) fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
+pub(super) fn print_debug_element(
+    label: &str,
+    engine: &Engine,
+    frame: &TraceFrame,
+) -> TraceRunResult<()> {
     let Some(spec) = std::env::var_os("PARITY_DEBUG_ELEMENT") else {
-        return;
+        return Ok(());
     };
-    let frame_bound = |name: &str, fallback: u64| {
+    let frame_bound = |name: &str, fallback: u64| -> TraceRunResult<u64> {
         std::env::var(name)
             .map(|value| {
                 value
                     .parse::<u64>()
-                    .unwrap_or_else(|_| panic!("{name} must be a u64"))
+                    .map_err(|_| TraceRunError::Input(format!("{name} must be a u64")))
             })
-            .unwrap_or(fallback)
+            .unwrap_or(Ok(fallback))
     };
-    let from = frame_bound("PARITY_DEBUG_FROM", 0);
-    let until = frame_bound("PARITY_DEBUG_UNTIL", 10);
+    let from = frame_bound("PARITY_DEBUG_FROM", 0)?;
+    let until = frame_bound("PARITY_DEBUG_UNTIL", 10)?;
     if frame.frame_after < from || frame.frame_after > until {
-        return;
+        return Ok(());
     }
     let spec = spec.to_string_lossy().to_string();
-    let (kind, index) = spec
-        .split_once(':')
-        .expect("PARITY_DEBUG_ELEMENT must look like pc:342");
-    let index: u32 = index
-        .parse()
-        .expect("PARITY_DEBUG_ELEMENT index must be u32");
+    let (kind, index) = spec.split_once(':').ok_or_else(|| {
+        TraceRunError::Input("PARITY_DEBUG_ELEMENT must look like pc:342".to_owned())
+    })?;
+    let index: u32 = index.parse().map_err(|error| {
+        TraceRunError::Input(format!("PARITY_DEBUG_ELEMENT index must be u32: {error:?}"))
+    })?;
     let id = match kind {
         "pc" => EntityId::Pc(robin_engine::entity_id::PcId(index)),
         "soldier" => EntityId::Soldier(robin_engine::entity_id::SoldierId(index)),
         "civilian" => EntityId::Civilian(robin_engine::entity_id::CivilianId(index)),
-        other => panic!("unsupported PARITY_DEBUG_ELEMENT kind {other}"),
+        other => {
+            return Err(TraceRunError::Input(format!(
+                "unsupported PARITY_DEBUG_ELEMENT kind {other}"
+            )));
+        }
     };
     // The slot may not exist yet on early frames; stay quiet until it does
     // rather than aborting the whole replay.
     let Some(entity) = engine.get_entity(id) else {
-        return;
+        return Ok(());
     };
     let sprite = &entity.element_data().sprite;
     let actor = entity.actor_data().expect("debug element is an actor");
@@ -435,6 +444,7 @@ pub(super) fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFra
         actor.execute_order_initialising,
         actor.last_execute_order_id,
     );
+    Ok(())
 }
 
 pub(super) fn print_startup_actors(
@@ -442,7 +452,7 @@ pub(super) fn print_startup_actors(
     engine: &Engine,
     frame: &TraceFrame,
     entity_map: &EntityMap,
-) {
+) -> TraceRunResult<()> {
     eprintln!("{label}:");
     let expected_inactive: Vec<_> = frame
         .elements
@@ -479,10 +489,10 @@ pub(super) fn print_startup_actors(
                         index: 119,
                     })
     }) {
-        let id = entity_map.translate(expected.entity_id);
-        let actual = engine
-            .get_entity(id)
-            .unwrap_or_else(|| panic!("mapped startup actor {id:?} is missing"));
+        let id = entity_map.translate(expected.entity_id)?;
+        let actual = engine.get_entity(id).ok_or_else(|| {
+            TraceRunError::TraceContent(format!("mapped startup actor {id:?} is missing"))
+        })?;
         let ai_debug = actual.ai_controller().map(|ai| {
             (
                 ai.current_state,
@@ -518,6 +528,7 @@ pub(super) fn print_startup_actors(
             actual.element_data().sector(),
         );
     }
+    Ok(())
 }
 
 /// Wraps a Rust entity id so its `Debug` rendering also carries the original-game
@@ -525,6 +536,12 @@ pub(super) fn print_startup_actors(
 ///
 /// The divergence report is read alongside `--dump-entity` (Original indices)
 /// and the Original's own `[DBG]` logs; the id spaces frequently differ.
+///
+/// Diff paths name the RUST id, but `--dump-entity`, the trace's
+/// `elements[].entity_id.index` and the Original's logs all use the ORIGINAL
+/// index, and the two are frequently unequal (e.g. Original pc:171 is
+/// Rust `Pc(PcId(174))`). Four investigations lost hours to that mismatch, so
+/// every diff root spells the pairing out.
 pub(super) struct EntityLabel {
     pub(super) id: robin_engine::entity_id::EntityId,
     pub(super) original_index: u32,

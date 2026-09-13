@@ -53,17 +53,11 @@ verify_deployment() {
     verify_hash "$workspace/scripts/run_schema16_final_validation.sh" "$expected_final_sha"
     verify_hash "$workspace/scripts/run_parity_release_sweep.sh" "$expected_sweep_sha"
     verify_hash "$recorder" "$recorder_sha"
-    verify_hash "$bundle/original_parity_replay" "$runner_sha"
-    [[ -f "$bundle/SHA256SUMS" && -f "$bundle/LIB_SHA256SUMS" ]]
-    main_manifest_sha=$(sha256_file "$bundle/SHA256SUMS")
-    lib_manifest_sha=$(sha256_file "$bundle/LIB_SHA256SUMS")
-    actual_trust=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$main_manifest_sha" "$lib_manifest_sha" | sha256sum)
-    actual_trust=${actual_trust%% *}
-    [[ "$actual_trust" == "$bundle_trust_sha" ]] || fail 'runner bundle trust mismatch'
-    (cd -- "$bundle" && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null \
-        || fail 'runner bundle content checksum failure'
+    # The same bundle path is handed to the controllers, which bind its loader
+    # proof to that path; reject it here before any handoff instead of later.
+    verify_runner_bundle "$bundle" "$bundle" \
+        && verify_runner_bundle_identity "$bundle" "$bundle_trust_sha" "$runner_sha" \
+        || exit 2
 }
 
 [[ "$poll_seconds" =~ ^[1-9][0-9]{0,3}$ ]] || fail 'poll seconds must be 1 through 9999'

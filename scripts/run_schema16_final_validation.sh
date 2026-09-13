@@ -41,102 +41,6 @@ unset LD_LIBRARY_PATH
 
 
 
-verify_runner_bundle() {
-    local bundle=$1 loader_proof_root=${2:-$1} manifest line path
-    [[ -x "$bundle/original_parity_replay" \
-        && -x "$bundle/original_parity_replay.remote" \
-        && -x "$bundle/lib/ld-linux-x86-64.so.2" \
-        && -f "$bundle/SHA256SUMS" \
-        && -f "$bundle/LIB_SHA256SUMS" \
-        && -f "$bundle/PROVENANCE.txt" \
-        && -f "$bundle/LOADER_LIST.txt" ]] \
-        || { printf 'error: incomplete parity runner bundle: %s\n' "$bundle" >&2; return 1; }
-    mapfile -t protocol_values < <(
-        sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' "$bundle/PROVENANCE.txt"
-    )
-    [[ ${#protocol_values[@]} == 1 && "${protocol_values[0]}" == 2 ]] \
-        || { printf 'error: bundle must authenticate NATIVE_CONVERSION_PROTOCOL=2: %s\n' \
-            "$bundle" >&2; return 1; }
-    if find "$bundle" -type l -print -quit | grep -q .; then
-        printf 'error: runner bundle contains a symlink: %s\n' "$bundle" >&2
-        return 1
-    fi
-    for manifest in "$bundle/SHA256SUMS" "$bundle/LIB_SHA256SUMS"; do
-        while IFS= read -r line; do
-            [[ "$line" =~ ^[0-9a-fA-F]{64}[[:space:]][\ \*](.+)$ ]] \
-                || { printf 'error: malformed bundle checksum entry: %s\n' "$manifest" >&2; return 1; }
-            path=${BASH_REMATCH[1]}
-            [[ "$path" != /* && "$path" != ../* && "$path" != */../* \
-                && "$path" != *'/..' && "$path" != *$'\n'* ]] \
-                || { printf 'error: unsafe bundle checksum path: %s\n' "$path" >&2; return 1; }
-        done <"$manifest"
-    done
-    if ! diff -u -- \
-        <(find "$bundle/lib" -type f -printf 'lib/%P\n' | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/LIB_SHA256SUMS" \
-            | LC_ALL=C sort) >&2
-    then
-        printf 'error: library manifest does not exactly cover bundle lib tree: %s\n' \
-            "$bundle" >&2
-        return 1
-    fi
-    if ! diff -u -- \
-        <(find "$bundle" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | LC_ALL=C sort) \
-        <(printf 'lib\n') >&2
-    then
-        printf 'error: runner bundle has an unexpected root directory: %s\n' \
-            "$bundle" >&2
-        return 1
-    fi
-    if ! diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$bundle/SHA256SUMS" \
-            | LC_ALL=C sort) >&2
-    then
-        printf 'error: main manifest does not exactly cover bundle root files: %s\n' \
-            "$bundle" >&2
-        return 1
-    fi
-    if ! diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(find "$bundle" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) >&2
-    then
-        printf 'error: runner bundle root file set is not canonical: %s\n' \
-            "$bundle" >&2
-        return 1
-    fi
-    grep -Fq -- "=> $loader_proof_root/lib/ld-linux-x86-64.so.2 " \
-        "$bundle/LOADER_LIST.txt" \
-        || { printf 'error: loader proof is not from authenticated final bundle path: %s\n' \
-            "$loader_proof_root" >&2; return 1; }
-    if ! awk -v prefix="$loader_proof_root/lib/" '
-        /=>/ {
-            resolved=$0
-            sub(/^.*=>[[:space:]]*/, "", resolved)
-            sub(/[[:space:]].*$/, "", resolved)
-            if (index(resolved, prefix) != 1) exit 1
-        }
-    ' "$bundle/LOADER_LIST.txt"; then
-        printf 'error: loader proof resolves outside authenticated lib tree: %s\n' \
-            "$loader_proof_root" >&2
-        return 1
-    fi
-    grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay\.remote$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LIB_SHA256SUMS$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]PROVENANCE\.txt$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LOADER_LIST\.txt$' "$bundle/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]lib/ld-linux-x86-64\.so\.2$' "$bundle/LIB_SHA256SUMS" \
-        || { printf 'error: bundle manifests omit required runtime inputs: %s\n' "$bundle" >&2; return 1; }
-    (cd -- "$bundle" \
-        && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null \
-        || { printf 'error: parity runner bundle checksum failure: %s\n' "$bundle" >&2; return 1; }
-}
-
 
 # Bind the stable logical `.jsonl.zst` identity to its normalized native bytes.
 # Any legacy source here means normalization raced with another writer or did
@@ -593,7 +497,7 @@ for audit in "${campaign_audits[@]}"; do
 done
 
 if (( runner_is_bundle == 1 )); then
-    verify_runner_bundle "$runner_source_dir" || exit 2
+    verify_runner_bundle "$runner_source_dir" "$runner_source_dir" || exit 2
     native_conversion_protocol=2
     runner_wrapper_sha=$(sha256_file "$runner_source_dir/original_parity_replay.remote") \
         || exit 2

@@ -266,8 +266,8 @@ const CTX_HALVE_LIMIT: u32 = 1 << 14;
 /// character, so slow, stable statistics win.
 const BUMP: u16 = 1;
 
-// An explicit layout permits safe, contiguous SIMD reads of symbol/count
-// pairs. This is decoder state only; it is never written to the bitstream.
+// An explicit layout keeps symbol/count pairs contiguous so the block-sum
+// loop in `Ctx::find_by_target` autovectorizes. This is decoder state only; it is never written to the bitstream.
 #[repr(C)]
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
 struct SymbolCount(u16, u16);
@@ -585,14 +585,30 @@ impl Ctx {
                 let mut cum = count as u32;
                 let (blocks, remainder) = tail.as_chunks::<16>();
                 for (block_index, block) in blocks.iter().enumerate() {
-                    let packed =
-                        std::simd::Simd::<u16, 32>::from_slice(bytemuck::cast_slice(block));
-                    let counts: std::simd::Simd<u16, 16> = std::simd::simd_swizzle!(
-                        packed,
-                        [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31]
-                    );
-                    let counts = std::simd::num::SimdUint::cast::<u32>(counts);
-                    let end = cum + std::simd::num::SimdUint::reduce_sum(counts);
+                    // Stable replacement for the former `std::simd` swizzle:
+                    // read each `#[repr(C)]` (symbol, count) pair as one u32
+                    // lane and sum the count halves. LLVM vectorizes this
+                    // fixed 16-lane shift+sum; a 2026-09 microbenchmark
+                    // (4096 random blocks x 5000, opt-level 3) measured it on
+                    // par with the portable_simd version at x86-64 and
+                    // x86-64-v3, while a per-field iterator sum was 20-50%
+                    // slower. On wasm32+simd128 LLVM lowers it to sixteen
+                    // branch-free `load16_u`/`add` ops rather than v128.
+                    // TODO: benchmark in the browser build against a
+                    // `core::arch::wasm32` v128 path if this shows up in
+                    // mission-load profiles.
+                    // Sixteen u16 counts cannot overflow u32.
+                    let lanes: [u32; 16] = bytemuck::cast(*block);
+                    let count_shift = if cfg!(target_endian = "little") {
+                        16
+                    } else {
+                        0
+                    };
+                    let mut block_sum = 0u32;
+                    for lane in lanes {
+                        block_sum += (lane >> count_shift) & 0xffff;
+                    }
+                    let end = cum + block_sum;
                     if target < end {
                         let (offset, symbol, start, count) =
                             find_in_symbol_block(block, target, cum);

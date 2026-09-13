@@ -112,77 +112,8 @@ runner_trust_sha=
 actual_runner_sha=
 if (( runner_is_bundle == 1 ))
 then
-    [[ -x "$runner" && -x "$runner_dir/original_parity_replay.remote" \
-        && -x "$runner_dir/lib/ld-linux-x86-64.so.2" \
-        && -f "$runner_dir/SHA256SUMS" && -f "$runner_dir/LIB_SHA256SUMS" \
-        && -f "$runner_dir/PROVENANCE.txt" && -f "$runner_dir/LOADER_LIST.txt" ]] \
-        || fail "packaged runner lacks checksum manifests: $runner_dir"
-    mapfile -t protocol_values < <(
-        sed -n 's/^NATIVE_CONVERSION_PROTOCOL=//p' "$runner_dir/PROVENANCE.txt"
-    )
-    [[ ${#protocol_values[@]} == 1 && "${protocol_values[0]}" == 2 ]] \
-        || fail "bundle must authenticate exactly NATIVE_CONVERSION_PROTOCOL=2: $runner_dir"
+    verify_runner_bundle "$runner_dir" "$runner_dir" || exit 2
     native_conversion_protocol=2
-    if find "$runner_dir" -type l -print -quit | grep -q .; then
-        fail "packaged runner contains a symlink: $runner_dir"
-    fi
-    for manifest in "$runner_dir/SHA256SUMS" "$runner_dir/LIB_SHA256SUMS"; do
-        while IFS= read -r manifest_line; do
-            [[ "$manifest_line" =~ ^[0-9a-fA-F]{64}[[:space:]][\ \*](.+)$ ]] \
-                || fail "malformed bundle checksum entry: $manifest"
-            manifest_path=${BASH_REMATCH[1]}
-            [[ "$manifest_path" != /* && "$manifest_path" != ../* \
-                && "$manifest_path" != */../* && "$manifest_path" != *'/..' \
-                && "$manifest_path" != *$'\n'* ]] \
-                || fail "unsafe bundle checksum path: $manifest_path"
-        done <"$manifest"
-    done
-    if ! cmp -s \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(cut -d' ' -f3- "$runner_dir/SHA256SUMS" | LC_ALL=C sort -u)
-    then
-        fail "packaged root manifest does not have the exact required set: $runner_dir"
-    fi
-    if ! cmp -s \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(find "$runner_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' \
-            | LC_ALL=C sort -u)
-    then
-        fail "packaged bundle root does not have the exact required file set: $runner_dir"
-    fi
-    [[ "$(find "$runner_dir" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')" == lib ]] \
-        || fail "packaged bundle root has an unexpected directory: $runner_dir"
-    grep -Fq -- "=> $runner_dir/lib/ld-linux-x86-64.so.2 " "$runner_dir/LOADER_LIST.txt" \
-        || fail "loader proof was not generated from final bundle path: $runner_dir"
-    if ! awk -v prefix="$runner_dir/lib/" '
-        /=>/ {
-            resolved=$0
-            sub(/^.*=>[[:space:]]*/, "", resolved)
-            sub(/[[:space:]].*$/, "", resolved)
-            if (index(resolved, prefix) != 1) exit 1
-        }
-    ' "$runner_dir/LOADER_LIST.txt"; then
-        fail "loader proof resolves outside final bundle lib directory: $runner_dir"
-    fi
-    grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay$' "$runner_dir/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay\.remote$' "$runner_dir/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LIB_SHA256SUMS$' "$runner_dir/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]PROVENANCE\.txt$' "$runner_dir/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LOADER_LIST\.txt$' "$runner_dir/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]lib/ld-linux-x86-64\.so\.2$' \
-            "$runner_dir/LIB_SHA256SUMS" \
-        || fail "packaged manifests omit required trust inputs: $runner_dir"
-    (cd "$runner_dir" && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) \
-        >/dev/null || fail "packaged runner checksum verification failed: $runner_dir"
-    if ! cmp -s \
-        <(cut -d' ' -f3- "$runner_dir/LIB_SHA256SUMS" | LC_ALL=C sort -u) \
-        <(cd "$runner_dir" && find lib \( -type f -o -type l \) -print | LC_ALL=C sort -u)
-    then
-        fail "packaged library manifest does not cover the exact lib tree: $runner_dir"
-    fi
     wrapper_path="$runner_dir/original_parity_replay.remote"
     wrapper_sha=$(sha256_file "$wrapper_path") \
         || fail 'cannot hash runner wrapper'
@@ -191,11 +122,8 @@ then
         || fail 'cannot hash packaged runner manifest'
     bundle_lib_manifest_sha=$(sha256_file "$runner_dir/LIB_SHA256SUMS") \
         || fail 'cannot hash packaged library manifest'
-    runner_trust_sha=$(printf 'schema16-runner-bundle-v1\nSHA256SUMS=%s\nLIB_SHA256SUMS=%s\n' \
-        "$bundle_manifest_sha" "$bundle_lib_manifest_sha" | sha256sum)
-    runner_trust_sha=${runner_trust_sha%% *}
-    [[ "$runner_trust_sha" == "$expected_trust_sha" ]] \
-        || fail "runner bundle trust mismatch: expected $expected_trust_sha, got $runner_trust_sha"
+    verify_runner_bundle_identity "$runner_dir" "$expected_trust_sha" || exit 2
+    runner_trust_sha=$expected_trust_sha
     actual_runner_sha=$(sha256_file "$runner") || fail "cannot hash runner: $runner"
 else
     actual_runner_sha=$(sha256_file "$runner") || fail "cannot hash runner: $runner"
@@ -493,24 +421,19 @@ else
 fi
 
 run_one() {
-    local logical=$1 relative key status_file native quarantine attempt=1 prior_status prior_attempt prior_log
-    local log_final log_in_progress rc=0
+    local logical=$1 key status_file native quarantine first_attempt=1 rc=0
+    local attempt_prior_status attempt_prior_number attempt_prior_log
+    local attempt_number attempt_log_name attempt_log_final attempt_log_in_progress
     local -a converter_command
-    relative=${logical#"$workspace"/}
-    key=$(printf '%s' "$relative" | sha256sum); key=${key%% *}
+    key=$(attempt_key "$workspace" "$logical") || return 1
     status_file="$audit/status/$key.status"
     native="$logical.parity.bitcode.zst"
     quarantine="$logical.parity-conversion-source"
     if [[ -f "$status_file" ]]; then
-        mapfile -t status_lines <"$status_file" || return 1
-        [[ ${#status_lines[@]} == 1 ]] || return 1
-        IFS=$'\t' read -r prior_status prior_attempt prior_log <<<"${status_lines[0]}" \
-            || return 1
-        [[ -n "$prior_status" && "$prior_attempt" =~ ^[0-9]+$ && -n "$prior_log" ]] \
-            || return 1
-        if [[ "$prior_status" == 0 ]]; then
+        attempt_read_status "$status_file" || return 1
+        if [[ "$attempt_prior_status" == 0 ]]; then
             [[ ! -e "$logical" && ! -e "$quarantine" && -f "$native" \
-                && -f "$audit/logs/$prior_log" ]] || {
+                && -f "$audit/logs/$attempt_prior_log" ]] || {
                 printf 'error: status-zero resume invariant failed: %s\n' "$logical" >&2
                 return 1
             }
@@ -521,20 +444,9 @@ run_one() {
         # canonical/quarantine/native transaction state, so never infer a
         # commit from pathname or log observations here: reserve a new attempt
         # and invoke the authenticated converter again under its trace lock.
-        attempt=$((prior_attempt + 1))
+        first_attempt=$((attempt_prior_number + 1))
     fi
-    while true; do
-        printf -v attempt_label '%04d' "$attempt"
-        log_name="$key.attempt-$attempt_label.log"
-        log_final="$audit/logs/$log_name"
-        log_in_progress="$log_final.in-progress"
-        [[ -e "$log_final" || -e "$log_in_progress" ]] || break
-        attempt=$((attempt + 1))
-    done
-    [[ ! -e "$log_final" && ! -e "$log_in_progress" ]] || return 1
-    (set -o noclobber; : >"$log_in_progress") 2>/dev/null || return 1
-    printf 'running\t%s\t%s\n' "$attempt" "$log_name" \
-        | write_atomic "$status_file" || return 1
+    attempt_begin "$audit/logs" "$key" "$first_attempt" "$status_file" || return 1
     if [[ -n "$loader_path" ]]; then
         converter_command=(env -u LD_LIBRARY_PATH "$loader_path" --library-path "$bundle_lib_dir" \
             "$runner_exec" --convert "$logical")
@@ -544,25 +456,24 @@ run_one() {
     if [[ "$ionice_class" == 2 ]]; then
         timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" \
             nice -n "$nice_level" ionice -c "$ionice_class" -n "$ionice_level" \
-            "${converter_command[@]}" >"$log_in_progress" 2>&1 || rc=$?
+            "${converter_command[@]}" >"$attempt_log_in_progress" 2>&1 || rc=$?
     else
         timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" \
             nice -n "$nice_level" ionice -c "$ionice_class" \
-            "${converter_command[@]}" >"$log_in_progress" 2>&1 || rc=$?
+            "${converter_command[@]}" >"$attempt_log_in_progress" 2>&1 || rc=$?
     fi
     if (( rc == 0 )) \
         && { [[ -e "$logical" ]] || [[ -e "$quarantine" ]] || [[ ! -f "$native" ]]; }
     then
         rc=65
         printf 'postcondition failure: source/quarantine remains or native is absent\n' \
-            >>"$log_in_progress"
+            >>"$attempt_log_in_progress"
     fi
-    mv -- "$log_in_progress" "$log_final" || return 1
-    printf '%s\t%s\t%s\n' "$rc" "$attempt" "$log_name" \
-        | write_atomic "$status_file" || return 1
+    attempt_finish "$status_file" "$rc" || return 1
     (( rc == 0 ))
 }
-export -f run_one sha256_file
+export -f run_one sha256_file write_atomic attempt_key attempt_read_status \
+    attempt_begin attempt_finish
 export workspace audit runner_exec timeout_seconds nice_level ionice_class ionice_level
 export loader_path bundle_lib_dir
 

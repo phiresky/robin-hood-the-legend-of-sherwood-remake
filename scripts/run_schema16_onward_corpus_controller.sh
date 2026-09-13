@@ -119,66 +119,10 @@ pin_capture_bundle() {
 }
 
 verify_capture_bundle() {
-    local candidate=$1 loader_proof_root=$2 manifest line path
-    verify_bundle "$candidate"
-    [[ -x "$candidate/original_parity_replay" \
-        && -x "$candidate/original_parity_replay.remote" \
-        && -x "$candidate/lib/ld-linux-x86-64.so.2" \
-        && -f "$candidate/LOADER_LIST.txt" ]] \
-        || fail "runner bundle lacks canonical runtime inputs: $candidate"
-    if find "$candidate" -type l -print -quit | grep -q .; then
-        fail "runner bundle contains a symlink: $candidate"
-    fi
-    for manifest in "$candidate/SHA256SUMS" "$candidate/LIB_SHA256SUMS"; do
-        while IFS= read -r line; do
-            [[ "$line" =~ ^[0-9a-fA-F]{64}[[:space:]][\ \*](.+)$ ]] \
-                || fail "malformed runner bundle checksum entry: $manifest"
-            path=${BASH_REMATCH[1]}
-            [[ "$path" != /* && "$path" != ../* && "$path" != */../* \
-                && "$path" != *'/..' && "$path" != *$'\n'* ]] \
-                || fail "unsafe runner bundle checksum path: $path"
-        done <"$manifest"
-    done
-    diff -u -- \
-        <(find "$candidate/lib" -type f -printf 'lib/%P\n' | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$candidate/LIB_SHA256SUMS" \
-            | LC_ALL=C sort) >/dev/null \
-        || fail "runner library manifest does not exactly cover lib tree: $candidate"
-    diff -u -- <(printf 'lib\n') \
-        <(find "$candidate" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | LC_ALL=C sort) >/dev/null \
-        || fail "runner bundle has an unexpected root directory: $candidate"
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(sed -n 's/^[0-9a-fA-F]\{64\} [ *]//p' "$candidate/SHA256SUMS" \
-            | LC_ALL=C sort) >/dev/null \
-        || fail "runner main manifest does not have the canonical file set: $candidate"
-    diff -u -- \
-        <(printf '%s\n' LIB_SHA256SUMS LOADER_LIST.txt PROVENANCE.txt SHA256SUMS \
-            original_parity_replay original_parity_replay.remote | LC_ALL=C sort) \
-        <(find "$candidate" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
-        >/dev/null || fail "runner bundle root file set is not canonical: $candidate"
-    grep -Fq -- "=> $loader_proof_root/lib/ld-linux-x86-64.so.2 " \
-        "$candidate/LOADER_LIST.txt" \
-        || fail "runner loader proof is not bound to authenticated source: $candidate"
-    awk -v prefix="$loader_proof_root/lib/" '
-        /=>/ {
-            resolved=$0
-            sub(/^.*=>[[:space:]]*/, "", resolved)
-            sub(/[[:space:]].*$/, "", resolved)
-            if (index(resolved, prefix) != 1) exit 1
-        }
-    ' "$candidate/LOADER_LIST.txt" \
-        || fail "runner loader proof resolves outside authenticated lib tree: $candidate"
-    grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay$' "$candidate/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]original_parity_replay\.remote$' "$candidate/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LIB_SHA256SUMS$' "$candidate/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]PROVENANCE\.txt$' "$candidate/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]LOADER_LIST\.txt$' "$candidate/SHA256SUMS" \
-        && grep -Eq '^[0-9a-fA-F]{64} [ *]lib/ld-linux-x86-64\.so\.2$' \
-            "$candidate/LIB_SHA256SUMS" \
-        || fail "runner manifests omit canonical runtime inputs: $candidate"
+    local candidate=$1 loader_proof_root=$2
+    verify_runner_bundle "$candidate" "$loader_proof_root" \
+        && verify_runner_bundle_identity "$candidate" "$bundle_trust_sha" "$runner_sha" \
+        || exit 2
 }
 
 write_phase() {

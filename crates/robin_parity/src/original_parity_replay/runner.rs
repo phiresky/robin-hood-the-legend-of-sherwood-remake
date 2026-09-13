@@ -1,21 +1,68 @@
 //! Single runner entry: orchestrates admitted traces, reconstruction, comparison and reporting.
-use super::*;
+#[cfg(not(feature = "client"))]
+use super::initialize_headless_engine;
+use super::{
+    BTreeMap, BTreeSet, BinaryTraceReader, BinaryTraceRecord, BufWriter, Duration, EntityMap, File,
+    Instant, LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW, LegacyRefreshOrientationProvenance,
+    MotionLineParity, Options, RollingDumpFrame, StorageContext, TRACE_SCHEMA_VERSION,
+    TraceCommand, TraceEntityId, TraceEntityKind, TraceRunError, TraceRunResult, TraceStartState,
+    TraceStorageResult, TraceTimeline, VecDeque, advance_trace_qa_recording_state,
+    append_legacy_retained_terminal_success_repair, apply_initial_npc_transients,
+    apply_legacy_interactive_chain_macro_fallback, apply_legacy_segment_visibility_fallback,
+    bench_trace_encodings, canonicalize_trace_identity, collect_current_delayed_drop_ale_routes,
+    compare_frame, compare_path_events, compare_visibility_queries, convert_recording_to_native,
+    cross_post_initialize_frame, current_drop_ale_same_sector_goal,
+    decode_and_validate_initial_save, difference_field, ensure_native_binary_trace,
+    has_legacy_teleport_star_lifecycle, initial_legacy_blocked_box_shadows,
+    legacy_additional_arrow_refresh_draws, legacy_loaded_save_retains_process_transients,
+    legacy_presentation_entity_states, legacy_presentation_sprite_rng_burst,
+    missing_legacy_presentation_sprite_rng_draws, parse_options,
+    print_current_trace_actor_diagnostics, print_current_trace_events, print_debug_element,
+    print_startup_actors, push_rolling_window, read_all_rng_draws, read_binary_trace_footer,
+    read_binary_trace_header, reblock_native_trace, record_arrow_publication_before_compare,
+    register_language_data_paths_for_tool, replay_campaign_run_id, requested_native_trace_path,
+    resolve_current_drop_ale, resolve_current_group_move_route,
+    restore_legacy_route_construction_diagnostics, should_preload_complete_rng_stream,
+    simulation_rng_draws, split_refresh_owned_orientations, storage_ensure, structured_divergences,
+    trace_content_sha256, validate_native_trace, validate_standalone_native_trace,
+    validate_trace_frame_with_legacy_additive_omissions, validate_trace_header,
+    validate_trace_start, write_automatic_rolling_dump, write_engine_dump_frame,
+    write_jsonl_record,
+};
+#[cfg(feature = "client")]
+use super::{
+    HostDisplayState, RpcError, VisualReplay, drain_headless_http, frame_zero_screenshot_path,
+    initialize_engine, restore_campaign, serve_halted_http,
+};
 
 pub fn main() {
     std::process::exit(trace_exit_code(run_command()));
 }
 
-fn trace_exit_code(result: TraceStorageResult<i32>) -> i32 {
+/// The single print-and-exit contract of a parity run.
+///
+/// Storage and trace-format failures print `parity trace error:` and exit 1.
+/// Every other [`TraceRunError`] was a panic before it became a typed error and
+/// is re-raised here as a panic carrying the same message: the resulting exit
+/// status 101 and the runtime's `panicked at` line are consumed by the corpus
+/// tooling (`scripts/run_schema16_existing_corpora_orchestrator.sh` accepts
+/// status 101 as parity evidence when the log names an RNG or divergence
+/// failure, and `scripts/replay_state_db.py` classifies `panicked at` logs as
+/// runner crashes).
+// TODO: give non-storage failures their own exit status and log marker once
+// those scripts classify them explicitly, then drop the re-raise.
+fn trace_exit_code(result: TraceRunResult<i32>) -> i32 {
     match result {
         Ok(code) => code,
-        Err(error) => {
+        Err(TraceRunError::Storage(error)) => {
             eprintln!("parity trace error: {error}");
             1
         }
+        Err(error) => panic!("{error}"),
     }
 }
 
-fn run_command() -> TraceStorageResult<i32> {
+fn run_command() -> TraceRunResult<i32> {
     let options = parse_options();
     if options.inspect_capabilities {
         // Inspection reads an existing native artifact; never convert or
@@ -108,7 +155,7 @@ fn run_command() -> TraceStorageResult<i32> {
 async fn capture_full_frame_zero_screenshot(
     options: Options,
     window: &mut robin_rs::window::GameWindow,
-) -> TraceStorageResult<i32> {
+) -> TraceRunResult<i32> {
     let invocation_dir = std::env::current_dir()
         .storage_context("resolve invocation directory for frame-zero screenshot")?;
     let trace_path = canonicalize_trace_identity(&options.trace_path)?;
@@ -128,8 +175,8 @@ async fn capture_full_frame_zero_screenshot(
     let initial_save = decode_and_validate_initial_save(&header);
 
     let (_launcher_campaign, profiles, application_context) = robin_rs::main_entry::rust_init()
-        .unwrap_or_else(|error| panic!("initialize game: {error}"));
-    let campaign = restore_campaign(&header.campaign, &profiles);
+        .map_err(|error| TraceRunError::Input(format!("initialize game: {error}")))?;
+    let campaign = restore_campaign(&header.campaign, &profiles)?;
     let game_args = robin_rs::main_entry::try_parse_cli_from([
         "original_parity_replay",
         "--mission",
@@ -140,7 +187,9 @@ async fn capture_full_frame_zero_screenshot(
         "--http-server=0",
         "--rollback-check=false",
     ])
-    .unwrap_or_else(|error| panic!("construct frame-zero game arguments: {error}"));
+    .map_err(|error| {
+        TraceRunError::Input(format!("construct frame-zero game arguments: {error}"))
+    })?;
     let mut game_args = robin_rs::main_entry::MissionLaunch::from(game_args);
     game_args.mission_start_map_output = Some(output_path.clone());
     game_args.mission_start_map_frame = 0;
@@ -183,7 +232,7 @@ pub(super) type ClientWindow = ();
 pub(super) fn run_replay(
     options: Options,
     visual_window: Option<ClientWindow>,
-) -> TraceStorageResult<i32> {
+) -> TraceRunResult<i32> {
     #[cfg(not(feature = "client"))]
     let timing = {
         crate::prepare_core_audio_timing(&options.core_datadir).map_err(|error| {
@@ -308,10 +357,10 @@ pub(super) fn run_replay(
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
     #[cfg(feature = "client")]
     let (mut engine, assets, mut host, background, mission_scb, _menu_text) =
-        initialize_engine(&header, initial_rng_draws.clone());
+        initialize_engine(&header, initial_rng_draws.clone())?;
     #[cfg(not(feature = "client"))]
     let (mut engine, assets, mission_scb) =
-        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing);
+        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing)?;
     let mut loaded_save_host = None;
     let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {
@@ -323,7 +372,9 @@ pub(super) fn run_replay(
             &mission_scb,
             &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
         )
-        .unwrap_or_else(|error| panic!("decode current-schema initial_save body: {error}"));
+        .map_err(|error| {
+            TraceRunError::Input(format!("decode current-schema initial_save body: {error}"))
+        })?;
         eprintln!(
             "decoded current-schema Original save through byte {} ({} elements, {} dynamic, {} pending paths, {} failed paths)",
             save.end_offset,
@@ -356,7 +407,9 @@ pub(super) fn run_replay(
                 &assets,
                 &save,
             )
-            .unwrap_or_else(|error| panic!("adopt current-schema initial_save body: {error}")),
+            .map_err(|error| {
+                TraceRunError::Input(format!("adopt current-schema initial_save body: {error}"))
+            })?,
         );
         eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
@@ -373,7 +426,7 @@ pub(super) fn run_replay(
         );
     }
     if let Some(transients) = header.initial_npc_transients.as_deref() {
-        apply_initial_npc_transients(&mut engine, transients);
+        apply_initial_npc_transients(&mut engine, transients)?;
         eprintln!(
             "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
             transients.len()
@@ -475,7 +528,7 @@ pub(super) fn run_replay(
             std::sync::Arc::new(robin_rs::replay_service::ReplayService::default());
         http_transport
             .start(port, replay_service.exports(), replay_service.launches())
-            .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
+            .map_err(|e| TraceRunError::Input(format!("start parity replay HTTP server: {e}")))?;
         eprintln!(
             "parity replay HTTP server ready on http://127.0.0.1:{port} (frame {})",
             engine.frame_counter()
@@ -521,7 +574,7 @@ pub(super) fn run_replay(
         );
         let legacy_additive_omissions = header.initial_npc_transients.is_none();
         if legacy_additive_omissions {
-            restore_legacy_route_construction_diagnostics(&mut frame.route_construction_events);
+            restore_legacy_route_construction_diagnostics(&mut frame.route_construction_events)?;
         }
         validate_trace_frame_with_legacy_additive_omissions(
             header.schema,
@@ -590,39 +643,46 @@ pub(super) fn run_replay(
         // Establish identity from the untouched mission-start state.  Besides
         // being the strongest isomorphism anchor, this lets startup debugging
         // distinguish load-time differences from first-hourglass mutations.
-        let map = entity_map.get_or_insert_with(|| EntityMap::build(&engine, &assets, &frame));
+        if entity_map.is_none() {
+            entity_map = Some(EntityMap::build(&engine, &assets, &frame)?);
+        }
+        let map = entity_map
+            .as_mut()
+            .expect("the entity map was established above");
         map.refresh_trace_indices(&frame);
+        // Validate the recorded deadlines before handing them to the engine; a
+        // malformed event stops the run before any deadline is installed.
+        let impossible_action_done_deadlines = frame
+            .strike_proposal_events
+            .iter()
+            .filter(|event| event.phase == "opponent_inputs")
+            .map(|event| -> TraceRunResult<_> {
+                Ok((
+                    event.actor_creation_order,
+                    event.principal_opponent_creation_order.ok_or_else(|| {
+                        TraceRunError::TraceContent(format!(
+                            "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",
+                            frame.frame_before, event.invocation
+                        ))
+                    })?,
+                    i16::try_from(event.time_limit.ok_or_else(|| {
+                        TraceRunError::TraceContent(format!(
+                            "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks time_limit",
+                            frame.frame_before, event.invocation
+                        ))
+                    })?)
+                    .map_err(|_| {
+                        TraceRunError::TraceContent(format!(
+                            "Original strike deadline does not fit SWORD: {:?}",
+                            event.time_limit
+                        ))
+                    })?,
+                ))
+            })
+            .collect::<TraceRunResult<Vec<_>>>()?;
         engine
             .parity_replay_setup()
-            .set_impossible_action_done_deadlines(
-            frame
-                .strike_proposal_events
-                .iter()
-                .filter(|event| event.phase == "opponent_inputs")
-                .map(|event| {
-                    (
-                        event.actor_creation_order,
-                        event.principal_opponent_creation_order.unwrap_or_else(|| {
-                            panic!(
-                                "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks principal_opponent_creation_order",
-                                frame.frame_before, event.invocation
-                            )
-                        }),
-                        i16::try_from(event.time_limit.unwrap_or_else(|| {
-                            panic!(
-                                "schema-{TRACE_SCHEMA_VERSION} frame {} opponent_inputs invocation {} lacks time_limit",
-                                frame.frame_before, event.invocation
-                            )
-                        }))
-                        .unwrap_or_else(|_| {
-                            panic!(
-                                "Original strike deadline does not fit SWORD: {:?}",
-                                event.time_limit
-                            )
-                        }),
-                    )
-                }),
-        );
+            .set_impossible_action_done_deadlines(impossible_action_done_deadlines);
         if debug_stage_timing {
             eprintln!("parity stage: mapped original frame {}", frame.frame_before);
         }
@@ -644,7 +704,7 @@ pub(super) fn run_replay(
         let debug_startup =
             frame.frame_before == 0 && std::env::var_os("PARITY_DEBUG_STARTUP").is_some();
         if debug_startup {
-            print_startup_actors("before Rust frame 1", &engine, &frame, map);
+            print_startup_actors("before Rust frame 1", &engine, &frame, map)?;
         }
         let director_completions = frame
             .director_completions
@@ -660,16 +720,16 @@ pub(super) fn run_replay(
         let resolutions = frame
             .resolved_exclamations
             .drain(..)
-            .map(|resolved| {
+            .map(|resolved| -> TraceRunResult<_> {
                 let _selection_diagnostics = (resolved.selected_variant, resolved.selected_entry);
-                robin_engine::sound::ResolvedExclamation {
-                    actor_id: map.translate(resolved.actor).index(),
+                Ok(robin_engine::sound::ResolvedExclamation {
+                    actor_id: map.translate(resolved.actor)?.index(),
                     identifier: resolved.identifier,
                     exclamation_id: resolved.exclamation_id,
                     duration_frames: resolved.duration_frames,
-                }
+                })
             })
-            .collect();
+            .collect::<TraceRunResult<Vec<_>>>()?;
         let external_facts = robin_engine::engine::ExternalFacts::new(
             director_completions,
             Some(robin_engine::engine::SoundBoundary::replay(resolutions)),
@@ -687,47 +747,46 @@ pub(super) fn run_replay(
         let preview_delayed_drop_ale_fact_prefix = frame_has_cross_sector_route_outcome
             && (!external_facts.director_completions.is_empty()
                 || external_facts.sound_boundary.is_some());
-        let mut delayed_drop_ale_fact_preview =
-            preview_delayed_drop_ale_fact_prefix.then(|| {
-                robin_engine::sight_obstacle::with_discarded_parity_visibility_capture(|| {
-                    let mut preview = engine.clone();
-                    preview
-                        .advance_frame(
-                            &assets,
-                            robin_engine::engine::SimulationFrameInput::no_hourglass()
-                                .with_external_facts(external_facts.clone()),
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!(
-                                "schema-16 frame {} rejected its external-fact prefix while resolving delayed DropAle routes: {error}",
-                                frame.frame_before,
+        let mut delayed_drop_ale_fact_preview = preview_delayed_drop_ale_fact_prefix
+            .then(|| {
+                robin_engine::sight_obstacle::with_discarded_parity_visibility_capture(
+                    || -> TraceRunResult<_> {
+                        let mut preview = engine.clone();
+                        preview
+                            .advance_frame(
+                                &assets,
+                                robin_engine::engine::SimulationFrameInput::no_hourglass()
+                                    .with_external_facts(external_facts.clone()),
                             )
-                        });
-                    preview
-                })
-            });
+                            .map_err(|error| {
+                                TraceRunError::Admission(format!(
+                                    "schema-16 frame {} rejected its external-fact prefix while resolving delayed DropAle routes: {error}",
+                                    frame.frame_before,
+                                ))
+                            })?;
+                        Ok(preview)
+                    },
+                )
+            })
+            .transpose()?;
         let popup_nested_refresh = frame
             .popup_events
             .iter()
             .any(|event| event.stage == "nested_refresh_entry" && event.remove_mouse == Some(true));
         let trace_commands_were_empty = frame.commands.is_empty();
-        let ordinary_refresh_eligible = frame
-            .commands
-            .iter()
-            .filter_map(|command| match command {
-                TraceCommand::OrientActionAt { actor, action, .. }
-                    if engine
-                        .parity_replay_setup()
-                        .orientation_would_emit_before_hourglass(
-                            map.translate(*actor),
-                            (*action).into(),
-                        ) =>
-                {
-                    Some((*actor, *action))
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let mut ordinary_refresh_eligible = Vec::new();
+        for command in &frame.commands {
+            if let TraceCommand::OrientActionAt { actor, action, .. } = command
+                && engine
+                    .parity_replay_setup()
+                    .orientation_would_emit_before_hourglass(
+                        map.translate(*actor)?,
+                        (*action).into(),
+                    )
+            {
+                ordinary_refresh_eligible.push((*actor, *action));
+            }
+        }
         let force_single_popup_orientation_late = infer_legacy_random_refresh_phase
             && legacy_refresh_orientation_provenance
                 .proves_single_popup_orientation_is_late(&frame.commands, popup_nested_refresh);
@@ -760,9 +819,9 @@ pub(super) fn run_replay(
                 &frame.route_construction_events,
                 &mut consumed_drop_ale_route_ordinals,
                 map,
-                current_drop_ale_same_sector_goal(&command, map, &engine),
+                current_drop_ale_same_sector_goal(&command, map, &engine)?,
                 trace_qa_recording,
-            );
+            )?;
             let group_move_resolution = resolve_current_group_move_route(
                 &command,
                 &frame.route_construction_events,
@@ -774,29 +833,29 @@ pub(super) fn run_replay(
                     .as_ref()
                     .expect("parity replay requires retained Original fast-grid topology")
                     .sectors,
-            );
+            )?;
             advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
             let converted = command.into_player_command(
                 map,
                 &engine,
                 drop_ale_resolution,
                 group_move_resolution,
-            );
+            )?;
             if let Some(command) = converted {
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        let mut commands_after_hourglass = commands_after_hourglass
-            .into_iter()
-            .filter_map(|command| {
+        let mut commands_after_hourglass = {
+            let mut resolved = Vec::new();
+            for command in commands_after_hourglass {
                 let drop_ale_resolution = resolve_current_drop_ale(
                     &command,
                     &frame.route_construction_events,
                     &mut consumed_drop_ale_route_ordinals,
                     map,
-                    current_drop_ale_same_sector_goal(&command, map, &engine),
+                    current_drop_ale_same_sector_goal(&command, map, &engine)?,
                     trace_qa_recording,
-                );
+                )?;
                 let group_move_resolution = resolve_current_group_move_route(
                     &command,
                     &frame.route_construction_events,
@@ -808,17 +867,20 @@ pub(super) fn run_replay(
                         .as_ref()
                         .expect("parity replay requires retained Original fast-grid topology")
                         .sectors,
-                );
+                )?;
                 advance_trace_qa_recording_state(&mut trace_qa_recording, &command);
 
-                command.into_player_command(
+                if let Some(command) = command.into_player_command(
                     map,
                     &engine,
                     drop_ale_resolution,
                     group_move_resolution,
-                )
-            })
-            .collect::<Vec<_>>();
+                )? {
+                    resolved.push(command);
+                }
+            }
+            resolved
+        };
         append_legacy_retained_terminal_success_repair(
             &mut commands_before_hourglass_resolved,
             &mut commands_after_hourglass,
@@ -858,7 +920,7 @@ pub(super) fn run_replay(
             &consumed_group_move_route_ordinals,
             map,
             delayed_drop_ale_route_engine,
-        );
+        )?;
         if debug_stage_timing {
             eprintln!(
                 "parity stage: entering Rust frame {} -> {}",
@@ -878,7 +940,7 @@ pub(super) fn run_replay(
                 .parity_replay_setup()
                 .replay_legacy_additional_arrow_refreshes(additional_draws);
         }
-        print_debug_element("before", &engine, &frame);
+        print_debug_element("before", &engine, &frame)?;
         robin_engine::movement_diagnostics::begin_parity_movement_capture();
         let simulation_started = Instant::now();
         let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -909,6 +971,10 @@ pub(super) fn run_replay(
                 // recorded command boundaries in both admission phases.
                 .parity_replay_setup()
                 .advance_frame(&assets, frame_input)
+                // This rejection deliberately stays a panic: it runs inside the
+                // tick's panic boundary, whose handler below appends the
+                // "Rust simulation panicked while replaying" line after the
+                // panic message. A typed error here would change that output.
                 .unwrap_or_else(|error| {
                     panic!("admit original frame {}: {error}", frame.frame_before)
                 })
@@ -965,9 +1031,9 @@ pub(super) fn run_replay(
         if debug_stage_timing {
             eprintln!("parity stage: completed Rust frame {}", frame.frame_after);
         }
-        print_debug_element("after", &engine, &frame);
-        map.extend_runtime_entities(&engine, &frame);
-        record_arrow_publication_before_compare(&engine, &frame, map);
+        print_debug_element("after", &engine, &frame)?;
+        map.extend_runtime_entities(&engine, &frame)?;
+        record_arrow_publication_before_compare(&engine, &frame, map)?;
         if debug_stage_timing {
             eprintln!(
                 "parity stage: extended runtime identity through frame {}",
@@ -1003,7 +1069,7 @@ pub(super) fn run_replay(
             let id = map.translate(TraceEntityId {
                 kind: TraceEntityKind::Soldier,
                 index: original_index,
-            });
+            })?;
             let entity = engine.get_entity(id).expect("debug soldier exists");
             let sprite = &entity.element_data().sprite;
             let actor = entity.actor_data().expect("debug soldier 83 is an actor");
@@ -1054,7 +1120,7 @@ pub(super) fn run_replay(
             }
         }
         if debug_startup {
-            print_startup_actors("after Rust frame 1", &engine, &frame, map);
+            print_startup_actors("after Rust frame 1", &engine, &frame, map)?;
         }
 
         let comparison_started = Instant::now();
@@ -1069,7 +1135,7 @@ pub(super) fn run_replay(
             &frame.path_events,
             &actual_path_events,
             map,
-        ));
+        )?);
         differences.extend(compare_frame(
             &engine,
             &assets,
@@ -1080,7 +1146,7 @@ pub(super) fn run_replay(
             header.initial_npc_transients.is_none(),
             header.schema <= LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW,
             &mut legacy_blocked_box_shadows,
-        ));
+        )?);
         if profile_timing {
             comparison_time += comparison_started.elapsed();
         }
@@ -1138,7 +1204,7 @@ pub(super) fn run_replay(
                 &actual_flight_steps,
                 &actual_move_box_extractions,
                 &differences,
-            );
+            )?;
         }
         if automatic_dump_enabled {
             push_rolling_window(
@@ -1231,14 +1297,14 @@ pub(super) fn run_replay(
                     &header,
                     map,
                     frame.frame_after,
-                );
+                )?;
             }
-            panic!(
+            return Err(TraceRunError::RngDivergence(format!(
                 "Rust consumed RNG draws {:?} at sites {rust_rng_sites:?} with script diagnostics {rust_rng_diagnostics:#?} during original frame {}; original ended at draw {rng_end}; Original simulation callsite offsets for the frame: {:?}",
                 rng_start..actual_rng_end,
                 frame.frame_before,
                 frame.rng_draws.gameplay_callsite_offsets(),
-            );
+            )));
         }
         if !differences.is_empty() {
             #[cfg(feature = "client")]
@@ -1264,7 +1330,7 @@ pub(super) fn run_replay(
                 // simulation tick, then runs one-shot post-initialization
                 // hook after refresh/sound. Apply that boundary only after
                 // comparing this frame, before advancing to the next one.
-                cross_post_initialize_frame(&mut engine, &assets);
+                cross_post_initialize_frame(&mut engine, &assets)?;
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -1324,7 +1390,7 @@ pub(super) fn run_replay(
                     &header,
                     map,
                     frame.frame_after,
-                );
+                )?;
             }
             #[cfg(feature = "client")]
             if http_server.is_some() {
@@ -1357,7 +1423,7 @@ pub(super) fn run_replay(
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
-        cross_post_initialize_frame(&mut engine, &assets);
+        cross_post_initialize_frame(&mut engine, &assets)?;
         #[cfg(feature = "client")]
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
@@ -1421,9 +1487,15 @@ pub(super) fn run_replay(
             rng_suffix: None,
             final_frame: None,
             frame_count: None,
-        } => return Err("parity trace ended without a clean rng_suffix terminator".to_owned()),
+        } => {
+            return Err(TraceRunError::Storage(
+                "parity trace ended without a clean rng_suffix terminator".to_owned(),
+            ));
+        }
         BinaryTraceRecord::End { .. } => {
-            return Err("native parity trace contains a partially populated terminator".to_owned());
+            return Err(TraceRunError::Storage(
+                "native parity trace contains a partially populated terminator".to_owned(),
+            ));
         }
         BinaryTraceRecord::Frame(_) => unreachable!("replay loop exits only on a terminator"),
     }

@@ -96,7 +96,8 @@ RUNNER
     printf 'ld-linux.so => %s/lib/ld-linux-x86-64.so.2 (0x0)\n' "$root" \
         >"$root/LOADER_LIST.txt"
     printf 'lib\n' >"$root/lib/ld-linux-x86-64.so.2"
-    chmod +x "$root/original_parity_replay" "$root/original_parity_replay.remote"
+    chmod +x "$root/original_parity_replay" "$root/original_parity_replay.remote" \
+        "$root/lib/ld-linux-x86-64.so.2"
     (cd "$root" && sha256sum lib/ld-linux-x86-64.so.2 >LIB_SHA256SUMS \
         && sha256sum original_parity_replay original_parity_replay.remote \
             PROVENANCE.txt LOADER_LIST.txt LIB_SHA256SUMS >SHA256SUMS)

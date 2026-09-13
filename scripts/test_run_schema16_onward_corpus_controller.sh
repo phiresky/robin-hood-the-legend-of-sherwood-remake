@@ -127,7 +127,6 @@ call_log="$test_root/calls"
     capture_convert_jobs=2
     verify_capture_bundle() { :; }
     verify_campaign_inventory() { :; }
-    write_phase() { :; }
     execute_capture_impl 5000000 "$campaign"
     grep -Fxq "ARG1=$workspace/reference-saves" "$invocation_proof"
     grep -Fxq "ARG2=$campaign" "$invocation_proof"
@@ -180,7 +179,6 @@ call_log="$test_root/calls"
     } >"$prepass_script"
     chmod +x -- "$prepass_script"
     bundle_trust_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    write_phase() { :; }
     execute_prepass_impl 5000000 "$campaign"
     grep -Fxq "ARG1=$workspace" "$prepass_proof"
     grep -Fxq "ARG2=$campaign" "$prepass_proof"
@@ -243,32 +241,44 @@ printf '/lib/loader => %s/lib/ld-linux-x86-64.so.2 (0x1)\n' "$bundle_fixture" \
     sha256sum -- original_parity_replay original_parity_replay.remote \
         LIB_SHA256SUMS PROVENANCE.txt LOADER_LIST.txt >SHA256SUMS
 )
-verify_bundle() {
-    (cd -- "$1" && sha256sum --strict -c SHA256SUMS \
-        && sha256sum --strict -c LIB_SHA256SUMS) >/dev/null
-}
-verify_capture_bundle "$bundle_fixture" "$bundle_fixture"
-ln -s -- original_parity_replay "$bundle_fixture/unmanifested-link"
-if (verify_capture_bundle "$bundle_fixture" "$bundle_fixture") \
-    2>"$test_root/bundle-symlink.err"
-then
-    printf 'test failure: canonical capture bundle accepted a symlink\n' >&2
-    exit 1
-fi
-grep -Fq 'runner bundle contains a symlink' "$test_root/bundle-symlink.err"
-rm -f -- "$bundle_fixture/unmanifested-link"
-printf 'extra\n' >"$bundle_fixture/unmanifested-root"
-if (verify_capture_bundle "$bundle_fixture" "$bundle_fixture") \
-    2>"$test_root/bundle-extra.err"
-then
-    printf 'test failure: canonical capture bundle accepted an extra root file\n' >&2
-    exit 1
-fi
-grep -Fq 'root file set is not canonical' "$test_root/bundle-extra.err"
+# Exercise the production verifier (shared lib) against the fixture's own pins.
+(
+    runner_sha=$(sha256_file "$bundle_fixture/original_parity_replay")
+    bundle_trust_sha=$(runner_bundle_digest "$bundle_fixture")
+    verify_capture_bundle "$bundle_fixture" "$bundle_fixture"
+    if (verify_capture_bundle "$bundle_fixture" "$test_root/other-source") \
+        2>"$test_root/bundle-proof.err"
+    then
+        printf 'test failure: capture bundle accepted a loader proof from another path\n' >&2
+        exit 1
+    fi
+    grep -Fq 'loader proof is not bound' "$test_root/bundle-proof.err"
+    if (bundle_trust_sha=$runner_sha; verify_capture_bundle "$bundle_fixture" "$bundle_fixture") \
+        2>"$test_root/bundle-trust.err"
+    then
+        printf 'test failure: capture bundle accepted a different trust digest\n' >&2
+        exit 1
+    fi
+    grep -Fq 'runner bundle trust digest mismatch' "$test_root/bundle-trust.err"
+    ln -s -- original_parity_replay "$bundle_fixture/unmanifested-link"
+    if (verify_capture_bundle "$bundle_fixture" "$bundle_fixture") \
+        2>"$test_root/bundle-symlink.err"
+    then
+        printf 'test failure: canonical capture bundle accepted a symlink\n' >&2
+        exit 1
+    fi
+    grep -Fq 'runner bundle contains a symlink' "$test_root/bundle-symlink.err"
+    rm -f -- "$bundle_fixture/unmanifested-link"
+    printf 'extra\n' >"$bundle_fixture/unmanifested-root"
+    if (verify_capture_bundle "$bundle_fixture" "$bundle_fixture") \
+        2>"$test_root/bundle-extra.err"
+    then
+        printf 'test failure: canonical capture bundle accepted an extra root file\n' >&2
+        exit 1
+    fi
+    grep -Fq 'root file set is not canonical' "$test_root/bundle-extra.err"
+)
 
-write_phase() {
-    printf '%s\n' "$1" >>"$test_root/phases"
-}
 execute_capture() {
     printf 'capture\t%s\t%s\n' "$1" "$2" >>"$call_log"
     : >"$2/capture-preserved.marker"

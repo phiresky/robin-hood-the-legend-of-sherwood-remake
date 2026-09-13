@@ -95,6 +95,16 @@ class WorkspaceHygieneTests(unittest.TestCase):
         for name in ["validate_motionstate.sh", "validate_schema15_replacements.sh"]:
             self.assertFalse((ROOT / "scripts" / name).exists())
 
+    def test_finished_campaign_supervisors_live_with_their_manifest(self):
+        campaign = ROOT / "scripts/parity-campaigns/schema16-20260824"
+        for name in ["run_schema16_corpus_ladder.sh", "run_schema16_distributed_capture.sh"]:
+            self.assertFalse((ROOT / "scripts" / name).exists(), name)
+            self.assertTrue((campaign / name).is_file(), name)
+            source = (campaign / name).read_text()
+            # Script-relative workspace defaults must still reach the repository root.
+            self.assertIn('"${BASH_SOURCE[0]}")/../../.."', source, name)
+            self.assertNotIn("bash scripts/run_schema16_", source, name)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,9 @@ set -euo pipefail
 # one at a time.  A zero-failure complete corpus terminates the ladder; any
 # non-zero verdict advances the random-input base by one million.
 
-script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Finished-campaign supervisor kept with its manifest in
+# scripts/parity-campaigns/schema16-20260824/; the workspace is three levels up.
+script_workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 workspace=${SCHEMA16_LADDER_WORKSPACE:-$script_workspace}
 corpus_root="$workspace/parity-save-replays/60s-random-input"
 audit_dir=${SCHEMA16_LADDER_AUDIT_DIR:-$workspace/tmp/parity-audits/corpus-ladder}
