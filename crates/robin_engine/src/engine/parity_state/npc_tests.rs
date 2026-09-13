@@ -640,8 +640,8 @@ impl Engine {
                     "gather_direction": enemy.gather_direction,
                     "gather_position_instructed": enemy.gather_position_instructed,
                     "officers_position": ai_position(enemy.officers_position),
-                    "previous_state": enemy.previous_state,
-                    "previous_substate": enemy.previous_substate,
+                    "previous_state": enemy.previous_state.raw(),
+                    "previous_substate": enemy.previous_substate.raw(),
                     "reported_to_officer": enemy.reported_to_officer,
                     "missed_soldier_timer": enemy.missed_soldier_timer,
                     "old_money": enemy.old_money,
@@ -721,8 +721,8 @@ fn npc_base_and_subclasses_match_frozen_json_encoder() {
             base.stimulus_queue.push(index);
         }
         if let AiBrain::Enemy(enemy) = &mut brain {
-            enemy.previous_state = i32::MIN;
-            enemy.previous_substate = -27;
+            enemy.previous_state = crate::ai::StoredEnumWord::from_raw(i32::MIN);
+            enemy.previous_substate = crate::ai::StoredEnumWord::from_raw(-27);
             enemy.my_seek_points = vec![7, 2, 7];
             enemy.seek_point_view_directions = vec![9, 1];
             enemy.personal_seek_point_1 = Some(crate::ai::SeekPoint {

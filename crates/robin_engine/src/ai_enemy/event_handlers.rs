@@ -200,8 +200,8 @@ impl EnemyAi {
             } else {
                 // Stash previous state, unalert seekers, transition to
                 // SEEKING_DETECTED_CHARLY.
-                self.previous_state = self.base.current_state as i32;
-                self.previous_substate = self.base.current_substate as i32;
+                self.previous_state = crate::ai::StoredEnumWord::new(self.base.current_state);
+                self.previous_substate = crate::ai::StoredEnumWord::new(self.base.current_substate);
                 self.base.outbox.actor.queue_unalert_near_charly_seekers(
                     CharlySeekerTarget::Npc(charly),
                     self.base.antagonist,

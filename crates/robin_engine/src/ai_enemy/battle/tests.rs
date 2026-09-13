@@ -2053,7 +2053,7 @@ fn proud_decision_speech(
     let mut ai = EnemyAi::new(91);
     ai.base.current_state = AiState::Attacking;
     ai.base.current_substate = entry_substate;
-    ai.previous_substate = serialized_previous_substate as i32;
+    ai.previous_substate = crate::ai::StoredEnumWord::new(serialized_previous_substate);
     ai.forced_next_battle_decision = Decision::TooProudToAttack;
     ai.list_them = vec![198];
 

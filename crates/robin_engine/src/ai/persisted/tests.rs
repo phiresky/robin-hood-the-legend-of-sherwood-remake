@@ -32,6 +32,99 @@ macro_rules! assert_projection_matches_wire {
 }
 
 #[test]
+fn stored_enum_word_wire_matches_raw_i32() {
+    #[derive(
+        Serialize, Deserialize, bitcode::Encode, bitcode::Decode, robin_state_hash_derive::StateHash,
+    )]
+    struct OldShape {
+        before: u16,
+        previous_state: i32,
+        previous_substate: i32,
+        after: bool,
+    }
+    #[derive(
+        Serialize, Deserialize, bitcode::Encode, bitcode::Decode, robin_state_hash_derive::StateHash,
+    )]
+    struct NewShape {
+        before: u16,
+        previous_state: StoredEnumWord<AiState>,
+        previous_substate: StoredEnumWord<Substate>,
+        after: bool,
+    }
+
+    let default_state = StoredEnumWord::<AiState>::default().raw();
+    let default_substate = StoredEnumWord::<Substate>::default().raw();
+    assert_eq!((default_state, default_substate), (0, 0));
+    let cases = [
+        (default_state, default_substate),
+        (AiState::Default as i32, Substate::DefaultOnPost as i32),
+        (
+            AiState::Seeking as i32,
+            Substate::SeekingDetectedCharly as i32,
+        ),
+        (i32::MIN, i32::MAX),
+        (-27, -1),
+    ];
+    for (state, substate) in cases {
+        let old = OldShape {
+            before: 0xBEEF,
+            previous_state: state,
+            previous_substate: substate,
+            after: true,
+        };
+        let new = NewShape {
+            before: 0xBEEF,
+            previous_state: StoredEnumWord::from_raw(state),
+            previous_substate: StoredEnumWord::from_raw(substate),
+            after: true,
+        };
+        // (1) state hash: field and whole struct.
+        assert_eq!(compute(&new.previous_state), compute(&state));
+        assert_eq!(compute(&new.previous_substate), compute(&substate));
+        assert_eq!(compute(&new), compute(&old));
+        // (2) bitcode bytes, both directions.
+        let old_bytes = bitcode::encode(&old);
+        assert_eq!(bitcode::encode(&new), old_bytes);
+        let decoded: NewShape = bitcode::decode(&old_bytes).unwrap();
+        assert_eq!(decoded.previous_state.raw(), state);
+        assert_eq!(decoded.previous_substate.raw(), substate);
+        // (3) serde_json, both directions.
+        let old_json = serde_json::to_string(&old).unwrap();
+        assert_eq!(serde_json::to_string(&new).unwrap(), old_json);
+        let decoded: NewShape = serde_json::from_str(&old_json).unwrap();
+        assert_eq!(decoded.previous_state.raw(), state);
+        assert_eq!(decoded.previous_substate.raw(), substate);
+        // Debug stays the bare i32.
+        assert_eq!(format!("{:?}", new.previous_state), format!("{state:?}"));
+        // (4) PersistedEnemyAi capture / into_runtime against the legacy
+        // i32-shaped EnemyAi wire.
+        let enemy = EnemyAi {
+            previous_state: StoredEnumWord::from_raw(state),
+            previous_substate: StoredEnumWord::from_raw(substate),
+            ..EnemyAi::new(7)
+        };
+        let restored = assert_projection_matches_wire!(enemy, PersistedEnemyAi, EnemyAi);
+        assert_eq!(restored.previous_state.raw(), state);
+        assert_eq!(restored.previous_substate.raw(), substate);
+    }
+    // Typed construction writes the same word as the old `as i32` cast.
+    assert_eq!(
+        StoredEnumWord::new(Substate::SeekingDetectedCharly).raw(),
+        Substate::SeekingDetectedCharly as i32
+    );
+    assert_eq!(
+        StoredEnumWord::<AiState>::from_raw(AiState::Seeking as i32).get("previous_state"),
+        AiState::Seeking
+    );
+}
+
+#[test]
+#[should_panic(expected = "live previous_substate contains invalid original-game enum word -27")]
+fn stored_enum_word_get_panics_on_invalid_word() {
+    StoredEnumWord::<Substate>::from_raw(-27).get("previous_substate");
+}
+
+#[test]
 fn ai_controller_scalar_projection_matrix() {
     for seed in 0..16u32 {
         let value = AiController {
@@ -155,8 +248,8 @@ fn enemy_ai_scalar_projection_matrix() {
             old_odds: (33u32 + seed) as i16,
             gather_direction: (35u32 + seed) as u16,
             gather_position_instructed: seed & (1 << 3) != 0,
-            previous_state: (39u32 + seed) as i32,
-            previous_substate: (40u32 + seed) as i32,
+            previous_state: StoredEnumWord::from_raw((39u32 + seed) as i32),
+            previous_substate: StoredEnumWord::from_raw((40u32 + seed) as i32),
             reported_to_officer: seed & (1 << 0) != 0,
             missed_soldier_timer: (42u32 + seed) as u16,
             old_money: (43u32 + seed) as u16,
@@ -373,8 +466,9 @@ fn outbox_projection_preserves_fifo_and_only_reconstructs_runtime_provenance() {
 fn enemy_and_friendly_projection_recurse_into_base_and_last_patrol_stimulus() {
     let enemy = EnemyAi {
         base: populated_controller(),
-        previous_state: i32::MIN,
-        previous_substate: i32::MAX,
+        // Out-of-range words must still round-trip verbatim.
+        previous_state: StoredEnumWord::from_raw(i32::MIN),
+        previous_substate: StoredEnumWord::from_raw(i32::MAX),
         missed_pc: Some(AiEntityHandle::new(0)),
         pending_group_instruction_candidates: vec![
             (3, Position::default()),

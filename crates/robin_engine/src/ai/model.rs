@@ -695,6 +695,96 @@ impl Substate {
 }
 
 // ---------------------------------------------------------------------------
+// Stored enum words
+// ---------------------------------------------------------------------------
+
+/// An AI enum whose original-game representation is a 32-bit enum word.
+pub trait OriginalEnumWord: Copy + TryFrom<u32> {
+    fn to_word(self) -> u32;
+}
+
+impl OriginalEnumWord for AiState {
+    fn to_word(self) -> u32 {
+        self as u32
+    }
+}
+
+impl OriginalEnumWord for Substate {
+    fn to_word(self) -> u32 {
+        self as u32
+    }
+}
+
+/// Raw serialized storage for an enum word of type `T`.
+///
+/// Legacy saves (and the original game's indeterminate initialization) can
+/// carry words that are not valid `T` discriminants, so the raw `i32` is kept
+/// verbatim. Every wire format is exactly that of the bare `i32`: the
+/// `StateHash` impl delegates to it, serde is transparent, and the bitcode
+/// derive encodes the single `i32` column (`PhantomData` encodes nothing) —
+/// pinned by `stored_enum_word_wire_matches_raw_i32` in `ai/persisted/tests.rs`.
+/// `Debug` also prints the bare `i32`.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[serde(transparent)]
+pub struct StoredEnumWord<T> {
+    raw: i32,
+    #[serde(skip)]
+    _enum: std::marker::PhantomData<T>,
+}
+
+impl<T> StoredEnumWord<T> {
+    /// Preserve an arbitrary stored word (legacy saves, tests).
+    pub const fn from_raw(raw: i32) -> Self {
+        Self {
+            raw,
+            _enum: std::marker::PhantomData,
+        }
+    }
+
+    /// The raw stored word, for wire projections.
+    pub const fn raw(self) -> i32 {
+        self.raw
+    }
+}
+
+impl<T: OriginalEnumWord> StoredEnumWord<T> {
+    pub fn new(value: T) -> Self {
+        Self::from_raw(value.to_word() as i32)
+    }
+
+    /// Decode the stored word, panicking (naming `field`) when it is not a
+    /// valid `T` — a live read of an indeterminate word is an invariant bug.
+    #[track_caller]
+    pub fn get(self, field: &'static str) -> T {
+        T::try_from(self.raw as u32).unwrap_or_else(|_| {
+            panic!(
+                "live {field} contains invalid original-game enum word {}",
+                self.raw
+            )
+        })
+    }
+}
+
+impl<T> Default for StoredEnumWord<T> {
+    fn default() -> Self {
+        Self::from_raw(0)
+    }
+}
+
+impl<T> std::fmt::Debug for StoredEnumWord<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.raw, f)
+    }
+}
+
+impl<T> robin_util::state_hash::StateHash for StoredEnumWord<T> {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Byte-identical to the former bare `i32` field (`write_i32`).
+        robin_util::state_hash::StateHash::state_hash(&self.raw, state);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Emoticon type
 // ---------------------------------------------------------------------------
 

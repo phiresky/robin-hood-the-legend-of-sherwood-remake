@@ -245,11 +245,12 @@ pub struct EnemyAi {
     /// Original-game initialization leaves this field indeterminate and still
     /// serializes all four bytes. It only becomes semantically live after
     /// PC-sighting processing assigns it together with
-    /// `previous_substate`.
-    pub previous_state: i32,
+    /// `previous_substate`. Stored as the raw word (wire-identical to `i32`);
+    /// read it with [`StoredEnumWord::get`].
+    pub previous_state: crate::ai::StoredEnumWord<AiState>,
     /// Raw serialized storage for the original game's previous substate; see
     /// [`Self::previous_state`].
-    pub previous_substate: i32,
+    pub previous_substate: crate::ai::StoredEnumWord<Substate>,
 
     pub reported_to_officer: bool,
 
@@ -472,8 +473,8 @@ impl EnemyAi {
             // Original base-class constructor values that differ from the
             // zero/empty `Default` of their field types.
             thirsty: true,
-            previous_state: AiState::Default as i32,
-            previous_substate: Substate::DefaultOnPost as i32,
+            previous_state: crate::ai::StoredEnumWord::new(AiState::Default),
+            previous_substate: crate::ai::StoredEnumWord::new(Substate::DefaultOnPost),
             soldier_profile_iq: 50,
             soldier_profile_courage: 50,
             soldier_profile_shooting: 50,
