@@ -156,10 +156,12 @@ impl EngineInner {
                 return;
             };
             let selector_camp = self
-                .get_entity(pc_id)
-                .unwrap_or_else(|| {
-                    panic!("selected PC {pc_id:?} disappeared during sword-target dispatch")
-                })
+                .world
+                .entities
+                .expect_entity(
+                    pc_id,
+                    format_args!("selected PC during sword-target dispatch"),
+                )
                 .camp();
             let is_blipped = target.element_data().blipped;
             let is_dead = target.is_dead();

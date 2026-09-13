@@ -101,10 +101,7 @@ impl EngineInner {
         if is_map_move {
             self.world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("MAP movement owner {owner:?} disappeared during Instruct")
-                })
+                .expect_entity_mut(owner, format_args!("MAP movement owner during Instruct"))
                 .position_iface_mut()
                 .set_anti_collision_on(false);
         }
@@ -397,10 +394,10 @@ impl LiftWaitCommandContext<'_> {
         if authorized {
             let owner_is_pc = self
                 .entities
-                .get(owner)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
-                })
+                .expect_entity(
+                    owner,
+                    format_args!("WAIT_FREE_LIFT owner during reservation"),
+                )
                 .is_pc();
             let lift = self.fast_grid.lift_state_mut(grid_idx as u32);
             if is_high {
@@ -408,14 +405,10 @@ impl LiftWaitCommandContext<'_> {
             } else {
                 lift.set_occupied_upwards(true, owner_is_pc);
             }
-            let actor = self
-                .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_FREE_LIFT owner {owner:?} vanished during reservation")
-                })
-                .actor_data_mut()
-                .unwrap_or_else(|| panic!("WAIT_FREE_LIFT owner {owner:?} is not an actor"));
+            let actor = self.entities.expect_actor_data_mut(
+                owner,
+                format_args!("WAIT_FREE_LIFT owner during reservation"),
+            );
             actor.active_lift = Some(crate::element::ActiveLiftClimb {
                 sector_number: u16::from(target_sector),
                 upwards: !is_high,
@@ -461,11 +454,10 @@ impl SmalltalkCommandContext<'_> {
             .entities
             .get(owner)
             .unwrap_or_else(|| panic!("smalltalk command {command:?} owner {owner:?} is missing"));
-        let opponent = self.entities.get(antagonist).unwrap_or_else(|| {
-            panic!(
-                "smalltalk command {command:?} owner {owner:?} references missing antagonist {antagonist:?}"
-            )
-        });
+        let opponent = self.entities.expect_entity(
+            antagonist,
+            format_args!("smalltalk command {command:?} owner {owner:?} antagonist"),
+        );
         assert!(
             opponent.human_data().is_some(),
             "smalltalk command {command:?} owner {owner:?} antagonist {antagonist:?} is not human"
@@ -1186,11 +1178,12 @@ impl WaitCommandContext<'_> {
             is_stuck_under_net,
             carrier_is_vip,
         ) = {
-            let entity = self.entities.get(owner).unwrap_or_else(|| {
-                panic!(
-                    "Wait translation owner {owner:?} is missing for {command:?} at {seq_id:?}/{elem_idx}"
-                )
-            });
+            // Keep "Wait translation owner" in the context: asserted by
+            // `wait_context_rejects_stale_owner_contextually`.
+            let entity = self.entities.expect_entity(
+                owner,
+                format_args!("Wait translation owner for {command:?} at {seq_id:?}/{elem_idx}"),
+            );
             let actor = entity.actor_data().unwrap_or_else(|| {
                 panic!(
                     "Wait translation owner {owner:?} is not an actor for {command:?} at {seq_id:?}/{elem_idx}"
@@ -1204,9 +1197,7 @@ impl WaitCommandContext<'_> {
                 actor.action_state,
                 entity.enemy_ai().is_some_and(|enemy| enemy.attentive),
                 entity.is_dead(),
-                entity
-                    .human_data()
-                    .is_some_and(|human| human.unconscious),
+                entity.human_data().is_some_and(|human| human.unconscious),
                 entity
                     .human_data()
                     .is_some_and(|human| !human.opponents.is_empty()),
@@ -1214,11 +1205,12 @@ impl WaitCommandContext<'_> {
                     .human_data()
                     .is_some_and(|human| human.stuck_under_nets_counter > 0),
                 carrier.is_some_and(|carrier_id| {
-                    let carrier = self.entities.get(carrier_id).unwrap_or_else(|| {
-                        panic!(
-                            "Wait translation owner {owner:?} references missing carrier {carrier_id:?} at {seq_id:?}/{elem_idx}"
-                        )
-                    });
+                    let carrier = self.entities.expect_entity(
+                        carrier_id,
+                        format_args!(
+                            "Wait translation owner {owner:?} carrier at {seq_id:?}/{elem_idx}"
+                        ),
+                    );
                     self.is_entity_vip(carrier)
                 }),
             )
@@ -1465,11 +1457,7 @@ impl WaitCommandContext<'_> {
             };
             let actor = self
                 .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| {
-                    panic!("WAIT_TIMER owner {owner:?} vanished during translation")
-                });
+                .expect_actor_data_mut(owner, format_args!("WAIT_TIMER owner during translation"));
             // The original game has one overloaded wait-time scalar. Keep the
             // seek-side Rust mirror synchronized with this WAIT_TIMER write:
             // if the timer is interrupted while dormant post-seek ownership
@@ -1484,17 +1472,16 @@ impl WaitCommandContext<'_> {
         {
             let actor = self
                 .entities
-                .get_mut(owner)
-                .and_then(Entity::actor_data_mut)
-                .unwrap_or_else(|| panic!("Wait translation listening owner {owner:?} vanished"));
+                .expect_actor_data_mut(owner, format_args!("Wait translation listening owner"));
             const TIME_LISTEN_WAIT: u32 = 25;
             actor.seek_refresh_wait = 0;
             actor.wait_time = TIME_LISTEN_WAIT;
         }
         if set_posture_stuck_under_net {
-            let entity = self.entities.get_mut(owner).unwrap_or_else(|| {
-                panic!("Wait translation owner {owner:?} vanished while setting net posture")
-            });
+            let entity = self.entities.expect_entity_mut(
+                owner,
+                format_args!("Wait translation owner while setting net posture"),
+            );
             entity
                 .element_data_mut()
                 .set_posture(crate::element::Posture::StuckUnderNet);
@@ -2376,10 +2363,7 @@ impl RecoveryCommandContext<'_> {
                 };
                 let owner_position = self
                     .entities
-                    .get(owner)
-                    .unwrap_or_else(|| {
-                        panic!("WakeUp owner {owner:?} is missing before direction setup")
-                    })
+                    .expect_entity(owner, format_args!("WakeUp owner before direction setup"))
                     .element_data()
                     .position_map();
                 let direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -2387,10 +2371,7 @@ impl RecoveryCommandContext<'_> {
                     target_position.y - owner_position.y,
                 );
                 self.entities
-                    .get_mut(owner)
-                    .unwrap_or_else(|| {
-                        panic!("WakeUp owner {owner:?} vanished during direction setup")
-                    })
+                    .expect_entity_mut(owner, format_args!("WakeUp owner during direction setup"))
                     .element_data_mut()
                     .set_direction_goal(direction);
 

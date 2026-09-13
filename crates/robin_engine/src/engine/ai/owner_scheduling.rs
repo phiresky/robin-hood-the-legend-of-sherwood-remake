@@ -792,13 +792,13 @@ impl EngineInner {
                     id.index()
                 )
             });
-            let entity = self.world.entities.get(id).unwrap_or_else(|| {
-                panic!(
-                    "synchronous patrol initialization owner {} references missing member {}",
-                    chief_id.index(),
-                    id.index()
-                )
-            });
+            let entity = self.world.entities.expect_entity(
+                id,
+                format_args!(
+                    "synchronous patrol initialization owner {} member",
+                    chief_id.index()
+                ),
+            );
             PatrolSnap {
                 position: view.position,
                 raw_position_world: entity.element_data().position(),
@@ -807,15 +807,13 @@ impl EngineInner {
                 posture: entity.element_data().posture(),
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
-                ai_state: entity
-                    .ai_controller()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "patrol member {} referenced by owner {} has no AI controller",
-                            id.index(),
-                            chief_id.index()
-                        )
-                    })
+                ai_state: self
+                    .world
+                    .entities
+                    .expect_ai_controller(
+                        id,
+                        format_args!("patrol member referenced by owner {}", chief_id.index()),
+                    )
                     .current_state,
                 is_alive: !entity.is_dead(),
                 is_active: entity.is_active(),
@@ -1134,10 +1132,10 @@ impl EngineInner {
 
         // Split borrow: the AI tick below reads `self.ai.global` / `self.world.fast_grid`
         // alongside the mutable entity, so the arena lookup stays explicit here.
-        let entity =
-            self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!("periodic NPC {} disappeared before call", npc_id.index())
-            });
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(npc_id, format_args!("periodic NPC before call"));
 
         match entity {
             Entity::Pc(_) | Entity::Soldier(_) => {

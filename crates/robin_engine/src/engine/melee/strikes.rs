@@ -566,28 +566,18 @@ impl EngineInner {
         target_id: EntityId,
         is_left: bool,
     ) {
-        let target = self.get_entity(target_id).unwrap_or_else(|| {
-            panic!("smalltalk attacker {attacker_id:?} tried to hint missing target {target_id:?}")
-        });
-        let target_human = target.human_data().unwrap_or_else(|| {
-            panic!(
-                "smalltalk attacker {attacker_id:?} tried to hint non-human target {target_id:?}"
-            )
-        });
+        let target_human = self.world.entities.expect_human_data(
+            target_id,
+            format_args!("smalltalk attacker {attacker_id:?} hint target"),
+        );
         let is_principal = target_human.opponents.first().copied() == Some(attacker_id);
         if !is_principal {
             return;
         }
-        let human = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .and_then(Entity::human_data_mut)
-            .unwrap_or_else(|| {
-                panic!(
-                    "smalltalk attacker {attacker_id:?} target {target_id:?} vanished while receiving hint"
-                )
-            });
+        let human = self.world.entities.expect_human_data_mut(
+            target_id,
+            format_args!("smalltalk attacker {attacker_id:?} hint target while receiving hint"),
+        );
         human.smalltalk_hint = if is_left {
             crate::element::SmalltalkHint::Left
         } else {
@@ -618,24 +608,19 @@ impl EngineInner {
                 "smalltalk-hint evaluation owner {entity_id:?} has {hint:?} without a hint opponent"
             )
         });
-        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-            panic!(
-                "smalltalk-hint evaluation owner {entity_id:?} references missing hint opponent {opponent_id:?}"
-            )
-        });
+        let opponent = self.world.entities.expect_entity(
+            opponent_id,
+            format_args!("smalltalk-hint evaluation owner {entity_id:?} hint opponent"),
+        );
         assert!(
             opponent.human_data().is_some(),
             "smalltalk-hint evaluation owner {entity_id:?} hint opponent {opponent_id:?} is not human"
         );
 
-        let human = self
-            .world
-            .entities
-            .get_mut(entity_id)
-            .and_then(Entity::human_data_mut)
-            .unwrap_or_else(|| {
-                panic!("smalltalk-hint evaluation owner {entity_id:?} vanished while clearing hint")
-            });
+        let human = self.world.entities.expect_human_data_mut(
+            entity_id,
+            format_args!("smalltalk-hint evaluation owner while clearing hint"),
+        );
         human.smalltalk_hint = crate::element::SmalltalkHint::None;
         human.smalltalk_hint_opponent = None;
 
@@ -3121,11 +3106,9 @@ impl EngineInner {
             // two separate checks: animation for visual recovery, then
             // action state for logical sword readiness.
             let target_in_sword = self
-                .get_entity(target_id)
-                .and_then(|e| e.actor_data())
-                .unwrap_or_else(|| {
-                    panic!("sword-strike principal opponent {target_id:?} requires actor data")
-                })
+                .world
+                .entities
+                .expect_actor_data(target_id, format_args!("sword-strike principal opponent"))
                 .action_state
                 .is_sword();
             let target_in_recovery = self.actor_is_in_sword_recovery(target_id);
@@ -3766,12 +3749,10 @@ impl EngineInner {
         let mut recover = None;
         let is_sherwood = self.is_sherwood(&assets.profile_manager);
         let naturally_woke = {
-            let entity = self.world.entities.get_mut(owner).unwrap_or_else(|| {
-                panic!(
-                    "concussion owner {} disappeared from its legacy slot",
-                    owner.index()
-                )
-            });
+            let entity = self
+                .world
+                .entities
+                .expect_entity_mut(owner, format_args!("concussion owner from its legacy slot"));
             assert!(
                 entity.human_data().is_some(),
                 "concussion owner {} is not human",

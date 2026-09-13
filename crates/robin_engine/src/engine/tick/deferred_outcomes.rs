@@ -651,15 +651,10 @@ impl EngineInner {
             // expose the captured pre-processing action state so nested
             // Swordfight reconsideration applies the original game's honour/action check.
             let action_state_after_perform = {
-                let actor = self
-                    .expect_entity_mut(entity_id, "weak/stunned callback owner before drain")
-                    .actor_data_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "weak/stunned callback owner {} is not an actor",
-                            entity_id.index()
-                        )
-                    });
+                let actor = self.world.entities.expect_actor_data_mut(
+                    entity_id,
+                    format_args!("weak/stunned callback owner before drain"),
+                );
                 std::mem::replace(&mut actor.action_state, action_state_before_perform)
             };
             self.add_weak_stunned_combat(
@@ -668,14 +663,12 @@ impl EngineInner {
                 entity_id,
                 anim_type == crate::order::OrderType::BeingWeakSword,
             );
-            self.expect_entity_mut(entity_id, "weak/stunned callback owner during drain")
-                .actor_data_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "weak/stunned callback owner {} lost actor data during drain",
-                        entity_id.index()
-                    )
-                })
+            self.world
+                .entities
+                .expect_actor_data_mut(
+                    entity_id,
+                    format_args!("weak/stunned callback owner during drain"),
+                )
                 .action_state = action_state_after_perform;
         }
     }
@@ -907,11 +900,10 @@ impl EngineInner {
         waking_up_done: Vec<(EntityId, EntityId)>,
     ) {
         for (rescuer, target) in waking_up_done {
-            let target_entity = self.get_entity(target).unwrap_or_else(|| {
-                panic!(
-                    "WakingUp DONE from rescuer {rescuer:?} references missing required target {target:?}"
-                )
-            });
+            let target_entity = self.world.entities.expect_entity(
+                target,
+                format_args!("WakingUp DONE from rescuer {rescuer:?} required target"),
+            );
             if !target_entity.is_human() {
                 panic!(
                     "WakingUp DONE from rescuer {rescuer:?} requires human target {target:?}, found {:?}",

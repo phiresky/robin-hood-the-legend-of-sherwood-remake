@@ -416,12 +416,10 @@ impl EngineInner {
 
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
-            let owner_human = self
-                .expect_entity_mut(entity_id, "opponent jump-line owner during refresh")
-                .human_data_mut()
-                .unwrap_or_else(|| {
-                    panic!("opponent jump-line owner {entity_id:?} stopped being human")
-                });
+            let owner_human = self.world.entities.expect_human_data_mut(
+                entity_id,
+                format_args!("opponent jump-line owner during refresh"),
+            );
             assert!(
                 owner_human.opponents.update_jump_line_at(i, this_jl),
                 "opponent slot {i} disappeared from {entity_id:?} during jump-line refresh"

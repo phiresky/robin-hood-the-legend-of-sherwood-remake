@@ -1184,11 +1184,10 @@ impl EngineInner {
                 "globally frozen seek owner {owner:?} has inconsistent actor/element targets"
             );
 
-            let target_entity = self.world.entities.get(seek_target).unwrap_or_else(|| {
-                panic!(
-                    "globally frozen seek owner {owner:?} references missing target {seek_target:?}"
-                )
-            });
+            let target_entity = self.world.entities.expect_entity(
+                seek_target,
+                format_args!("globally frozen seek owner {owner:?} target"),
+            );
             let target_position = target_entity.element_data().position_map();
             let target_sector = target_entity.element_data().sector();
             let use_point = flags.contains(crate::sequence::MoveFlags::USE_POINT);

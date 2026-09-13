@@ -1096,12 +1096,10 @@ impl EngineInner {
     /// synchronous NPC `EVENT_FITAGAIN`, and is not deferred to each observer.
     pub(crate) fn apply_wake_redetection_blinks<I: Into<EntityId>>(&mut self, waker_id: I) {
         let waker_id = waker_id.into();
-        let waker = self.get_entity(waker_id).unwrap_or_else(|| {
-            panic!(
-                "wake BlinkEnemy fan-out requires missing waker {}",
-                waker_id.index()
-            )
-        });
+        let waker = self
+            .world
+            .entities
+            .expect_entity(waker_id, format_args!("wake BlinkEnemy fan-out waker"));
         let waker_is_pc = waker.is_pc();
         let waker_is_soldier = matches!(waker, Entity::Soldier(_));
         if !(waker_is_pc

@@ -10,14 +10,10 @@ impl EngineInner {
         // `HumanHandle` is the raw sparse element slot, not a SoldierId; an
         // AI-controlled hero therefore has to retain its ActorPc entity kind here.
         let target_id = self.expect_human_id_for_ai_handle(target, operation);
-        self.world
-            .entities
-            .get_mut(target_id)
-            .expect("validated cross-NPC human vanished")
-            .enemy_ai_mut()
-            .unwrap_or_else(|| {
-                panic!("cross-NPC {operation} target human {target} has no enemy AI")
-            })
+        self.world.entities.expect_enemy_ai_mut(
+            target_id,
+            format_args!("cross-NPC {operation} target human {target}"),
+        )
     }
 
     /// Execute the complete original-game patrol clearing made by the
@@ -385,14 +381,10 @@ impl EngineInner {
 
     fn register_synchronizing_actor(&mut self, target: u32, actor: u32) {
         let target_id = self.expect_human_id_for_ai_handle(target, "register-synchronizing-actor");
-        let entity = self
-            .world
-            .entities
-            .get_mut(target_id)
-            .expect("validated synchronization target vanished");
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("synchronization target human {target} has no AI controller")
-        });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            target_id,
+            format_args!("synchronization target human {target}"),
+        );
         // Registering a synchronizing AI actor is a direct,
         // unconditional append. In particular, the target can reach its
         // waypoint in a later element update slot in this same frame and
@@ -1781,13 +1773,10 @@ impl EngineInner {
             let target_position = self
                 .world
                 .entities
-                .get(target_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "look-there target {} disappeared during the registry walk",
-                        target_id.index()
-                    )
-                })
+                .expect_entity(
+                    target_id,
+                    format_args!("look-there target during the registry walk"),
+                )
                 .element_data()
                 .position();
             let dx = target_position.x - caller_position.x;
@@ -1999,9 +1988,10 @@ impl EngineInner {
                     panic!("synchronous {stimulus_type:?} target {target} disappeared")
                 });
             let ctx = {
-                let entity = self.world.entities.get(target_id).unwrap_or_else(|| {
-                    panic!("synchronous {stimulus_type:?} target {target} disappeared")
-                });
+                let entity = self.world.entities.expect_entity(
+                    target_id,
+                    format_args!("synchronous {stimulus_type:?} target {target}"),
+                );
                 self.ai_context_from_entity(
                     entity,
                     self.control.frame_counter,

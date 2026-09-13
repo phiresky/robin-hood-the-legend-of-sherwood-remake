@@ -147,13 +147,10 @@ impl EngineInner {
             return;
         }
         let command = self.actor_command(npc_id);
-        let entity =
-            self.world.entities.get(npc_id).unwrap_or_else(|| {
-                panic!("BORED_BOUNDARY owner {} disappeared during {phase}", owner)
-            });
-        let ai = entity
-            .ai_controller()
-            .unwrap_or_else(|| panic!("BORED_BOUNDARY owner {} has no AI during {phase}", owner));
+        let ai = self.world.entities.expect_ai_controller(
+            npc_id,
+            format_args!("BORED_BOUNDARY owner {owner} during {phase}"),
+        );
         eprintln!(
             "BORED_BOUNDARY frame={} owner={} phase={} command={:?} state={:?} substate={:?} timer_running={} timer_deadline={} self_stimuli={} owner_work={} orders={}",
             frame,

@@ -565,13 +565,10 @@ impl EngineInner {
         // apply the whole queue here after the owner's AI tick ran.
         let debug_primary_swap = crate::ai_enemy::primary_swap_debug_enabled();
         for (friend_id, new_target) in effects.friend_primary_target_swaps {
-            let friend = self.world.entities.get_mut(friend_id).unwrap_or_else(|| {
-                panic!(
-                    "pending-drain NPC {} primary-target friend {} disappeared",
-                    npc_id.index(),
-                    friend_id.index()
-                )
-            });
+            let friend = self.world.entities.expect_entity_mut(
+                friend_id,
+                format_args!("pending-drain NPC {} primary-target friend", npc_id.index()),
+            );
             let Entity::Soldier(friend) = friend else {
                 panic!(
                     "pending-drain NPC {} primary-target friend {} is not a soldier",

@@ -629,36 +629,22 @@ impl EngineInner {
             );
 
             {
-                let chief = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} disappeared during AI initialization",
-                        npc_id.index()
-                    )
-                });
-                let ai = chief.ai_controller_mut().unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} has no AI controller during initialization",
-                        npc_id.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("patrol chief during AI initialization"),
+                );
                 ai.patrol = sorted_patrol.clone();
                 ai.missed_patrol_members = missed;
                 ai.needs_patrol_reinit = false;
             }
             for member in sorted_patrol {
-                let entity = self.world.entities.get_mut(member).unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} admitted missing member {}",
-                        npc_id.index(),
-                        member.index()
-                    )
-                });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!(
-                        "patrol member {} has no AI controller during initialization",
-                        member.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    member,
+                    format_args!(
+                        "patrol chief {} member during AI initialization",
+                        npc_id.index()
+                    ),
+                );
                 ai.patrol_chief = Some(npc_id);
             }
         }

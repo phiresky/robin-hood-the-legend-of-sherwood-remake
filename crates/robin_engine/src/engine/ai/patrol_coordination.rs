@@ -27,25 +27,20 @@ impl EngineInner {
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
         for member in members {
             let in_uninterruptible_command = self.is_very_very_busy(member);
-            let building_sector = self
-                .world
-                .entities
-                .get(member)
-                .map(|entity| self.entity_building_sector(entity.element_data().sector()))
-                .unwrap_or_else(|| {
-                    panic!(
-                        "patrol direction owner {} references missing member {}",
-                        owner.index(),
-                        member.index()
+            let building_sector = self.entity_building_sector(
+                self.world
+                    .entities
+                    .expect_entity(
+                        member,
+                        format_args!("patrol direction owner {} member", owner.index()),
                     )
-                });
-            let entity = self.world.entities.get(member).unwrap_or_else(|| {
-                panic!(
-                    "patrol direction owner {} lost member {}",
-                    owner.index(),
-                    member.index()
-                )
-            });
+                    .element_data()
+                    .sector(),
+            );
+            let entity = self.world.entities.expect_entity(
+                member,
+                format_args!("patrol direction owner {} member", owner.index()),
+            );
             let mut ctx = self.ai_context_from_entity(
                 entity,
                 self.control.frame_counter,
@@ -555,13 +550,13 @@ impl EngineInner {
                 .entities
                 .get(minion_id)
                 .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
-            let entity = self.world.entities.get(minion_id).unwrap_or_else(|| {
-                panic!(
-                    "patrol chief {} lost member {} after coordinate Think",
-                    owner.index(),
-                    minion_id.index()
-                )
-            });
+            let entity = self.world.entities.expect_entity(
+                minion_id,
+                format_args!(
+                    "patrol chief {} member after coordinate Think",
+                    owner.index()
+                ),
+            );
             let mut live_ctx = self.ai_context_from_entity(
                 entity,
                 patrol_frame,

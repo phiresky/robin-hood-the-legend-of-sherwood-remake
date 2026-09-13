@@ -404,10 +404,12 @@ impl EngineInner {
             .and_then(|a| a.active_lift);
         if let Some(lift) = active_lift {
             let victim_is_pc = self
-                .get_entity(victim_id)
-                .unwrap_or_else(|| {
-                    panic!("active-lift victim {victim_id:?} vanished before forced release")
-                })
+                .world
+                .entities
+                .expect_entity(
+                    victim_id,
+                    format_args!("active-lift victim before forced release"),
+                )
                 .is_pc();
             if let Some(grid_idx) = self
                 .world
@@ -1464,11 +1466,11 @@ impl EngineInner {
                     }
                 };
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("lateral strike attacker {attacker_id:?} is missing")
-                    });
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("lateral strike attacker"))
+                    .element_data()
+                    .position();
                 collect_lateral_strike_victims(
                     &self.world.entities,
                     attacker_id,
@@ -1529,11 +1531,11 @@ impl EngineInner {
                     }
                 };
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("half-circle strike attacker {attacker_id:?} is missing")
-                    });
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("half-circle strike attacker"))
+                    .element_data()
+                    .position();
                 collect_half_circle_strike_victims(
                     &self.world.entities,
                     attacker_id,
@@ -1549,11 +1551,11 @@ impl EngineInner {
             }
             WeaponThrustKind::TrueCircle | WeaponThrustKind::FalseCircle => {
                 let attacker_position = self
-                    .get_entity(attacker_id)
-                    .map(|entity| entity.element_data().position())
-                    .unwrap_or_else(|| {
-                        panic!("full-circle strike attacker {attacker_id:?} is missing")
-                    });
+                    .world
+                    .entities
+                    .expect_entity(attacker_id, format_args!("full-circle strike attacker"))
+                    .element_data()
+                    .position();
                 collect_full_circle_strike_victims(
                     &self.world.entities,
                     attacker_id,

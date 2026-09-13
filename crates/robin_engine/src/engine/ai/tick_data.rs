@@ -133,12 +133,10 @@ impl EngineInner {
         {
             return;
         }
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "RVLIFE owner {} disappeared at stage {stage}",
-                npc_id.index()
-            )
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity(npc_id, format_args!("RVLIFE owner at stage {stage}"));
         let Some(npc) = entity.ai_actor_data() else {
             return;
         };
@@ -275,14 +273,10 @@ impl EngineInner {
         let current = crate::entities::BoundaryPosition::of(
             self.world
                 .entities
-                .get(target)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "owner {} requires position for missing entity {}",
-                        owner.index(),
-                        target.index()
-                    )
-                })
+                .expect_entity(
+                    target,
+                    format_args!("owner {} position target", owner.index()),
+                )
                 .element_data(),
         );
         let target_has_not_moved = self.world.original_creation_order(target)
@@ -543,12 +537,10 @@ impl EngineInner {
         &self,
         npc_id: crate::element::EntityId,
     ) -> crate::ai_friendly::FriendlyPerTickData {
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "owner-local friendly tick context owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self.world.entities.expect_entity(
+            npc_id,
+            format_args!("owner-local friendly tick context owner"),
+        );
         let Entity::Civilian(civilian) = entity else {
             panic!(
                 "owner-local friendly tick context owner {} is not a Civilian",
@@ -671,13 +663,10 @@ impl EngineInner {
                 let Some(target_id) = detectable.element else {
                     continue;
                 };
-                let target = self.world.entities.get(target_id).unwrap_or_else(|| {
-                    panic!(
-                        "NPC {} has Enemy detectable for missing actor {}",
-                        npc_id.index(),
-                        target_id.index()
-                    )
-                });
+                let target = self.world.entities.expect_entity(
+                    target_id,
+                    format_args!("NPC {} Enemy detectable actor", npc_id.index()),
+                );
                 let input = extract_exact_forecast_input(
                     self,
                     target,
@@ -924,14 +913,14 @@ impl EngineInner {
                 let raw_world_position = self
                     .world
                     .entities
-                    .get(id)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "NPC {} observation fighter {} has no live entity",
+                    .expect_entity(
+                        id,
+                        format_args!(
+                            "NPC {} observation fighter {}",
                             npc_id.index(),
                             fighter.handle
-                        )
-                    })
+                        ),
+                    )
                     .element_data()
                     .position();
                 crate::ai::ReconsiderSwordfightObservationFighter {
@@ -969,9 +958,10 @@ impl EngineInner {
                                 fighter.handle
                             )
                         });
-                    let entity = self.world.entities.get(fighter_id).unwrap_or_else(|| {
-                        panic!("RECONSIDER owner {npc_id:?} cannot read fighter {fighter_id:?}")
-                    });
+                    let entity = self.world.entities.expect_entity(
+                        fighter_id,
+                        format_args!("RECONSIDER owner {npc_id:?} fighter"),
+                    );
                     let current_sequence = self
                         .orders
                         .sequence_manager
@@ -1043,7 +1033,6 @@ impl EngineInner {
         // general builder's stub origin here made every such member face
         // sector 15 even though the preceding approach used the real chief.
         if let Some(chief_id) = ai.patrol_chief {
-            let chief = self.expect_entity(chief_id, "enemy tick context patrol chief");
             let chief_ai = self.world.entities.expect_ai_controller(
                 chief_id,
                 format_args!("enemy tick context owner {} patrol chief", npc_id.index()),

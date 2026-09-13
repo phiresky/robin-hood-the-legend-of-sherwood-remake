@@ -1061,6 +1061,79 @@ impl Entities {
             .ai_actor_data()
             .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
     }
+    /// Required entity with a formatted context, borrowing only the entity
+    /// arena. Prefer this over `EngineInner::expect_entity` when the context
+    /// needs to name other ids (owner, principal, ...) or when only the
+    /// arena is borrowed.
+    #[track_caller]
+    pub(crate) fn expect_entity<I: Into<EntityId>>(
+        &self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &Entity {
+        let id = id.into();
+        self.get(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+    }
+    /// Mutable twin of [`Entities::expect_entity`]; one arena borrow.
+    #[track_caller]
+    pub(crate) fn expect_entity_mut<I: Into<EntityId>>(
+        &mut self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut Entity {
+        let id = id.into();
+        self.get_mut(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+    }
+    /// Required human state (PC, soldier or civilian).
+    #[track_caller]
+    pub(crate) fn expect_human_data<I: Into<EntityId>>(
+        &self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &crate::element::HumanData {
+        let id = id.into();
+        self.expect_entity(id, context)
+            .human_data()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} is not human"))
+    }
+    /// Mutable twin of [`Entities::expect_human_data`]; one arena borrow.
+    #[track_caller]
+    pub(crate) fn expect_human_data_mut<I: Into<EntityId>>(
+        &mut self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::element::HumanData {
+        let id = id.into();
+        self.expect_entity_mut(id, context)
+            .human_data_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} is not human"))
+    }
+    /// Required actor state.
+    #[track_caller]
+    pub(crate) fn expect_actor_data<I: Into<EntityId>>(
+        &self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &crate::element::ActorData {
+        let id = id.into();
+        self.expect_entity(id, context)
+            .actor_data()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} is not an actor"))
+    }
+    /// Mutable twin of [`Entities::expect_actor_data`]; one arena borrow.
+    #[track_caller]
+    pub(crate) fn expect_actor_data_mut<I: Into<EntityId>>(
+        &mut self,
+        id: I,
+        context: std::fmt::Arguments<'_>,
+    ) -> &mut crate::element::ActorData {
+        let id = id.into();
+        self.expect_entity_mut(id, context)
+            .actor_data_mut()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} is not an actor"))
+    }
 }
 
 #[cfg(test)]
@@ -1112,6 +1185,34 @@ mod required_ai_access_tests {
             Entities::from_legacy_slots(vec![Some(make_test_pc(crate::element::Posture::Upright))]);
         let id = entities.id_at_legacy_slot(0).unwrap();
         entities.expect_ai_controller_mut(id, format_args!("NPC dispatch"));
+    }
+
+    #[test]
+    fn typed_entity_access_preserves_one_arena_generation_increment_per_borrow() {
+        let mut entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        ))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        let before = entities.generation(id);
+        entities.expect_entity(id, format_args!("entity test"));
+        entities.expect_human_data(id, format_args!("human test"));
+        entities.expect_actor_data(id, format_args!("actor test"));
+        assert_eq!(entities.generation(id), before);
+        entities.expect_entity_mut(id, format_args!("entity test"));
+        assert_eq!(entities.generation(id), before + 1);
+        entities.expect_human_data_mut(id, format_args!("human test"));
+        assert_eq!(entities.generation(id), before + 2);
+        entities.expect_actor_data_mut(id, format_args!("actor test"));
+        assert_eq!(entities.generation(id), before + 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "strike owner: entity Soldier(SoldierId(1)) disappeared")]
+    fn missing_required_entity_names_its_context() {
+        Entities::new().expect_entity(
+            EntityId::Soldier(crate::entity_id::SoldierId(1)),
+            format_args!("strike owner"),
+        );
     }
 
     #[test]

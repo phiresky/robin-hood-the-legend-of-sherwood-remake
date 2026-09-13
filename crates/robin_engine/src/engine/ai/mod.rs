@@ -3714,10 +3714,7 @@ pub(super) fn build_friend_swap_candidates(
                 position_owner,
                 |position_id| {
                     let element = entities
-                        .get(position_id)
-                        .unwrap_or_else(|| {
-                            panic!("friend-swap position owner {position_id:?} disappeared")
-                        })
+                        .expect_entity(position_id, format_args!("friend-swap position owner"))
                         .element_data();
                     crate::ai::Position {
                         x: element.position_map().x,
@@ -6095,12 +6092,10 @@ impl EngineInner {
             npc_id.index()
         );
         let global = &mut self.ai.global;
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "SetAIState decision-completion owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(npc_id, format_args!("SetAIState decision-completion owner"));
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.end_think(
                 sim,

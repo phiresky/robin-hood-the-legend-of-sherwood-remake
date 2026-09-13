@@ -736,18 +736,16 @@ impl EngineInner {
                 // of its re-entrant effects finish in this stack frame,
                 // before Perform's initialization acquires AILOCK_FREEZE.
                 let moving = self
-                .get_entity(target)
-                .unwrap_or_else(|| {
-                    panic!("Hit/Strangle victim {target:?} vanished after translation for {seq_id:?}/{elem_idx}")
-                })
-                .actor_data()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Hit/Strangle victim {target:?} lost actor state after translation"
+                    .world
+                    .entities
+                    .expect_actor_data(
+                        target,
+                        format_args!(
+                            "Hit/Strangle victim after translation for {seq_id:?}/{elem_idx}"
+                        ),
                     )
-                })
-                .action_state
-                .is_moving();
+                    .action_state
+                    .is_moving();
                 if moving {
                     self.dispatch_synchronous_ai_think_preserving_detection_fifo(
                         sim,

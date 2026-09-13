@@ -617,13 +617,10 @@ impl EngineInner {
         entity_id: EntityId,
         stimulus: crate::ai::Stimulus,
     ) {
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared while queueing {:?}",
-                entity_id.index(),
-                stimulus.stimulus_type
-            )
-        });
+        let entity = self.world.entities.expect_entity_mut(
+            entity_id,
+            format_args!("NPC while queueing {:?}", stimulus.stimulus_type),
+        );
         if matches!(entity, Entity::Pc(pc) if pc.pc.ai.is_none()) {
             return;
         }
@@ -660,12 +657,10 @@ impl EngineInner {
         if (frame & 63) != (creation_order & 31) {
             return;
         }
-        let entity = self.world.entities.get_mut(id).unwrap_or_else(|| {
-            panic!(
-                "tiredness owner {} disappeared from its legacy slot",
-                id.index()
-            )
-        });
+        let entity = self
+            .world
+            .entities
+            .expect_entity_mut(id, format_args!("tiredness owner from its legacy slot"));
         assert!(
             entity.human_data().is_some(),
             "tiredness owner {} is not human",

@@ -1200,9 +1200,10 @@ impl EngineInner {
         let pc_ids = self.world.original_pc_registry().to_vec();
         let sight_obstacles = self.sight_obstacles(assets);
         let discovered = pc_ids.into_iter().any(|pc_id| {
-            let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
-                panic!("bonus {bonus_id:?} discovery refresh found stale PC registry id {pc_id:?}")
-            });
+            let entity = self.world.entities.expect_entity(
+                pc_id,
+                format_args!("bonus {bonus_id:?} discovery refresh PC registry id"),
+            );
             let Entity::Pc(pc) = entity else {
                 panic!("bonus {bonus_id:?} discovery refresh found non-PC registry id {pc_id:?}")
             };
@@ -2076,13 +2077,10 @@ impl EngineInner {
         tick_data: &mut AiPerTickData,
     ) {
         let forecast = |target_id: EntityId| {
-            let target = self.world.entities.get(target_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} requires a destination forecast for missing actor {}",
-                    npc_id.index(),
-                    target_id.index()
-                )
-            });
+            let target = self.world.entities.expect_entity(
+                target_id,
+                format_args!("NPC {} destination forecast actor", npc_id.index()),
+            );
             let mut input = extract_exact_forecast_input(
                 self,
                 target,
@@ -2983,13 +2981,13 @@ impl EngineInner {
         // Detection reveals newly seen blipped NPCs inline, after the
         // complete scan has built its FIFO but before the first queued Think.
         for target_id in reveal_targets {
-            let target = self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                panic!(
-                    "newly seen enemy target {} for NPC {} disappeared before blip reveal",
-                    target_id.index(),
+            let target = self.world.entities.expect_entity_mut(
+                target_id,
+                format_args!(
+                    "newly seen enemy target for NPC {} before blip reveal",
                     npc_id.index()
-                )
-            });
+                ),
+            );
             target.reveal_blip();
         }
 

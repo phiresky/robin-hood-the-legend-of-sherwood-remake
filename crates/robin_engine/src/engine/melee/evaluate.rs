@@ -537,11 +537,10 @@ impl EngineInner {
         }
 
         // ── Distance branch ───────────────────────────────────────
-        let opp = self.get_entity(principal_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation distance owner {entity_id:?} references missing principal {principal_id:?}"
-            )
-        });
+        let opp = self.world.entities.expect_entity(
+            principal_id,
+            format_args!("swordfight evaluation distance owner {entity_id:?} principal"),
+        );
         let opp_pos_3d = opp.element_data().position();
         let opp_pos_map = opp.element_data().position_map();
         let opp_sector = opp
@@ -804,11 +803,10 @@ impl EngineInner {
             .opponents
             .clone();
         for opponent_id in opponents.iter().copied() {
-            let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} references missing opponent {opponent_id:?}"
-                )
-            });
+            let opponent = self.world.entities.expect_entity(
+                opponent_id,
+                format_args!("swordfight evaluation owner {entity_id:?} opponent"),
+            );
             assert!(
                 opponent.human_data().is_some(),
                 "swordfight evaluation owner {entity_id:?} opponent {opponent_id:?} is not human"
@@ -826,18 +824,12 @@ impl EngineInner {
 
         let first_principal = opponents[0];
         let principal_is_swordfighting = !self
-            .get_entity(first_principal)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} vanished"
-                )
-            })
-            .human_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} is not human"
-                )
-            })
+            .world
+            .entities
+            .expect_human_data(
+                first_principal,
+                format_args!("swordfight evaluation owner {entity_id:?} principal"),
+            )
             .opponents
             .is_empty();
         if !principal_is_swordfighting {
@@ -873,11 +865,12 @@ impl EngineInner {
             )
         };
         let (principal_pos, principal_sector, principal_uber) = {
-            let principal = self.get_entity(first_principal).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {first_principal:?} vanished before range check"
-                )
-            });
+            let principal = self.world.entities.expect_entity(
+                first_principal,
+                format_args!(
+                    "swordfight evaluation owner {entity_id:?} principal before range check"
+                ),
+            );
             let uber = required_hth_weapon_profile(
                 principal,
                 first_principal,
@@ -994,11 +987,10 @@ impl EngineInner {
                     "swordfight evaluation owner {entity_id:?} lost its principal after selection"
                 )
             });
-        let principal = self.get_entity(principal_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation owner {entity_id:?} selected missing principal {principal_id:?}"
-            )
-        });
+        let principal = self.world.entities.expect_entity(
+            principal_id,
+            format_args!("swordfight evaluation owner {entity_id:?} selected principal"),
+        );
         let principal_human = principal.human_data().unwrap_or_else(|| {
             panic!(
                 "swordfight evaluation owner {entity_id:?} selected non-human principal {principal_id:?}"
@@ -1023,35 +1015,33 @@ impl EngineInner {
                 });
             if has_initiative {
                 if received {
-                    self.get_entity_mut(entity_id)
-                        .and_then(Entity::human_data_mut)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "swordfight evaluation owner {entity_id:?} vanished while consuming initiative"
-                            )
-                        })
+                    self.world
+                        .entities
+                        .expect_human_data_mut(
+                            entity_id,
+                            format_args!("swordfight evaluation owner while consuming initiative"),
+                        )
                         .received_smalltalk_initiative = false;
                 } else {
                     let loses =
                         crate::sim_rng::u32(sim, crate::sim_rng::RngSite::MeleeInitiative, 0..100)
                             <= u32::from(relative_ability);
                     if loses || self.can_he_kill_me_but_me_not(entity_id, principal_id, assets) {
-                        self.get_entity_mut(entity_id)
-                            .and_then(Entity::human_data_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "swordfight evaluation owner {entity_id:?} vanished during initiative transfer"
-                                )
-                            })
+                        self.world
+                            .entities
+                            .expect_human_data_mut(
+                                entity_id,
+                                format_args!(
+                                    "swordfight evaluation owner during initiative transfer"
+                                ),
+                            )
                             .smalltalk_initiative = false;
-                        let opponent_human = self
-                            .get_entity_mut(principal_id)
-                            .and_then(Entity::human_data_mut)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "swordfight evaluation owner {entity_id:?} principal {principal_id:?} vanished during initiative transfer"
-                                )
-                            });
+                        let opponent_human = self.world.entities.expect_human_data_mut(
+                            principal_id,
+                            format_args!(
+                                "swordfight evaluation owner {entity_id:?} principal during initiative transfer"
+                            ),
+                        );
                         opponent_human.smalltalk_initiative = true;
                         opponent_human.received_smalltalk_initiative = true;
                         return;
@@ -1105,12 +1095,14 @@ impl EngineInner {
             )
         };
         let principal_pos = self
-            .get_entity(principal_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation owner {entity_id:?} principal {principal_id:?} vanished before strike selection"
-                )
-            })
+            .world
+            .entities
+            .expect_entity(
+                principal_id,
+                format_args!(
+                    "swordfight evaluation owner {entity_id:?} principal before strike selection"
+                ),
+            )
             .element_data()
             .position();
         let dx = principal_pos.x - self_pos.x;
@@ -1285,18 +1277,10 @@ impl EngineInner {
                     crate::order::OrderType::TransitionWaitingSwordParryingSword,
                 ) as i16
             });
-        self.get_entity(target_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation strike proposal PC {pc_id:?} references missing target {target_id:?}"
-                )
-            })
-            .actor_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation strike proposal PC {pc_id:?} target {target_id:?} is not an actor"
-                )
-            });
+        self.world.entities.expect_actor_data(
+            target_id,
+            format_args!("swordfight evaluation strike proposal PC {pc_id:?} target"),
+        );
         let opponent_time_limit = self.opponent_sword_strike_time_limit_for_actor(pc_id, target_id);
 
         // Build the nearby-victim list (same shape as the soldier path).
@@ -1448,28 +1432,23 @@ impl EngineInner {
 
         // Friend ability comes from the principal opponent's opposing-fighter ability.
         let friends = self
-            .get_entity(principal_id)
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back owner {entity_id:?} references missing principal {principal_id:?}"
-                )
-            })
-            .human_data()
-            .unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back principal {principal_id:?} for {entity_id:?} is not human"
-                )
-            })
+            .world
+            .entities
+            .expect_human_data(
+                principal_id,
+                format_args!("swordfight evaluation step-back owner {entity_id:?} principal"),
+            )
             .opponents
             .ids();
         let friends_ability: u16 = friends
             .iter()
             .map(|id| {
-                self.get_entity(*id).unwrap_or_else(|| {
-                    panic!(
-                        "swordfight evaluation step-back principal {principal_id:?} references missing friend {id:?}"
-                    )
-                })
+                self.world.entities.expect_entity(
+                    *id,
+                    format_args!(
+                        "swordfight evaluation step-back principal {principal_id:?} friend"
+                    ),
+                )
             })
             .map(|e| {
                 fighting_ability_from_profile(
@@ -1499,11 +1478,10 @@ impl EngineInner {
 
         let mut opponents_ability: u16 = 0;
         for opp_id in opponents.iter().copied() {
-            let opp = self.get_entity(opp_id).unwrap_or_else(|| {
-                panic!(
-                    "swordfight evaluation step-back owner {entity_id:?} references missing opponent {opp_id:?}"
-                )
-            });
+            let opp = self.world.entities.expect_entity(
+                opp_id,
+                format_args!("swordfight evaluation step-back owner {entity_id:?} opponent"),
+            );
             let opp_pos = opp.element_data().position();
             let rel_x = opp_pos.x - my_pos.x;
             let rel_y = (opp_pos.y - my_pos.y) * INVERSE_SWORDFIGHT_ASPECT_RATIO;
@@ -1582,11 +1560,10 @@ impl EngineInner {
         let me_id = me_id.into();
         let opponent_id = opponent_id.into();
         let me = self.expect_entity(me_id, "swordfight evaluation range comparison owner");
-        let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
-            panic!(
-                "swordfight evaluation range comparison opponent {opponent_id:?} for {me_id:?} is missing"
-            )
-        });
+        let opponent = self.world.entities.expect_entity(
+            opponent_id,
+            format_args!("swordfight evaluation range comparison opponent for {me_id:?}"),
+        );
         let me_pos = me.element_data().position();
         let opp_pos = opponent.element_data().position();
 
@@ -1932,11 +1909,10 @@ impl EngineInner {
             // Original rejects every strike and falls back to ParrySword.
             let target_id_for_nearby = principal_opponent.unwrap_or(attacker_id);
             let opponent_time_limit = {
-                let opponent = self.get_entity(target_id_for_nearby).unwrap_or_else(|| {
-                    panic!(
-                        "strike warning PC {victim_id:?} references missing principal opponent {target_id_for_nearby:?}"
-                    )
-                });
+                let opponent = self.world.entities.expect_entity(
+                    target_id_for_nearby,
+                    format_args!("strike warning PC {victim_id:?} principal opponent"),
+                );
                 opponent.actor_data().unwrap_or_else(|| {
                     panic!(
                         "strike warning PC {victim_id:?} principal opponent {target_id_for_nearby:?} is not an actor"

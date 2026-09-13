@@ -224,10 +224,10 @@ impl EngineInner {
     /// replacement sequence.
     pub(in crate::engine) fn extract_move_instruction_owner(&mut self, owner: EntityId) -> bool {
         let (entity_layer, pf_idx, move_box_map) = {
-            let entity =
-                self.world.entities.get(owner).unwrap_or_else(|| {
-                    panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared")
-                });
+            let entity = self
+                .world
+                .entities
+                .expect_entity(owner, format_args!("RHCOMMAND_MOVE extraction owner"));
             let pi = entity.position_iface();
             let pf_idx = u16::from(pi.get_pathfinder_index().unwrap_or_else(|| {
                 panic!("RHCOMMAND_MOVE extraction owner {owner:?} has no pathfinder index")
@@ -283,19 +283,22 @@ impl EngineInner {
         let center = authorized.then(|| authorized_box.center());
         if let Some(center) = center {
             let source = MapPoint::new(center.x, center.y);
-            let entity = self.get_entity_mut(owner).unwrap_or_else(|| {
-                panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared after lookup")
-            });
+            let entity = self.world.entities.expect_entity_mut(
+                owner,
+                format_args!("RHCOMMAND_MOVE extraction owner after lookup"),
+            );
             entity.position_iface_mut().set_map_position(source);
             let elem = entity.element_data_mut();
             elem.set_position_map(source);
             elem.update_grid_cell();
         }
         let corrected_position = authorized.then(|| {
-            self.get_entity(owner)
-                .unwrap_or_else(|| {
-                    panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared after correction")
-                })
+            self.world
+                .entities
+                .expect_entity(
+                    owner,
+                    format_args!("RHCOMMAND_MOVE extraction owner after correction"),
+                )
                 .element_data()
                 .position_map()
         });
@@ -682,10 +685,10 @@ impl EngineInner {
         #[cfg(test)]
         observe_post_execute_crossing(self, entity_id);
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
-            let entity =
-                self.world.entities.get(entity_id).unwrap_or_else(|| {
-                    panic!("post-Execute crossing owner {entity_id:?} is missing")
-                });
+            let entity = self
+                .world
+                .entities
+                .expect_entity(entity_id, format_args!("post-Execute crossing owner"));
             (
                 entity.position_iface().old_map_position(),
                 entity.element_data().position_map(),
