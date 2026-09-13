@@ -871,6 +871,127 @@ mod tests {
         assert_unprepared_launch(&decoded);
     }
 
+    /// Decode a launch configuration exactly as the launch `Deserialize` impl
+    /// does and reduce it to comparable values: the configuration, the derived
+    /// startup options, and whether any runtime authority was installed.
+    fn decode_launch_fixture(
+        input: &str,
+    ) -> Result<(serde_json::Value, serde_json::Value, bool), String> {
+        let launch: super::MissionLaunch =
+            serde_json::from_str(input).map_err(|error| error.to_string())?;
+        assert_unprepared_launch(&launch);
+        Ok((
+            serde_json::to_value(&launch.config).unwrap(),
+            serde_json::to_value(launch.global_options.options()).unwrap(),
+            launch.global_options.preparation_files().is_ok(),
+        ))
+    }
+
+    /// Fixture table for the launch configuration `Deserialize` behaviour.
+    /// Written against the hand-written impl; the derived impl must match it
+    /// input for input, including ignored unknown fields and error text.
+    #[test]
+    fn launch_configuration_deserialize_fixtures_are_stable() {
+        let expect_ok = |config: super::CliArgs| {
+            Ok((
+                serde_json::to_value(&config).unwrap(),
+                serde_json::to_value(super::options_from_args(&config)).unwrap(),
+                false,
+            ))
+        };
+        let flagged = super::CliArgs {
+            no_sound: true,
+            headless: true,
+            mission: Some("Dem_Lei_MP".into()),
+            http_server: 9,
+            rollback_check: false,
+            mp_expected_players: Some(3),
+            ..Default::default()
+        };
+        let cases: Vec<(&str, Result<(serde_json::Value, serde_json::Value, bool), String>)> = vec![
+            // Missing configuration defaults.
+            ("{}", expect_ok(super::CliArgs::default())),
+            (r#"{"config":{}}"#, expect_ok(super::CliArgs::default())),
+            (
+                r#"{"config":{"no-sound":true,"headless":true,"mission":"Dem_Lei_MP","http-server":9,"rollback-check":false,"mp-expected-players":3}}"#,
+                expect_ok(flagged.clone()),
+            ),
+            // Sequence form of the outer struct.
+            (
+                r#"[{"no-sound":true,"headless":true,"mission":"Dem_Lei_MP","http-server":9,"rollback-check":false,"mp-expected-players":3}]"#,
+                expect_ok(flagged.clone()),
+            ),
+            // Unknown outer fields (including runtime handoffs) are ignored.
+            (
+                r#"{"config":{"headless":true},"replay_data":{"forged":true},"mission-restart":true,"bogus":1}"#,
+                expect_ok(super::CliArgs {
+                    headless: true,
+                    ..Default::default()
+                }),
+            ),
+            // Unknown and snake_case configuration keys are ignored.
+            (
+                r#"{"config":{"no_sound":true,"not-a-flag":7}}"#,
+                expect_ok(super::CliArgs::default()),
+            ),
+            // Errors.
+            (
+                r#"{"config":null}"#,
+                Err("invalid type: null, expected struct CliArgs at line 1 column 14".into()),
+            ),
+            // An empty sequence defaults its only (defaulted) field.
+            ("[]", expect_ok(super::CliArgs::default())),
+            (
+                "[{},{}]",
+                Err("trailing characters at line 1 column 5".into()),
+            ),
+            (
+                r#""launch""#,
+                Err(
+                    "invalid type: string \"launch\", expected struct Configuration at line 1 column 8"
+                        .into(),
+                ),
+            ),
+            (
+                r#"{"config":{"http-server":"x"}}"#,
+                Err("invalid type: string \"x\", expected u16 at line 1 column 28".into()),
+            ),
+            (
+                r#"{"config":{},"config":{}}"#,
+                Err("duplicate field `config` at line 1 column 21".into()),
+            ),
+        ];
+        let mismatches: Vec<_> = cases
+            .into_iter()
+            .filter_map(|(input, expected)| {
+                let actual = decode_launch_fixture(input);
+                (actual != expected).then(|| format!("{input}: {actual:?}"))
+            })
+            .collect();
+        assert!(mismatches.is_empty(), "{mismatches:#?}");
+    }
+
+    /// The launch configuration's serialized form is `{"config": CliArgs}`.
+    #[test]
+    fn launch_configuration_serialize_fixture_is_stable() {
+        let config = super::CliArgs {
+            goldeneye: true,
+            replay: Some("recording.rhrec.jsonl".into()),
+            mp_nickname: "nick".into(),
+            ..Default::default()
+        };
+        let launch = super::MissionLaunch::from(config.clone());
+        assert_eq!(
+            serde_json::to_value(&launch).unwrap(),
+            serde_json::json!({ "config": serde_json::to_value(&config).unwrap() })
+        );
+        let text = serde_json::to_string(&launch).unwrap();
+        assert_eq!(
+            decode_launch_fixture(&text).unwrap().0,
+            serde_json::to_value(&config).unwrap()
+        );
+    }
+
     #[test]
     #[cfg(feature = "multiplayer")]
     fn browser_join_route_requires_interactive_preflight_before_mission_bootstrap() {
