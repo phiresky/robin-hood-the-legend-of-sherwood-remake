@@ -64,8 +64,8 @@ fn synchronous_publication_failure_matrix_recovers_only_completed_payloads() {
                     .rename_slot(&handle, format!("Replacement {stage:?}"))
                     .unwrap();
                 persistence::inject_failure(stage);
-                let error = manager
-                    .write_save_from_engine_with_diagnostic(
+                let result = if diagnostic {
+                    manager.write_multiplayer_diagnostic_from_engine(
                         &mut host,
                         &game,
                         index,
@@ -73,9 +73,19 @@ fn synchronous_publication_failure_matrix_recovers_only_completed_payloads() {
                         17,
                         Some(&profiles),
                         None,
-                        diagnostic,
                     )
-                    .unwrap_err();
+                } else {
+                    manager.write_save_from_engine(
+                        &mut host,
+                        &game,
+                        index,
+                        &engine,
+                        17,
+                        Some(&profiles),
+                        None,
+                    )
+                };
+                let error = result.unwrap_err();
                 assert!(
                     format!("{error:#}").contains("injected"),
                     "{stage:?}: {error:#}"

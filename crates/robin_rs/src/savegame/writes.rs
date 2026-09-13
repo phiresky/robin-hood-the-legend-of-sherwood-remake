@@ -1,6 +1,127 @@
-//! Capture and publication entry points. Named operations preserve their distinct
-//! replay-boundary, quick-slot rotation, and synchronous/background ordering.
+//! Capture and publication entry points.
+//!
+//! Every named `write_*` operation is a thin constructor for a [`SaveRequest`]
+//! (slot kind × sync/background × source). [`SaveGameManager::write`] is the
+//! single dispatch; each leaf preserves its distinct replay-boundary,
+//! quick-slot rotation, and synchronous/background ordering.
 use super::*;
+
+/// Live-session inputs shared by every capture-based write.
+///
+/// Not serde: this borrows the running host/game/engine for the duration of
+/// one capture and has no persisted form.
+#[derive(Clone, Copy)]
+struct SaveCapture<'a> {
+    host: &'a Host,
+    game: &'a crate::game::Game,
+    engine: &'a Engine,
+    mission_id: u32,
+    profiles: Option<&'a ProfileManager>,
+    thumbnail: Option<&'a Thumbnail>,
+}
+
+/// A well-known special slot and the label used when it is first allocated.
+#[derive(Debug, Clone, Copy)]
+struct SpecialTarget {
+    filename: &'static str,
+    display_text: &'static str,
+}
+
+const CONTINUE: SpecialTarget = SpecialTarget {
+    filename: save_file::special_slots::CONTINUE,
+    display_text: "Continue",
+};
+const RESTART: SpecialTarget = SpecialTarget {
+    filename: save_file::special_slots::RESTART,
+    display_text: "Restart Point",
+};
+const SHERWOOD: SpecialTarget = SpecialTarget {
+    filename: save_file::special_slots::SHERWOOD,
+    display_text: "Sherwood",
+};
+
+#[derive(Debug, Clone, Copy)]
+enum SaveMode {
+    /// Serialize and publish on the calling thread.
+    Sync,
+    /// Capture on the calling thread; serialize and publish on the owned writer.
+    Background,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SaveSlot {
+    Special {
+        target: SpecialTarget,
+        mode: SaveMode,
+    },
+    /// An existing catalog slot, always published synchronously.
+    Manual {
+        index: usize,
+        multiplayer_diagnostic: bool,
+    },
+    /// QuickSave with ExQuickSave rotation, always published synchronously.
+    Quick,
+}
+
+enum SaveSource<'a> {
+    /// Capture the live session; the write attaches a fresh replay boundary.
+    Capture(SaveCapture<'a>),
+    /// Mirror an already-decoded payload without capturing a new replay marker.
+    Loaded {
+        save: GameSaveFile,
+        profiles: &'a ProfileManager,
+        thumbnail: Option<&'a Thumbnail>,
+    },
+}
+
+struct SaveRequest<'a> {
+    slot: SaveSlot,
+    source: SaveSource<'a>,
+}
+
+enum SaveOutcome {
+    /// Synchronously committed; the serialized payload may be mirrored.
+    Committed {
+        committed: CommittedSave,
+        payload: save_file::SerializedSave,
+    },
+    /// QuickSave published after rotation.
+    QuickPublished(save_file::SerializedSave),
+    /// Background publication status, or an immediately completed browser
+    /// session checkpoint.
+    Status(SaveWriteStatus),
+}
+
+impl SaveOutcome {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Committed { .. } => "a committed save",
+            Self::QuickPublished(_) => "a quick save",
+            Self::Status(_) => "a write status",
+        }
+    }
+
+    fn into_committed(self) -> (CommittedSave, save_file::SerializedSave) {
+        match self {
+            Self::Committed { committed, payload } => (committed, payload),
+            other => panic!("manual-slot save request produced {}", other.kind()),
+        }
+    }
+
+    fn into_quick_payload(self) -> save_file::SerializedSave {
+        match self {
+            Self::QuickPublished(payload) => payload,
+            other => panic!("quick save request produced {}", other.kind()),
+        }
+    }
+
+    fn into_status(self) -> SaveWriteStatus {
+        match self {
+            Self::Status(status) => status,
+            other => panic!("background save request produced {}", other.kind()),
+        }
+    }
+}
 
 impl SaveGameManager {
     /// Save the current engine state to the "Continue" auto-save slot.
@@ -15,9 +136,21 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
-            .map(|_| ())
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: CONTINUE,
+                mode: SaveMode::Sync,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|_| ())
     }
 
     /// Like [`write_continue_save`](Self::write_continue_save), but moves
@@ -33,50 +166,51 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<SaveWriteStatus> {
-        self.write_special_save_background(
-            save_file::special_slots::CONTINUE,
-            "Continue",
-            host,
-            game,
-            engine,
-            mission_id,
-            profiles,
-            thumbnail,
-        )
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: CONTINUE,
+                mode: SaveMode::Background,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(SaveOutcome::into_status)
     }
 
     /// Mirror a successfully loaded save without capturing a new replay marker.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Browser builds have no manual special-save slots and reject this.
     pub(crate) fn write_loaded_continue_background(
         &mut self,
-        mut save: GameSaveFile,
+        save: GameSaveFile,
         profiles: &ProfileManager,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<SaveWriteStatus> {
-        self.finish_background()?;
-        self.ensure_no_pending_delete()?;
-        self.reconcile_quick_slots()?;
-        let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
-        save.header.display_text = self.catalog[index].text.clone();
-        self.queue_special_save(index, save, profiles, thumbnail)
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: CONTINUE,
+                mode: SaveMode::Background,
+            },
+            source: SaveSource::Loaded {
+                save,
+                profiles,
+                thumbnail,
+            },
+        })
+        .map(SaveOutcome::into_status)
     }
 
-    /// Browser builds have no manual special-save slots; see the native twin.
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn write_loaded_continue_background(
-        &mut self,
-        _save: GameSaveFile,
-        _profiles: &ProfileManager,
-        _thumbnail: Option<&Thumbnail>,
-    ) -> Result<SaveWriteStatus> {
-        anyhow::bail!(
-            "browser manual special-save persistence is unavailable; use durable autosaves"
-        );
-    }
-
-    /// Save the current engine state to the "QuickSave" slot.
-    /// The previous quick save (if any) is rotated to "ExQuickSave".
-    pub(super) fn write_quick_save_payload(
+    /// Save the current engine state to the "Restart" auto-save slot.
+    ///
+    /// Captures the level start state so the player can restart without
+    /// reloading the whole level from disk. Browser builds publish a
+    /// session-only Restart checkpoint without a thumbnail.
+    pub fn write_restart_save(
         &mut self,
         host: &mut Host,
         game: &crate::game::Game,
@@ -84,7 +218,316 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: RESTART,
+                mode: SaveMode::Sync,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|_| ())
+    }
+
+    /// Like [`write_restart_save`](Self::write_restart_save), but captures
+    /// the engine state on the calling thread and moves the expensive JSON
+    /// serialization + disk write to a background thread. Browser builds
+    /// publish an immediately loadable session checkpoint without serialization.
+    pub fn write_restart_save_background(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<SaveWriteStatus> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: RESTART,
+                mode: SaveMode::Background,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(SaveOutcome::into_status)
+    }
+
+    /// Save the current engine state to the "Sherwood" checkpoint slot.
+    ///
+    /// Captures state when entering the Sherwood map so the campaign
+    /// can be rewound one step.
+    pub fn write_sherwood_save(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Special {
+                target: SHERWOOD,
+                mode: SaveMode::Sync,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|_| ())
+    }
+
+    /// Write a full save file (engine + campaign) to the given slot.
+    ///
+    /// The caller must supply the live engine; the engine must have an
+    /// active campaign (panics otherwise).  If `thumbnail` is `Some`, it
+    /// is also written to the sibling thumb file alongside the payload.
+    pub fn write_save_from_engine(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<CommittedSave> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Manual {
+                index,
+                multiplayer_diagnostic: false,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|outcome| outcome.into_committed().0)
+    }
+
+    /// Write a local multiplayer diagnostic. It is deliberately tagged in
+    /// both the payload and slot index and is never suitable as session state.
+    pub fn write_multiplayer_diagnostic_from_engine(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<CommittedSave> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Manual {
+                index,
+                multiplayer_diagnostic: true,
+            },
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|outcome| outcome.into_committed().0)
+    }
+
+    /// Publish the selected slot first, then mirror the same capture if its
+    /// slot policy requires it. Some reports only mirror failure; Err means
+    /// the primary publication failed.
+    pub(crate) fn write_save_and_continue(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        index: usize,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<Option<String>> {
+        let (committed, payload) = self
+            .write(SaveRequest {
+                slot: SaveSlot::Manual {
+                    index,
+                    multiplayer_diagnostic: false,
+                },
+                source: SaveSource::Capture(SaveCapture {
+                    host,
+                    game,
+                    engine,
+                    mission_id,
+                    profiles,
+                    thumbnail,
+                }),
+            })?
+            .into_committed();
+        let index = self.resolve_handle(committed.slot())?;
+        if matches!(
+            self.catalog[index].special,
+            Some(SpecialSlot::Continue | SpecialSlot::Restart)
+        ) {
+            return Ok(None);
+        }
+        Ok(self
+            .mirror_captured_continue(index, &payload, thumbnail)
+            .err()
+            .map(|e| format!("{e:#}")))
+    }
+
+    /// Save to "QuickSave" (rotating the previous one to "ExQuickSave"), then
+    /// mirror the same payload to Continue. Err means the quick save failed;
+    /// `Some` reports only a mirror failure.
+    pub(crate) fn write_quick_save_and_continue(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<Option<String>> {
+        let payload = self
+            .write(SaveRequest {
+                slot: SaveSlot::Quick,
+                source: SaveSource::Capture(SaveCapture {
+                    host,
+                    game,
+                    engine,
+                    mission_id,
+                    profiles,
+                    thumbnail,
+                }),
+            })?
+            .into_quick_payload();
+        let index = self
+            .find_by_filename(save_file::special_slots::QUICK)
+            .context("published quick save lost its slot")?;
+        Ok(self
+            .mirror_captured_continue(index, &payload, thumbnail)
+            .err()
+            .map(|e| format!("{e:#}")))
+    }
+
+    #[cfg(test)]
+    pub(super) fn write_quick_save(
+        &mut self,
+        host: &mut Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<()> {
+        self.write(SaveRequest {
+            slot: SaveSlot::Quick,
+            source: SaveSource::Capture(SaveCapture {
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            }),
+        })
+        .map(|_| ())
+    }
+
+    /// The single dispatch for every named write entry point.
+    fn write(&mut self, request: SaveRequest<'_>) -> Result<SaveOutcome> {
+        let SaveRequest { slot, source } = request;
+        match slot {
+            SaveSlot::Special { target, mode } => {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Browser Restart is a session checkpoint in either mode,
+                    // published synchronously and without a thumbnail.
+                    if target.filename == save_file::special_slots::RESTART
+                        && let SaveSource::Capture(capture) = &source
+                    {
+                        self.write_session_restart(
+                            capture.host,
+                            capture.game,
+                            capture.engine,
+                            capture.mission_id,
+                            capture.profiles,
+                        )?;
+                        return Ok(SaveOutcome::Status(SaveWriteStatus::Completed));
+                    }
+                }
+                match (mode, source) {
+                    (SaveMode::Sync, SaveSource::Capture(capture)) => {
+                        let index =
+                            self.ensure_special_slot(target.filename, target.display_text)?;
+                        let (committed, payload) = self.write_manual(index, capture, false)?;
+                        Ok(SaveOutcome::Committed { committed, payload })
+                    }
+                    (SaveMode::Background, source) => self
+                        .write_special_background(target, source)
+                        .map(SaveOutcome::Status),
+                    (SaveMode::Sync, SaveSource::Loaded { .. }) => anyhow::bail!(
+                        "loaded save payloads can only be mirrored by a background write, not {slot:?}"
+                    ),
+                }
+            }
+            SaveSlot::Manual {
+                index,
+                multiplayer_diagnostic,
+            } => {
+                let SaveSource::Capture(capture) = source else {
+                    anyhow::bail!("loaded save payloads cannot be written to {slot:?}");
+                };
+                let (committed, payload) =
+                    self.write_manual(index, capture, multiplayer_diagnostic)?;
+                Ok(SaveOutcome::Committed { committed, payload })
+            }
+            SaveSlot::Quick => {
+                let SaveSource::Capture(capture) = source else {
+                    anyhow::bail!("loaded save payloads cannot be written to {slot:?}");
+                };
+                self.write_quick_save_payload(capture)
+                    .map(SaveOutcome::QuickPublished)
+            }
+        }
+    }
+
+    /// Save the current engine state to the "QuickSave" slot.
+    /// The previous quick save (if any) is rotated to "ExQuickSave".
+    fn write_quick_save_payload(
+        &mut self,
+        capture: SaveCapture<'_>,
     ) -> Result<save_file::SerializedSave> {
+        let SaveCapture {
+            host,
+            mission_id,
+            profiles,
+            thumbnail,
+            ..
+        } = capture;
         Self::require_synchronous_storage()?;
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
@@ -101,14 +544,7 @@ impl SaveGameManager {
                     mission_id,
                 )
             });
-        let mut save = capture_save(
-            host,
-            game,
-            engine,
-            mission_id,
-            profiles,
-            current.text.clone(),
-        )?;
+        let mut save = capture_save(capture, current.text.clone())?;
         host.application_context()
             .replay_recording()
             .attach_save_boundary(&mut save)?;
@@ -158,135 +594,75 @@ impl SaveGameManager {
         Ok(payload)
     }
 
-    /// Save the current engine state to the "Restart" auto-save slot.
-    ///
-    /// Captures the level start state so the player can restart without
-    /// reloading the whole level from disk.
+    /// Queue a special-slot publication on the owned background writer.
+    /// Capture happens here, on the calling thread, before the writer starts.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn write_restart_save(
+    fn write_special_background(
         &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point")?;
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
-            .map(|_| ())
-    }
-
-    /// Browser builds publish a session-only Restart checkpoint without a
-    /// thumbnail; see the native twin.
-    #[cfg(target_arch = "wasm32")]
-    pub fn write_restart_save(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        _thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
-        self.write_session_restart(host, game, engine, mission_id, profiles)
-    }
-
-    /// Like [`write_restart_save`](Self::write_restart_save), but captures
-    /// the engine state on the calling thread and moves the expensive JSON
-    /// serialization + disk write to a background thread. Browser builds
-    /// publish an immediately loadable session checkpoint without serialization.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn write_restart_save_background(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<SaveWriteStatus> {
-        self.write_special_save_background(
-            save_file::special_slots::RESTART,
-            "Restart Point",
-            host,
-            game,
-            engine,
-            mission_id,
-            profiles,
-            thumbnail,
-        )
-    }
-
-    /// Browser twin of the native background Restart write: the session
-    /// checkpoint is published synchronously and carries no thumbnail.
-    #[cfg(target_arch = "wasm32")]
-    pub fn write_restart_save_background(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        _thumbnail: Option<&Thumbnail>,
-    ) -> Result<SaveWriteStatus> {
-        self.write_session_restart(host, game, engine, mission_id, profiles)?;
-        Ok(SaveWriteStatus::Completed)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn write_special_save_background(
-        &mut self,
-        filename: &str,
-        display_text: &str,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
+        target: SpecialTarget,
+        source: SaveSource<'_>,
     ) -> Result<SaveWriteStatus> {
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
         self.reconcile_quick_slots()?;
-        let idx = self.ensure_special_slot(filename, display_text)?;
+        let idx = self.ensure_special_slot(target.filename, target.display_text)?;
         let display_text = self.catalog[idx].text.clone();
-        // Capture (clone) on the main thread before starting the writer.
-        let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
-        host.application_context()
-            .replay_recording()
-            .attach_save_boundary(&mut save)?;
-        self.queue_special_save(
-            idx,
-            save,
-            profiles.context("save metadata requires profiles")?,
-            thumbnail,
-        )
+        match source {
+            SaveSource::Capture(capture) => {
+                // Capture (clone) on the main thread before starting the writer.
+                let mut save = capture_save(capture, display_text)?;
+                capture
+                    .host
+                    .application_context()
+                    .replay_recording()
+                    .attach_save_boundary(&mut save)?;
+                self.queue_special_save(
+                    idx,
+                    save,
+                    capture
+                        .profiles
+                        .context("save metadata requires profiles")?,
+                    capture.thumbnail,
+                )
+            }
+            SaveSource::Loaded {
+                mut save,
+                profiles,
+                thumbnail,
+            } => {
+                save.header.display_text = display_text;
+                self.queue_special_save(idx, save, profiles, thumbnail)
+            }
+        }
     }
 
-    /// Browser builds have no manual special-save slots. Pending background
-    /// work is still settled first, exactly as on native.
+    /// Browser builds have no manual special-save slots. For a live capture,
+    /// pending background work is still settled first, exactly as on native;
+    /// a loaded payload is rejected immediately.
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn write_special_save_background(
+    fn write_special_background(
         &mut self,
-        _filename: &str,
-        _display_text: &str,
-        _host: &mut Host,
-        _game: &crate::game::Game,
-        _engine: &Engine,
-        _mission_id: u32,
-        _profiles: Option<&ProfileManager>,
-        _thumbnail: Option<&Thumbnail>,
+        _target: SpecialTarget,
+        source: SaveSource<'_>,
     ) -> Result<SaveWriteStatus> {
-        self.finish_background()?;
-        self.ensure_no_pending_delete()?;
+        match source {
+            SaveSource::Capture(_) => {
+                self.finish_background()?;
+                self.ensure_no_pending_delete()?;
+            }
+            SaveSource::Loaded {
+                save: _save,
+                profiles: _profiles,
+                thumbnail: _thumbnail,
+            } => {}
+        }
         anyhow::bail!(
             "browser manual special-save persistence is unavailable; use durable autosaves"
         );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn queue_special_save(
+    fn queue_special_save(
         &mut self,
         idx: usize,
         save: GameSaveFile,
@@ -358,72 +734,11 @@ impl SaveGameManager {
         Ok(())
     }
 
-    /// Save the current engine state to the "Sherwood" checkpoint slot.
-    ///
-    /// Captures state when entering the Sherwood map so the campaign
-    /// can be rewound one step.
-    pub fn write_sherwood_save(
+    /// Capture into an existing catalog slot and publish it synchronously.
+    fn write_manual(
         &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::SHERWOOD, "Sherwood")?;
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
-            .map(|_| ())
-    }
-
-    /// Write a full save file (engine + campaign) to the given slot.
-    ///
-    /// The caller must supply the live engine; the engine must have an
-    /// active campaign (panics otherwise).  If `thumbnail` is `Some`, it
-    /// is also written to the sibling thumb file alongside the payload.
-    pub fn write_save_from_engine(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
         index: usize,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<CommittedSave> {
-        self.write_save_from_engine_with_diagnostic(
-            host, game, index, engine, mission_id, profiles, thumbnail, false,
-        )
-        .map(|(committed, _)| committed)
-    }
-
-    /// Write a local multiplayer diagnostic. It is deliberately tagged in
-    /// both the payload and slot index and is never suitable as session state.
-    pub fn write_multiplayer_diagnostic_from_engine(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        index: usize,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<CommittedSave> {
-        self.write_save_from_engine_with_diagnostic(
-            host, game, index, engine, mission_id, profiles, thumbnail, true,
-        )
-        .map(|(committed, _)| committed)
-    }
-
-    pub(super) fn write_save_from_engine_with_diagnostic(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        index: usize,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
+        capture: SaveCapture<'_>,
         multiplayer_diagnostic: bool,
     ) -> Result<(CommittedSave, save_file::SerializedSave)> {
         Self::require_synchronous_storage()?;
@@ -436,95 +751,36 @@ impl SaveGameManager {
             .with_context(|| format!("cannot write missing save slot {index}"))?
             .text
             .clone();
-        let mut save = capture_save(host, game, engine, mission_id, profiles, display_text)?;
+        let mut save = capture_save(capture, display_text)?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let mut metadata = self.catalog[index].clone();
         metadata.update_snapshot_metadata(
             &save.header,
             save.engine.campaign(),
-            profiles.context("save metadata requires mission profiles")?,
+            capture
+                .profiles
+                .context("save metadata requires mission profiles")?,
         );
         metadata.validate_published_metadata()?;
         save.validate_current_schema()?;
-        host.application_context()
+        capture
+            .host
+            .application_context()
             .replay_recording()
             .attach_save_boundary(&mut save)?;
         let payload = save_file::SerializedSave::new(&save)?;
         let bytes = payload.encode(&metadata.text)?;
-        let committed = self.commit_synchronous(index, metadata, &bytes, thumbnail)?;
+        let committed = self.commit_synchronous(index, metadata, &bytes, capture.thumbnail)?;
         Ok((committed, payload))
     }
 
-    /// Publish the selected slot first, then mirror the same capture if its
-    /// slot policy requires it. Some reports only mirror failure; Err means
-    /// the primary publication failed.
-    pub(crate) fn write_save_and_continue(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        index: usize,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<Option<String>> {
-        let (committed, payload) = self.write_save_from_engine_with_diagnostic(
-            host, game, index, engine, mission_id, profiles, thumbnail, false,
-        )?;
-        let index = self.resolve_handle(committed.slot())?;
-        if matches!(
-            self.catalog[index].special,
-            Some(SpecialSlot::Continue | SpecialSlot::Restart)
-        ) {
-            return Ok(None);
-        }
-        Ok(self
-            .mirror_captured_continue(index, &payload, thumbnail)
-            .err()
-            .map(|e| format!("{e:#}")))
-    }
-
-    pub(crate) fn write_quick_save_and_continue(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<Option<String>> {
-        let payload =
-            self.write_quick_save_payload(host, game, engine, mission_id, profiles, thumbnail)?;
-        let index = self
-            .find_by_filename(save_file::special_slots::QUICK)
-            .context("published quick save lost its slot")?;
-        Ok(self
-            .mirror_captured_continue(index, &payload, thumbnail)
-            .err()
-            .map(|e| format!("{e:#}")))
-    }
-
-    #[cfg(test)]
-    pub(super) fn write_quick_save(
-        &mut self,
-        host: &mut Host,
-        game: &crate::game::Game,
-        engine: &Engine,
-        mission_id: u32,
-        profiles: Option<&ProfileManager>,
-        thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
-        self.write_quick_save_payload(host, game, engine, mission_id, profiles, thumbnail)
-            .map(|_| ())
-    }
-
-    pub(super) fn mirror_captured_continue(
+    fn mirror_captured_continue(
         &mut self,
         source: usize,
         payload: &save_file::SerializedSave,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let index = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
+        let index = self.ensure_special_slot(CONTINUE.filename, CONTINUE.display_text)?;
         let metadata = self.catalog[source].cloned_for_slot(&self.catalog[index]);
         let bytes = payload.encode(&metadata.text)?;
         self.commit_synchronous(index, metadata, &bytes, thumbnail)
@@ -533,14 +789,15 @@ impl SaveGameManager {
 }
 
 /// Capture only: each publication workflow owns when to attach its replay boundary.
-fn capture_save(
-    host: &Host,
-    game: &crate::game::Game,
-    engine: &Engine,
-    mission_id: u32,
-    profiles: Option<&ProfileManager>,
-    display_text: String,
-) -> Result<GameSaveFile> {
+fn capture_save(capture: SaveCapture<'_>, display_text: String) -> Result<GameSaveFile> {
+    let SaveCapture {
+        host,
+        game,
+        engine,
+        mission_id,
+        profiles,
+        ..
+    } = capture;
     let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
     GameSaveFile::capture_with_game(
         engine,
