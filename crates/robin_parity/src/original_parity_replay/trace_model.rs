@@ -893,7 +893,8 @@ pub(super) fn missing_legacy_seek_distance() -> f32 {
 ///
 /// ON-DISK FORMAT INVARIANT: do not change fields, their order, or their
 /// types without bumping `TRACE_NATIVE_VERSION` and freezing this layout in a
-/// version-named compatibility type, as done by [`TraceElementV67`](super::v67::TraceElementV67).
+/// version-named compatibility type (as the since-deleted `TraceElementV67`
+/// used to be for version 67).
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 pub(super) struct TraceElement {
     pub(super) entity_id: TraceEntityId,

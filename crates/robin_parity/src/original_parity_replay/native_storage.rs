@@ -744,10 +744,12 @@ pub(super) fn update_native_semantic_digest<T: bitcode::Encode + ?Sized>(
     digest.update(encoded);
 }
 
-/// Rewrite an authoritative version-66, version-67, or version-68 native trace
-/// into bounded bitcode blocks and a bounded-window zstd frame. The semantic
-/// record stream, frame count, and final frame are unchanged; legacy inputs
-/// migrate to the current header/footer version through their frozen decoders.
+/// Rewrite an authoritative version-68 native trace into bounded bitcode
+/// blocks and a bounded-window zstd frame. The semantic record stream, frame
+/// count, and final frame are unchanged. Only the current
+/// `TRACE_NATIVE_VERSION` is accepted (see `validate_native_version`); older
+/// native versions are rejected and must be migrated offline with their
+/// original runner.
 ///
 /// A hard-link recovery source is synced before the atomic replacement. If
 /// the process crashes at any later point, rerunning `--reblock` reads that
@@ -791,10 +793,10 @@ pub(super) fn reblock_native_trace(
         (header.version) == (source_footer.version),
         "native parity trace reblock source header/footer versions differ"
     );
-    // The reader has already projected every supported legacy layout into the
-    // current in-memory representation. Reblocking is therefore also the
-    // native-format migration boundary: always emit the current header/footer
-    // version, and compare semantic digests after the same normalization.
+    // The reader only accepts the current native version, so this assignment
+    // is a no-op today; it pins the emitted header/footer to the current
+    // version and keeps the semantic digests compared after the same
+    // normalization.
     header.version = TRACE_NATIVE_VERSION;
     let output_footer = BinaryTraceFooter {
         version: TRACE_NATIVE_VERSION,
@@ -976,8 +978,8 @@ pub(super) fn digest_and_validate_native_trace_with_version_policy(
         "native parity trace header/footer versions differ"
     );
     // Container versions describe encoding layouts, not replay semantics.
-    // Readers project supported legacy layouts into the current types, so
-    // normalize the header before hashing to compare migrations faithfully.
+    // Readers currently accept only `TRACE_NATIVE_VERSION`; normalizing the
+    // header before hashing keeps digests independent of the container version.
     if normalize_container_version {
         header.version = TRACE_NATIVE_VERSION;
     }

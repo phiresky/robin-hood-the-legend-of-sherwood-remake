@@ -525,6 +525,12 @@ pub(super) fn print_startup_actors(
 ///
 /// The divergence report is read alongside `--dump-entity` (Original indices)
 /// and the Original's own `[DBG]` logs; the id spaces frequently differ.
+///
+/// Diff paths name the RUST id, but `--dump-entity`, the trace's
+/// `elements[].entity_id.index` and the Original's logs all use the ORIGINAL
+/// index, and the two are frequently unequal (e.g. Original pc:171 is
+/// Rust `Pc(PcId(174))`). Four investigations lost hours to that mismatch, so
+/// every diff root spells the pairing out.
 pub(super) struct EntityLabel {
     pub(super) id: robin_engine::entity_id::EntityId,
     pub(super) original_index: u32,
