@@ -1,7 +1,10 @@
 //! Authenticated exact-owned backup cleanup, recovery, and retention.
 
 use super::filesystem::BackupTreePaths;
+use super::filesystem::BoundaryHook;
 use super::filesystem::FileIdentity;
+use super::filesystem::UnlinkPinnedRegularHooks;
+use super::filesystem::UnlinkPinnedRegularRequest;
 use super::filesystem::backup_tree_paths_cap;
 use super::filesystem::cap_entry_exists;
 use super::filesystem::cleanup_tombstone_relative;
@@ -17,9 +20,9 @@ use super::filesystem::read_cap_regular_bounded;
 use super::filesystem::read_cap_regular_bounded_with_mode;
 use super::filesystem::record_cap_file_with_identity;
 use super::filesystem::remove_pinned_regular_via_tombstone;
+use super::filesystem::run_boundary_hook;
 use super::filesystem::sync_cap_directory;
 use super::filesystem::unlink_pinned_regular;
-use super::filesystem::unlink_pinned_regular_with_hook;
 use super::filesystem::valid_complete_backup_name;
 use super::filesystem::valid_partial_backup_name;
 use super::filesystem::validate_managed_directory_tree;
@@ -192,14 +195,16 @@ pub(super) fn recover_interrupted_complete_cleanups(
                     && !cap_entry_exists(&root, Path::new(&final_name))?),
             "discarded cleanup-journal partial has no authenticated recovery state"
         );
-        unlink_pinned_regular_with_hook(
-            &root,
-            &discard_name,
-            &discard,
-            discard_identity,
-            0o400,
-            "discarded cleanup-journal partial",
-            || Ok(()),
+        unlink_pinned_regular(
+            UnlinkPinnedRegularRequest {
+                parent: &root,
+                name: &discard_name,
+                pinned: &discard,
+                expected_identity: discard_identity,
+                expected_mode: 0o400,
+                label: "discarded cleanup-journal partial",
+            },
+            UnlinkPinnedRegularHooks::default(),
         )?;
     }
     for partial_name in partial_journals {
@@ -326,7 +331,14 @@ pub(super) fn recover_interrupted_complete_cleanups(
             continue;
         }
         if cleanup_exists || terminal_exists {
-            resume_authenticated_cleanup(&root, &journal, backup_authority_key)?;
+            resume_authenticated_cleanup(
+                ResumeCleanupRequest {
+                    backup_root: &root,
+                    journal: &journal,
+                    backup_authority_key,
+                },
+                ResumeCleanupHooks::default(),
+            )?;
             cleanup_directories.remove(&journal.cleanup_directory_name);
             terminal_cleanup_directories.remove(&journal.terminal_cleanup_directory_name);
             continue;
@@ -384,31 +396,28 @@ fn remove_pinned_cleanup_journal(
     Ok(())
 }
 
-fn resume_authenticated_cleanup(
-    backup_root: &cap_std::fs::Dir,
-    journal: &BackupCleanupJournalV1,
-    backup_authority_key: &[u8; 32],
+#[derive(Clone, Copy)]
+pub(super) struct ResumeCleanupRequest<'a> {
+    pub backup_root: &'a cap_std::fs::Dir,
+    pub journal: &'a BackupCleanupJournalV1,
+    pub backup_authority_key: &'a [u8; 32],
+}
+
+#[derive(Default)]
+pub(super) struct ResumeCleanupHooks<'a> {
+    pub after_terminal_rename: BoundaryHook<'a>,
+    pub after_terminal_root_remove: BoundaryHook<'a>,
+}
+
+pub(super) fn resume_authenticated_cleanup(
+    request: ResumeCleanupRequest<'_>,
+    hooks: ResumeCleanupHooks<'_>,
 ) -> anyhow::Result<()> {
-    resume_authenticated_cleanup_with_hooks(
+    let ResumeCleanupRequest {
         backup_root,
         journal,
         backup_authority_key,
-        || Ok(()),
-        || Ok(()),
-    )
-}
-
-pub(super) fn resume_authenticated_cleanup_with_hooks<F, G>(
-    backup_root: &cap_std::fs::Dir,
-    journal: &BackupCleanupJournalV1,
-    backup_authority_key: &[u8; 32],
-    after_terminal_rename: F,
-    after_terminal_root_remove: G,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-    G: FnOnce() -> anyhow::Result<()>,
-{
+    } = request;
     anyhow::ensure!(
         metadata_identity(&backup_root.dir_metadata()?).matches_parts(
             journal.backup_root_device_id,
@@ -607,12 +616,11 @@ where
         &journal_bytes,
         &tombstoned_paths,
         active_cleanup_name,
-        after_terminal_rename,
-        after_terminal_root_remove,
+        hooks,
     )
 }
 
-fn remove_remaining_quarantined_tree<F, G>(
+fn remove_remaining_quarantined_tree(
     backup_root: &cap_std::fs::Dir,
     journal: &BackupCleanupJournalV1,
     actual_tree: &BackupTreePaths,
@@ -622,13 +630,12 @@ fn remove_remaining_quarantined_tree<F, G>(
     journal_bytes: &[u8],
     tombstoned_paths: &BTreeSet<String>,
     active_cleanup_name: &str,
-    after_terminal_rename: F,
-    after_terminal_root_remove: G,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-    G: FnOnce() -> anyhow::Result<()>,
-{
+    hooks: ResumeCleanupHooks<'_>,
+) -> anyhow::Result<()> {
+    let ResumeCleanupHooks {
+        after_terminal_rename,
+        after_terminal_root_remove,
+    } = hooks;
     let directory = open_cap_directory_nofollow(backup_root, Path::new(active_cleanup_name))?;
     let authority_paths = BTreeSet::from([
         "backup-manifest.json".to_owned(),
@@ -728,7 +735,7 @@ where
         }
         sync_cap_directory(backup_root)?;
     }
-    after_terminal_rename()?;
+    run_boundary_hook(after_terminal_rename)?;
     let terminal_directory = open_cap_directory_nofollow(
         backup_root,
         Path::new(&journal.terminal_cleanup_directory_name),
@@ -739,7 +746,7 @@ where
     );
     backup_root.remove_dir(&journal.terminal_cleanup_directory_name)?;
     sync_cap_directory(backup_root)?;
-    after_terminal_root_remove()?;
+    run_boundary_hook(after_terminal_root_remove)?;
     anyhow::ensure!(
         !cap_entry_exists(backup_root, Path::new(&journal.cleanup_directory_name))?
             && !cap_entry_exists(
@@ -766,7 +773,15 @@ fn remove_verified_cleanup_entry(
     already_tombstoned: bool,
 ) -> anyhow::Result<()> {
     if !already_tombstoned {
-        return rename_verified_entry_to_tombstone(root, relative, expected_identity, is_directory);
+        return rename_verified_entry_to_tombstone(
+            TombstoneRenameRequest {
+                root,
+                relative,
+                expected_identity,
+                is_directory,
+            },
+            TombstoneRenameHooks::default(),
+        );
     }
     let (parent, child_name) = open_cap_parent_for_relative(root, Path::new(relative))?;
     let actual_identity = if is_directory {
@@ -790,14 +805,17 @@ fn remove_verified_cleanup_entry(
             "cleanup tombstone was substituted before removal: {relative}"
         );
         unlink_pinned_regular(
-            &parent,
-            child_name
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("cleanup tombstone filename is not UTF-8"))?,
-            &child,
-            expected_identity,
-            expected_mode,
-            "cleanup tombstone file",
+            UnlinkPinnedRegularRequest {
+                parent: &parent,
+                name: child_name
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("cleanup tombstone filename is not UTF-8"))?,
+                pinned: &child,
+                expected_identity,
+                expected_mode,
+                label: "cleanup tombstone file",
+            },
+            UnlinkPinnedRegularHooks::default(),
         )?;
         return Ok(());
     };
@@ -883,34 +901,34 @@ fn cleanup_names(backup_id: &str) -> anyhow::Result<(String, String, String)> {
     Ok((directory, journal, partial))
 }
 
-fn rename_verified_entry_to_tombstone(
-    root: &cap_std::fs::Dir,
-    relative: &str,
-    expected_identity: FileIdentity,
-    is_directory: bool,
+#[derive(Clone, Copy)]
+pub(super) struct TombstoneRenameRequest<'a> {
+    pub root: &'a cap_std::fs::Dir,
+    pub relative: &'a str,
+    pub expected_identity: FileIdentity,
+    pub is_directory: bool,
+}
+
+#[derive(Default)]
+pub(super) struct TombstoneRenameHooks<'a> {
+    pub before_rename: BoundaryHook<'a>,
+    pub after_rename: BoundaryHook<'a>,
+}
+
+pub(super) fn rename_verified_entry_to_tombstone(
+    request: TombstoneRenameRequest<'_>,
+    hooks: TombstoneRenameHooks<'_>,
 ) -> anyhow::Result<()> {
-    rename_verified_entry_to_tombstone_with_hooks(
+    let TombstoneRenameRequest {
         root,
         relative,
         expected_identity,
         is_directory,
-        || Ok(()),
-        || Ok(()),
-    )
-}
-
-pub(super) fn rename_verified_entry_to_tombstone_with_hooks<F, G>(
-    root: &cap_std::fs::Dir,
-    relative: &str,
-    expected_identity: FileIdentity,
-    is_directory: bool,
-    before_rename: F,
-    after_rename: G,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-    G: FnOnce() -> anyhow::Result<()>,
-{
+    } = request;
+    let TombstoneRenameHooks {
+        before_rename,
+        after_rename,
+    } = hooks;
     let tombstone = cleanup_tombstone_relative(relative)?;
     if relative == tombstone {
         anyhow::bail!("cleanup tombstone path cannot tombstone itself");
@@ -923,7 +941,7 @@ where
             == metadata_identity(&tombstone_parent.dir_metadata()?),
         "cleanup tombstone must remain in the source parent"
     );
-    before_rename()?;
+    run_boundary_hook(before_rename)?;
     {
         use std::os::fd::AsFd as _;
         rustix::fs::renameat_with(
@@ -935,7 +953,7 @@ where
         )?;
     }
     sync_cap_directory(&source_parent)?;
-    after_rename()?;
+    run_boundary_hook(after_rename)?;
     if is_directory {
         let moved = open_cap_directory_nofollow(&tombstone_parent, &tombstone_name)?;
         let metadata = moved.dir_metadata()?;
@@ -965,14 +983,17 @@ where
             "cleanup source was substituted while moving it to a safe tombstone; the replacement was preserved"
         );
         unlink_pinned_regular(
-            &tombstone_parent,
-            tombstone_name
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("cleanup tombstone filename is not UTF-8"))?,
-            &moved,
-            expected_identity,
-            expected_mode,
-            "cleanup source file after tombstoning",
+            UnlinkPinnedRegularRequest {
+                parent: &tombstone_parent,
+                name: tombstone_name
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("cleanup tombstone filename is not UTF-8"))?,
+                pinned: &moved,
+                expected_identity,
+                expected_mode,
+                label: "cleanup source file after tombstoning",
+            },
+            UnlinkPinnedRegularHooks::default(),
         )?;
     }
     Ok(())
@@ -1118,7 +1139,14 @@ fn remove_exact_verified_tree(
         metadata_identity(&directory.dir_metadata()?) == verified_tree.root_identity(),
         "quarantined backup root differs from the verified inode"
     );
-    resume_authenticated_cleanup(backup_root, &journal, backup_authority_key)
+    resume_authenticated_cleanup(
+        ResumeCleanupRequest {
+            backup_root,
+            journal: &journal,
+            backup_authority_key,
+        },
+        ResumeCleanupHooks::default(),
+    )
 }
 
 pub(super) fn cleanup_journal_for_verified_tree(

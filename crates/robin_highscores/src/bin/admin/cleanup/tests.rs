@@ -4,7 +4,6 @@ use super::super::filesystem::open_cap_directory_nofollow;
 use super::super::filesystem::open_cap_regular_nofollow;
 use super::super::filesystem::pin_directory_capability;
 use super::super::filesystem::unlink_pinned_regular;
-use super::super::filesystem::unlink_pinned_regular_with_hook;
 use super::super::filesystem::write_private_file;
 use super::*;
 use std::path::Path;
@@ -21,18 +20,22 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
     let pinned = open_cap_regular_nofollow(&parent, Path::new("discard")).unwrap();
     let identity = metadata_identity_std(&pinned.metadata().unwrap());
     assert!(
-        unlink_pinned_regular_with_hook(
-            &parent,
-            "discard",
-            &pinned,
-            identity,
-            0o400,
-            "test discard",
-            || {
-                std::fs::rename(&source_path, &displaced_path)?;
-                std::fs::write(&source_path, b"replacement")?;
-                std::fs::set_permissions(&source_path, std::fs::Permissions::from_mode(0o400))?;
-                Ok(())
+        unlink_pinned_regular(
+            UnlinkPinnedRegularRequest {
+                parent: &parent,
+                name: "discard",
+                pinned: &pinned,
+                expected_identity: identity,
+                expected_mode: 0o400,
+                label: "test discard",
+            },
+            UnlinkPinnedRegularHooks {
+                before_unlink: Some(Box::new(|| {
+                    std::fs::rename(&source_path, &displaced_path)?;
+                    std::fs::write(&source_path, b"replacement")?;
+                    std::fs::set_permissions(&source_path, std::fs::Permissions::from_mode(0o400))?;
+                    Ok(())
+                })),
             },
         )
         .is_err(),
@@ -47,12 +50,15 @@ fn direct_pinned_unlink_rejects_substitution_and_proves_unlinked_inode() {
     let terminal = open_cap_regular_nofollow(&parent, Path::new("terminal")).unwrap();
     let terminal_identity = metadata_identity_std(&terminal.metadata().unwrap());
     unlink_pinned_regular(
-        &parent,
-        "terminal",
-        &terminal,
-        terminal_identity,
-        0o400,
-        "test terminal",
+        UnlinkPinnedRegularRequest {
+            parent: &parent,
+            name: "terminal",
+            pinned: &terminal,
+            expected_identity: terminal_identity,
+            expected_mode: 0o400,
+            label: "test terminal",
+        },
+        UnlinkPinnedRegularHooks::default(),
     )
     .unwrap();
     assert!(!terminal_path.exists());

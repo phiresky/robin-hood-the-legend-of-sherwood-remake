@@ -1,6 +1,9 @@
 //! Pinned restore sources and preserved immutable release authority.
 
+use super::filesystem::BoundaryHook;
 use super::filesystem::FileIdentity;
+use super::filesystem::UnlinkPinnedRegularHooks;
+use super::filesystem::UnlinkPinnedRegularRequest;
 use super::filesystem::cap_entry_exists;
 use super::filesystem::copy_open_file;
 use super::filesystem::duplicate_pinned_file;
@@ -16,6 +19,7 @@ use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::remove_pinned_regular_via_tombstone;
 use super::filesystem::revalidate_pinned_regular_path;
 use super::filesystem::revalidate_pinned_root_directory;
+use super::filesystem::run_boundary_hook;
 use super::filesystem::sync_cap_directory;
 use super::filesystem::unlink_pinned_regular;
 use super::filesystem::validate_managed_metadata;
@@ -171,12 +175,15 @@ pub(super) async fn preserve_release_authority(
             "discarded release-authority partial was substituted before recovery"
         );
         unlink_pinned_regular(
-            &authority,
-            &discarded_partial_name,
-            &discarded,
-            discarded_identity,
-            0o400,
-            "discarded release-authority partial",
+            UnlinkPinnedRegularRequest {
+                parent: &authority,
+                name: &discarded_partial_name,
+                pinned: &discarded,
+                expected_identity: discarded_identity,
+                expected_mode: 0o400,
+                label: "discarded release-authority partial",
+            },
+            UnlinkPinnedRegularHooks::default(),
         )?;
         drop(discarded_bytes);
     }
@@ -517,28 +524,33 @@ pub(super) fn pin_backup_restore_sources(
     Ok(pinned)
 }
 
-pub(super) async fn copy_pinned_restore_source(
-    source: &PinnedRestoreSource,
-    destination: &Path,
-) -> anyhow::Result<()> {
-    copy_pinned_restore_source_with_hook(source, destination, || Ok(())).await
+#[derive(Clone, Copy)]
+pub(super) struct RestoreSourceCopyRequest<'a> {
+    pub source: &'a PinnedRestoreSource,
+    pub destination: &'a Path,
 }
 
-async fn copy_pinned_restore_source_with_hook<F>(
-    source: &PinnedRestoreSource,
-    destination: &Path,
-    after_copy: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-{
+#[derive(Default)]
+pub(super) struct RestoreSourceCopyHooks<'a> {
+    pub after_copy: BoundaryHook<'a>,
+}
+
+pub(super) async fn copy_pinned_restore_source(
+    request: RestoreSourceCopyRequest<'_>,
+    hooks: RestoreSourceCopyHooks<'_>,
+) -> anyhow::Result<()> {
     use std::io::{Seek as _, SeekFrom};
 
+    let RestoreSourceCopyRequest {
+        source,
+        destination,
+    } = request;
+    let RestoreSourceCopyHooks { after_copy } = hooks;
     source.revalidate("backup restore source before copy")?;
     let mut duplicate = duplicate_pinned_file(&source.file, false)?;
     duplicate.seek(SeekFrom::Start(0))?;
     copy_open_file(tokio::fs::File::from_std(duplicate), destination).await?;
-    after_copy()?;
+    run_boundary_hook(after_copy)?;
     source.revalidate("backup restore source after copy")?;
     let target =
         read_bounded_regular_nofollow(destination, u64::try_from(source.bytes.len())?).await?;

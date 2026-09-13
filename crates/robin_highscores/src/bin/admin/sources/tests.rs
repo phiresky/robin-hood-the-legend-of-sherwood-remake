@@ -19,9 +19,15 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o400)).unwrap();
     let swapped_target = directory.path().join("archive/swapped.key");
     assert!(
-        copy_pinned_restore_source(&pinned, &swapped_target)
-            .await
-            .is_err(),
+        copy_pinned_restore_source(
+            RestoreSourceCopyRequest {
+                source: &pinned,
+                destination: &swapped_target,
+            },
+            RestoreSourceCopyHooks::default(),
+        )
+        .await
+        .is_err(),
         "a pathname replacement after admission must not be copied"
     );
     assert!(!swapped_target.exists());
@@ -45,14 +51,22 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     .unwrap();
     let mutated_target = directory.path().join("archive/mutated.key");
     assert!(
-        copy_pinned_restore_source_with_hook(&pinned, &mutated_target, || {
-            {
-                use std::os::unix::fs::FileExt as _;
-                mutation.write_all_at(&[0x33; 32], 0)?;
-                mutation.sync_all()?;
-            }
-            Ok(())
-        })
+        copy_pinned_restore_source(
+            RestoreSourceCopyRequest {
+                source: &pinned,
+                destination: &mutated_target,
+            },
+            RestoreSourceCopyHooks {
+                after_copy: Some(Box::new(|| {
+                    {
+                        use std::os::unix::fs::FileExt as _;
+                        mutation.write_all_at(&[0x33; 32], 0)?;
+                        mutation.sync_all()?;
+                    }
+                    Ok(())
+                })),
+            },
+        )
         .await
         .is_err(),
         "in-place mutation during a descriptor copy must fail before any manifest is authored"
@@ -82,8 +96,11 @@ async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {
     std::fs::set_permissions(&unit, std::fs::Permissions::from_mode(0o440)).unwrap();
     assert!(
         copy_pinned_restore_source(
-            &pinned_unit,
-            &directory.path().join("archive/substituted.service"),
+            RestoreSourceCopyRequest {
+                source: &pinned_unit,
+                destination: &directory.path().join("archive/substituted.service"),
+            },
+            RestoreSourceCopyHooks::default(),
         )
         .await
         .is_err(),

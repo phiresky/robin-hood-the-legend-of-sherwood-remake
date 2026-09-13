@@ -103,7 +103,7 @@ async fn verify_live_database_schema_with_fence(
     let fenced = fence.clone();
     let (admission, quiescence, snapshot) = tokio::task::spawn_blocking(move || {
         fenced.validate_exclusive_pair(&admission, &quiescence)?;
-        let snapshot = LiveDatabaseSnapshot::create(&database_path)?;
+        let snapshot = LiveDatabaseSnapshot::create(&database_path, LiveSnapshotHooks::default())?;
         fenced.validate_exclusive_pair(&admission, &quiescence)?;
         Ok::<_, anyhow::Error>((admission, quiescence, snapshot))
     })
@@ -256,15 +256,16 @@ struct LiveDatabaseSnapshot {
     _copied_wal: Option<std::fs::File>,
 }
 
-impl LiveDatabaseSnapshot {
-    fn create(database_path: &Path) -> anyhow::Result<Self> {
-        Self::create_with_hook(database_path, || Ok(()))
-    }
+/// Fault-injection boundaries for [`LiveDatabaseSnapshot::create`]. Production
+/// passes `LiveSnapshotHooks::default()`; each hook runs at most once.
+#[derive(Default)]
+struct LiveSnapshotHooks<'a> {
+    after_copy: Option<Box<dyn FnOnce() -> anyhow::Result<()> + 'a>>,
+}
 
-    fn create_with_hook<F>(database_path: &Path, after_copy: F) -> anyhow::Result<Self>
-    where
-        F: FnOnce() -> anyhow::Result<()>,
-    {
+impl LiveDatabaseSnapshot {
+    fn create(database_path: &Path, hooks: LiveSnapshotHooks<'_>) -> anyhow::Result<Self> {
+        let LiveSnapshotHooks { after_copy } = hooks;
         anyhow::ensure!(
             database_path.is_absolute(),
             "database path must be absolute"
@@ -341,7 +342,9 @@ impl LiveDatabaseSnapshot {
             )?),
             None => None,
         };
-        after_copy()?;
+        if let Some(after_copy) = after_copy {
+            after_copy()?;
+        }
 
         // A second complete same-descriptor capture closes both in-place
         // mutation and short-read races at the copy boundary.
@@ -1173,7 +1176,8 @@ mod tests {
         let copied_root = tempfile::tempdir().unwrap();
         let (copied_database, _copied_fence) = private_database_root(copied_root.path());
         migrate_database(&copied_database).await;
-        let snapshot = LiveDatabaseSnapshot::create(&copied_database).unwrap();
+        let snapshot =
+            LiveDatabaseSnapshot::create(&copied_database, LiveSnapshotHooks::default()).unwrap();
         snapshot
             ._copied_database
             .set_permissions(std::fs::Permissions::from_mode(SNAPSHOT_FILE_MODE | 0o4000))
@@ -1184,8 +1188,9 @@ mod tests {
 
     async fn assert_special_leaf_rejects_without_blocking(database: PathBuf, special: PathBuf) {
         let task_database = database.clone();
-        let mut task =
-            tokio::task::spawn_blocking(move || LiveDatabaseSnapshot::create(&task_database));
+        let mut task = tokio::task::spawn_blocking(move || {
+            LiveDatabaseSnapshot::create(&task_database, LiveSnapshotHooks::default())
+        });
         match tokio::time::timeout(Duration::from_secs(1), &mut task).await {
             Ok(result) => {
                 let error = result.unwrap().err().unwrap();
@@ -1273,12 +1278,17 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (database, _fence) = private_database_root(root.path());
         migrate_database(&database).await;
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            let mut file = std::fs::OpenOptions::new().append(true).open(&database)?;
-            file.write_all(b"uncooperative mutation")?;
-            file.sync_all()?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    let mut file = std::fs::OpenOptions::new().append(true).open(&database)?;
+                    file.write_all(b"uncooperative mutation")?;
+                    file.sync_all()?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         let message = error.to_string();
@@ -1291,15 +1301,20 @@ mod tests {
         let (database, _fence) = private_database_root(root.path());
         migrate_database(&database).await;
         let displaced = root.path().join("displaced.sqlite3");
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            std::fs::rename(&database, &displaced)?;
-            std::fs::copy(&displaced, &database)?;
-            std::fs::set_permissions(
-                &database,
-                std::fs::Permissions::from_mode(DATABASE_FILE_MODE),
-            )?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    std::fs::rename(&database, &displaced)?;
+                    std::fs::copy(&displaced, &database)?;
+                    std::fs::set_permissions(
+                        &database,
+                        std::fs::Permissions::from_mode(DATABASE_FILE_MODE),
+                    )?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         assert!(error.to_string().contains("changed"));
@@ -1312,15 +1327,20 @@ mod tests {
         migrate_database(&database).await;
         let database_parent = database.parent().unwrap().to_owned();
         let displaced_parent = root.path().join("displaced-database");
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            std::fs::rename(&database_parent, &displaced_parent)?;
-            std::fs::create_dir(&database_parent)?;
-            std::fs::set_permissions(
-                &database_parent,
-                std::fs::Permissions::from_mode(DATABASE_DIRECTORY_MODE),
-            )?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    std::fs::rename(&database_parent, &displaced_parent)?;
+                    std::fs::create_dir(&database_parent)?;
+                    std::fs::set_permissions(
+                        &database_parent,
+                        std::fs::Permissions::from_mode(DATABASE_DIRECTORY_MODE),
+                    )?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         assert!(
@@ -1337,12 +1357,20 @@ mod tests {
         let wal_connection = migrate_database_with_current_schema_only_in_wal(&database).await;
         let wal = database.parent().unwrap().join(WAL_LEAF);
         let displaced = root.path().join("displaced-wal");
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            std::fs::rename(&wal, &displaced)?;
-            std::fs::copy(&displaced, &wal)?;
-            std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(DATABASE_FILE_MODE))?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    std::fs::rename(&wal, &displaced)?;
+                    std::fs::copy(&displaced, &wal)?;
+                    std::fs::set_permissions(
+                        &wal,
+                        std::fs::Permissions::from_mode(DATABASE_FILE_MODE),
+                    )?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         assert!(error.to_string().contains("changed"));
@@ -1357,12 +1385,17 @@ mod tests {
         let (database, _fence) = private_database_root(root.path());
         let wal_connection = migrate_database_with_current_schema_only_in_wal(&database).await;
         let wal = database.parent().unwrap().join(WAL_LEAF);
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            let mut file = std::fs::OpenOptions::new().append(true).open(&wal)?;
-            file.write_all(b"uncooperative wal mutation")?;
-            file.sync_all()?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    let mut file = std::fs::OpenOptions::new().append(true).open(&wal)?;
+                    file.write_all(b"uncooperative wal mutation")?;
+                    file.sync_all()?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         let message = error.to_string();
@@ -1377,12 +1410,20 @@ mod tests {
         let wal_connection = migrate_database_with_current_schema_only_in_wal(&database).await;
         let shm = database.parent().unwrap().join(SHM_LEAF);
         let displaced = root.path().join("displaced-shm");
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            std::fs::rename(&shm, &displaced)?;
-            std::fs::copy(&displaced, &shm)?;
-            std::fs::set_permissions(&shm, std::fs::Permissions::from_mode(DATABASE_FILE_MODE))?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    std::fs::rename(&shm, &displaced)?;
+                    std::fs::copy(&displaced, &shm)?;
+                    std::fs::set_permissions(
+                        &shm,
+                        std::fs::Permissions::from_mode(DATABASE_FILE_MODE),
+                    )?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         assert!(error.to_string().contains("changed"));
@@ -1396,11 +1437,19 @@ mod tests {
         migrate_database(&database).await;
         let wal = database.parent().unwrap().join(WAL_LEAF);
         assert!(!wal.exists());
-        let error = LiveDatabaseSnapshot::create_with_hook(&database, || {
-            std::fs::write(&wal, b"unexpected wal")?;
-            std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(DATABASE_FILE_MODE))?;
-            Ok(())
-        })
+        let error = LiveDatabaseSnapshot::create(
+            &database,
+            LiveSnapshotHooks {
+                after_copy: Some(Box::new(|| {
+                    std::fs::write(&wal, b"unexpected wal")?;
+                    std::fs::set_permissions(
+                        &wal,
+                        std::fs::Permissions::from_mode(DATABASE_FILE_MODE),
+                    )?;
+                    Ok(())
+                })),
+            },
+        )
         .err()
         .unwrap();
         assert!(error.to_string().contains("unexpected database sidecar"));

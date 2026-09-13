@@ -262,12 +262,18 @@ async fn assert_scrub_connection_closes(panic: bool) {
     config.database_path = directory.path().join("snapshot.sqlite3");
     let database = Database::migrate(&config).await.unwrap();
     database.close_fenced().await.unwrap();
-    let error = scrub_transient_backup_state_with_hook(&config.database_path, 1, || {
-        if panic {
-            panic!("injected scrub panic with active transaction")
-        }
-        anyhow::bail!("injected scrub error with active transaction")
-    })
+    let error = scrub_transient_backup_state(
+        &config.database_path,
+        1,
+        TransientScrubHooks {
+            after_updates: Some(Box::new(move || {
+                if panic {
+                    panic!("injected scrub panic with active transaction")
+                }
+                anyhow::bail!("injected scrub error with active transaction")
+            })),
+        },
+    )
     .await
     .unwrap_err();
     assert!(error.to_string().contains(if panic {
@@ -543,7 +549,17 @@ async fn verified_backup_install_is_noreplace_and_reports_parent_sync_failure() 
         .await
         .unwrap();
     assert!(
-        install_verified_partial_with(&racing_partial, &racing_complete, || Ok(())).is_err(),
+        install_verified_partial(
+            PartialInstallRequest {
+                partial: &racing_partial,
+                complete: &racing_complete,
+                backup_root: directory.path(),
+            },
+            PartialInstallHooks {
+                sync_parent: Some(Box::new(|| Ok(()))),
+            },
+        )
+        .is_err(),
         "an independently installed completed backup must win the publication race"
     );
     assert!(racing_partial.join("new").is_file());
@@ -562,9 +578,16 @@ async fn verified_backup_install_is_noreplace_and_reports_parent_sync_failure() 
     write_private_file(&partial.join("nested/bytes"), b"durable bytes")
         .await
         .unwrap();
-    let outcome = install_verified_partial_with(&partial, &complete, || {
-        anyhow::bail!("injected parent fsync failure")
-    })
+    let outcome = install_verified_partial(
+        PartialInstallRequest {
+            partial: &partial,
+            complete: &complete,
+            backup_root: directory.path(),
+        },
+        PartialInstallHooks {
+            sync_parent: Some(Box::new(|| anyhow::bail!("injected parent fsync failure"))),
+        },
+    )
     .unwrap();
     assert!(matches!(
         outcome,
@@ -595,7 +618,19 @@ async fn durability_sync_rejects_a_symlink_in_the_verified_tree() {
         partial.join("substituted"),
     )
     .unwrap();
-    assert!(install_verified_partial_with(&partial, &complete, || Ok(())).is_err());
+    assert!(
+        install_verified_partial(
+            PartialInstallRequest {
+                partial: &partial,
+                complete: &complete,
+                backup_root: directory.path(),
+            },
+            PartialInstallHooks {
+                sync_parent: Some(Box::new(|| Ok(()))),
+            },
+        )
+        .is_err()
+    );
     assert!(partial.exists());
     assert!(!complete.exists());
 }
@@ -613,11 +648,15 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     std::fs::set_permissions(&status, std::fs::Permissions::from_mode(0o400)).unwrap();
 
     assert!(
-        publish_private_atomic_with_hooks(
+        publish_private_atomic(
             &status,
             b"pre-rename-failure",
-            sync_cap_directory,
-            || anyhow::bail!("injected pre-rename failure")
+            PrivatePublicationHooks {
+                sync_parent: Some(Box::new(sync_cap_directory)),
+                before_rename: Some(Box::new(|| {
+                    anyhow::bail!("injected pre-rename failure")
+                })),
+            },
         )
         .is_err()
     );
@@ -629,11 +668,13 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
             .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp"))
     );
 
-    let durability = publish_private_atomic_with_hooks(
+    let durability = publish_private_atomic(
         &status,
         b"new-envelope",
-        |_| anyhow::bail!("injected parent fsync failure"),
-        || Ok(()),
+        PrivatePublicationHooks {
+            sync_parent: Some(Box::new(|_| anyhow::bail!("injected parent fsync failure"))),
+            before_rename: Some(Box::new(|| Ok(()))),
+        },
     )
     .unwrap();
     assert!(matches!(
@@ -642,16 +683,18 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     ));
     assert_eq!(std::fs::read(&status).unwrap(), b"new-envelope");
 
-    let identity = publish_private_atomic_with_hooks(
+    let identity = publish_private_atomic(
         &status,
         b"authenticated-envelope",
-        |_| {
-            std::fs::remove_file(&status)?;
-            std::fs::write(&status, b"substituted")?;
-            std::fs::set_permissions(&status, std::fs::Permissions::from_mode(0o400))?;
-            Ok(())
+        PrivatePublicationHooks {
+            sync_parent: Some(Box::new(|_| {
+                std::fs::remove_file(&status)?;
+                std::fs::write(&status, b"substituted")?;
+                std::fs::set_permissions(&status, std::fs::Permissions::from_mode(0o400))?;
+                Ok(())
+            })),
+            before_rename: Some(Box::new(|| Ok(()))),
         },
-        || Ok(()),
     )
     .unwrap();
     assert!(matches!(
@@ -659,14 +702,16 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
         StatusPublicationOutcome::PublishedButIdentityUncertain(_)
     ));
 
-    let parent_mode_race = publish_private_atomic_with_hooks(
+    let parent_mode_race = publish_private_atomic(
         &status,
         b"mode-race",
-        |_| {
-            std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o777))?;
-            Ok(())
+        PrivatePublicationHooks {
+            sync_parent: Some(Box::new(|_| {
+                std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o777))?;
+                Ok(())
+            })),
+            before_rename: Some(Box::new(|| Ok(()))),
         },
-        || Ok(()),
     )
     .unwrap();
     assert!(matches!(
@@ -675,7 +720,12 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     ));
     std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700)).unwrap();
 
-    let published = publish_private_atomic(&status, b"canonical-envelope").unwrap();
+    let published = publish_private_atomic(
+        &status,
+        b"canonical-envelope",
+        PrivatePublicationHooks::default(),
+    )
+    .unwrap();
     assert!(matches!(published, StatusPublicationOutcome::Published));
     assert_eq!(std::fs::read(&status).unwrap(), b"canonical-envelope");
     let metadata = std::fs::metadata(&status).unwrap();
@@ -683,7 +733,9 @@ fn status_publication_is_one_atomic_owner_only_file_with_typed_failures() {
     assert_eq!(metadata.nlink(), 1);
     assert_eq!(metadata.uid(), rustix::process::geteuid().as_raw());
     std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o750)).unwrap();
-    assert!(publish_private_atomic(&status, b"rejected").is_err());
+    assert!(
+        publish_private_atomic(&status, b"rejected", PrivatePublicationHooks::default()).is_err()
+    );
     assert_eq!(std::fs::read(&status).unwrap(), b"canonical-envelope");
 }
 
@@ -697,16 +749,18 @@ fn status_publication_detects_parent_replacement_after_install() {
     std::fs::create_dir(&status_parent).unwrap();
     std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700)).unwrap();
     let status = status_parent.join("backup-status.json");
-    let outcome = publish_private_atomic_with_hooks(
+    let outcome = publish_private_atomic(
         &status,
         b"envelope",
-        |_| {
-            std::fs::rename(&status_parent, &detached_parent)?;
-            std::fs::create_dir(&status_parent)?;
-            std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700))?;
-            Ok(())
+        PrivatePublicationHooks {
+            sync_parent: Some(Box::new(|_| {
+                std::fs::rename(&status_parent, &detached_parent)?;
+                std::fs::create_dir(&status_parent)?;
+                std::fs::set_permissions(&status_parent, std::fs::Permissions::from_mode(0o700))?;
+                Ok(())
+            })),
+            before_rename: Some(Box::new(|| Ok(()))),
         },
-        || Ok(()),
     )
     .unwrap();
     assert!(matches!(
@@ -1130,7 +1184,9 @@ impl PublicationFixture {
                         maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                     },
                     BackupHooks {
-                        publish_status: publish_private_atomic,
+                        publish_status: |path: &Path, bytes: &[u8]| {
+                            publish_private_atomic(path, bytes, PrivatePublicationHooks::default())
+                        },
                         before_install: move || {
                             std::fs::rename(&swap_key_path, &swap_displaced_key)?;
                             std::fs::write(&swap_key_path, [0x41; 32])?;
@@ -1182,7 +1238,9 @@ impl PublicationFixture {
                         maximum_status_bytes: robin_highscores::backup::MAX_BACKUP_STATUS_BYTES
                     },
                     BackupHooks {
-                        publish_status: publish_private_atomic,
+                        publish_status: |path: &Path, bytes: &[u8]| {
+                            publish_private_atomic(path, bytes, PrivatePublicationHooks::default())
+                        },
                         before_install: || Ok(()),
                         before_status_publication: move || {
                             use std::os::unix::fs::FileExt as _;
@@ -2174,7 +2232,9 @@ impl PublicationFixture {
                 },
                 BackupHooks {
                     publish_status: |path: &Path, bytes: &[u8]| match publish_private_atomic(
-                        path, bytes
+                        path,
+                        bytes,
+                        PrivatePublicationHooks::default(),
                     )? {
                         StatusPublicationOutcome::Published => {
                             Ok(StatusPublicationOutcome::PublishedButIdentityUncertain(

@@ -7,6 +7,7 @@ use super::cleanup::recover_stale_partial_backups;
 use super::cleanup::remove_owned_complete_backup;
 use super::cleanup::remove_owned_partial_backup;
 use super::cleanup::retain_complete_backups;
+use super::filesystem::BoundaryHook;
 use super::filesystem::acquire_backup_operation_lock;
 use super::filesystem::cap_entry_exists;
 use super::filesystem::copy_open_file;
@@ -22,6 +23,7 @@ use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::record_file;
 use super::filesystem::revalidate_pinned_regular_path;
 use super::filesystem::revalidate_pinned_root_directory;
+use super::filesystem::run_boundary_hook;
 use super::filesystem::set_backup_permissions;
 use super::filesystem::set_private_directory;
 use super::filesystem::sync_cap_directory;
@@ -30,11 +32,15 @@ use super::filesystem::write_private_file;
 use super::policy::BACKUP_MANIFEST_SCHEMA_VERSION;
 use super::policy::SYSTEMD_UNIT_FILES;
 use super::policy::SYSTEMD_USER_ROOT;
+use super::sources::PinnedRestoreSource;
+use super::sources::RestoreSourceCopyHooks;
+use super::sources::RestoreSourceCopyRequest;
 use super::sources::copy_pinned_restore_source;
 use super::sources::pin_backup_restore_sources;
 use super::sources::pin_restore_source;
 use super::sources::preserve_release_authority;
 use super::sources::validate_backup_restore_source_contract;
+use super::verification::VerifiedBackup;
 use super::verification::verify_backup_authenticated;
 use anyhow::Context as _;
 use robin_highscores::CampaignStore;
@@ -131,7 +137,9 @@ struct BackupHooks<
 impl Default for BackupHooks {
     fn default() -> Self {
         Self {
-            publish_status: publish_private_atomic,
+            publish_status: |path, bytes| {
+                publish_private_atomic(path, bytes, PrivatePublicationHooks::default())
+            },
             before_install: || Ok(()),
             before_status_publication: || Ok(()),
         }
@@ -193,6 +201,42 @@ where
         .map_err(|error| anyhow::anyhow!(error).context("backup owner task failed"))?
 }
 
+/// The status envelope published before this run, pinned during admission:
+/// (authenticated status, pinned status file, exact canonical bytes).
+type ExistingBackupStatus = (BackupStatusV4, std::fs::File, Vec<u8>);
+
+/// Admitted authority for one backup run, shared by its phases.
+///
+/// Descriptor-holding fields are declared in reverse of the order in which the
+/// single-function owner created them, so they still drop in that order.
+struct BackupOperation<'a> {
+    existing_status: Option<ExistingBackupStatus>,
+    status_parent_guard: std::fs::File,
+    status_parent_capability: cap_std::fs::Dir,
+    backup_authority_key: [u8; 32],
+    backup_authority_source: PinnedRestoreSource,
+    /// Canonical backup root, proven identical to the requested path.
+    backup_root: PathBuf,
+    status_parent: &'a Path,
+    config: &'a ServerConfig,
+    release_manifest_path: &'a Path,
+    release_identity: &'a BackupReleaseIdentityV2,
+    status_path: &'a Path,
+    retain_complete: usize,
+    restore_sources: &'a BTreeMap<PathBuf, PathBuf>,
+    maximum_status_bytes: usize,
+}
+
+/// An authenticated, verified partial backup that is not installed yet.
+struct VerifiedPartialBackup {
+    identifier: String,
+    partial: PathBuf,
+    complete: PathBuf,
+    verified: VerifiedBackup,
+}
+
+/// Sequencing shell: admission, pre-backup reconciliation under
+/// operation.lock, then the locked backup under the heartbeat and writer gate.
 async fn backup_and_publish_status_owned<F, I, S>(
     request: BackupRequest<'_>,
     hooks: BackupHooks<F, I, S>,
@@ -202,6 +246,40 @@ where
     I: FnOnce() -> anyhow::Result<()>,
     S: FnOnce() -> anyhow::Result<()>,
 {
+    let operation = admit_backup(request).await?;
+    let _operation_lock = operation.reconcile_under_operation_lock().await?;
+
+    let database = Database::connect(operation.config).await?;
+    let (backup_lock, exclusive_fence) = acquire_backup_write_authority(&database).await?;
+    let result: anyhow::Result<PathBuf> = run_with_backup_lock_heartbeat(
+        &database,
+        &backup_lock,
+        operation.run_locked(&database, &backup_lock, &exclusive_fence, hooks),
+    )
+    .await;
+    let release = release_backup_gate_and_close_pool_under_exclusive_fence(
+        &database,
+        &backup_lock,
+        &exclusive_fence,
+    )
+    .await;
+    match (result, release) {
+        (Ok(value), Ok(true)) => Ok(value),
+        (Ok(_), Ok(false)) => anyhow::bail!("backup writer gate disappeared before release"),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(operation), Ok(true)) => Err(operation),
+        (Err(operation), Ok(false)) => {
+            Err(operation.context("backup failed and its writer gate disappeared before release"))
+        }
+        (Err(operation), Err(release)) => Err(operation.context(format!(
+            "backup failed and releasing its writer gate also failed: {release}"
+        ))),
+    }
+}
+
+/// Admission: validate the request, pin the backup root, authority key, status
+/// parent, and any existing authenticated status before operation.lock.
+async fn admit_backup(request: BackupRequest<'_>) -> anyhow::Result<BackupOperation<'_>> {
     let BackupRequest {
         config,
         release_manifest_path,
@@ -212,11 +290,6 @@ where
         restore_sources,
         maximum_status_bytes,
     } = request;
-    let BackupHooks {
-        publish_status,
-        before_install,
-        before_status_publication,
-    } = hooks;
     anyhow::ensure!(
         maximum_status_bytes > 0
             && maximum_status_bytes <= robin_highscores::backup::MAX_BACKUP_STATUS_BYTES,
@@ -345,179 +418,281 @@ where
     } else {
         None
     };
+    Ok(BackupOperation {
+        existing_status,
+        status_parent_guard,
+        status_parent_capability,
+        backup_authority_key,
+        backup_authority_source,
+        backup_root: canonical_backup_root,
+        status_parent,
+        config,
+        release_manifest_path,
+        release_identity,
+        status_path,
+        retain_complete,
+        restore_sources,
+        maximum_status_bytes,
+    })
+}
 
-    let _operation_lock = acquire_backup_operation_lock(backup_root)?;
-    backup_authority_source.revalidate("backup authority HMAC key")?;
-    revalidate_pinned_root_directory(&status_parent_guard, status_parent, "backup status parent")?;
-    if let Some((_, status_file, status_bytes)) = &existing_status {
-        revalidate_pinned_regular_path(
-            status_file,
-            status_path,
-            0o400,
-            Some(0o700),
-            "existing backup status",
-        )?;
-        anyhow::ensure!(
-            read_bounded_pinned_file(
-                duplicate_pinned_file(status_file, false)?,
-                u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES)?,
-            )? == *status_bytes,
-            "existing backup status changed before cleanup admission"
-        );
-    } else {
-        anyhow::ensure!(
-            !cap_entry_exists(&status_parent_capability, status_name)?,
-            "backup status appeared while acquiring the operation lock"
-        );
-    }
-    recover_interrupted_complete_cleanups(backup_root, &backup_authority_key)?;
-    recover_stale_partial_backups(backup_root)?;
-    if let Some((status, status_file, status_bytes)) = &existing_status {
-        // Reconcile a crash after status publication but before post-publish
-        // retention before allocating another generation. Prune only a crash
-        // backlog down to the configured steady-state count; healthy retained
-        // redundancy remains intact until the replacement is fully published.
-        let maximum_admitted_generations = retain_complete
-            .checked_add(1)
-            .ok_or_else(|| anyhow::anyhow!("retention generation bound overflows"))?;
-        backup_authority_source.revalidate("backup authority HMAC key before retention")?;
-        retain_complete_backups(
-            backup_root,
-            &status.backup_id,
-            retain_complete,
-            maximum_admitted_generations,
-            release_identity,
-            &backup_authority_key,
-        )
-        .await?;
-        backup_authority_source.revalidate("backup authority HMAC key after retention")?;
+impl BackupOperation<'_> {
+    /// Acquire operation.lock, re-prove admission under it, recover interrupted
+    /// cleanups and stale partials, and reconcile a post-publication crash
+    /// backlog. Returns the held operation lock.
+    async fn reconcile_under_operation_lock(&self) -> anyhow::Result<std::fs::File> {
+        let backup_root = self.backup_root.as_path();
+        let status_path = self.status_path;
+        let status_parent = self.status_parent;
+        let status_name = Path::new("backup-status.json");
+        let status_parent_guard = &self.status_parent_guard;
+        let status_parent_capability = &self.status_parent_capability;
+        let existing_status = &self.existing_status;
+        let backup_authority_source = &self.backup_authority_source;
+        let backup_authority_key = &self.backup_authority_key;
+        let retain_complete = self.retain_complete;
+        let release_identity = self.release_identity;
+
+        let operation_lock = acquire_backup_operation_lock(backup_root)?;
+        backup_authority_source.revalidate("backup authority HMAC key")?;
         revalidate_pinned_root_directory(
             &status_parent_guard,
             status_parent,
             "backup status parent",
         )?;
-        revalidate_pinned_regular_path(
-            status_file,
-            status_path,
-            0o400,
-            Some(0o700),
-            "existing backup status",
-        )?;
-        anyhow::ensure!(
-            read_bounded_pinned_file(
-                duplicate_pinned_file(status_file, false)?,
-                u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES)?,
-            )? == *status_bytes,
-            "existing backup status changed during pre-backup retention"
-        );
-    }
-
-    let database = Database::connect(config).await?;
-    let (backup_lock, exclusive_fence) = acquire_backup_write_authority(&database).await?;
-    let result: anyhow::Result<PathBuf> = run_with_backup_lock_heartbeat(
-        &database,
-        &backup_lock,
-        async {
-            wait_for_maintenance_writers(&database, &backup_lock).await?;
-            exclusive_fence.revalidate()?;
-            anyhow::ensure!(
-                database.active_maintenance_write_lease_count().await? == 0,
-                "maintenance writer lease appeared after the exclusive TTL drain"
-            );
-            let replay =
-                ReplayStore::create(config.replay_directory.clone(), config.max_replay_bytes)
-                    .await?;
-            let campaign = CampaignStore::create(
-                config.campaign_state_directory.clone(),
-                config.max_campaign_bytes,
-            )
-            .await?;
-
-    // Recompute the same typed estimate used by deployment while holding the
-    // operation lock and immediately before any partial backup byte is
-    // created. Existing retained backups are already charged to live free
-    // space; exactly one additional generation is required here.
-    estimate_backup_space(
-        config,
-        release_identity,
-        backup_root,
-        status_path,
-        restore_sources,
-    )
-    .await?
-    .ensure_available()?;
-    preserve_release_authority(backup_root, release_manifest_path, release_identity).await?;
-
-    let created_at_unix_ms = u64::try_from(robin_highscores::model::now_epoch_ms()?)?;
-    let identifier = format!(
-        "backup-v4-{created_at_unix_ms}-{}",
-        uuid::Uuid::now_v7().simple()
-    );
-    let partial = backup_root.join(format!(".{identifier}.partial"));
-    let complete = backup_root.join(&identifier);
-    create_backup_directory(&partial).await?;
-    set_private_directory(&partial).await?;
-    let backup_result = backup_locked(
-        config,
-        &database,
-                &replay,
-                &campaign,
-        &backup_lock,
-        &partial,
-        created_at_unix_ms,
-        release_identity,
-        restore_sources,
-    )
-    .await;
-            if let Err(error) = backup_result {
-                return Err(cleanup_failed_partial_backup(&database, backup_root, &partial, error).await);
-            }
-            let manifest_bytes = read_bounded_regular_nofollow(
-                &partial.join("backup-manifest.json"),
-                u64::try_from(robin_highscores::backup::MAX_BACKUP_MANIFEST_BYTES)?,
-            )
-            .await?;
-            let manifest: BackupManifest = serde_json::from_slice(&manifest_bytes)?;
-            anyhow::ensure!(
-                canonical_json_bytes(&manifest)? == manifest_bytes,
-                "new backup manifest is not canonical before envelope publication"
-            );
-            backup_authority_source
-                .revalidate("backup authority HMAC key before envelope publication")?;
-            let envelope = BackupVerificationEnvelopeV2::new_authenticated(
-                identifier.clone(),
-                &manifest,
-                &backup_authority_key,
+        if let Some((_, status_file, status_bytes)) = &existing_status {
+            revalidate_pinned_regular_path(
+                status_file,
+                status_path,
+                0o400,
+                Some(0o700),
+                "existing backup status",
             )?;
-            let envelope_path = partial.join("backup-verification-envelope.json");
-            write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
-                        set_backup_permissions(
-                &envelope_path,
-                std::fs::Permissions::from_mode(0o400),
+            anyhow::ensure!(
+                read_bounded_pinned_file(
+                    duplicate_pinned_file(status_file, false)?,
+                    u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES)?,
+                )? == *status_bytes,
+                "existing backup status changed before cleanup admission"
+            );
+        } else {
+            anyhow::ensure!(
+                !cap_entry_exists(&status_parent_capability, status_name)?,
+                "backup status appeared while acquiring the operation lock"
+            );
+        }
+        recover_interrupted_complete_cleanups(backup_root, &backup_authority_key)?;
+        recover_stale_partial_backups(backup_root)?;
+        if let Some((status, status_file, status_bytes)) = &existing_status {
+            // Reconcile a crash after status publication but before post-publish
+            // retention before allocating another generation. Prune only a crash
+            // backlog down to the configured steady-state count; healthy retained
+            // redundancy remains intact until the replacement is fully published.
+            let maximum_admitted_generations = retain_complete
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("retention generation bound overflows"))?;
+            backup_authority_source.revalidate("backup authority HMAC key before retention")?;
+            retain_complete_backups(
+                backup_root,
+                &status.backup_id,
+                retain_complete,
+                maximum_admitted_generations,
+                release_identity,
+                &backup_authority_key,
             )
             .await?;
-            sync_directory(&partial).await?;
-            refresh_backup_lock(&database, &backup_lock).await?;
-            let verified = match verify_backup_authenticated(&partial, &backup_authority_key).await {
-        Ok(verified) => verified,
-        Err(error) => {
-            remove_owned_partial_backup(backup_root, &partial)?;
-            return Err(error);
+            backup_authority_source.revalidate("backup authority HMAC key after retention")?;
+            revalidate_pinned_root_directory(
+                &status_parent_guard,
+                status_parent,
+                "backup status parent",
+            )?;
+            revalidate_pinned_regular_path(
+                status_file,
+                status_path,
+                0o400,
+                Some(0o700),
+                "existing backup status",
+            )?;
+            anyhow::ensure!(
+                read_bounded_pinned_file(
+                    duplicate_pinned_file(status_file, false)?,
+                    u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES)?,
+                )? == *status_bytes,
+                "existing backup status changed during pre-backup retention"
+            );
         }
-    };
-    anyhow::ensure!(
-        (*verified.release_identity()) == *release_identity,
-        "verified backup release identity differs from the active installed release"
-    );
-    if robin_highscores::secure_fs::available_space(backup_root)? < config.minimum_storage_free_bytes {
-        remove_owned_partial_backup(backup_root, &partial)?;
-        anyhow::bail!("completed backup would violate the configured storage floor");
+        Ok(operation_lock)
     }
 
-    // Build and bound the complete authenticated readiness envelope while the
-    // backup is still a removable partial. An installed backup must never be
-    // left behind merely because its projection cannot be published.
-    let status_bytes_result = async {
+    /// The operation owned by the backup-lock heartbeat: drain writers, build and
+    /// verify a partial, bound its status envelope, install, publish, retain.
+    async fn run_locked<F, I, S>(
+        &self,
+        database: &Database,
+        backup_lock: &str,
+        exclusive_fence: &ExclusiveBackupDatabaseFence,
+        hooks: BackupHooks<F, I, S>,
+    ) -> anyhow::Result<PathBuf>
+    where
+        F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome>,
+        I: FnOnce() -> anyhow::Result<()>,
+        S: FnOnce() -> anyhow::Result<()>,
+    {
+        let config = self.config;
+        wait_for_maintenance_writers(database, backup_lock).await?;
+        exclusive_fence.revalidate()?;
+        anyhow::ensure!(
+            database.active_maintenance_write_lease_count().await? == 0,
+            "maintenance writer lease appeared after the exclusive TTL drain"
+        );
+        let replay =
+            ReplayStore::create(config.replay_directory.clone(), config.max_replay_bytes).await?;
+        let campaign = CampaignStore::create(
+            config.campaign_state_directory.clone(),
+            config.max_campaign_bytes,
+        )
+        .await?;
+        let backup = self
+            .create_verified_partial(database, backup_lock, &replay, &campaign)
+            .await?;
+
+        // Build and bound the complete authenticated readiness envelope while the
+        // backup is still a removable partial. An installed backup must never be
+        // left behind merely because its projection cannot be published.
+        let status_bytes_result = self.authenticated_status_bytes(&backup).await;
+        let status_bytes = match status_bytes_result {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                remove_owned_partial_backup(&self.backup_root, &backup.partial)?;
+                return Err(error);
+            }
+        };
+        self.install_and_publish(database, backup_lock, backup, status_bytes, hooks)
+            .await
+    }
+
+    /// Create one partial generation, write its authenticated verification
+    /// envelope, and verify it against the active release and storage floor.
+    async fn create_verified_partial(
+        &self,
+        database: &Database,
+        backup_lock: &str,
+        replay: &ReplayStore,
+        campaign: &CampaignStore,
+    ) -> anyhow::Result<VerifiedPartialBackup> {
+        let config = self.config;
+        let release_manifest_path = self.release_manifest_path;
+        let release_identity = self.release_identity;
+        let backup_root = self.backup_root.as_path();
+        let status_path = self.status_path;
+        let restore_sources = self.restore_sources;
+        let backup_authority_source = &self.backup_authority_source;
+        let backup_authority_key = &self.backup_authority_key;
+
+        // Recompute the same typed estimate used by deployment while holding the
+        // operation lock and immediately before any partial backup byte is
+        // created. Existing retained backups are already charged to live free
+        // space; exactly one additional generation is required here.
+        estimate_backup_space(
+            config,
+            release_identity,
+            backup_root,
+            status_path,
+            restore_sources,
+        )
+        .await?
+        .ensure_available()?;
+        preserve_release_authority(backup_root, release_manifest_path, release_identity).await?;
+
+        let created_at_unix_ms = u64::try_from(robin_highscores::model::now_epoch_ms()?)?;
+        let identifier = format!(
+            "backup-v4-{created_at_unix_ms}-{}",
+            uuid::Uuid::now_v7().simple()
+        );
+        let partial = backup_root.join(format!(".{identifier}.partial"));
+        let complete = backup_root.join(&identifier);
+        create_backup_directory(&partial).await?;
+        set_private_directory(&partial).await?;
+        let backup_result = backup_locked(
+            config,
+            database,
+            replay,
+            campaign,
+            backup_lock,
+            &partial,
+            created_at_unix_ms,
+            release_identity,
+            restore_sources,
+        )
+        .await;
+        if let Err(error) = backup_result {
+            return Err(
+                cleanup_failed_partial_backup(&database, backup_root, &partial, error).await,
+            );
+        }
+        let manifest_bytes = read_bounded_regular_nofollow(
+            &partial.join("backup-manifest.json"),
+            u64::try_from(robin_highscores::backup::MAX_BACKUP_MANIFEST_BYTES)?,
+        )
+        .await?;
+        let manifest: BackupManifest = serde_json::from_slice(&manifest_bytes)?;
+        anyhow::ensure!(
+            canonical_json_bytes(&manifest)? == manifest_bytes,
+            "new backup manifest is not canonical before envelope publication"
+        );
+        backup_authority_source
+            .revalidate("backup authority HMAC key before envelope publication")?;
+        let envelope = BackupVerificationEnvelopeV2::new_authenticated(
+            identifier.clone(),
+            &manifest,
+            &backup_authority_key,
+        )?;
+        let envelope_path = partial.join("backup-verification-envelope.json");
+        write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
+        set_backup_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).await?;
+        sync_directory(&partial).await?;
+        refresh_backup_lock(&database, &backup_lock).await?;
+        let verified = match verify_backup_authenticated(&partial, &backup_authority_key).await {
+            Ok(verified) => verified,
+            Err(error) => {
+                remove_owned_partial_backup(backup_root, &partial)?;
+                return Err(error);
+            }
+        };
+        anyhow::ensure!(
+            (*verified.release_identity()) == *release_identity,
+            "verified backup release identity differs from the active installed release"
+        );
+        if robin_highscores::secure_fs::available_space(backup_root)?
+            < config.minimum_storage_free_bytes
+        {
+            remove_owned_partial_backup(backup_root, &partial)?;
+            anyhow::bail!("completed backup would violate the configured storage floor");
+        }
+        Ok(VerifiedPartialBackup {
+            identifier,
+            partial,
+            complete,
+            verified,
+        })
+    }
+
+    /// Re-read the verified manifest and build the bounded authenticated status
+    /// envelope bytes for `backup` without mutating any filesystem state.
+    async fn authenticated_status_bytes(
+        &self,
+        backup: &VerifiedPartialBackup,
+    ) -> anyhow::Result<Vec<u8>> {
+        let VerifiedPartialBackup {
+            identifier,
+            partial,
+            complete,
+            verified,
+        } = backup;
+        let backup_authority_source = &self.backup_authority_source;
+        let backup_authority_key = &self.backup_authority_key;
+        let maximum_status_bytes = self.maximum_status_bytes;
         let manifest_bytes = read_bounded_regular_nofollow(
             &partial.join("backup-manifest.json"),
             u64::try_from(robin_highscores::backup::MAX_BACKUP_MANIFEST_BYTES)?,
@@ -542,69 +717,102 @@ where
             .revalidate("backup authority HMAC key before status publication")?;
         let status = BackupStatusV4::new_authenticated(
             identifier.clone(),
-                        complete.to_string_lossy().into_owned(),
-                        manifest,
-                        &backup_authority_key,
-                    )?;
-                    status.verify(&backup_authority_key)?;
+            complete.to_string_lossy().into_owned(),
+            manifest,
+            &backup_authority_key,
+        )?;
+        status.verify(&backup_authority_key)?;
         let status_bytes = canonical_json_bytes(&status)?;
         anyhow::ensure!(
             status_bytes.len() <= maximum_status_bytes,
             "authenticated backup readiness envelope exceeds its byte limit"
         );
-        Ok::<_, anyhow::Error>(status_bytes)
+        Ok(status_bytes)
     }
-    .await;
-    let status_bytes = match status_bytes_result {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            remove_owned_partial_backup(backup_root, &partial)?;
-            return Err(error);
-        }
-    };
-    refresh_backup_lock(&database, &backup_lock).await?;
-    if let Err(error) = before_install().and_then(|()| {
-        backup_authority_source.revalidate("backup authority HMAC key before backup installation")
-    }) {
-        remove_owned_partial_backup(backup_root, &partial)?;
-        return Err(error.context("backup authority changed before backup installation"));
-    }
-    match install_verified_partial(&partial, &complete, backup_root) {
-        Ok(BackupInstallOutcome::Installed) => {}
-        Ok(BackupInstallOutcome::InstalledButParentSyncFailed(error)) => {
-            anyhow::bail!(
-                "verified backup was installed at {} but backup-root durability sync failed; status was not published: {error:#}",
-                complete.display()
-            );
-        }
-        Err(error) => {
-            remove_owned_partial_backup(backup_root, &partial)?;
-            return Err(error);
-        }
-    }
-    let complete = tokio::fs::canonicalize(&complete).await?;
-    anyhow::ensure!(
-        complete == backup_root.join(&identifier),
-        "completed backup directory is not exactly backup-root/backup-id"
-    );
 
-    refresh_backup_lock(&database, &backup_lock).await?;
-    if let Err(error) = before_status_publication().and_then(|()| {
-        backup_authority_source.revalidate("backup authority HMAC key at status publication")
-    }) {
-        remove_owned_complete_backup(
-            backup_root,
-            &complete,
-            &identifier,
-            verified.tree(),
-            &backup_authority_key,
-        )?;
-        return Err(error.context("backup authority changed before status publication"));
-    }
-    let publication = match publish_status(status_path, &status_bytes) {
-        Ok(outcome) => outcome,
-        Err(publication_error) => {
+    /// Install the verified partial, publish its status envelope, then run
+    /// post-publication retention. Hooks fire at their original boundaries.
+    async fn install_and_publish<F, I, S>(
+        &self,
+        database: &Database,
+        backup_lock: &str,
+        backup: VerifiedPartialBackup,
+        status_bytes: Vec<u8>,
+        hooks: BackupHooks<F, I, S>,
+    ) -> anyhow::Result<PathBuf>
+    where
+        F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome>,
+        I: FnOnce() -> anyhow::Result<()>,
+        S: FnOnce() -> anyhow::Result<()>,
+    {
+        let BackupHooks {
+            publish_status,
+            before_install,
+            before_status_publication,
+        } = hooks;
+        let VerifiedPartialBackup {
+            identifier,
+            partial,
+            complete,
+            verified,
+        } = backup;
+        let release_identity = self.release_identity;
+        let backup_root = self.backup_root.as_path();
+        let status_path = self.status_path;
+        let retain_complete = self.retain_complete;
+        let backup_authority_source = &self.backup_authority_source;
+        let backup_authority_key = &self.backup_authority_key;
+        refresh_backup_lock(database, backup_lock).await?;
+        if let Err(error) = before_install().and_then(|()| {
+            backup_authority_source
+                .revalidate("backup authority HMAC key before backup installation")
+        }) {
+            remove_owned_partial_backup(backup_root, &partial)?;
+            return Err(error.context("backup authority changed before backup installation"));
+        }
+        match install_verified_partial(
+            PartialInstallRequest {
+                partial: &partial,
+                complete: &complete,
+                backup_root,
+            },
+            PartialInstallHooks::default(),
+        ) {
+            Ok(BackupInstallOutcome::Installed) => {}
+            Ok(BackupInstallOutcome::InstalledButParentSyncFailed(error)) => {
+                anyhow::bail!(
+                    "verified backup was installed at {} but backup-root durability sync failed; status was not published: {error:#}",
+                    complete.display()
+                );
+            }
+            Err(error) => {
+                remove_owned_partial_backup(backup_root, &partial)?;
+                return Err(error);
+            }
+        }
+        let complete = tokio::fs::canonicalize(&complete).await?;
+        anyhow::ensure!(
+            complete == backup_root.join(&identifier),
+            "completed backup directory is not exactly backup-root/backup-id"
+        );
+
+        refresh_backup_lock(&database, &backup_lock).await?;
+        if let Err(error) = before_status_publication().and_then(|()| {
+            backup_authority_source.revalidate("backup authority HMAC key at status publication")
+        }) {
             remove_owned_complete_backup(
+                backup_root,
+                &complete,
+                &identifier,
+                verified.tree(),
+                &backup_authority_key,
+            )?;
+            return Err(error.context("backup authority changed before status publication"));
+        }
+        let publication = match publish_status(status_path, &status_bytes) {
+            Ok(outcome) => outcome,
+            Err(publication_error) => {
+                remove_owned_complete_backup(
                 backup_root,
                 &complete,
                 &identifier,
@@ -617,69 +825,49 @@ where
                     complete.display()
                 )
             })?;
-            return Err(publication_error.context(
+                return Err(publication_error.context(
                 "status publication failed before installation; exact unreferenced backup removed",
             ));
-        }
-    };
-    match publication {
-        StatusPublicationOutcome::Published => {}
-        StatusPublicationOutcome::PublishedButParentSyncFailed(source) => {
-            return Err(StatusPublicationDurabilityUncertain {
-                path: status_path.to_owned(),
-                envelope_sha256: hex::encode(Sha256::digest(&status_bytes)),
-                source,
             }
-            .into());
-        }
-        StatusPublicationOutcome::PublishedButIdentityUncertain(source) => {
-            return Err(StatusPublicationIdentityUncertain {
-                path: status_path.to_owned(),
-                envelope_sha256: hex::encode(Sha256::digest(&status_bytes)),
-                source,
+        };
+        match publication {
+            StatusPublicationOutcome::Published => {}
+            StatusPublicationOutcome::PublishedButParentSyncFailed(source) => {
+                return Err(StatusPublicationDurabilityUncertain {
+                    path: status_path.to_owned(),
+                    envelope_sha256: hex::encode(Sha256::digest(&status_bytes)),
+                    source,
+                }
+                .into());
             }
-            .into());
+            StatusPublicationOutcome::PublishedButIdentityUncertain(source) => {
+                return Err(StatusPublicationIdentityUncertain {
+                    path: status_path.to_owned(),
+                    envelope_sha256: hex::encode(Sha256::digest(&status_bytes)),
+                    source,
+                }
+                .into());
+            }
         }
-    }
-    // Retention follows publication so the previously published backup is
-    // never removed while the old status still names it. If pruning fails,
-    // the command fails but the new authenticated status and backup remain a
-    // truthful, complete readiness boundary.
-    refresh_backup_lock(&database, &backup_lock).await?;
-    backup_authority_source.revalidate("backup authority HMAC key before final retention")?;
-    retain_complete_backups(
-        backup_root,
-        &identifier,
-                retain_complete,
-                retain_complete
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("retention generation bound overflows"))?,
-                release_identity,
-                &backup_authority_key,
-    )
-    .await?;
-    backup_authority_source.revalidate("backup authority HMAC key at backup completion")?;
-    Ok(complete)
-        },
-    )
-    .await;
-    let release = release_backup_gate_and_close_pool_under_exclusive_fence(
-        &database,
-        &backup_lock,
-        &exclusive_fence,
-    )
-    .await;
-    match (result, release) {
-        (Ok(value), Ok(true)) => Ok(value),
-        (Ok(_), Ok(false)) => anyhow::bail!("backup writer gate disappeared before release"),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(operation), Ok(true)) => Err(operation),
-        (Err(operation), Ok(false)) => {
-            Err(operation.context("backup failed and its writer gate disappeared before release"))
-        }
-        (Err(operation), Err(release)) => Err(operation.context(format!(
-            "backup failed and releasing its writer gate also failed: {release}"
-        ))),
+        // Retention follows publication so the previously published backup is
+        // never removed while the old status still names it. If pruning fails,
+        // the command fails but the new authenticated status and backup remain a
+        // truthful, complete readiness boundary.
+        refresh_backup_lock(&database, &backup_lock).await?;
+        backup_authority_source.revalidate("backup authority HMAC key before final retention")?;
+        retain_complete_backups(
+            backup_root,
+            &identifier,
+            retain_complete,
+            retain_complete
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("retention generation bound overflows"))?,
+            release_identity,
+            &backup_authority_key,
+        )
+        .await?;
+        backup_authority_source.revalidate("backup authority HMAC key at backup completion")?;
+        Ok(complete)
     }
 }
 
@@ -1029,20 +1217,23 @@ where
     }
 }
 
-fn publish_private_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<StatusPublicationOutcome> {
-    publish_private_atomic_with_hooks(path, bytes, sync_cap_directory, || Ok(()))
+/// Fault-injection boundaries for [`publish_private_atomic`]. `sync_parent`
+/// replaces the post-rename parent fsync (default: `sync_cap_directory`).
+#[derive(Default)]
+struct PrivatePublicationHooks<'a> {
+    sync_parent: Option<Box<dyn FnOnce(&cap_std::fs::Dir) -> anyhow::Result<()> + Send + 'a>>,
+    before_rename: BoundaryHook<'a>,
 }
 
-fn publish_private_atomic_with_hooks<S, R>(
+fn publish_private_atomic(
     path: &Path,
     bytes: &[u8],
-    sync_parent: S,
-    before_rename: R,
-) -> anyhow::Result<StatusPublicationOutcome>
-where
-    S: FnOnce(&cap_std::fs::Dir) -> anyhow::Result<()>,
-    R: FnOnce() -> anyhow::Result<()>,
-{
+    hooks: PrivatePublicationHooks<'_>,
+) -> anyhow::Result<StatusPublicationOutcome> {
+    let PrivatePublicationHooks {
+        sync_parent,
+        before_rename,
+    } = hooks;
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("backup status path has no parent"))?;
@@ -1082,7 +1273,7 @@ where
             );
         }
         drop(file);
-        before_rename()?;
+        run_boundary_hook(before_rename)?;
         {
             use std::os::fd::AsFd as _;
             rustix::fs::renameat_with(
@@ -1107,7 +1298,11 @@ where
         }
         return Err(error);
     }
-    if let Err(error) = sync_parent(&directory) {
+    let parent_sync = match sync_parent {
+        Some(sync_parent) => sync_parent(&directory),
+        None => sync_cap_directory(&directory),
+    };
+    if let Err(error) = parent_sync {
         return Ok(StatusPublicationOutcome::PublishedButParentSyncFailed(
             error,
         ));
@@ -1312,7 +1507,12 @@ async fn backup_locked(
     let pinned_sources = pin_backup_restore_sources(config, readable_sources, release_identity)?;
     let database_path = destination.join("highscores.sqlite3");
     database.online_backup_to(&database_path).await?;
-    scrub_transient_backup_state(&database_path, created_at_unix_ms).await?;
+    scrub_transient_backup_state(
+        &database_path,
+        created_at_unix_ms,
+        TransientScrubHooks::default(),
+    )
+    .await?;
     set_backup_permissions(&database_path, std::fs::Permissions::from_mode(0o600)).await?;
     let mut files = vec![record_file(destination, &database_path).await?];
     let mut restore_sources = vec![RestoreSource {
@@ -1373,10 +1573,13 @@ async fn backup_locked(
 
     let cursor_target = destination.join("restore/state/cursor-hmac.key");
     copy_pinned_restore_source(
-        pinned_sources
-            .get(&config.cursor_secret_path)
-            .ok_or_else(|| anyhow::anyhow!("pinned cursor secret is missing"))?,
-        &cursor_target,
+        RestoreSourceCopyRequest {
+            source: pinned_sources
+                .get(&config.cursor_secret_path)
+                .ok_or_else(|| anyhow::anyhow!("pinned cursor secret is missing"))?,
+            destination: &cursor_target,
+        },
+        RestoreSourceCopyHooks::default(),
     )
     .await?;
     files.push(record_file(destination, &cursor_target).await?);
@@ -1386,10 +1589,13 @@ async fn backup_locked(
     });
     let grant_target = destination.join("restore/state/competition-run-grant.key");
     copy_pinned_restore_source(
-        pinned_sources
-            .get(&config.competition_run_grant_secret_path)
-            .ok_or_else(|| anyhow::anyhow!("pinned competition-grant secret is missing"))?,
-        &grant_target,
+        RestoreSourceCopyRequest {
+            source: pinned_sources
+                .get(&config.competition_run_grant_secret_path)
+                .ok_or_else(|| anyhow::anyhow!("pinned competition-grant secret is missing"))?,
+            destination: &grant_target,
+        },
+        RestoreSourceCopyHooks::default(),
     )
     .await?;
     files.push(record_file(destination, &grant_target).await?);
@@ -1402,10 +1608,13 @@ async fn backup_locked(
     });
     let preflight_target = destination.join("restore/state/run-preflight-grant.key");
     copy_pinned_restore_source(
-        pinned_sources
-            .get(&config.run_preflight_grant_secret_path)
-            .ok_or_else(|| anyhow::anyhow!("pinned run-preflight secret is missing"))?,
-        &preflight_target,
+        RestoreSourceCopyRequest {
+            source: pinned_sources
+                .get(&config.run_preflight_grant_secret_path)
+                .ok_or_else(|| anyhow::anyhow!("pinned run-preflight secret is missing"))?,
+            destination: &preflight_target,
+        },
+        RestoreSourceCopyHooks::default(),
     )
     .await?;
     files.push(record_file(destination, &preflight_target).await?);
@@ -1423,10 +1632,13 @@ async fn backup_locked(
         .ok_or_else(|| anyhow::anyhow!("backup requires the moderation bearer secret"))?;
     let moderation_target = destination.join("restore/state/moderation-bearer.token");
     copy_pinned_restore_source(
-        pinned_sources
-            .get(moderation_original)
-            .ok_or_else(|| anyhow::anyhow!("pinned moderation secret is missing"))?,
-        &moderation_target,
+        RestoreSourceCopyRequest {
+            source: pinned_sources
+                .get(moderation_original)
+                .ok_or_else(|| anyhow::anyhow!("pinned moderation secret is missing"))?,
+            destination: &moderation_target,
+        },
+        RestoreSourceCopyHooks::default(),
     )
     .await?;
     files.push(record_file(destination, &moderation_target).await?);
@@ -1439,10 +1651,13 @@ async fn backup_locked(
         let original = Path::new(SYSTEMD_USER_ROOT).join(unit);
         let target = destination.join("restore/systemd/user").join(unit);
         copy_pinned_restore_source(
-            pinned_sources
-                .get(&original)
-                .ok_or_else(|| anyhow::anyhow!("pinned installed unit is missing: {unit}"))?,
-            &target,
+            RestoreSourceCopyRequest {
+                source: pinned_sources
+                    .get(&original)
+                    .ok_or_else(|| anyhow::anyhow!("pinned installed unit is missing: {unit}"))?,
+                destination: &target,
+            },
+            RestoreSourceCopyHooks::default(),
         )
         .await?;
         files.push(record_file(destination, &target).await?);
@@ -1485,22 +1700,21 @@ async fn backup_locked(
     Ok(())
 }
 
+/// Fault-injection boundary for [`scrub_transient_backup_state`]: runs after
+/// every scrub statement and before the transaction commits.
+#[derive(Default)]
+struct TransientScrubHooks<'a> {
+    after_updates: BoundaryHook<'a>,
+}
+
 async fn scrub_transient_backup_state(
     database_path: &Path,
     snapshot_at_unix_ms: u64,
+    hooks: TransientScrubHooks<'_>,
 ) -> anyhow::Result<()> {
-    scrub_transient_backup_state_with_hook(database_path, snapshot_at_unix_ms, || Ok(())).await
-}
-
-async fn scrub_transient_backup_state_with_hook<F>(
-    database_path: &Path,
-    snapshot_at_unix_ms: u64,
-    after_updates: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-{
     use futures_util::FutureExt as _;
+
+    let TransientScrubHooks { after_updates } = hooks;
 
     let snapshot_at_unix_ms = i64::try_from(snapshot_at_unix_ms)?;
     let options = SqliteConnectOptions::new()
@@ -1550,7 +1764,7 @@ where
         sqlx::query("DELETE FROM maintenance_locks")
             .execute(&mut *transaction)
             .await?;
-        after_updates()?;
+        run_boundary_hook(after_updates)?;
         transaction.commit().await?;
         Ok::<_, anyhow::Error>(())
     })
@@ -1644,26 +1858,31 @@ where
     }
 }
 
-fn install_verified_partial(
-    partial: &Path,
-    complete: &Path,
-    backup_root: &Path,
-) -> anyhow::Result<BackupInstallOutcome> {
-    install_verified_partial_with(partial, complete, || {
-        let directory = open_directory_nofollow(backup_root)?;
-        directory.sync_all()?;
-        Ok(())
-    })
+#[derive(Clone, Copy)]
+struct PartialInstallRequest<'a> {
+    partial: &'a Path,
+    complete: &'a Path,
+    backup_root: &'a Path,
 }
 
-fn install_verified_partial_with<F>(
-    partial: &Path,
-    complete: &Path,
-    sync_parent: F,
-) -> anyhow::Result<BackupInstallOutcome>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-{
+/// Fault-injection boundary for [`install_verified_partial`]. `sync_parent`
+/// replaces the post-rename backup-root fsync (default: open and sync
+/// `backup_root`).
+#[derive(Default)]
+struct PartialInstallHooks<'a> {
+    sync_parent: BoundaryHook<'a>,
+}
+
+fn install_verified_partial(
+    request: PartialInstallRequest<'_>,
+    hooks: PartialInstallHooks<'_>,
+) -> anyhow::Result<BackupInstallOutcome> {
+    let PartialInstallRequest {
+        partial,
+        complete,
+        backup_root,
+    } = request;
+    let PartialInstallHooks { sync_parent } = hooks;
     sync_private_tree_bottom_up(partial)?;
     rustix::fs::renameat_with(
         rustix::fs::CWD,
@@ -1675,7 +1894,15 @@ where
     .map_err(|error| {
         anyhow::anyhow!("atomically install verified backup without replacement: {error}")
     })?;
-    Ok(match sync_parent() {
+    let parent_sync = match sync_parent {
+        Some(sync_parent) => sync_parent(),
+        None => (|| {
+            let directory = open_directory_nofollow(backup_root)?;
+            directory.sync_all()?;
+            Ok(())
+        })(),
+    };
+    Ok(match parent_sync {
         Ok(()) => BackupInstallOutcome::Installed,
         Err(error) => BackupInstallOutcome::InstalledButParentSyncFailed(error),
     })

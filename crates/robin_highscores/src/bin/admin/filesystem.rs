@@ -358,12 +358,15 @@ pub(super) fn remove_pinned_regular_via_tombstone(
         "{label} was substituted while moving to its deletion tombstone; the replacement was preserved"
     );
     unlink_pinned_regular(
-        parent,
-        tombstone_name,
-        &moved,
-        expected_identity,
-        expected_mode,
-        label,
+        UnlinkPinnedRegularRequest {
+            parent,
+            name: tombstone_name,
+            pinned: &moved,
+            expected_identity,
+            expected_mode,
+            label,
+        },
+        UnlinkPinnedRegularHooks::default(),
     )?;
     {
         use std::os::unix::fs::MetadataExt as _;
@@ -375,43 +378,50 @@ pub(super) fn remove_pinned_regular_via_tombstone(
     Ok(())
 }
 
+/// Optional fault-injection closure at one named TOCTOU boundary. Production
+/// passes `None` (via the owning `*Hooks::default()`); tests inject failures or
+/// races. Invoked at most once, exactly where the positional closure used to be.
+pub(super) type BoundaryHook<'a> = Option<Box<dyn FnOnce() -> anyhow::Result<()> + Send + 'a>>;
+
+/// Run an optional boundary hook; an absent hook is a successful no-op.
+pub(super) fn run_boundary_hook(hook: BoundaryHook<'_>) -> anyhow::Result<()> {
+    hook.map_or(Ok(()), |hook| hook())
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct UnlinkPinnedRegularRequest<'a> {
+    pub parent: &'a cap_std::fs::Dir,
+    pub name: &'a str,
+    pub pinned: &'a std::fs::File,
+    pub expected_identity: FileIdentity,
+    pub expected_mode: u32,
+    pub label: &'a str,
+}
+
+#[derive(Default)]
+pub(super) struct UnlinkPinnedRegularHooks<'a> {
+    pub before_unlink: BoundaryHook<'a>,
+}
+
 pub(super) fn unlink_pinned_regular(
-    parent: &cap_std::fs::Dir,
-    name: &str,
-    pinned: &std::fs::File,
-    expected_identity: FileIdentity,
-    expected_mode: u32,
-    label: &str,
+    request: UnlinkPinnedRegularRequest<'_>,
+    hooks: UnlinkPinnedRegularHooks<'_>,
 ) -> anyhow::Result<()> {
-    unlink_pinned_regular_with_hook(
+    let UnlinkPinnedRegularRequest {
         parent,
         name,
         pinned,
         expected_identity,
         expected_mode,
         label,
-        || Ok(()),
-    )
-}
-
-pub(super) fn unlink_pinned_regular_with_hook<F>(
-    parent: &cap_std::fs::Dir,
-    name: &str,
-    pinned: &std::fs::File,
-    expected_identity: FileIdentity,
-    expected_mode: u32,
-    label: &str,
-    before_unlink: F,
-) -> anyhow::Result<()>
-where
-    F: FnOnce() -> anyhow::Result<()>,
-{
+    } = request;
+    let UnlinkPinnedRegularHooks { before_unlink } = hooks;
     validate_private_pinned_file(pinned, expected_mode, label)?;
     anyhow::ensure!(
         metadata_identity_std(&pinned.metadata()?) == expected_identity,
         "{label} pinned authority changed before removal"
     );
-    before_unlink()?;
+    run_boundary_hook(before_unlink)?;
     let current = open_cap_regular_nofollow(parent, Path::new(name))?;
     validate_private_pinned_file(pinned, expected_mode, label)?;
     validate_private_pinned_file(&current, expected_mode, label)?;
