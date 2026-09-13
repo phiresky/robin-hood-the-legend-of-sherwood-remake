@@ -356,7 +356,14 @@ impl EnemyAi {
                     .launch_commands
                     .push(crate::element::Command::EquipBowDown);
             } else {
-                self.i_am_in_trouble(self.required_primary_target("reacting to an enemy").get());
+                self.i_am_in_trouble(
+                    self.required(
+                        self.base.primary_target,
+                        "a primary target",
+                        "reacting to an enemy",
+                    )
+                    .get(),
+                );
                 self.battle_decisions(env, global);
             }
         }
@@ -392,8 +399,12 @@ impl EnemyAi {
         {
             self.base.stop_all();
             self.i_am_in_trouble(
-                self.required_primary_target("finishing a running reaction")
-                    .get(),
+                self.required(
+                    self.base.primary_target,
+                    "a primary target",
+                    "finishing a running reaction",
+                )
+                .get(),
             );
             self.battle_decisions(env, global);
             if debug_decision_path {
@@ -673,7 +684,11 @@ impl EnemyAi {
                 // state or positions, it does not become stale when the
                 // per-tick fighter registry omits the owner.
                 .unwrap_or(self.sword_range);
-            let target_handle = self.required_primary_target("approaching a newly selected enemy");
+            let target_handle = self.required(
+                self.base.primary_target,
+                "a primary target",
+                "approaching a newly selected enemy",
+            );
             let target = self.find_fighter(target_handle, tick).unwrap_or_else(|| {
                 panic!(
                     "AttackingApproachingNewEnemy primary target {target_handle} is missing its required fighter snapshot"
@@ -1030,8 +1045,12 @@ impl EnemyAi {
             if safe_to_shoot {
                 self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
                 self.shoot_arrow_at(
-                    self.required_primary_target("shooting an aimed arrow")
-                        .get(),
+                    self.required(
+                        self.base.primary_target,
+                        "a primary target",
+                        "shooting an aimed arrow",
+                    )
+                    .get(),
                     ctx,
                 );
             } else {
@@ -1657,7 +1676,12 @@ impl EnemyAi {
                         // soldier's guarded_pc and the PC's reciprocal
                         // guard.
                         self.set_guarded_pc(Some(crate::entity_id::PcId(
-                            self.required_primary_target("menacing a comatose PC").get(),
+                            self.required(
+                                self.base.primary_target,
+                                "a primary target",
+                                "menacing a comatose PC",
+                            )
+                            .get(),
                         )));
                     }
                     self.base.launch_timer(20, ctx.frame);
@@ -2159,8 +2183,12 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
             self.i_am_in_trouble(
-                self.required_primary_target("finishing an archer bend reaction")
-                    .get(),
+                self.required(
+                    self.base.primary_target,
+                    "a primary target",
+                    "finishing an archer bend reaction",
+                )
+                .get(),
             );
             self.battle_decisions(env, global);
         }

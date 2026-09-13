@@ -996,7 +996,7 @@ impl EnemyAi {
                 StimulusType::EventMyTalk1
                     // antagonist.think(CallYourTalk1)
                     if self.base.antagonist.is_some() => {
-                        let antagonist = self.required_antagonist("chasing an apple-throwing child");
+                        let antagonist = self.required(self.base.antagonist, "an antagonist","chasing an apple-throwing child");
                         self.base
                             .outbox.reentrant.cross_npc_actions
                             .push(CrossNpcAction::SendStimulus {
@@ -1491,7 +1491,11 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            let body = self.required_detected_body("reacting to a body");
+            let body = self.required(
+                self.base.detected_body,
+                "a detected body",
+                "reacting to a body",
+            );
             let v = ctx.expect_entity_view(body, "loot-approach body");
             let body_pos = v.position;
             let is_tied = v.posture == crate::element::Posture::Tied;
@@ -2396,7 +2400,11 @@ impl EnemyAi {
         // position (set by seek_next_point → go_near).
         // On arrival, stop and begin identification.
         if stimulus_type == StimulusType::EventReachPoint {
-            let beggar = self.required_beggar_to_examine("approaching a beggar seek point");
+            let beggar = self.required(
+                self.beggar_to_examine,
+                "a beggar-to-examine",
+                "approaching a beggar seek point",
+            );
             // The arrival is only an
             // identification when the beggar's max-norm distance is below 100.
             // The go_near(50) request only bounds the *path goal*; the beggar
@@ -2491,7 +2499,11 @@ impl EnemyAi {
         // First inspection phase: timer fires after the
         // menace/equip-bow animation completes.
         if stimulus_type == StimulusType::EventTimer {
-            let beggar = self.required_beggar_to_examine("identifying a beggar");
+            let beggar = self.required(
+                self.beggar_to_examine,
+                "a beggar-to-examine",
+                "identifying a beggar",
+            );
             // This logic queries
             // the examined beggar's NPC status at the instant this timer fires.
             // Do not use `beggar_is_npc`: it is only a compatibility cache
@@ -2757,7 +2769,11 @@ impl EnemyAi {
             //             about this body (and stand by for instructions)
             //   OFFICER → if body is far enough, delegate; else examine
             //   KNIGHT  → examine themselves
-            let body = self.required_detected_body("reacting to a body");
+            let body = self.required(
+                self.base.detected_body,
+                "a detected body",
+                "reacting to a body",
+            );
             let mut nearby_officer: Option<NpcHandle> = None;
             let mut look_for_soldiers = false;
 
@@ -2849,7 +2865,11 @@ impl EnemyAi {
             // The timer only watches for a body that has recovered
             // while we are travelling. Body examination itself is
             // exclusively driven by EVENT_REACHPOINT in the original.
-            let body_handle = self.required_detected_body("travelling toward a body");
+            let body_handle = self.required(
+                self.base.detected_body,
+                "a detected body",
+                "travelling toward a body",
+            );
             let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
                 panic!("SeekingBody timer target {body_handle} has no typed live entity view")
             });
@@ -2859,7 +2879,11 @@ impl EnemyAi {
                 self.base.launch_timer(10, ctx.frame);
             }
         } else if stimulus_type == StimulusType::EventReachPoint {
-            let body_handle = self.required_detected_body("reaching a body");
+            let body_handle = self.required(
+                self.base.detected_body,
+                "a detected body",
+                "reaching a body",
+            );
             let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
                 panic!("SeekingBody target {body_handle} has no typed live entity view")
             });
@@ -3450,7 +3474,11 @@ impl EnemyAi {
     fn seeking_officer_call_soldier(&mut self, stimulus_type: StimulusType) -> bool {
         // Officer turned to face soldier, now calls them
         if stimulus_type == StimulusType::EventDone {
-            let antagonist = self.required_antagonist("calling an individual soldier");
+            let antagonist = self.required(
+                self.base.antagonist,
+                "an antagonist",
+                "calling an individual soldier",
+            );
             self.base
                 .outbox
                 .reentrant
@@ -3475,7 +3503,11 @@ impl EnemyAi {
         // Officer waits for soldier to approach
         match stimulus_type {
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("waiting for a called soldier");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting for a called soldier",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -3519,7 +3551,11 @@ impl EnemyAi {
                     .say_with_flags(Remark::OfficerSendsOutSoldier, SpeechFlags::MYTALK_1);
             }
             StimulusType::EventMyTalk1 => {
-                let antagonist = self.required_antagonist("instructing a soldier");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "instructing a soldier",
+                );
                 // I said "Soldier! Examine this place!"
                 self.base
                     .outbox
@@ -3546,7 +3582,11 @@ impl EnemyAi {
                 self.base.launch_timer(30, ctx.frame);
             }
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("waiting for an instructed soldier");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting for an instructed soldier",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -3577,8 +3617,11 @@ impl EnemyAi {
                 self.base.say(Remark::OfficerAsksWhatsup);
             }
             StimulusType::EventTimer => {
-                let antagonist =
-                    self.required_antagonist("waiting for an instructed soldier to return");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting for an instructed soldier to return",
+                );
                 let ant = tick
                     .camp_soldiers
                     .iter()
@@ -3641,7 +3684,11 @@ impl EnemyAi {
                 let soldier = match stimulus.info {
                     StimulusInfo::Human(h) => h.get(),
                     _ => self
-                        .required_antagonist("receiving an instructed soldier report")
+                        .required(
+                            self.base.antagonist,
+                            "an antagonist",
+                            "receiving an instructed soldier report",
+                        )
                         .get(),
                 };
                 if !self.get_report_from_soldier(soldier, false, ctx, tick) {
@@ -3688,7 +3735,11 @@ impl EnemyAi {
     ) -> bool {
         // Soldier called by officer, approach on timer
         if stimulus_type == StimulusType::EventTimer {
-            let antagonist = self.required_antagonist("approaching a calling officer");
+            let antagonist = self.required(
+                self.base.antagonist,
+                "an antagonist",
+                "approaching a calling officer",
+            );
             let officer_pos = tick
                 .camp_soldiers
                 .iter()
@@ -3726,7 +3777,11 @@ impl EnemyAi {
         // Soldier walking to officer
         match stimulus_type {
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("walking to a calling officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "walking to a calling officer",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -3739,7 +3794,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
-                let antagonist = self.required_antagonist("reaching a calling officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "reaching a calling officer",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -3781,7 +3840,11 @@ impl EnemyAi {
         // Soldier receiving instructions from officer
         match stimulus_type {
             StimulusType::EventMyTalk1 => {
-                let antagonist = self.required_antagonist("receiving officer instructions");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "receiving officer instructions",
+                );
                 // I said "What's your order, Sir?"
                 self.base
                     .outbox
@@ -3805,7 +3868,11 @@ impl EnemyAi {
                     .detected_body
                     .is_some_and(|body| self.already_seen_bodies.contains(&body.get()))
                 {
-                    let antagonist = self.required_antagonist("declining an already examined body");
+                    let antagonist = self.required(
+                        self.base.antagonist,
+                        "an antagonist",
+                        "declining an already examined body",
+                    );
                     // Already examined — skip search, return to officer
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
@@ -3827,7 +3894,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventMyTalk2 => {
-                let antagonist = self.required_antagonist("accepting officer instructions");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "accepting officer instructions",
+                );
                 // I said "Sir, yes, Sir!"
                 // Original captures the officer's selected body before
                 // delivering CALL_YOURTALK_2, which can advance the
@@ -3880,8 +3951,11 @@ impl EnemyAi {
                 );
             }
             StimulusType::EventTimer => {
-                let antagonist =
-                    self.required_antagonist("waiting for officer instruction completion");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting for officer instruction completion",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -3948,8 +4022,11 @@ impl EnemyAi {
                 match ant_substate {
                     Substate::SeekingOfficerWaitForInstructedSoldier
                     | Substate::SeekingOfficerWaitForInstructedGroup => {
-                        let antagonist =
-                            self.required_antagonist("starting a report to an officer");
+                        let antagonist = self.required(
+                            self.base.antagonist,
+                            "an antagonist",
+                            "starting a report to an officer",
+                        );
                         self.base.outbox.reentrant.owner_work.push(
                             crate::ai::AiOwnerWork::BeginSoldierGiveReport {
                                 officer: antagonist.get(),
@@ -3976,7 +4053,11 @@ impl EnemyAi {
         // Soldier gives report to officer
         match stimulus_type {
             StimulusType::EventMyTalk1 => {
-                let antagonist = self.required_antagonist("giving a report to an officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "giving a report to an officer",
+                );
                 self.base
                     .outbox
                     .reentrant
@@ -4207,7 +4288,11 @@ impl EnemyAi {
                 let soldier = match stimulus.info {
                     StimulusInfo::Human(h) => h.get(),
                     _ => self
-                        .required_antagonist("receiving an instructed group report")
+                        .required(
+                            self.base.antagonist,
+                            "an antagonist",
+                            "receiving an instructed group report",
+                        )
                         .get(),
                 };
                 if !self.get_report_from_soldier(soldier, true, ctx, tick) {
@@ -4342,7 +4427,11 @@ impl EnemyAi {
                 // ReachPoint -> Turn sequence ordering.
                 self.base.go_to(self.gather_position, GotoFlags::RUN, ctx);
             } else {
-                let antagonist = self.required_antagonist("joining a called officer group");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "joining a called officer group",
+                );
                 let officer_pos = tick
                     .camp_soldiers
                     .iter()
@@ -4374,7 +4463,11 @@ impl EnemyAi {
         let ThinkEnv { ctx, tick, .. } = env;
         match stimulus_type {
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("travelling to a group officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "travelling to a group officer",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -4408,7 +4501,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventDone => {
-                let antagonist = self.required_antagonist("finishing travel to a group officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "finishing travel to a group officer",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -4599,7 +4696,11 @@ impl EnemyAi {
         // Soldier reached officer, starting report
         match stimulus_type {
             StimulusType::EventMyTalk0 => {
-                let antagonist = self.required_antagonist("starting an officer report");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "starting an officer report",
+                );
                 // Forward talk to officer
                 let ant_substate = tick
                     .camp_soldiers
@@ -4626,7 +4727,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("waiting during an officer report");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting during an officer report",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -4646,7 +4751,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
-                let antagonist = self.required_antagonist("reaching an officer to report");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "reaching an officer to report",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -4723,7 +4832,11 @@ impl EnemyAi {
             stimulus_type,
             StimulusType::EventMyTalk1 | StimulusType::EventTimer
         ) {
-            let antagonist = self.required_antagonist("giving an alerting report");
+            let antagonist = self.required(
+                self.base.antagonist,
+                "an antagonist",
+                "giving an alerting report",
+            );
             let officer_report = tick
                 .camp_soldiers
                 .iter()
@@ -4845,7 +4958,11 @@ impl EnemyAi {
                 self.base.say(Remark::OfficerAsksWhatsup);
             }
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("waiting for an alerting soldier");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "waiting for an alerting soldier",
+                );
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
@@ -4870,7 +4987,11 @@ impl EnemyAi {
                 let soldier = match stimulus.info {
                     StimulusInfo::Human(h) => h.get(),
                     _ => self
-                        .required_antagonist("receiving an alerting soldier report")
+                        .required(
+                            self.base.antagonist,
+                            "an antagonist",
+                            "receiving an alerting soldier report",
+                        )
                         .get(),
                 };
                 if !self.get_report_from_soldier(soldier, false, ctx, tick) {
@@ -4903,7 +5024,11 @@ impl EnemyAi {
                 );
             }
             StimulusType::EventMyTalk1 => {
-                let antagonist = self.required_antagonist("answering an alerting soldier");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "answering an alerting soldier",
+                );
                 self.base
                     .outbox
                     .reentrant
@@ -5264,7 +5389,11 @@ impl EnemyAi {
                     self.return_to_duty_default(env);
                     return false;
                 };
-                let antagonist = self.required_antagonist("sending Charly to another officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "sending Charly to another officer",
+                );
                 self.base.outbox.reentrant.cross_npc_actions.push(
                     CrossNpcAction::RequestThinkResult {
                         target: charly.get(),
@@ -5341,7 +5470,11 @@ impl EnemyAi {
         let ThinkEnv { ctx, .. } = env;
         match stimulus_type {
             StimulusType::EventTimer => {
-                let antagonist = self.required_antagonist("reporting back to an officer");
+                let antagonist = self.required(
+                    self.base.antagonist,
+                    "an antagonist",
+                    "reporting back to an officer",
+                );
                 // The original game checks whether this actor detects the antagonist. This is
                 // the normal live view cone, not the 360° helper.
                 if self.is_detecting(antagonist, ctx) {
@@ -5450,7 +5583,7 @@ impl EnemyAi {
                 StimulusType::EventMyTalk1
                     // antagonist.think(CallYourTalk1)
                     if self.base.antagonist.is_some() => {
-                        let antagonist = self.required_antagonist("answering an officer lecture");
+                        let antagonist = self.required(self.base.antagonist, "an antagonist","answering an officer lecture");
                         self.base
                             .outbox.reentrant.cross_npc_actions
                             .push(CrossNpcAction::SendStimulus {
@@ -5531,7 +5664,8 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventMyTalk1 if self.base.antagonist.is_some() => {
-                let antagonist = self.required_antagonist("lecturing Charly");
+                let antagonist =
+                    self.required(self.base.antagonist, "an antagonist", "lecturing Charly");
                 self.base
                     .outbox
                     .reentrant

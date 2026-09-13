@@ -425,44 +425,12 @@ pub struct EnemyAi {
 }
 
 impl EnemyAi {
+    /// Unwrap a field the current substate requires to be set, panicking with
+    /// the owner, the field (`what`, e.g. "an antagonist") and the substate
+    /// `context` otherwise.
     #[track_caller]
-    fn required_primary_target(&self, context: &'static str) -> AiEntityHandle {
-        self.base.primary_target.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a primary target while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_antagonist(&self, context: &'static str) -> AiEntityHandle {
-        self.base.antagonist.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires an antagonist while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_beggar_to_examine(&self, context: &'static str) -> AiEntityHandle {
-        self.beggar_to_examine.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a beggar-to-examine while {context}",
-                self.base.me
-            )
-        })
-    }
-
-    #[track_caller]
-    fn required_detected_body(&self, context: &'static str) -> AiEntityHandle {
-        self.base.detected_body.unwrap_or_else(|| {
-            panic!(
-                "enemy AI {} requires a detected body while {context}",
-                self.base.me
-            )
-        })
+    fn required<T>(&self, value: Option<T>, what: &'static str, context: &'static str) -> T {
+        value.unwrap_or_else(|| panic!("enemy AI {} requires {what} while {context}", self.base.me))
     }
 
     /// Clear both combat-neighbour links and synchronously request the two

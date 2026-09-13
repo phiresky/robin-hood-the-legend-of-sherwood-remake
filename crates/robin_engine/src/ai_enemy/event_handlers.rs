@@ -2129,7 +2129,11 @@ impl EnemyAi {
                         )
                     })
                     .position;
-                let target = self.required_primary_target("resuming a failed ladder route");
+                let target = self.required(
+                    self.base.primary_target,
+                    "a primary target",
+                    "resuming a failed ladder route",
+                );
                 let avenger_wait_position =
                     tick.avenger_wait_position_for(self.base.primary_target);
                 self.base.couldnt_reachpoint = true;
