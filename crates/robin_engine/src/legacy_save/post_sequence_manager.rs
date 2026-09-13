@@ -7,12 +7,12 @@
 //! sequence-element IDs. These are IDs, not phase-one element references.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::{hex16, reserve};
+use super::read_helpers::hex16;
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{LegacySequenceElementRef, read_sequence_element_ref};
@@ -53,10 +53,14 @@ pub struct LegacySequenceStaticIds {
     pub sequence_element_next_id: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacySequencePayloadLimits)]
 pub struct LegacyManagedSequence {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(read = read_sequence_with_pre_serialization(reader, ctx))]
     pub body: LegacyInlineSequence,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
@@ -128,31 +132,15 @@ impl LegacySequenceManagerState {
             };
 
             let sequence_count = reader.read_count_u32("sequences.count", limits.sequences)?;
-            let mut sequences = Vec::new();
-            reserve(reader, &mut sequences, sequence_count, "sequences")?;
-            for index in 0..sequence_count {
-                sequences.push(reader.scope(format!("sequences[{index}]"), |reader| {
-                    Ok(LegacyManagedSequence {
-                        start_offset: reader.offset(),
-                        body: read_sequence_with_pre_serialization(reader, &limits.payload)?,
-                        end_offset: reader.offset(),
-                    })
-                })?);
-            }
+            let sequences = reader.read_list("sequences", sequence_count, |reader, item| {
+                LegacyManagedSequence::read_field(reader, item, &limits.payload)
+            })?;
 
             let deferred_count =
                 reader.read_count_u32("deferred_elements.count", limits.deferred_elements)?;
-            let mut deferred_elements = Vec::new();
-            reserve(
-                reader,
-                &mut deferred_elements,
-                deferred_count,
-                "deferred_elements",
-            )?;
-            for index in 0..deferred_count {
-                deferred_elements.push(reader.scope(
-                    format!("deferred_elements[{index}]"),
-                    |reader| {
+            let deferred_elements =
+                reader.read_list("deferred_elements", deferred_count, |reader, item| {
+                    reader.scope(item, |reader| {
                         let offset = reader.offset();
                         let element = read_sequence_element_ref(reader, "element")?;
                         if element.0.is_none() {
@@ -164,9 +152,8 @@ impl LegacySequenceManagerState {
                             ));
                         }
                         Ok(LegacyDeferredSequenceElement { offset, element })
-                    },
-                )?);
-            }
+                    })
+                })?;
 
             validate_ids(reader, &static_ids, &sequences, &deferred_elements)?;
             let end_offset = reader.offset();
@@ -197,25 +184,14 @@ fn validate_ids(
     sequences: &[LegacyManagedSequence],
     deferred_elements: &[LegacyDeferredSequenceElement],
 ) -> LegacyResult<()> {
-    let mut sequence_ids = HashSet::new();
     let manager_sequence_ids = sequences
         .iter()
         .map(|sequence| sequence.body.unique_id.0)
         .collect::<HashSet<_>>();
-    let mut element_ids = HashSet::new();
-    let mut order_ids = HashSet::new();
-    let mut manager_element_ids = HashSet::new();
+    let mut ids = SequenceIdSets::default();
 
     for sequence in sequences {
-        collect_sequence_ids(
-            reader,
-            &sequence.body,
-            true,
-            &mut sequence_ids,
-            &mut element_ids,
-            &mut order_ids,
-            &mut manager_element_ids,
-        )?;
+        collect_sequence_ids(reader, &sequence.body, true, &mut ids)?;
     }
 
     validate_next_id(
@@ -223,34 +199,34 @@ fn validate_ids(
         static_ids.order_next_id_offset,
         "order_static.next_id",
         static_ids.order_next_id,
-        order_ids.iter().copied().max(),
+        ids.orders.iter().copied().max(),
     )?;
     validate_next_id(
         reader,
         static_ids.sequence_next_id_offset,
         "sequence_static.next_id",
         static_ids.sequence_next_id,
-        sequence_ids.iter().copied().max(),
+        ids.sequences.iter().copied().max(),
     )?;
     validate_next_id(
         reader,
         static_ids.sequence_element_next_id_offset,
         "sequence_element_static.next_id",
         static_ids.sequence_element_next_id,
-        element_ids.iter().copied().max(),
+        ids.elements.iter().copied().max(),
     )?;
 
     for sequence in sequences {
         validate_fixups(
             reader,
             &sequence.body,
-            &manager_element_ids,
+            &ids.manager_elements,
             &manager_sequence_ids,
         )?;
     }
     for deferred in deferred_elements {
         let id = deferred.element.0.expect("non-null checked while reading");
-        if !manager_element_ids.contains(&id) {
+        if !ids.manager_elements.contains(&id) {
             return Err(reader.invalid_value(
                 deferred.offset,
                 "deferred_elements.element",
@@ -272,18 +248,24 @@ fn validate_ids(
     Ok(())
 }
 
+/// Unique-ID sets accumulated while walking every manager-owned sequence.
+#[derive(Default)]
+struct SequenceIdSets {
+    sequences: HashSet<u32>,
+    elements: HashSet<u32>,
+    orders: HashSet<u32>,
+    manager_elements: HashSet<u32>,
+}
+
 fn collect_sequence_ids(
     reader: &mut LegacyReader<'_>,
     sequence: &LegacyInlineSequence,
     manager_owned: bool,
-    sequence_ids: &mut HashSet<u32>,
-    element_ids: &mut HashSet<u32>,
-    order_ids: &mut HashSet<u32>,
-    manager_element_ids: &mut HashSet<u32>,
+    ids: &mut SequenceIdSets,
 ) -> LegacyResult<()> {
     insert_unique(
         reader,
-        sequence_ids,
+        &mut ids.sequences,
         sequence.unique_id.0,
         "sequence.unique_id",
         "a unique sequence ID",
@@ -292,18 +274,18 @@ fn collect_sequence_ids(
         let base = element.base();
         insert_unique(
             reader,
-            element_ids,
+            &mut ids.elements,
             base.unique_id.0,
             "sequence_element.unique_id",
             "a unique sequence-element ID",
         )?;
         if manager_owned {
-            manager_element_ids.insert(base.unique_id.0);
+            ids.manager_elements.insert(base.unique_id.0);
         }
         for order in &base.orders {
             insert_unique(
                 reader,
-                order_ids,
+                &mut ids.orders,
                 order.unique_id.0,
                 "order.unique_id",
                 "a unique order ID",
@@ -312,15 +294,7 @@ fn collect_sequence_ids(
         if let LegacyInlineSequenceElement::Movement(movement) = element
             && let Some(post_seek) = movement.post_seek_sequence.as_deref()
         {
-            collect_sequence_ids(
-                reader,
-                post_seek,
-                false,
-                sequence_ids,
-                element_ids,
-                order_ids,
-                manager_element_ids,
-            )?;
+            collect_sequence_ids(reader, post_seek, false, ids)?;
         }
     }
     Ok(())

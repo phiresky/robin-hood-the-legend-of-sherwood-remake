@@ -7,19 +7,17 @@
 //! top-level importer can compose these sections without guessing boundaries.
 //!
 //! Wire order follows the original game's engine, minimap, ground-mark, and
-//! titbit serialization.
+//! titbit serialization. Field declaration order is wire order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::read_count_u16;
-use super::read_helpers::{hex16, read_box2, read_point2, read_point3, reserve};
+use super::read_helpers::hex16;
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyContext, LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::payload_base::{
     LegacyBoundingBox2, LegacyElementRef, LegacyPoint2, LegacyPoint3, LegacySequenceElementRef,
-    read_element_ref, read_sequence_element_ref,
 };
 
 const FINGERPRINT_MINIMAP: [u8; 16] = hex16("50f6249a4ee7522862f2c5f5442ae167");
@@ -47,19 +45,31 @@ impl Default for LegacyPostSimpleLimits {
     }
 }
 
+/// Decode context shared by the post-simple sections.
+#[derive(Clone, Copy)]
+pub struct LegacyPostSimpleDecode<'a> {
+    pub abi_profile: LegacySaveAbiProfile,
+    pub limits: &'a LegacyPostSimpleLimits,
+}
+
 /// engine failed-path-request list.
 ///
 /// [`super::adopt_paths`] must restore the authoritative queue
 /// rather than synthesize a new path request from only actor and destination.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostSimpleDecode<'_>)]
 pub struct LegacyFailedPathRequests {
+    #[legacy(value = ctx.abi_profile)]
     pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(count_u16 = ctx.limits.failed_path_requests, count_name = "count")]
     pub requests: Vec<LegacyFailedPathRequest>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyFailedPathRequest {
     /// Raw 32-bit animation value written by enum serialization.
     pub action: i32,
@@ -85,39 +95,14 @@ impl LegacyFailedPathRequests {
         abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("failed_path_requests", |reader| {
-            let start_offset = reader.offset();
-            let count = read_count_u16(reader, "count", limits.failed_path_requests)?;
-            let mut requests = Vec::new();
-            reserve(reader, &mut requests, count, "requests")?;
-            for index in 0..count {
-                requests.push(reader.scope(format!("requests[{index}]"), |reader| {
-                    Ok(LegacyFailedPathRequest {
-                        action: reader.read_i32("action")?,
-                        reverse: reader.read_bool("reverse")?,
-                        use_first_point: reader.read_bool("use_first_point")?,
-                        tolerance: reader.read_f32("tolerance")?,
-                        speed: reader.read_u8("speed")?,
-                        area: reader.read_u16("area")?,
-                        half_diagonal_index: reader.read_u16("half_diagonal_index")?,
-                        layer: reader.read_u16("layer")?,
-                        sector: reader.read_u16("sector")?,
-                        time: reader.read_u32("time")?,
-                        goal: read_point2(reader, "goal")?,
-                        source: read_point2(reader, "source")?,
-                        actor: read_element_ref(reader, "actor")?,
-                        antagonist: read_element_ref(reader, "antagonist")?,
-                        sequence_element: read_sequence_element_ref(reader, "sequence_element")?,
-                    })
-                })?);
-            }
-            Ok(Self {
+        Self::read_field(
+            reader,
+            "failed_path_requests",
+            &LegacyPostSimpleDecode {
                 abi_profile,
-                start_offset,
-                requests,
-                end_offset: reader.offset(),
-            })
-        })
+                limits,
+            },
+        )
     }
 }
 
@@ -125,22 +110,29 @@ impl LegacyFailedPathRequests {
 ///
 /// [`super::adopt_simple`] returns this state to the host UI layer; it must not
 /// be dropped merely because the simulation does not own the minimap widget.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostSimpleDecode<'_>)]
 pub struct LegacyMinimapState {
+    #[legacy(value = ctx.abi_profile)]
     pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(fingerprint = FINGERPRINT_MINIMAP, expected = "minimap fingerprint")]
     pub go_in: bool,
     pub map_displayed: bool,
     pub transition_counter: f32,
     pub highlight_refresh: u32,
     pub close_after_highlight: bool,
+    /// This module is v48-only. The Original condition is version >= 25.
     pub restore: bool,
     pub memory_box: LegacyBoundingBox2,
+    #[legacy(count_u32 = ctx.limits.minimap_highlights)]
     pub highlighted_elements: Vec<LegacyMinimapHighlight>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyMinimapHighlight {
     pub element: LegacyElementRef,
     pub refresh: bool,
@@ -152,51 +144,14 @@ impl LegacyMinimapState {
         abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("minimap", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature("fingerprint", FINGERPRINT_MINIMAP, "minimap fingerprint")?;
-            let go_in = reader.read_bool("go_in")?;
-            let map_displayed = reader.read_bool("map_displayed")?;
-            let transition_counter = reader.read_f32("transition_counter")?;
-            let highlight_refresh = reader.read_u32("highlight_refresh")?;
-            let close_after_highlight = reader.read_bool("close_after_highlight")?;
-            // This module is v48-only. The Original condition is version >= 25.
-            let restore = reader.read_bool("restore")?;
-            let memory_box = read_box2(reader, "memory_box")?;
-            let count =
-                reader.read_count_u32("highlighted_elements.count", limits.minimap_highlights)?;
-            let mut highlighted_elements = Vec::new();
-            reserve(
-                reader,
-                &mut highlighted_elements,
-                count,
-                "highlighted_elements",
-            )?;
-            for index in 0..count {
-                highlighted_elements.push(reader.scope(
-                    format!("highlighted_elements[{index}]"),
-                    |reader| {
-                        Ok(LegacyMinimapHighlight {
-                            element: read_element_ref(reader, "element")?,
-                            refresh: reader.read_bool("refresh")?,
-                        })
-                    },
-                )?);
-            }
-            Ok(Self {
+        Self::read_field(
+            reader,
+            "minimap",
+            &LegacyPostSimpleDecode {
                 abi_profile,
-                start_offset,
-                go_in,
-                map_displayed,
-                transition_counter,
-                highlight_refresh,
-                close_after_highlight,
-                restore,
-                memory_box,
-                highlighted_elements,
-                end_offset: reader.offset(),
-            })
-        })
+                limits,
+            },
+        )
     }
 }
 
@@ -205,55 +160,42 @@ impl LegacyMinimapState {
 /// Every resolved entry must be a non-null player actor.
 /// Resolution must enforce those requirements; this byte-level
 /// reader cannot validate a reference before phase-one identities are wired.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Context: the maximum element count.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = usize)]
 pub struct LegacyElementSelection {
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(count_u32 = *ctx, count_name = "count")]
     pub elements: Vec<LegacyElementRef>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
 impl LegacyElementSelection {
     pub fn read(
         reader: &mut LegacyReader<'_>,
-        field: impl Into<std::borrow::Cow<'static, str>>,
+        field: impl Into<LegacyContext>,
         maximum: usize,
     ) -> LegacyResult<Self> {
-        reader.scope(field, |reader| {
-            let start_offset = reader.offset();
-            let count = reader.read_count_u32("count", maximum)?;
-            let mut elements = Vec::new();
-            reserve(reader, &mut elements, count, "elements")?;
-            for index in 0..count {
-                elements.push(read_element_ref(reader, format!("elements[{index}]"))?);
-            }
-            Ok(Self {
-                start_offset,
-                elements,
-                end_offset: reader.offset(),
-            })
-        })
+        Self::read_field(reader, field, &maximum)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyFollowViewRefs {
+    #[legacy(offset)]
     pub start_offset: u64,
     pub follow: LegacyElementRef,
     pub view: LegacyElementRef,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
 impl LegacyFollowViewRefs {
     pub fn read(reader: &mut LegacyReader<'_>) -> LegacyResult<Self> {
-        reader.scope("follow_view", |reader| {
-            let start_offset = reader.offset();
-            Ok(Self {
-                start_offset,
-                follow: read_element_ref(reader, "follow")?,
-                view: read_element_ref(reader, "view")?,
-                end_offset: reader.offset(),
-            })
-        })
+        Self::read_field(reader, "follow_view", &())
     }
 }
 
@@ -262,15 +204,24 @@ impl LegacyFollowViewRefs {
 /// [`super::adopt_simple`] preserves the current sprite frame exactly. Recreating a
 /// marker through the normal API starts its render lifetime at a different
 /// frame boundary and can cause a visible replay mismatch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostSimpleDecode<'_>)]
 pub struct LegacyGroundMarkState {
+    #[legacy(value = ctx.abi_profile)]
     pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(
+        fingerprint = FINGERPRINT_GROUND_MARK,
+        expected = "ground-mark fingerprint",
+        count_u32 = ctx.limits.ground_marks
+    )]
     pub marks: Vec<LegacyGroundMark>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyGroundMark {
     pub current_sprite_frame: u16,
     pub current_level: u16,
@@ -283,32 +234,14 @@ impl LegacyGroundMarkState {
         abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("ground_mark", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_GROUND_MARK,
-                "ground-mark fingerprint",
-            )?;
-            let count = reader.read_count_u32("marks.count", limits.ground_marks)?;
-            let mut marks = Vec::new();
-            reserve(reader, &mut marks, count, "marks")?;
-            for index in 0..count {
-                marks.push(reader.scope(format!("marks[{index}]"), |reader| {
-                    Ok(LegacyGroundMark {
-                        current_sprite_frame: reader.read_u16("current_sprite_frame")?,
-                        current_level: reader.read_u16("current_level")?,
-                        position: read_point2(reader, "position")?,
-                    })
-                })?);
-            }
-            Ok(Self {
+        Self::read_field(
+            reader,
+            "ground_mark",
+            &LegacyPostSimpleDecode {
                 abi_profile,
-                start_offset,
-                marks,
-                end_offset: reader.offset(),
-            })
-        })
+                limits,
+            },
+        )
     }
 }
 
@@ -322,16 +255,22 @@ impl LegacyGroundMarkState {
 /// [`super::adopt_simple`] rebuilds the render-owned blinking/dotted counters using
 /// the Original's load reset values while retaining every authoritative item,
 /// ID, phase, and reference below.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyPostSimpleDecode<'_>)]
 pub struct LegacyTitbitsState {
+    #[legacy(value = ctx.abi_profile)]
     pub abi_profile: LegacySaveAbiProfile,
+    #[legacy(offset)]
     pub start_offset: u64,
+    #[legacy(fingerprint = FINGERPRINT_TITBITS, expected = "hint-manager fingerprint")]
     pub current_id: u32,
+    #[legacy(name = "items", count_u32 = ctx.limits.titbits)]
     pub titbits: Vec<LegacyTitbit>,
+    #[legacy(offset)]
     pub end_offset: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyTitbit {
     /// Raw 32-bit titbit-kind value written by enum serialization.
     pub kind: i32,
@@ -355,44 +294,14 @@ impl LegacyTitbitsState {
         abi_profile: LegacySaveAbiProfile,
         limits: &LegacyPostSimpleLimits,
     ) -> LegacyResult<Self> {
-        reader.scope("titbits", |reader| {
-            let start_offset = reader.offset();
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_TITBITS,
-                "hint-manager fingerprint",
-            )?;
-            let current_id = reader.read_u32("current_id")?;
-            let count = reader.read_count_u32("items.count", limits.titbits)?;
-            let mut titbits = Vec::new();
-            reserve(reader, &mut titbits, count, "items")?;
-            for index in 0..count {
-                titbits.push(reader.scope(format!("items[{index}]"), |reader| {
-                    Ok(LegacyTitbit {
-                        kind: reader.read_i32("kind")?,
-                        frame_count: reader.read_u16("frame_count")?,
-                        sprite_frame: reader.read_u16("sprite_frame")?,
-                        sprite_row: reader.read_u16("sprite_row")?,
-                        phase: reader.read_u16("phase")?,
-                        display_order_first: reader.read_f32("display_order_first")?,
-                        display_order_effective: reader.read_f32("display_order_effective")?,
-                        layer: reader.read_u16("layer")?,
-                        blinking: reader.read_bool("blinking")?,
-                        id: reader.read_u32("id")?,
-                        element_info_supplier: read_element_ref(reader, "element_info_supplier")?,
-                        element_manager: read_element_ref(reader, "element_manager")?,
-                        position: read_point3(reader, "position")?,
-                    })
-                })?);
-            }
-            Ok(Self {
+        Self::read_field(
+            reader,
+            "titbits",
+            &LegacyPostSimpleDecode {
                 abi_profile,
-                start_offset,
-                current_id,
-                titbits,
-                end_offset: reader.offset(),
-            })
-        })
+                limits,
+            },
+        )
     }
 }
 

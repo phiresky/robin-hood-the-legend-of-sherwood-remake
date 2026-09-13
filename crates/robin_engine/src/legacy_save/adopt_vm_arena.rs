@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::{
     element::Entity,
@@ -16,15 +15,13 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    payload_base::LegacyElementRef,
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
     payload_dispatch::{LegacyElementPayload, LegacyElementPayloadStream},
     payload_vm::{LegacyVmMemberKind, LegacyVmMemberSection, LegacyVmMemberValue},
     post_grid::LegacyFastFindGridState,
     post_hiking::LegacyHikingGuideState,
+    vm_schema::{HANDLE_INDEX_MAX, check_location_topology},
 };
-
-const HANDLE_INDEX_MAX: usize = 0x0fff_ffff;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LegacyVmArenaOwner {
@@ -46,99 +43,9 @@ pub struct LegacyVmArenaPlan {
     locations: Vec<Option<ComputedScriptLocation>>,
 }
 
-#[derive(Debug, Error)]
-pub enum LegacyVmArenaError {
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error("serialized VM owner {owner:?} occurs more than once")]
-    DuplicateOwner { owner: LegacyVmArenaOwner },
-    #[error(
-        "serialized VM owner {owner:?} member {member} declares {kind:?}, but its decoded value is {value_kind}"
-    )]
-    MemberValueMismatch {
-        owner: LegacyVmArenaOwner,
-        member: String,
-        kind: LegacyVmMemberKind,
-        value_kind: &'static str,
-    },
-    #[error(
-        "serialized VM owner {owner:?} location member {member:?} references sector {sector}, but initialized topology has {count} sector slots"
-    )]
-    MissingSector {
-        owner: LegacyVmArenaOwner,
-        member: String,
-        sector: u16,
-        count: usize,
-    },
-    #[error(
-        "serialized VM owner {owner:?} location member {member:?} references layer {layer}, but initialized topology has {count} layers"
-    )]
-    MissingLayer {
-        owner: LegacyVmArenaOwner,
-        member: String,
-        layer: u16,
-        count: usize,
-    },
-    #[error(
-        "serialized VM owner {owner:?} location member {member:?} requires unrepresentable script handle index {index}"
-    )]
-    HandleOverflow {
-        owner: LegacyVmArenaOwner,
-        member: String,
-        index: usize,
-    },
-    #[error("VM adoption requested unplanned serialized owner {owner:?}")]
-    MissingOwner { owner: LegacyVmArenaOwner },
-    #[error(
-        "VM adoption owner {owner:?} has {actual} serialized Location members, but the shared arena reserved {expected}"
-    )]
-    OwnerLocationCountMismatch {
-        owner: LegacyVmArenaOwner,
-        expected: usize,
-        actual: usize,
-    },
-    #[error(
-        "serialized VM owner {owner:?} class is {saved:?}, but initialized class is {runtime:?}"
-    )]
-    ClassMismatch {
-        owner: LegacyVmArenaOwner,
-        saved: String,
-        runtime: String,
-    },
-    #[error(
-        "serialized VM owner {owner:?} member count is {saved}, but initialized class {class_name:?} has {runtime}"
-    )]
-    MemberCountMismatch {
-        owner: LegacyVmArenaOwner,
-        class_name: String,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error("serialized VM owner {owner:?} member {index} schema mismatch: {detail}")]
-    SchemaMismatch {
-        owner: LegacyVmArenaOwner,
-        index: usize,
-        detail: String,
-    },
-    #[error(
-        "serialized VM owner {owner:?} member {member:?} requires bytes {address}..{end}, outside initialized heap length {heap_len}"
-    )]
-    HeapRange {
-        owner: LegacyVmArenaOwner,
-        member: String,
-        heap_len: usize,
-        address: usize,
-        end: usize,
-    },
-    #[error(
-        "serialized VM owner {owner:?} {member_kind} member {member:?} resolves to wrong entity {entity_id}"
-    )]
-    WrongEntity {
-        owner: LegacyVmArenaOwner,
-        member_kind: &'static str,
-        member: String,
-        entity_id: crate::element::EntityId,
-    },
+/// Error context naming one serialized VM owner.
+fn owner_site(owner: LegacyVmArenaOwner) -> AdoptSite {
+    AdoptSite::owned(format!("serialized VM owner {owner:?}"))
 }
 
 impl LegacyVmArenaPlan {
@@ -150,7 +57,7 @@ impl LegacyVmArenaPlan {
         grid: &LegacyFastFindGridState,
         hiking: &LegacyHikingGuideState,
         global: Option<&LegacyVmMemberSection>,
-    ) -> Result<Self, LegacyVmArenaError> {
+    ) -> Result<Self, LegacyAdoptError> {
         let mut builder = LegacyVmArenaBuilder {
             engine,
             assets,
@@ -209,7 +116,7 @@ impl LegacyVmArenaPlan {
         &self,
         creation_order: u32,
         members: Option<&LegacyVmMemberSection>,
-    ) -> Result<usize, LegacyVmArenaError> {
+    ) -> Result<usize, LegacyAdoptError> {
         members
             .map(|members| self.owner_prefix(LegacyVmArenaOwner::Element(creation_order), members))
             .transpose()
@@ -222,18 +129,19 @@ impl LegacyVmArenaPlan {
         &self,
         owner: LegacyVmArenaOwner,
         members: &LegacyVmMemberSection,
-    ) -> Result<usize, LegacyVmArenaError> {
+    ) -> Result<usize, LegacyAdoptError> {
         let slice = self
             .slices
             .get(&owner)
-            .ok_or(LegacyVmArenaError::MissingOwner { owner })?;
+            .ok_or_else(|| owner_site(owner).error(AdoptErrorKind::UnplannedVmOwner))?;
         let actual = location_member_count(owner, members)?;
         if actual != slice.len {
-            return Err(LegacyVmArenaError::OwnerLocationCountMismatch {
-                owner,
-                expected: slice.len,
-                actual,
-            });
+            return Err(
+                owner_site(owner).error(AdoptErrorKind::VmOwnerLocationCountMismatch {
+                    expected: slice.len,
+                    actual,
+                }),
+            );
         }
         Ok(slice.start)
     }
@@ -250,29 +158,33 @@ impl LegacyVmArenaPlan {
     /// absolute Location allocation prefix.
     pub(crate) fn preflight_heap(
         &self,
-        engine: &EngineInner,
-        assets: &LevelAssets,
-        entities: &LegacyEntityFixups,
+        ctx: &AdoptCtx<'_>,
         owner: LegacyVmArenaOwner,
         saved: &LegacyVmMemberSection,
         class: &crate::scb::ClassEntry,
         current_heap: &[u8],
-    ) -> Result<Vec<u8>, LegacyVmArenaError> {
+    ) -> Result<Vec<u8>, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            ..
+        } = *ctx;
         let location_prefix = self.owner_prefix(owner, saved)?;
         if saved.class_name != class.class_name {
-            return Err(LegacyVmArenaError::ClassMismatch {
-                owner,
+            return Err(owner_site(owner).error(AdoptErrorKind::VmClassMismatch {
                 saved: saved.class_name.clone(),
                 runtime: class.class_name.clone(),
-            });
+            }));
         }
         if saved.members.len() != class.member_variables.len() {
-            return Err(LegacyVmArenaError::MemberCountMismatch {
-                owner,
-                class_name: class.class_name.clone(),
-                saved: saved.members.len(),
-                runtime: class.member_variables.len(),
-            });
+            return Err(
+                owner_site(owner).error(AdoptErrorKind::VmMemberCountMismatch {
+                    class_name: class.class_name.clone(),
+                    saved: saved.members.len(),
+                    runtime: class.member_variables.len(),
+                }),
+            );
         }
         let mut heap = current_heap.to_vec();
         let mut location_ordinal = 0;
@@ -283,55 +195,55 @@ impl LegacyVmArenaPlan {
             .enumerate()
         {
             super::vm_schema::check_member_schema(&saved_member.schema, runtime_member).map_err(
-                |detail| LegacyVmArenaError::SchemaMismatch {
-                    owner,
-                    index,
-                    detail,
+                |detail| {
+                    owner_site(owner).error(AdoptErrorKind::VmSchemaMismatch { index, detail })
                 },
             )?;
             let address = saved_member.schema.address as usize;
             let end = super::vm_schema::member_end(address, heap.len()).map_err(|end| {
-                LegacyVmArenaError::HeapRange {
-                    owner,
-                    member: saved_member.schema.name.clone(),
-                    heap_len: heap.len(),
-                    address,
-                    end,
-                }
+                owner_site(owner).field_error(
+                    saved_member.schema.name.clone(),
+                    AdoptErrorKind::VmHeapRange {
+                        heap_len: heap.len(),
+                        address,
+                        end,
+                    },
+                )
             })?;
             let bits = match (&saved_member.schema.kind, &saved_member.value) {
                 (LegacyVmMemberKind::Raw32 { .. }, LegacyVmMemberValue::Raw32 { bits }) => *bits,
                 (LegacyVmMemberKind::ActorRef, LegacyVmMemberValue::ActorRef(reference)) => {
-                    resolve_entity_handle(
+                    super::vm_schema::resolve_entity_handle(
                         engine,
                         entities,
-                        owner,
-                        &saved_member.schema.name,
-                        "Actor",
                         *reference,
                         Entity::is_actor,
-                    )?
+                    )
+                    .map_err(|error| {
+                        error.at(&owner_site(owner), &saved_member.schema.name, "Actor")
+                    })?
                 }
                 (LegacyVmMemberKind::ScrollRef, LegacyVmMemberValue::ScrollRef(reference)) => {
-                    resolve_entity_handle(
+                    super::vm_schema::resolve_entity_handle(
                         engine,
                         entities,
-                        owner,
-                        &saved_member.schema.name,
-                        "Scroll",
                         *reference,
                         |entity| matches!(entity, Entity::Scroll(_)),
-                    )?
+                    )
+                    .map_err(|error| {
+                        error.at(&owner_site(owner), &saved_member.schema.name, "Scroll")
+                    })?
                 }
                 (LegacyVmMemberKind::Location, LegacyVmMemberValue::Location(location)) => {
-                    let storage_index =
-                        location_prefix
-                            .checked_add(location_ordinal)
-                            .ok_or_else(|| LegacyVmArenaError::HandleOverflow {
-                                owner,
-                                member: saved_member.schema.name.clone(),
-                                index: usize::MAX,
-                            })?;
+                    let overflow = |index| {
+                        owner_site(owner).field_error(
+                            saved_member.schema.name.clone(),
+                            AdoptErrorKind::VmHandleOverflow { index },
+                        )
+                    };
+                    let storage_index = location_prefix
+                        .checked_add(location_ordinal)
+                        .ok_or_else(|| overflow(usize::MAX))?;
                     location_ordinal += 1;
                     if location.is_none() {
                         0
@@ -340,28 +252,21 @@ impl LegacyVmArenaPlan {
                             .scripts
                             .location_count
                             .checked_add(storage_index)
-                            .ok_or_else(|| LegacyVmArenaError::HandleOverflow {
-                                owner,
-                                member: saved_member.schema.name.clone(),
-                                index: usize::MAX,
-                            })?;
+                            .ok_or_else(|| overflow(usize::MAX))?;
                         if handle_index > HANDLE_INDEX_MAX {
-                            return Err(LegacyVmArenaError::HandleOverflow {
-                                owner,
-                                member: saved_member.schema.name.clone(),
-                                index: handle_index,
-                            });
+                            return Err(overflow(handle_index));
                         }
                         ScriptHandleCodec::location_handle_from_index(handle_index) as u32
                     }
                 }
                 _ => {
-                    return Err(LegacyVmArenaError::MemberValueMismatch {
-                        owner,
-                        member: saved_member.schema.name.clone(),
-                        kind: saved_member.schema.kind.clone(),
-                        value_kind: value_kind(&saved_member.value),
-                    });
+                    return Err(owner_site(owner).field_error(
+                        saved_member.schema.name.clone(),
+                        AdoptErrorKind::VmMemberValueMismatch {
+                            kind: saved_member.schema.kind.clone(),
+                            value_kind: value_kind(&saved_member.value),
+                        },
+                    ));
                 }
             };
             heap[address..end].copy_from_slice(&bits.to_le_bytes());
@@ -384,29 +289,6 @@ impl LegacyVmArenaPlan {
     }
 }
 
-fn resolve_entity_handle(
-    engine: &EngineInner,
-    entities: &LegacyEntityFixups,
-    owner: LegacyVmArenaOwner,
-    member: &str,
-    member_kind: &'static str,
-    reference: LegacyElementRef,
-    predicate: impl FnOnce(&Entity) -> bool,
-) -> Result<u32, LegacyVmArenaError> {
-    let Some(entity_id) = entities.resolve_element(reference)? else {
-        return Ok(0);
-    };
-    if !engine.world.entities.get(entity_id).is_some_and(predicate) {
-        return Err(LegacyVmArenaError::WrongEntity {
-            owner,
-            member_kind,
-            member: member.to_owned(),
-            entity_id,
-        });
-    }
-    Ok(ScriptHandleCodec::actor_handle(entity_id) as u32)
-}
-
 struct LegacyVmArenaBuilder<'a> {
     engine: &'a EngineInner,
     assets: &'a LevelAssets,
@@ -419,10 +301,10 @@ impl LegacyVmArenaBuilder<'_> {
         &mut self,
         owner: LegacyVmArenaOwner,
         members: &LegacyVmMemberSection,
-    ) -> Result<(), LegacyVmArenaError> {
+    ) -> Result<(), LegacyAdoptError> {
         let start = self.locations.len();
         if self.slices.contains_key(&owner) {
-            return Err(LegacyVmArenaError::DuplicateOwner { owner });
+            return Err(owner_site(owner).error(AdoptErrorKind::DuplicateVmOwner));
         }
         for member in &members.members {
             validate_value_variant(
@@ -435,22 +317,20 @@ impl LegacyVmArenaBuilder<'_> {
                 continue;
             };
             let storage_index = self.locations.len();
+            let overflow = |index| {
+                owner_site(owner).field_error(
+                    member.schema.name.clone(),
+                    AdoptErrorKind::VmHandleOverflow { index },
+                )
+            };
             let handle_index = self
                 .assets
                 .scripts
                 .location_count
                 .checked_add(storage_index)
-                .ok_or_else(|| LegacyVmArenaError::HandleOverflow {
-                    owner,
-                    member: member.schema.name.clone(),
-                    index: usize::MAX,
-                })?;
+                .ok_or_else(|| overflow(usize::MAX))?;
             if handle_index > HANDLE_INDEX_MAX {
-                return Err(LegacyVmArenaError::HandleOverflow {
-                    owner,
-                    member: member.schema.name.clone(),
-                    index: handle_index,
-                });
+                return Err(overflow(handle_index));
             }
             let converted = location
                 .as_ref()
@@ -459,26 +339,15 @@ impl LegacyVmArenaBuilder<'_> {
                         self.engine.world.fast_grid.level.sectors.len(),
                         |topology| topology.sectors.len(),
                     );
-                    if let Some(sector) = location.sector.0
-                        && usize::from(sector) >= sector_count
-                    {
-                        return Err(LegacyVmArenaError::MissingSector {
-                            owner,
-                            member: member.schema.name.clone(),
-                            sector,
-                            count: sector_count,
-                        });
-                    }
-                    let layer_count = self.engine.world.fast_grid.level.layers.len();
-                    if usize::from(location.layer) >= layer_count {
-                        return Err(LegacyVmArenaError::MissingLayer {
-                            owner,
-                            member: member.schema.name.clone(),
-                            layer: location.layer,
-                            count: layer_count,
-                        });
-                    }
-                    Ok(ComputedScriptLocation {
+                    check_location_topology(
+                        &owner_site(owner),
+                        &member.schema.name,
+                        location.sector.0,
+                        sector_count,
+                        location.layer,
+                        self.engine.world.fast_grid.level.layers.len(),
+                    )?;
+                    Ok::<_, LegacyAdoptError>(ComputedScriptLocation {
                         position: (location.position.x, location.position.y),
                         layer: Some(location.layer),
                         sector: location.sector.0,
@@ -506,7 +375,7 @@ impl LegacyVmArenaBuilder<'_> {
 fn location_member_count(
     owner: LegacyVmArenaOwner,
     members: &LegacyVmMemberSection,
-) -> Result<usize, LegacyVmArenaError> {
+) -> Result<usize, LegacyAdoptError> {
     let mut count = 0;
     for member in &members.members {
         validate_value_variant(
@@ -527,7 +396,7 @@ fn validate_value_variant(
     member: &str,
     kind: &LegacyVmMemberKind,
     value: &LegacyVmMemberValue,
-) -> Result<(), LegacyVmArenaError> {
+) -> Result<(), LegacyAdoptError> {
     let matches = matches!(
         (kind, value),
         (
@@ -548,15 +417,16 @@ fn validate_value_variant(
         return Ok(());
     }
     let value_kind = value_kind(value);
-    Err(LegacyVmArenaError::MemberValueMismatch {
-        owner,
-        member: member.to_owned(),
-        kind: kind.clone(),
-        value_kind,
-    })
+    Err(owner_site(owner).field_error(
+        member.to_owned(),
+        AdoptErrorKind::VmMemberValueMismatch {
+            kind: kind.clone(),
+            value_kind,
+        },
+    ))
 }
 
-fn value_kind(value: &LegacyVmMemberValue) -> &'static str {
+pub(super) fn value_kind(value: &LegacyVmMemberValue) -> &'static str {
     match value {
         LegacyVmMemberValue::Raw32 { .. } => "Raw32",
         LegacyVmMemberValue::ActorRef(_) => "ActorRef",
@@ -702,9 +572,11 @@ mod tests {
         };
         assert!(matches!(
             plan.owner_prefix(owner, &one_location(None)),
-            Err(LegacyVmArenaError::OwnerLocationCountMismatch {
-                expected: 0,
-                actual: 1,
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::VmOwnerLocationCountMismatch {
+                    expected: 0,
+                    actual: 1,
+                },
                 ..
             })
         ));
@@ -722,7 +594,10 @@ mod tests {
         section.members[0].schema.kind = LegacyVmMemberKind::ActorRef;
         assert!(matches!(
             location_member_count(LegacyVmArenaOwner::Element(7), &section),
-            Err(LegacyVmArenaError::MemberValueMismatch { .. })
+            Err(LegacyAdoptError {
+                kind: AdoptErrorKind::VmMemberValueMismatch { .. },
+                ..
+            })
         ));
     }
 }

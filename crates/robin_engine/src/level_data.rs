@@ -5502,7 +5502,7 @@ mod tests {
             assert_eq!(error.field, "open");
             assert!(matches!(
                 error.kind,
-                crate::legacy_io::LegacyIoErrorKind::SbFile(crate::sbfile::SbFileError::Read)
+                crate::legacy_io::LegacyIoErrorKind::SbFile(crate::sbfile::SbFileError::Read(_))
             ));
         };
         for failed_file in ["proto.rhp", "mission.rhm"] {

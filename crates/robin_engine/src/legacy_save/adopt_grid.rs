@@ -5,113 +5,27 @@
 //! Original array slot into a mutation-only plan. Applying that plan to the
 //! same candidate engine is then infallible.
 
-use thiserror::Error;
-
 use crate::{
     ai::{Position, RepulsivePoint},
     coordinates::MapVec,
     element::{Entity, EntityId},
-    engine::{EngineInner, LegacyGridGateAsset, LevelAssets},
+    engine::{EngineInner, LegacyGridGateAsset},
     fast_find_grid::LiftRuntimeState,
     gate::GateType,
     patch::OccupantId,
 };
 
 use super::{
-    LegacySaveAbiProfile,
-    adopt::{LegacyEntityFixups, LegacyPositionTopology, LegacySaveAdoptError},
-    adopt_elements::{LegacyElementAdoptError, LegacyElementBaseAdoption},
-    adopt_vm_arena::{LegacyVmArenaError, LegacyVmArenaOwner, LegacyVmArenaPlan},
-    gate_topology::{LegacyGateOrderError, derive_legacy_gate_order},
+    adopt::{LegacyEntityFixups, LegacyPositionTopology},
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    adopt_elements::LegacyElementBaseAdoption,
+    adopt_vm_arena::{LegacyVmArenaOwner, LegacyVmArenaPlan},
+    gate_topology::derive_legacy_gate_order,
     post_grid::{
         LegacyFastFindGridState, LegacyGateState, LegacyPatchState, LegacySpecialSectorState,
     },
-    topology_adapter::{LegacyTopologyAdapterError, derive_grid_topology},
+    topology_adapter::derive_grid_topology,
 };
-
-#[derive(Debug, Error)]
-pub enum LegacyGridAdoptError {
-    #[error(transparent)]
-    VmArena(#[from] LegacyVmArenaError),
-    #[error("FastFindGrid adoption supports Linux i386 v48, not {profile:?}")]
-    UnsupportedAbi { profile: LegacySaveAbiProfile },
-    #[error(transparent)]
-    Topology(#[from] LegacyTopologyAdapterError),
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error(transparent)]
-    Element(#[from] LegacyElementAdoptError),
-    #[error("cannot map Original FastFindGrid gate identity: {0}")]
-    GateOrder(#[from] LegacyGateOrderError),
-    #[error(
-        "saved FastFindGrid {field} count is {saved}, but initialized mission topology has {runtime}"
-    )]
-    CountMismatch {
-        field: &'static str,
-        saved: usize,
-        runtime: usize,
-    },
-    #[error("saved FastFindGrid {field} at index {index} does not match initialized topology")]
-    KindMismatch { field: &'static str, index: usize },
-    #[error(
-        "saved patch walk entry {walk_index} maps to missing initialized patch index {patch_index}"
-    )]
-    MissingPatch {
-        walk_index: usize,
-        patch_index: usize,
-    },
-    #[error("saved {field} occupant {creation_order} resolves to non-actor entity {entity_id}")]
-    NonActorOccupant {
-        field: &'static str,
-        creation_order: u32,
-        entity_id: EntityId,
-    },
-    #[error("saved {field} occupant list contains a null element pointer")]
-    NullOccupant { field: &'static str },
-    #[error("saved patch {patch_index} FX identity resolves to missing/non-FX entity {entity_id}")]
-    MissingPatchFx {
-        patch_index: usize,
-        entity_id: EntityId,
-    },
-    #[error("saved patch {patch_index} FX points at patch {saved_patch:?}, expected {patch_index}")]
-    PatchFxOwnerMismatch {
-        patch_index: usize,
-        saved_patch: Option<i16>,
-    },
-    #[error(
-        "saved script sector {script_object_index} VM presence is {saved}, but initialized zone {zone_index} VM presence is {runtime}"
-    )]
-    ZoneVmPresenceMismatch {
-        script_object_index: usize,
-        zone_index: usize,
-        saved: bool,
-        runtime: bool,
-    },
-    #[error("saved static repulsive point {index} field {field} contains non-finite value {value}")]
-    NonFiniteStaticRepulsivePoint {
-        index: usize,
-        field: &'static str,
-        value: f32,
-    },
-    #[error("initialized grid runtime array {field} is shorter than required index {index}")]
-    MissingRuntimeIndex { field: &'static str, index: usize },
-    #[error("saved patch {patch_index} has invalid changing-obstacle topology: {detail}")]
-    InvalidChangingObstacle { patch_index: usize, detail: String },
-    #[error(
-        "saved building sector {sector_index} maps to missing initialized building index {building_index}"
-    )]
-    MissingBuilding {
-        sector_index: usize,
-        building_index: usize,
-    },
-    #[error(
-        "saved script object {script_object_index} maps to missing initialized script zone {zone_index}"
-    )]
-    MissingScriptZone {
-        script_object_index: usize,
-        zone_index: usize,
-    },
-}
 
 #[derive(Clone, Debug)]
 pub struct LegacyFastFindGridAdoptionPlan {
@@ -193,14 +107,18 @@ struct PlannedBuilding {
 impl LegacyFastFindGridAdoptionPlan {
     /// Validate all topology, references, indices, and unsupported lossless
     /// representation boundaries before the candidate engine is mutated.
-    pub fn preflight(
-        engine: &EngineInner,
-        assets: &LevelAssets,
+    pub(crate) fn preflight(
+        ctx: &AdoptCtx<'_>,
         state: &LegacyFastFindGridState,
-        entities: &LegacyEntityFixups,
-        position_topology: &LegacyPositionTopology,
         vm_arena: &LegacyVmArenaPlan,
-    ) -> Result<Self, LegacyGridAdoptError> {
+    ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine,
+            assets,
+            entities,
+            position_topology,
+            ..
+        } = *ctx;
         let static_repulsive_points = preflight_static_repulsive_points(state)?;
 
         let decoded_topology = derive_grid_topology(engine, assets)?;
@@ -220,9 +138,13 @@ impl LegacyFastFindGridAdoptionPlan {
                 .interactables
                 .patches
                 .get(patch_index)
-                .ok_or(LegacyGridAdoptError::MissingPatch {
-                    walk_index,
-                    patch_index,
+                .ok_or_else(|| {
+                    AdoptSite::owned(format!("saved patch walk entry {walk_index}")).error(
+                        AdoptErrorKind::MissingInitialized {
+                            what: "patch index",
+                            index: patch_index,
+                        },
+                    )
                 })?;
             preflight_patch_runtime_indices(engine, runtime)?;
             let occupants = resolve_patch_occupants(engine, entities, saved)?;
@@ -240,7 +162,8 @@ impl LegacyFastFindGridAdoptionPlan {
         }
 
         let gate_order =
-            derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)?;
+            derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
+                .map_err(|error| error.context("cannot map Original FastFindGrid gate identity"))?;
         let mut doors = Vec::new();
         for (gate_index, (saved, retained_gate)) in
             state.gates.iter().zip(&retained.gates).enumerate()
@@ -254,15 +177,9 @@ impl LegacyFastFindGridAdoptionPlan {
                         .interactables
                         .doors
                         .get(door_index)
-                        .ok_or(LegacyGridAdoptError::MissingRuntimeIndex {
-                            field: "doors",
-                            index: door_index,
-                        })?;
+                        .ok_or_else(|| missing_runtime_index("doors", door_index))?;
                     if runtime.gate_type != GateType::Door {
-                        return Err(LegacyGridAdoptError::KindMismatch {
-                            field: "gates",
-                            index: door_index,
-                        });
+                        return Err(kind_mismatch("gates", door_index));
                     }
                     doors.push(PlannedDoor {
                         door_index,
@@ -276,10 +193,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     });
                 }
                 _ => {
-                    return Err(LegacyGridAdoptError::KindMismatch {
-                        field: "gates",
-                        index: gate_index,
-                    });
+                    return Err(kind_mismatch("gates", gate_index));
                 }
             }
         }
@@ -297,12 +211,14 @@ impl LegacyFastFindGridAdoptionPlan {
                 .as_ref()
                 .and_then(|mission| mission.zone_vm_class_and_heap(zone_index));
             if saved.script_members.is_some() != runtime_vm.is_some() {
-                return Err(LegacyGridAdoptError::ZoneVmPresenceMismatch {
-                    script_object_index: saved.script_object_index,
-                    zone_index,
+                return Err(AdoptSite::owned(format!(
+                    "saved script sector {} (zone {zone_index})",
+                    saved.script_object_index
+                ))
+                .error(AdoptErrorKind::VmPresenceMismatch {
                     saved: saved.script_members.is_some(),
                     runtime: runtime_vm.is_some(),
-                });
+                }));
             }
             let vm_heap = saved
                 .script_members
@@ -310,9 +226,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 .zip(runtime_vm)
                 .map(|(members, (class, heap))| {
                     vm_arena.preflight_heap(
-                        engine,
-                        assets,
-                        entities,
+                        ctx,
                         LegacyVmArenaOwner::ScriptZone(zone_index),
                         members,
                         class,
@@ -327,10 +241,14 @@ impl LegacyFastFindGridAdoptionPlan {
                 .get(zone_index)
                 .is_none()
             {
-                return Err(LegacyGridAdoptError::MissingScriptZone {
-                    script_object_index: saved.script_object_index,
-                    zone_index,
-                });
+                return Err(AdoptSite::owned(format!(
+                    "saved script object {}",
+                    saved.script_object_index
+                ))
+                .error(AdoptErrorKind::MissingInitialized {
+                    what: "script zone",
+                    index: zone_index,
+                }));
             }
             script_zones.push(PlannedOccupants {
                 index: zone_index,
@@ -384,10 +302,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     let runtime_index = runtime_special.doors[door_ordinal];
                     door_ordinal += 1;
                     if runtime_index >= engine.world.fast_grid.sector_active.len() {
-                        return Err(LegacyGridAdoptError::MissingRuntimeIndex {
-                            field: "door sector active",
-                            index: runtime_index,
-                        });
+                        return Err(missing_runtime_index("door sector active", runtime_index));
                     }
                     door_sectors.push((runtime_index, *active));
                 }
@@ -401,10 +316,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     let building_index = engine.world.fast_grid.level.sectors[runtime_index]
                         .building_index
                         .map(usize::from)
-                        .ok_or(LegacyGridAdoptError::KindMismatch {
-                            field: "building sectors",
-                            index: *sector_index,
-                        })?;
+                        .ok_or_else(|| kind_mismatch("building sectors", *sector_index))?;
                     if engine
                         .script_domains
                         .buildings
@@ -418,10 +330,13 @@ impl LegacyFastFindGridAdoptionPlan {
                             .get(building_index)
                             .is_none()
                     {
-                        return Err(LegacyGridAdoptError::MissingBuilding {
-                            sector_index: *sector_index,
-                            building_index,
-                        });
+                        return Err(AdoptSite::owned(format!(
+                            "saved building sector {sector_index}"
+                        ))
+                        .error(AdoptErrorKind::MissingInitialized {
+                            what: "building index",
+                            index: building_index,
+                        }));
                     }
                     let occupants =
                         resolve_actor_occupants(engine, entities, "building sector", occupants)?;
@@ -442,10 +357,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     let runtime_index = runtime_special.lifts[lift_ordinal];
                     lift_ordinal += 1;
                     let runtime_index = u32::try_from(runtime_index).map_err(|_| {
-                        LegacyGridAdoptError::MissingRuntimeIndex {
-                            field: "lift sector exceeds u32",
-                            index: runtime_index,
-                        }
+                        missing_runtime_index("lift sector exceeds u32", runtime_index)
                     })?;
                     lifts.push((
                         runtime_index,
@@ -501,41 +413,43 @@ impl LegacyFastFindGridAdoptionPlan {
                         assets.navigation.pathfinder_graph.as_ref(),
                         patch.pathfinder_sector,
                     )
-                    .ok_or_else(|| LegacyGridAdoptError::InvalidChangingObstacle {
-                        patch_index: planned.patch_index,
-                        detail: format!(
-                            "pathfinder sector {} has no graph area",
-                            patch.pathfinder_sector
-                        ),
+                    .ok_or_else(|| {
+                        invalid_changing_obstacle(
+                            planned.patch_index,
+                            format!(
+                                "pathfinder sector {} has no graph area",
+                                patch.pathfinder_sector
+                            ),
+                        )
                     })?;
                 let changing_obstacle = u16::try_from(patch.pathfinder_changing_obstacles)
-                    .map_err(|_| LegacyGridAdoptError::InvalidChangingObstacle {
-                        patch_index: planned.patch_index,
-                        detail: format!(
-                            "changing obstacle {} exceeds u16",
-                            patch.pathfinder_changing_obstacles
-                        ),
+                    .map_err(|_| {
+                        invalid_changing_obstacle(
+                            planned.patch_index,
+                            format!(
+                                "changing obstacle {} exceeds u16",
+                                patch.pathfinder_changing_obstacles
+                            ),
+                        )
                     })?;
                 // The pathfinder stores two state bits per changing obstacle in
                 // a u32. Validate before the runtime's shift operation.
                 if changing_obstacle >= 16 {
-                    return Err(LegacyGridAdoptError::InvalidChangingObstacle {
-                        patch_index: planned.patch_index,
-                        detail: format!(
+                    return Err(invalid_changing_obstacle(
+                        planned.patch_index,
+                        format!(
                             "changing obstacle {changing_obstacle} exceeds the 16 two-bit u32 slots"
                         ),
-                    });
+                    ));
                 }
                 let layer = usize::from(patch.pathfinder_layer);
                 if layer >= pathfinder.states.len()
                     || usize::from(area) >= pathfinder.states[layer].len()
                 {
-                    return Err(LegacyGridAdoptError::InvalidChangingObstacle {
-                        patch_index: planned.patch_index,
-                        detail: format!(
-                            "layer {layer}, area {area} is outside pathfinder state topology"
-                        ),
-                    });
+                    return Err(invalid_changing_obstacle(
+                        planned.patch_index,
+                        format!("layer {layer}, area {area} is outside pathfinder state topology"),
+                    ));
                 }
                 let mut appeared = Vec::new();
                 let mut line_toggles = Vec::new();
@@ -552,10 +466,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 for (line_index, active) in line_toggles {
                     let index = usize::from(line_index);
                     if index >= runtime_grid.line_active.len() {
-                        return Err(LegacyGridAdoptError::MissingRuntimeIndex {
-                            field: "pathfinder obstacle line",
-                            index,
-                        });
+                        return Err(missing_runtime_index("pathfinder obstacle line", index));
                     }
                     runtime_grid.line_active[index] = active;
                 }
@@ -563,10 +474,7 @@ impl LegacyFastFindGridAdoptionPlan {
                     let index = usize::try_from(sector_index.get())
                         .expect("u32 sector index does not fit usize");
                     if index >= runtime_grid.sector_active.len() {
-                        return Err(LegacyGridAdoptError::MissingRuntimeIndex {
-                            field: "pathfinder obstacle sector",
-                            index,
-                        });
+                        return Err(missing_runtime_index("pathfinder obstacle sector", index));
                     }
                     runtime_grid.sector_active[index] = active;
                 }
@@ -749,14 +657,11 @@ impl LegacyFastFindGridAdoptionPlan {
 fn validate_state_shape(
     state: &LegacyFastFindGridState,
     topology: &super::post_grid::LegacyGridTopology,
-) -> Result<(), LegacyGridAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     check_count("patches", state.patches.len(), topology.patches.len())?;
     for (index, (saved, expected)) in state.patches.iter().zip(&topology.patches).enumerate() {
         if &saved.topology != expected {
-            return Err(LegacyGridAdoptError::KindMismatch {
-                field: "patch topology",
-                index,
-            });
+            return Err(kind_mismatch("patch topology", index));
         }
     }
     check_count("gates", state.gates.len(), topology.gates.len())?;
@@ -793,10 +698,7 @@ fn validate_state_shape(
         .enumerate()
     {
         if saved.script_object_index != expected_index {
-            return Err(LegacyGridAdoptError::KindMismatch {
-                field: "script sector topology",
-                index: ordinal,
-            });
+            return Err(kind_mismatch("script sector topology", ordinal));
         }
     }
     let expected_special = topology
@@ -835,26 +737,31 @@ fn validate_state_shape(
             _ => false,
         };
         if !matches {
-            return Err(LegacyGridAdoptError::KindMismatch {
-                field: "special sector topology",
-                index: ordinal,
-            });
+            return Err(kind_mismatch("special sector topology", ordinal));
         }
     }
     Ok(())
 }
 
-fn check_count(
-    field: &'static str,
-    saved: usize,
-    runtime: usize,
-) -> Result<(), LegacyGridAdoptError> {
+const GRID: AdoptSite = AdoptSite::new("saved FastFindGrid");
+const INITIALIZED_GRID: AdoptSite = AdoptSite::new("initialized grid");
+
+fn kind_mismatch(field: &'static str, index: usize) -> LegacyAdoptError {
+    GRID.field_error(field, AdoptErrorKind::TopologyKindMismatch { index })
+}
+
+fn missing_runtime_index(field: &'static str, index: usize) -> LegacyAdoptError {
+    INITIALIZED_GRID.field_error(field, AdoptErrorKind::MissingRuntimeIndex { index })
+}
+
+fn invalid_changing_obstacle(patch_index: usize, detail: String) -> LegacyAdoptError {
+    AdoptSite::owned(format!("saved patch {patch_index}"))
+        .error(AdoptErrorKind::InvalidChangingObstacle { detail })
+}
+
+fn check_count(field: &'static str, saved: usize, runtime: usize) -> Result<(), LegacyAdoptError> {
     if saved != runtime {
-        return Err(LegacyGridAdoptError::CountMismatch {
-            field,
-            saved,
-            runtime,
-        });
+        return Err(GRID.field_error(field, AdoptErrorKind::CountMismatch { saved, runtime }));
     }
     Ok(())
 }
@@ -863,7 +770,7 @@ fn resolve_patch_occupants(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,
     saved: &LegacyPatchState,
-) -> Result<Vec<OccupantId>, LegacyGridAdoptError> {
+) -> Result<Vec<OccupantId>, LegacyAdoptError> {
     Ok(
         resolve_actor_occupants(engine, entities, "patch", &saved.occupants)?
             .into_iter()
@@ -877,29 +784,27 @@ fn resolve_actor_occupants(
     entities: &LegacyEntityFixups,
     field: &'static str,
     references: &[super::payload_base::LegacyElementRef],
-) -> Result<Vec<EntityId>, LegacyGridAdoptError> {
+) -> Result<Vec<EntityId>, LegacyAdoptError> {
     references
         .iter()
         .map(|&reference| {
-            let creation_order = reference
-                .0
-                .ok_or(LegacyGridAdoptError::NullOccupant { field })?;
+            let creation_order = reference.0.ok_or_else(|| {
+                GRID.field_error(format!("{field} occupants"), AdoptErrorKind::NullReference)
+            })?;
             let entity_id = entities
                 .resolve_element(reference)?
                 .expect("non-null reference resolved as null");
-            let entity = engine.world.entities.get(entity_id).ok_or(
-                LegacyGridAdoptError::NonActorOccupant {
-                    field,
-                    creation_order,
+            let non_actor = || {
+                let mut site = AdoptSite::owned(format!("saved {field} occupant"));
+                site.creation_order = Some(creation_order);
+                site.error(AdoptErrorKind::WrongEntityKind {
                     entity_id,
-                },
-            )?;
+                    expected: "actor",
+                })
+            };
+            let entity = engine.world.entities.get(entity_id).ok_or_else(non_actor)?;
             if !entity.is_actor() {
-                return Err(LegacyGridAdoptError::NonActorOccupant {
-                    field,
-                    creation_order,
-                    entity_id,
-                });
+                return Err(non_actor());
             }
             Ok(entity_id)
         })
@@ -912,7 +817,7 @@ fn preflight_patch_fx(
     position_topology: &LegacyPositionTopology,
     patch_index: usize,
     saved: &LegacyPatchState,
-) -> Result<Option<PlannedPatchFx>, LegacyGridAdoptError> {
+) -> Result<Option<PlannedPatchFx>, LegacyAdoptError> {
     let Some(fx) = &saved.fx else {
         return Ok(None);
     };
@@ -922,22 +827,23 @@ fn preflight_patch_fx(
     let element =
         LegacyElementBaseAdoption::preflight(engine, &fx.element, entities, position_topology)?;
     let entity_id = element.entity_id();
+    let patch = || AdoptSite::owned(format!("saved patch {patch_index}"));
     if !matches!(engine.world.entities.get(entity_id), Some(Entity::Fx(_))) {
-        return Err(LegacyGridAdoptError::MissingPatchFx {
-            patch_index,
-            entity_id,
-        });
+        return Err(patch().field_error(
+            "fx",
+            AdoptErrorKind::WrongEntityKind {
+                entity_id,
+                expected: "FX",
+            },
+        ));
     }
-    let expected_patch =
-        i16::try_from(patch_index).map_err(|_| LegacyGridAdoptError::MissingRuntimeIndex {
-            field: "patch FX owner exceeds i16",
-            index: patch_index,
-        })?;
+    let expected_patch = i16::try_from(patch_index)
+        .map_err(|_| missing_runtime_index("patch FX owner exceeds i16", patch_index))?;
     if fx.patch.0 != Some(expected_patch) {
-        return Err(LegacyGridAdoptError::PatchFxOwnerMismatch {
+        return Err(patch().error(AdoptErrorKind::PatchFxOwnerMismatch {
             patch_index,
             saved_patch: fx.patch.0,
-        });
+        }));
     }
     Ok(Some(PlannedPatchFx {
         entity_id,
@@ -949,7 +855,7 @@ fn preflight_patch_fx(
 
 fn preflight_static_repulsive_points(
     state: &LegacyFastFindGridState,
-) -> Result<Vec<RepulsivePoint>, LegacyGridAdoptError> {
+) -> Result<Vec<RepulsivePoint>, LegacyAdoptError> {
     state
         .static_repulsive_points
         .iter()
@@ -968,11 +874,10 @@ fn preflight_static_repulsive_points(
                 ("radius", saved.point.radius),
             ] {
                 if !value.is_finite() {
-                    return Err(LegacyGridAdoptError::NonFiniteStaticRepulsivePoint {
-                        index,
-                        field,
-                        value,
-                    });
+                    return Err(
+                        AdoptSite::owned(format!("saved static repulsive point {index}"))
+                            .field_error(field, AdoptErrorKind::NonFinite { value }),
+                    );
                 }
             }
             let flags = i32::from(saved.point.affects_pcs)
@@ -1005,7 +910,7 @@ fn preflight_static_repulsive_points(
 fn preflight_patch_runtime_indices(
     engine: &EngineInner,
     patch: &crate::patch::Patch,
-) -> Result<(), LegacyGridAdoptError> {
+) -> Result<(), LegacyAdoptError> {
     for (field, indices, count) in [
         (
             "patch.old_sector_indices",
@@ -1081,15 +986,12 @@ fn preflight_patch_runtime_indices(
         ),
     ] {
         if let Some(index) = indices.into_iter().find(|&index| index >= count) {
-            return Err(LegacyGridAdoptError::MissingRuntimeIndex { field, index });
+            return Err(missing_runtime_index(field, index));
         }
     }
     for &index in &patch.door_indices {
         if index as usize >= engine.script_domains.interactables.doors.len() {
-            return Err(LegacyGridAdoptError::MissingRuntimeIndex {
-                field: "patch.door_indices",
-                index: index as usize,
-            });
+            return Err(missing_runtime_index("patch.door_indices", index as usize));
         }
     }
     Ok(())
@@ -1127,6 +1029,7 @@ mod tests {
     use crate::{
         engine::LevelAssets,
         legacy_save::{
+            LegacySaveAbiProfile,
             payload_base::{LegacyElementRef, LegacyPoint2},
             post_grid::{LegacyGridTopology, LegacyLayeredRepulsivePoint, LegacyRepulsivePoint},
         },
@@ -1172,19 +1075,26 @@ mod tests {
     fn windows_profile_reaches_normal_topology_validation() {
         let mut state = empty_state();
         state.abi_profile = LegacySaveAbiProfile::RetailWindowsX86V48;
+        let (engine, assets) = (EngineInner::new(), LevelAssets::new());
+        let (entities, position_topology) = (empty_fixups(), empty_position_topology());
+        let sequence_topology =
+            crate::legacy_save::adopt_sequences::LegacySequenceTopology::default();
+        let ctx = AdoptCtx {
+            engine: &engine,
+            assets: &assets,
+            entities: &entities,
+            position_topology: &position_topology,
+            sequence_topology: &sequence_topology,
+        };
         let error = LegacyFastFindGridAdoptionPlan::preflight(
-            &EngineInner::new(),
-            &LevelAssets::new(),
+            &ctx,
             &state,
-            &empty_fixups(),
-            &empty_position_topology(),
             &LegacyVmArenaPlan::empty_for_tests(),
         )
         .unwrap_err();
-        assert!(!matches!(
-            error,
-            LegacyGridAdoptError::UnsupportedAbi { .. }
-        ));
+        // Retail saves share the Linux grid layout; rejection must come from
+        // the empty mission topology, never from the ABI profile.
+        assert!(!error.to_string().contains("RetailWindowsX86V48"));
     }
 
     #[test]
@@ -1255,11 +1165,12 @@ mod tests {
 
         assert!(matches!(
             preflight_static_repulsive_points(&state),
-            Err(LegacyGridAdoptError::NonFiniteStaticRepulsivePoint {
-                index: 0,
-                field: "position.x",
+            Err(LegacyAdoptError {
+                subject,
+                field: Some(field),
+                kind: AdoptErrorKind::NonFinite { .. },
                 ..
-            })
+            }) if subject == "saved static repulsive point 0" && field == "position.x"
         ));
     }
 
@@ -1281,10 +1192,11 @@ mod tests {
         };
         assert!(matches!(
             validate_state_shape(&state, &topology),
-            Err(LegacyGridAdoptError::KindMismatch {
-                field: "special sector topology",
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::TopologyKindMismatch { .. },
                 ..
-            })
+            }) if field == "special sector topology"
         ));
     }
 
@@ -1478,7 +1390,11 @@ mod tests {
         let engine = EngineInner::new();
         assert!(matches!(
             resolve_actor_occupants(&engine, &empty_fixups(), "patch", &[LegacyElementRef(None)],),
-            Err(LegacyGridAdoptError::NullOccupant { field: "patch" })
+            Err(LegacyAdoptError {
+                field: Some(field),
+                kind: AdoptErrorKind::NullReference,
+                ..
+            }) if field == "patch occupants"
         ));
     }
 }

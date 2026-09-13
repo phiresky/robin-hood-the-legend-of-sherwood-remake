@@ -9,14 +9,17 @@
 
 use std::collections::BTreeSet;
 
-use thiserror::Error;
-
 use crate::{engine::EngineInner, short_briefings::ShortBriefings};
 
 use super::{
     LegacySaveAbiProfile,
+    adopt_common::{AdoptErrorKind, AdoptSite, LegacyAdoptError},
     engine::{LegacyEnginePreamble, LegacyShortBriefing, LegacyShortBriefings},
 };
+
+const ENGINE: AdoptSite = AdoptSite::new("legacy engine");
+const SPEED_EXPECTED: &str = "a finite non-negative speed";
+const SPEED_INDEX_EXPECTED: &str = "an index into the Original 32-entry scrolling table";
 
 const MAX_SCROLL_SPEED_INDEX: u16 = 31;
 
@@ -40,23 +43,13 @@ pub(crate) struct LegacyLinuxPreambleState {
     short_briefings: ShortBriefings,
 }
 
-#[derive(Clone, Debug, Error, PartialEq)]
-pub(crate) enum LegacyPreambleAdoptionError {
-    #[error("legacy engine speed must be finite and non-negative, got {value}")]
-    InvalidSpeed { value: f32 },
-    #[error("legacy scroll speed index {value} exceeds the Original 32-entry scrolling table")]
-    ScrollSpeedIndexOutOfRange { value: u16 },
-    #[error("legacy short briefing id {id} occurs more than once")]
-    DuplicateShortBriefing { id: u32 },
-}
-
 impl LegacyLinuxPreambleState {
     /// Validate and convert the fields whose destination is entirely
     /// engine-owned and semantically identical in the Original Linux port.
     pub(crate) fn try_from_v48(
         abi: LegacySaveAbiProfile,
         preamble: &LegacyEnginePreamble,
-    ) -> Result<Self, LegacyPreambleAdoptionError> {
+    ) -> Result<Self, LegacyAdoptError> {
         Self::try_from_fields(
             abi,
             LegacyPreambleFields {
@@ -78,16 +71,12 @@ impl LegacyLinuxPreambleState {
     fn try_from_fields(
         _abi: LegacySaveAbiProfile,
         fields: LegacyPreambleFields<'_>,
-    ) -> Result<Self, LegacyPreambleAdoptionError> {
+    ) -> Result<Self, LegacyAdoptError> {
         if !fields.speed.is_finite() || fields.speed < 0.0 {
-            return Err(LegacyPreambleAdoptionError::InvalidSpeed {
-                value: fields.speed,
-            });
+            return Err(ENGINE.invalid("speed", fields.speed, SPEED_EXPECTED));
         }
         if fields.speed_index > MAX_SCROLL_SPEED_INDEX {
-            return Err(LegacyPreambleAdoptionError::ScrollSpeedIndexOutOfRange {
-                value: fields.speed_index,
-            });
+            return Err(ENGINE.invalid("speed_index", fields.speed_index, SPEED_INDEX_EXPECTED));
         }
 
         let short_briefings = convert_short_briefings(fields.short_briefings)?;
@@ -123,7 +112,7 @@ struct LegacyPreambleFields<'a> {
 
 fn convert_short_briefings(
     source: &LegacyShortBriefings,
-) -> Result<ShortBriefings, LegacyPreambleAdoptionError> {
+) -> Result<ShortBriefings, LegacyAdoptError> {
     let mut seen = BTreeSet::new();
     let mut converted = ShortBriefings::default();
     append_short_briefings(&mut converted, &mut seen, &source.primaries, true)?;
@@ -136,10 +125,10 @@ fn append_short_briefings(
     seen: &mut BTreeSet<u32>,
     source: &[LegacyShortBriefing],
     primary: bool,
-) -> Result<(), LegacyPreambleAdoptionError> {
+) -> Result<(), LegacyAdoptError> {
     for entry in source {
         if !seen.insert(entry.id) {
-            return Err(LegacyPreambleAdoptionError::DuplicateShortBriefing { id: entry.id });
+            return Err(AdoptErrorKind::DuplicateShortBriefing { id: entry.id }.into());
         }
         let inserted = destination.add(entry.id, primary);
         debug_assert!(inserted, "duplicate briefing was validated above");
@@ -279,7 +268,7 @@ mod tests {
                 invalid,
             )
             .unwrap_err(),
-            LegacyPreambleAdoptionError::ScrollSpeedIndexOutOfRange { value: 32 }
+            ENGINE.invalid("speed_index", 32, SPEED_INDEX_EXPECTED)
         );
 
         let mut invalid = fields(&source_briefings);
@@ -290,7 +279,7 @@ mod tests {
                 invalid,
             )
             .unwrap_err(),
-            LegacyPreambleAdoptionError::InvalidSpeed { value: -1.0 }
+            ENGINE.invalid("speed", -1.0, SPEED_EXPECTED)
         );
     }
 
@@ -306,7 +295,7 @@ mod tests {
                 fields(&duplicate),
             )
             .unwrap_err(),
-            LegacyPreambleAdoptionError::DuplicateShortBriefing { id: 7 }
+            LegacyAdoptError::from(AdoptErrorKind::DuplicateShortBriefing { id: 7 })
         );
     }
 }

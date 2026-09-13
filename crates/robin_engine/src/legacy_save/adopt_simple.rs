@@ -5,8 +5,6 @@
 //! mission. Host-owned minimap widget state is deliberately returned to the
 //! caller rather than discarded.
 
-use thiserror::Error;
-
 use crate::{
     coordinates::{ScreenBBox, WorldPoint3D},
     element::{Entity, EntityId},
@@ -17,32 +15,14 @@ use crate::{
 };
 
 use super::{
-    adopt::{LegacyEntityFixups, LegacySaveAdoptError},
-    body::LegacyUserLockState,
-    post_simple::{
-        LegacyElementSelection, LegacyFollowViewRefs, LegacyGroundMarkState, LegacyMinimapState,
-        LegacyTitbitsState,
-    },
+    adopt::LegacyEntityFixups,
+    adopt_common::{AdoptCtx, AdoptErrorKind, AdoptSite, LegacyAdoptError},
+    body::LegacySaveBody,
+    post_simple::{LegacyElementSelection, LegacyMinimapState},
 };
 
-#[derive(Debug, Error)]
-pub enum LegacySimpleAdoptError {
-    #[error(transparent)]
-    Reference(#[from] LegacySaveAdoptError),
-    #[error("saved {field} entry resolves to non-PC entity {entity_id}")]
-    SelectionIsNotPc {
-        field: &'static str,
-        entity_id: EntityId,
-    },
-    #[error("saved titbit {index} has unknown kind value {value}")]
-    UnknownTitbitKind { index: usize, value: i32 },
-    #[error("saved titbit {index} uses reserved id 0xffffffff")]
-    InvalidTitbitId { index: usize },
-    #[error("saved minimap highlight {index} has a null element reference")]
-    NullMinimapHighlight { index: usize },
-    #[error("saved minimap field {field} contains non-finite value {value}")]
-    NonFiniteMinimap { field: &'static str, value: f32 },
-}
+const TITBIT: AdoptSite = AdoptSite::new("saved titbit");
+const MINIMAP: AdoptSite = AdoptSite::new("saved minimap");
 
 /// Engine-owned state plus host-owned values which must be installed together
 /// at the loaded-save boundary.
@@ -60,17 +40,20 @@ pub struct LegacySimpleAdoptionPlan {
 }
 
 impl LegacySimpleAdoptionPlan {
-    pub fn preflight(
-        engine: &EngineInner,
-        entities: &LegacyEntityFixups,
-        user_lock: &LegacyUserLockState,
-        selected: &LegacyElementSelection,
-        selected_before_lock: &LegacyElementSelection,
-        follow_view: &LegacyFollowViewRefs,
-        ground_mark: &LegacyGroundMarkState,
-        titbits: &LegacyTitbitsState,
-        minimap: &LegacyMinimapState,
-    ) -> Result<Self, LegacySimpleAdoptError> {
+    pub(crate) fn preflight(
+        ctx: &AdoptCtx<'_>,
+        body: &LegacySaveBody,
+    ) -> Result<Self, LegacyAdoptError> {
+        let AdoptCtx {
+            engine, entities, ..
+        } = *ctx;
+        let user_lock = &body.user_lock;
+        let selected = &body.selected_elements;
+        let selected_before_lock = &body.selected_before_lock;
+        let follow_view = &body.follow_view;
+        let ground_mark = &body.ground_mark;
+        let titbits = &body.titbits;
+        let minimap = &body.minimap;
         let selected = resolve_pc_selection(engine, entities, selected, "selected_elements")?;
         let selected_before_lock = resolve_pc_selection(
             engine,
@@ -99,11 +82,14 @@ impl LegacySimpleAdoptionPlan {
 
         let mut converted_titbits = Vec::with_capacity(titbits.titbits.len());
         for (index, saved) in titbits.titbits.iter().enumerate() {
-            let kind =
-                titbit_kind(saved.kind).ok_or(LegacySimpleAdoptError::UnknownTitbitKind {
-                    index,
-                    value: saved.kind,
-                })?;
+            let kind = titbit_kind(saved.kind).ok_or_else(|| {
+                TITBIT.field_error(
+                    format!("titbits[{index}].kind"),
+                    AdoptErrorKind::UnknownEnum {
+                        value: i64::from(saved.kind),
+                    },
+                )
+            })?;
             let supplier = resolve_titbit_handle(entities, saved.element_info_supplier)?;
             let manager = resolve_titbit_handle(entities, saved.element_manager)?;
             converted_titbits.push(TitbitInfo {
@@ -120,8 +106,13 @@ impl LegacySimpleAdoptionPlan {
                 // with the second value while loading.
                 display_order: saved.display_order_effective,
                 blinking: saved.blinking,
-                id: crate::titbit::TitbitId::new(saved.id)
-                    .ok_or(LegacySimpleAdoptError::InvalidTitbitId { index })?,
+                id: crate::titbit::TitbitId::new(saved.id).ok_or_else(|| {
+                    TITBIT.invalid(
+                        format!("titbits[{index}].id"),
+                        saved.id,
+                        "a titbit id other than the reserved 0xffffffff",
+                    )
+                })?,
             });
         }
 
@@ -177,15 +168,15 @@ impl LegacySimpleHostState {
 fn convert_minimap(
     saved: &LegacyMinimapState,
     entities: &LegacyEntityFixups,
-) -> Result<MinimapV48State, LegacySimpleAdoptError> {
-    finite_minimap("transition_counter", saved.transition_counter)?;
+) -> Result<MinimapV48State, LegacyAdoptError> {
+    MINIMAP.finite("transition_counter", saved.transition_counter)?;
     for (field, value) in [
         ("memory_box.top_left.x", saved.memory_box.top_left.x),
         ("memory_box.top_left.y", saved.memory_box.top_left.y),
         ("memory_box.bottom_right.x", saved.memory_box.bottom_right.x),
         ("memory_box.bottom_right.y", saved.memory_box.bottom_right.y),
     ] {
-        finite_minimap(field, value)?;
+        MINIMAP.finite(field, value)?;
     }
     let memory_box = if saved.memory_box.bounds_are_set {
         ScreenBBox::from_coords(
@@ -204,13 +195,18 @@ fn convert_minimap(
         .map(|(index, highlight)| {
             let entity = entities
                 .resolve_element(highlight.element)?
-                .ok_or(LegacySimpleAdoptError::NullMinimapHighlight { index })?;
+                .ok_or_else(|| {
+                    MINIMAP.field_error(
+                        format!("highlighted_elements[{index}]"),
+                        AdoptErrorKind::NullReference,
+                    )
+                })?;
             Ok(HighlightedElement {
                 element_index: entity.index(),
                 refresh: highlight.refresh,
             })
         })
-        .collect::<Result<Vec<_>, LegacySimpleAdoptError>>()?;
+        .collect::<Result<Vec<_>, LegacyAdoptError>>()?;
     Ok(MinimapV48State {
         go_in: saved.go_in,
         map_displayed: saved.map_displayed,
@@ -223,20 +219,12 @@ fn convert_minimap(
     })
 }
 
-fn finite_minimap(field: &'static str, value: f32) -> Result<(), LegacySimpleAdoptError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(LegacySimpleAdoptError::NonFiniteMinimap { field, value })
-    }
-}
-
 fn resolve_pc_selection(
     engine: &EngineInner,
     entities: &LegacyEntityFixups,
     saved: &LegacyElementSelection,
     field: &'static str,
-) -> Result<Vec<EntityId>, LegacySimpleAdoptError> {
+) -> Result<Vec<EntityId>, LegacyAdoptError> {
     saved
         .elements
         .iter()
@@ -245,7 +233,13 @@ fn resolve_pc_selection(
                 .resolve_element(reference)?
                 .expect("saved selection references must be non-null while loading");
             if !matches!(engine.world.entities.get(entity_id), Some(Entity::Pc(_))) {
-                return Err(LegacySimpleAdoptError::SelectionIsNotPc { field, entity_id });
+                return Err(AdoptSite::new("saved selection").field_error(
+                    field,
+                    AdoptErrorKind::WrongEntityKind {
+                        entity_id,
+                        expected: "PC",
+                    },
+                ));
             }
             Ok(entity_id)
         })
@@ -255,7 +249,7 @@ fn resolve_pc_selection(
 fn resolve_titbit_handle(
     entities: &LegacyEntityFixups,
     reference: super::payload_base::LegacyElementRef,
-) -> Result<Option<ElementHandle>, LegacySaveAdoptError> {
+) -> Result<Option<ElementHandle>, LegacyAdoptError> {
     Ok(entities
         .resolve_element(reference)?
         .map(|entity| ElementHandle(entity.index())))

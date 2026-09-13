@@ -7,15 +7,15 @@
 //! save section when the wrong mission data is supplied.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::{hex16, read_point2, reserve};
+use super::read_helpers::{hex16, reserve};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_base::{
-    LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2, read_element_ref,
+    LegacyElementBaseDecode, LegacyElementRef, LegacyFxPayload, LegacyPayloadLimits, LegacyPoint2,
 };
 use super::payload_vm::{LegacyVmMemberDecoder, LegacyVmMemberSection};
 
@@ -127,23 +127,42 @@ pub struct LegacyFastFindGridState {
     pub end_offset: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Decode context for one patch: its mission topology entry and limits.
+#[derive(Clone, Copy)]
+pub struct LegacyPatchDecode<'a> {
+    pub topology: &'a LegacyPatchTopology,
+    pub limits: &'a LegacyGridLimits,
+    pub payload_limits: &'a LegacyPayloadLimits,
+}
+
+/// Field declaration order is wire order (`topology` consumes no bytes).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyPatchDecode<'_>,
+    fingerprint = FINGERPRINT_PATCH,
+    expected = "patch fingerprint"
+)]
 pub struct LegacyPatchState {
+    #[legacy(value = ctx.topology.clone())]
     pub topology: LegacyPatchTopology,
     pub active: bool,
     /// Four obsolete lock booleans are skipped by the Original. They are
     /// opaque compiler-era bytes, not authoritative boolean values.
+    #[legacy(bytes)]
     pub obsolete_lock_bytes: [u8; 4],
     pub locked: bool,
+    #[legacy(read = read_occupants(reader, ctx.limits))]
     pub occupants: Vec<LegacyElementRef>,
     pub active_now: bool,
     pub applied_now: bool,
     pub in_transition_now: bool,
+    #[legacy(read = read_patch_fx(reader, ctx))]
     pub fx: Option<LegacyFxPayload>,
     pub display_doors: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, LegacyRead)]
+#[legacy(fingerprint = FINGERPRINT_DOOR, expected = "door fingerprint")]
 pub struct LegacyDoorState {
     pub locked_pc: bool,
     pub locked_npc_villain: bool,
@@ -188,13 +207,14 @@ pub enum LegacySpecialSectorState {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyLayeredRepulsivePoint {
+    #[legacy(flatten)]
     pub point: LegacyRepulsivePoint,
     pub layer: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyRepulsivePoint {
     pub position: LegacyPoint2,
     pub concave: bool,
@@ -228,8 +248,15 @@ impl LegacyFastFindGridState {
             let mut patches = Vec::new();
             reserve(reader, &mut patches, topology.patches.len(), "patches")?;
             for (index, patch_topology) in topology.patches.iter().enumerate() {
-                patches.push(reader.scope(format!("patches[{index}]"), |reader| {
-                    read_patch(reader, patch_topology, limits, payload_limits)
+                patches.push(reader.scope_indexed("patches", index, |reader| {
+                    LegacyPatchState::read(
+                        reader,
+                        &LegacyPatchDecode {
+                            topology: patch_topology,
+                            limits,
+                            payload_limits,
+                        },
+                    )
                 })?);
             }
 
@@ -238,7 +265,9 @@ impl LegacyFastFindGridState {
             for (index, topology) in topology.gates.iter().enumerate() {
                 gates.push(match topology {
                     LegacyGateTopology::Door => {
-                        LegacyGateState::Door(reader.scope(format!("gates[{index}]"), read_door)?)
+                        LegacyGateState::Door(reader.scope_indexed("gates", index, |reader| {
+                            LegacyDoorState::read(reader, &())
+                        })?)
                     }
                     LegacyGateTopology::Stateless => LegacyGateState::Stateless,
                 });
@@ -249,30 +278,27 @@ impl LegacyFastFindGridState {
                 let LegacyScriptObjectTopology::Sector { associated_class } = script_object else {
                     continue;
                 };
-                script_sectors.push(reader.scope(
-                    format!("script_objects[{index}]"),
-                    |reader| {
-                        reader.read_signature(
-                            "fingerprint",
-                            FINGERPRINT_SCRIPT_SECTOR,
-                            "script-sector fingerprint",
-                        )?;
-                        let occupants = read_occupants(reader, limits)?;
-                        let script_members = associated_class
-                            .as_deref()
-                            .map(|class_name| {
-                                reader.scope("script_members", |reader| {
-                                    context.read_sector_script_members(reader, class_name)
-                                })
+                script_sectors.push(reader.scope_indexed("script_objects", index, |reader| {
+                    reader.read_signature(
+                        "fingerprint",
+                        FINGERPRINT_SCRIPT_SECTOR,
+                        "script-sector fingerprint",
+                    )?;
+                    let occupants = read_occupants(reader, limits)?;
+                    let script_members = associated_class
+                        .as_deref()
+                        .map(|class_name| {
+                            reader.scope("script_members", |reader| {
+                                context.read_sector_script_members(reader, class_name)
                             })
-                            .transpose()?;
-                        Ok(LegacyScriptSectorState {
-                            script_object_index: index,
-                            occupants,
-                            script_members,
                         })
-                    },
-                )?);
+                        .transpose()?;
+                    Ok(LegacyScriptSectorState {
+                        script_object_index: index,
+                        occupants,
+                        script_members,
+                    })
+                })?);
             }
 
             let mut special_sectors = Vec::new();
@@ -291,33 +317,37 @@ impl LegacyFastFindGridState {
                         }
                     }
                     LegacySectorTopology::Building => {
-                        reader.scope(format!("sectors[{index}].building"), |reader| {
-                            reader.read_signature(
-                                "fingerprint",
-                                FINGERPRINT_BUILDING_SECTOR,
-                                "building-sector fingerprint",
-                            )?;
-                            Ok(LegacySpecialSectorState::Building {
-                                sector_index: index,
-                                occupants: read_occupants(reader, limits)?,
-                                arrow_reserve: reader.read_bool("arrow_reserve")?,
+                        reader.scope_indexed("sectors", index, |reader| {
+                            reader.scope("building", |reader| {
+                                reader.read_signature(
+                                    "fingerprint",
+                                    FINGERPRINT_BUILDING_SECTOR,
+                                    "building-sector fingerprint",
+                                )?;
+                                Ok(LegacySpecialSectorState::Building {
+                                    sector_index: index,
+                                    occupants: read_occupants(reader, limits)?,
+                                    arrow_reserve: reader.read_bool("arrow_reserve")?,
+                                })
                             })
                         })?
                     }
                     LegacySectorTopology::Lift => {
-                        reader.scope(format!("sectors[{index}].lift"), |reader| {
-                            reader.read_signature(
-                                "fingerprint",
-                                FINGERPRINT_LIFT_SECTOR,
-                                "lift-sector fingerprint",
-                            )?;
-                            Ok(LegacySpecialSectorState::Lift {
-                                sector_index: index,
-                                occupants_pc: reader.read_u16("occupants_pc")?,
-                                occupants: reader.read_u16("occupants")?,
-                                occupied_upwards: reader.read_bool("occupied_upwards")?,
-                                occupied_downwards: reader.read_bool("occupied_downwards")?,
-                                wait_time: reader.read_u32("wait_time")?,
+                        reader.scope_indexed("sectors", index, |reader| {
+                            reader.scope("lift", |reader| {
+                                reader.read_signature(
+                                    "fingerprint",
+                                    FINGERPRINT_LIFT_SECTOR,
+                                    "lift-sector fingerprint",
+                                )?;
+                                Ok(LegacySpecialSectorState::Lift {
+                                    sector_index: index,
+                                    occupants_pc: reader.read_u16("occupants_pc")?,
+                                    occupants: reader.read_u16("occupants")?,
+                                    occupied_upwards: reader.read_bool("occupied_upwards")?,
+                                    occupied_downwards: reader.read_bool("occupied_downwards")?,
+                                    wait_time: reader.read_u32("wait_time")?,
+                                })
                             })
                         })?
                     }
@@ -329,24 +359,10 @@ impl LegacyFastFindGridState {
                 "static_repulsive_points.count",
                 limits.static_repulsive_points,
             )?;
-            let mut static_repulsive_points = Vec::new();
-            reserve(
-                reader,
-                &mut static_repulsive_points,
-                point_count,
-                "static_repulsive_points",
-            )?;
-            for index in 0..point_count {
-                static_repulsive_points.push(reader.scope(
-                    format!("static_repulsive_points[{index}]"),
-                    |reader| {
-                        Ok(LegacyLayeredRepulsivePoint {
-                            point: read_repulsive_point(reader)?,
-                            layer: reader.read_u16("layer")?,
-                        })
-                    },
-                )?);
-            }
+            let static_repulsive_points =
+                reader.read_list("static_repulsive_points", point_count, |reader, item| {
+                    LegacyLayeredRepulsivePoint::read_field(reader, item, &())
+                })?;
 
             let end_offset = reader.offset();
             Ok(Self {
@@ -395,60 +411,25 @@ fn validate_topology(
     Ok(())
 }
 
-fn read_patch(
+/// The patch-owned effect exists exactly when the mission constructed one.
+fn read_patch_fx(
     reader: &mut LegacyReader<'_>,
-    topology: &LegacyPatchTopology,
-    limits: &LegacyGridLimits,
-    payload_limits: &LegacyPayloadLimits,
-) -> LegacyResult<LegacyPatchState> {
-    reader.read_signature("fingerprint", FINGERPRINT_PATCH, "patch fingerprint")?;
-    let active = reader.read_bool("active")?;
-    let mut obsolete_lock_bytes = [0; 4];
-    reader.read_bytes("obsolete_lock_bytes", &mut obsolete_lock_bytes)?;
-    let locked = reader.read_bool("locked")?;
-    let occupants = read_occupants(reader, limits)?;
-    let active_now = reader.read_bool("active_now")?;
-    let applied_now = reader.read_bool("applied_now")?;
-    let in_transition_now = reader.read_bool("in_transition_now")?;
-    let fx = topology
+    ctx: &LegacyPatchDecode<'_>,
+) -> LegacyResult<Option<LegacyFxPayload>> {
+    ctx.topology
         .fx
         .map(|identity| {
-            reader.scope("fx", |reader| {
-                LegacyFxPayload::read(
-                    reader,
-                    payload_limits,
-                    Some(identity.creation_order),
-                    Some(identity.class),
-                )
-            })
+            LegacyFxPayload::read_field(
+                reader,
+                "fx",
+                &LegacyElementBaseDecode {
+                    limits: ctx.payload_limits,
+                    expected_creation_order: Some(identity.creation_order),
+                    expected_class: Some(identity.class),
+                },
+            )
         })
-        .transpose()?;
-    let display_doors = reader.read_bool("display_doors")?;
-    Ok(LegacyPatchState {
-        topology: topology.clone(),
-        active,
-        obsolete_lock_bytes,
-        locked,
-        occupants,
-        active_now,
-        applied_now,
-        in_transition_now,
-        fx,
-        display_doors,
-    })
-}
-
-fn read_door(reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyDoorState> {
-    reader.read_signature("fingerprint", FINGERPRINT_DOOR, "door fingerprint")?;
-    Ok(LegacyDoorState {
-        locked_pc: reader.read_bool("locked_pc")?,
-        locked_npc_villain: reader.read_bool("locked_npc_villain")?,
-        locked_npc_civilian: reader.read_bool("locked_npc_civilian")?,
-        unlockable: reader.read_bool("unlockable")?,
-        special_authorisation_pc: reader.read_bool("special_authorisation_pc")?,
-        authorised_pc_direct: reader.read_u16("authorised_pc_direct")?,
-        authorised_pc_indirect: reader.read_u16("authorised_pc_indirect")?,
-    })
+        .transpose()
 }
 
 fn read_occupants(
@@ -465,29 +446,8 @@ fn read_occupants(
             "occupant count within the caller-supplied limit",
         ));
     }
-    let mut occupants = Vec::new();
-    reserve(reader, &mut occupants, count, "occupants")?;
-    for index in 0..count {
-        occupants.push(read_element_ref(reader, format!("occupants[{index}]"))?);
-    }
-    Ok(occupants)
-}
-
-fn read_repulsive_point(reader: &mut LegacyReader<'_>) -> LegacyResult<LegacyRepulsivePoint> {
-    Ok(LegacyRepulsivePoint {
-        position: read_point2(reader, "position")?,
-        concave: reader.read_bool("concave")?,
-        limit_left: read_point2(reader, "limit_left")?,
-        limit_right: read_point2(reader, "limit_right")?,
-        action_radius: reader.read_f32("action_radius")?,
-        force_a: reader.read_f32("force_a")?,
-        force_b: reader.read_f32("force_b")?,
-        radius: reader.read_f32("radius")?,
-        id: reader.read_u32("id")?,
-        affects_pcs: reader.read_bool("affects_pcs")?,
-        affects_soldiers: reader.read_bool("affects_soldiers")?,
-        affects_civilians: reader.read_bool("affects_civilians")?,
-        affects_animals: reader.read_bool("affects_animals")?,
+    reader.read_list("occupants", count, |reader, item| {
+        LegacyElementRef::read_field(reader, item, &())
     })
 }
 

@@ -4,25 +4,21 @@
 //! records. Several leaf serializers write state before calling their parent,
 //! while the wasp element deliberately uses object serialization
 //! despite being projectile elements. The readers below mirror the
-//! exact `Serialize` call order.
+//! exact `Serialize` call order: field declaration order is wire order.
 
 use super::read_helpers::DEFAULT_BULK_LIMIT;
-use super::read_helpers::read_count_u16 as read_bounded_u16;
-use super::read_helpers::{read_point2, read_point3, reserve};
 use serde::{Deserialize, Serialize};
 
-use crate::legacy_io::{LegacyReader, LegacyResult};
+use crate::legacy_io::{LegacyRead, LegacyReader, LegacyResult};
 
 use super::LegacySaveAbiProfile;
 use super::elements::LegacyElementClass;
 use super::payload_base::{
     LegacyElementRef, LegacyMobilePayload, LegacyOpaquePointer32, LegacyPayloadDecodeContext,
-    LegacyPayloadLimits, LegacyPoint2, LegacyPoint3, LegacySectorRef, read_element_ref,
-    read_sector_ref,
+    LegacyPoint2, LegacyPoint3, LegacySectorRef, read_nullable_u32_ref,
 };
-use super::payload_nonactors::{LegacyObjectPayload, read_object_payload};
-
-const NULL_U32: u32 = u32::MAX;
+use super::payload_dispatch::LegacyElementPayloadLimits;
+use super::payload_nonactors::{LegacyObjectDecode, LegacyObjectPayload, read_object_payload};
 
 const FINGERPRINT_PROJECTILE: [u8; 16] = [
     0x69, 0x33, 0xdb, 0xbc, 0x6b, 0xe4, 0x35, 0xf3, 0x24, 0x9e, 0x7c, 0xf1, 0xc9, 0x94, 0xfb, 0x2d,
@@ -52,6 +48,14 @@ impl Default for LegacyObjectPayloadLimits {
     }
 }
 
+/// Decode context for projectile leaves: the embedded Object identity plus
+/// the projectile-specific limits.
+#[derive(Clone, Copy)]
+pub struct LegacyProjectileDecode<'a> {
+    pub object: LegacyObjectDecode<'a>,
+    pub limits: &'a LegacyObjectPayloadLimits,
+}
+
 /// Complete phase-two payload for any object/item class handled by this
 /// module. The enum keeps classes with identical inherited grammars distinct,
 /// which makes conversion and diagnostics independent of the numeric class ID.
@@ -76,12 +80,23 @@ pub enum LegacyObjectItemPayload {
 pub fn read_object_item_payload(
     reader: &mut LegacyReader<'_>,
     abi_profile: LegacySaveAbiProfile,
-    limits: &LegacyObjectPayloadLimits,
-    base_limits: &LegacyPayloadLimits,
+    payload_limits: &LegacyElementPayloadLimits,
     context: &dyn LegacyPayloadDecodeContext,
     creation_order: u32,
     class: LegacyElementClass,
 ) -> LegacyResult<LegacyObjectItemPayload> {
+    let base_limits = &payload_limits.base;
+    // Every leaf passes its own concrete class down to the Object parent.
+    let object = LegacyObjectDecode {
+        abi_profile,
+        limits: base_limits,
+        creation_order,
+        class,
+    };
+    let projectile = LegacyProjectileDecode {
+        object,
+        limits: &payload_limits.objects,
+    };
     reader.scope(format!("object_item.{class:?}"), |reader| {
         Ok(match class {
             LegacyElementClass::Object => LegacyObjectItemPayload::Object(read_object_payload(
@@ -91,69 +106,32 @@ pub fn read_object_item_payload(
                 creation_order,
                 class,
             )?),
-            LegacyElementClass::Arrow => LegacyObjectItemPayload::Arrow(LegacyArrowPayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-            )?),
+            LegacyElementClass::Arrow => LegacyObjectItemPayload::Arrow(
+                LegacyArrowPayload::read_field(reader, "arrow", &projectile)?,
+            ),
             LegacyElementClass::Apple => LegacyObjectItemPayload::Apple(LegacyApplePayload {
-                projectile: LegacyProjectilePayload::read(
-                    reader,
-                    abi_profile,
-                    limits,
-                    base_limits,
-                    creation_order,
-                    class,
-                )?,
+                projectile: LegacyProjectilePayload::read_field(reader, "projectile", &projectile)?,
             }),
-            LegacyElementClass::Purse => LegacyObjectItemPayload::Purse(LegacyPursePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-            )?),
+            LegacyElementClass::Purse => LegacyObjectItemPayload::Purse(
+                LegacyPursePayload::read_field(reader, "purse", &projectile)?,
+            ),
             LegacyElementClass::Stone => LegacyObjectItemPayload::Stone(LegacyStonePayload {
-                projectile: LegacyProjectilePayload::read(
-                    reader,
-                    abi_profile,
-                    limits,
-                    base_limits,
-                    creation_order,
-                    class,
-                )?,
+                projectile: LegacyProjectilePayload::read_field(reader, "projectile", &projectile)?,
             }),
-            LegacyElementClass::WaspNest => {
-                LegacyObjectItemPayload::WaspNest(LegacyWaspNestPayload::read(
-                    reader,
-                    abi_profile,
-                    limits,
-                    base_limits,
-                    creation_order,
-                )?)
-            }
-            LegacyElementClass::Wasp => LegacyObjectItemPayload::Wasp(LegacyWaspPayload::read(
+            LegacyElementClass::WaspNest => LegacyObjectItemPayload::WaspNest(
+                LegacyWaspNestPayload::read_field(reader, "wasp_nest", &projectile)?,
+            ),
+            LegacyElementClass::Wasp => LegacyObjectItemPayload::Wasp(
+                LegacyWaspPayload::read_field(reader, "wasp", &object)?,
+            ),
+            LegacyElementClass::Net => LegacyObjectItemPayload::Net(LegacyNetPayload::read_field(
                 reader,
-                abi_profile,
-                base_limits,
-                creation_order,
+                "net",
+                &projectile,
             )?),
-            LegacyElementClass::Net => LegacyObjectItemPayload::Net(LegacyNetPayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-            )?),
-            LegacyElementClass::Coin => LegacyObjectItemPayload::Coin(LegacyCoinPayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-            )?),
+            LegacyElementClass::Coin => LegacyObjectItemPayload::Coin(
+                LegacyCoinPayload::read_field(reader, "coin", &projectile)?,
+            ),
             LegacyElementClass::Ale => LegacyObjectItemPayload::Ale(LegacyAlePayload {
                 object: read_object_payload(
                     reader,
@@ -188,7 +166,12 @@ pub fn read_object_item_payload(
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyProjectileDecode<'_>,
+    fingerprint = FINGERPRINT_PROJECTILE,
+    expected = "projectile-element fingerprint"
+)]
 pub struct LegacyProjectilePayload {
     pub flying: bool,
     pub dive: bool,
@@ -200,83 +183,20 @@ pub struct LegacyProjectilePayload {
     /// audited two-byte struct padding.
     pub trajectory_origin_sector_pointer: LegacyOpaquePointer32,
     pub trajectory_origin_level: u16,
+    #[legacy(bytes)]
     pub trajectory_origin_padding: [u8; 2],
     pub trajectory_origin_sector: LegacySectorRef,
     pub flight_direction: u16,
     pub start: LegacyPoint3,
     pub end: LegacyPoint3,
     pub shooter: LegacyElementRef,
+    #[legacy(count_u32 = ctx.limits.trajectory_points)]
     pub trajectory: Vec<LegacyTrajectoryPoint>,
+    #[legacy(read = LegacyObjectPayload::read_field(reader, "object", &ctx.object))]
     pub object: LegacyObjectPayload,
 }
 
-impl LegacyProjectilePayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-        class: LegacyElementClass,
-    ) -> LegacyResult<Self> {
-        reader.scope("projectile", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_PROJECTILE,
-                "projectile-element fingerprint",
-            )?;
-            let flying = reader.read_bool("flying")?;
-            let dive = reader.read_bool("dive")?;
-            let magic_bullet = reader.read_bool("magic_bullet")?;
-            let frame_count = reader.read_u16("frame_count")?;
-            let trajectory_origin_map = read_point2(reader, "trajectory_origin_map")?;
-            let trajectory_origin_sector_pointer =
-                LegacyOpaquePointer32(reader.read_u32("trajectory_origin_sector_pointer")?);
-            let trajectory_origin_level = reader.read_u16("trajectory_origin_level")?;
-            let mut trajectory_origin_padding = [0; 2];
-            reader.read_bytes("trajectory_origin_padding", &mut trajectory_origin_padding)?;
-            let trajectory_origin_sector = read_sector_ref(reader, "trajectory_origin_sector")?;
-            let flight_direction = reader.read_u16("flight_direction")?;
-            let start = read_point3(reader, "start")?;
-            let end = read_point3(reader, "end")?;
-            let shooter = read_element_ref(reader, "shooter")?;
-            let count = reader.read_count_u32("trajectory.count", limits.trajectory_points)?;
-            let mut trajectory = Vec::new();
-            reserve(reader, &mut trajectory, count, "trajectory")?;
-            for index in 0..count {
-                trajectory.push(reader.scope(format!("trajectory[{index}]"), |reader| {
-                    Ok(LegacyTrajectoryPoint {
-                        time: reader.read_u16("time")?,
-                        bounce: reader.read_bool("bounce")?,
-                        material: reader.read_u32("material")?,
-                        position: read_point3(reader, "position")?,
-                    })
-                })?);
-            }
-            let object =
-                read_object_payload(reader, abi_profile, base_limits, creation_order, class)?;
-            Ok(Self {
-                flying,
-                dive,
-                magic_bullet,
-                frame_count,
-                trajectory_origin_map,
-                trajectory_origin_sector_pointer,
-                trajectory_origin_level,
-                trajectory_origin_padding,
-                trajectory_origin_sector,
-                flight_direction,
-                start,
-                end,
-                shooter,
-                trajectory,
-                object,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
 pub struct LegacyTrajectoryPoint {
     pub time: u16,
     pub bounce: bool,
@@ -284,9 +204,15 @@ pub struct LegacyTrajectoryPoint {
     pub position: LegacyPoint3,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyProjectileDecode<'_>,
+    fingerprint = FINGERPRINT_ARROW,
+    expected = "arrow-element fingerprint"
+)]
 pub struct LegacyArrowPayload {
     pub projectile: LegacyProjectilePayload,
+    #[legacy(read = read_bow(reader))]
     pub bow: Option<LegacyBowPayload>,
     pub flat_shot: bool,
     pub falling: bool,
@@ -296,49 +222,13 @@ pub struct LegacyArrowPayload {
     pub play_impact: bool,
 }
 
-impl LegacyArrowPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("arrow", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_ARROW,
-                "arrow-element fingerprint",
-            )?;
-            let projectile = LegacyProjectilePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-                LegacyElementClass::Arrow,
-            )?;
-            let has_bow = reader.read_bool("has_bow")?;
-            let bow = if has_bow {
-                let raw = reader.read_u32("bow_profile")?;
-                Some(LegacyBowPayload {
-                    profile: (raw != NULL_U32).then_some(raw),
-                })
-            } else {
-                None
-            };
-            Ok(Self {
-                projectile,
-                bow,
-                flat_shot: reader.read_bool("flat_shot")?,
-                falling: reader.read_bool("falling")?,
-                falling_direction: reader.read_u8("falling_direction")?,
-                last_sector: reader.read_u8("last_sector")?,
-                last_azimuth: reader.read_i16("last_azimuth")?,
-                play_impact: reader.read_bool("play_impact")?,
-            })
-        })
+fn read_bow(reader: &mut LegacyReader<'_>) -> LegacyResult<Option<LegacyBowPayload>> {
+    if !reader.read_bool("has_bow")? {
+        return Ok(None);
     }
+    Ok(Some(LegacyBowPayload {
+        profile: read_nullable_u32_ref(reader, "bow_profile")?,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,197 +248,61 @@ pub struct LegacyStonePayload {
     pub projectile: LegacyProjectilePayload,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyProjectileDecode<'_>,
+    fingerprint = FINGERPRINT_PURSE,
+    expected = "purse-element fingerprint"
+)]
 pub struct LegacyPursePayload {
     pub number_of_coins: u16,
     pub projectile: LegacyProjectilePayload,
 }
 
-impl LegacyPursePayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("purse", |reader| {
-            reader.read_signature(
-                "fingerprint",
-                FINGERPRINT_PURSE,
-                "purse-element fingerprint",
-            )?;
-            let number_of_coins = reader.read_u16("number_of_coins")?;
-            let projectile = LegacyProjectilePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-                LegacyElementClass::Purse,
-            )?;
-            Ok(Self {
-                number_of_coins,
-                projectile,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Wasp-nest serialization has no stream-validation call.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyProjectileDecode<'_>)]
 pub struct LegacyWaspNestPayload {
     pub projectile: LegacyProjectilePayload,
     pub flying_wasp_count: u32,
 }
 
-impl LegacyWaspNestPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("wasp_nest", |reader| {
-            // Wasp-nest serialization has no stream-validation call.
-            let projectile = LegacyProjectilePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-                LegacyElementClass::WaspNest,
-            )?;
-            let flying_wasp_count = reader.read_u32("flying_wasp_count")?;
-            Ok(Self {
-                projectile,
-                flying_wasp_count,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(
+    ctx = LegacyObjectDecode<'_>,
+    fingerprint = FINGERPRINT_WASP,
+    expected = "wasp-element fingerprint"
+)]
 pub struct LegacyWaspPayload {
     pub nest: LegacyElementRef,
     pub victim: LegacyElementRef,
     pub stinging: bool,
     pub timeout: u32,
     pub movement: LegacyPoint3,
+    /// Intentional Original behavior: wasps inherit Projectile but
+    /// serialize only their Object base.
     pub object: LegacyObjectPayload,
 }
 
-impl LegacyWaspPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("wasp", |reader| {
-            reader.read_signature("fingerprint", FINGERPRINT_WASP, "wasp-element fingerprint")?;
-            let nest = read_element_ref(reader, "nest")?;
-            let victim = read_element_ref(reader, "victim")?;
-            let stinging = reader.read_bool("stinging")?;
-            let timeout = reader.read_u32("timeout")?;
-            let movement = read_point3(reader, "movement")?;
-            // Intentional Original behavior: wasps inherit Projectile but
-            // serialize only their Object base.
-            let object = read_object_payload(
-                reader,
-                abi_profile,
-                base_limits,
-                creation_order,
-                LegacyElementClass::Wasp,
-            )?;
-            Ok(Self {
-                nest,
-                victim,
-                stinging,
-                timeout,
-                movement,
-                object,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Net serialization has no stream-validation call.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyProjectileDecode<'_>)]
 pub struct LegacyNetPayload {
     pub projectile: LegacyProjectilePayload,
+    #[legacy(count_u16 = ctx.limits.net_victims)]
     pub victims: Vec<LegacyElementRef>,
     pub time_until_unfolding: u32,
     pub crumpled: bool,
     pub was_flying: bool,
 }
 
-impl LegacyNetPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("net", |reader| {
-            // Net serialization has no stream-validation call.
-            let projectile = LegacyProjectilePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-                LegacyElementClass::Net,
-            )?;
-            let count = read_bounded_u16(reader, "victims.count", limits.net_victims)?;
-            let mut victims = Vec::new();
-            reserve(reader, &mut victims, count, "victims")?;
-            for index in 0..count {
-                victims.push(read_element_ref(reader, format!("victims[{index}]"))?);
-            }
-            Ok(Self {
-                projectile,
-                victims,
-                time_until_unfolding: reader.read_u32("time_until_unfolding")?,
-                crumpled: reader.read_bool("crumpled")?,
-                was_flying: reader.read_bool("was_flying")?,
-            })
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Coin serialization has no stream-validation call and stores its leaf
+/// reference before invoking Projectile.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, LegacyRead)]
+#[legacy(ctx = LegacyProjectileDecode<'_>)]
 pub struct LegacyCoinPayload {
     pub source_purse: LegacyElementRef,
     pub projectile: LegacyProjectilePayload,
-}
-
-impl LegacyCoinPayload {
-    fn read(
-        reader: &mut LegacyReader<'_>,
-        abi_profile: LegacySaveAbiProfile,
-        limits: &LegacyObjectPayloadLimits,
-        base_limits: &LegacyPayloadLimits,
-        creation_order: u32,
-    ) -> LegacyResult<Self> {
-        reader.scope("coin", |reader| {
-            // Coin serialization has no stream-validation call and stores
-            // its leaf reference before invoking Projectile.
-            let source_purse = read_element_ref(reader, "source_purse")?;
-            let projectile = LegacyProjectilePayload::read(
-                reader,
-                abi_profile,
-                limits,
-                base_limits,
-                creation_order,
-                LegacyElementClass::Coin,
-            )?;
-            Ok(Self {
-                source_purse,
-                projectile,
-            })
-        })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -565,8 +319,34 @@ pub struct LegacySpyCapePayload {
 mod tests {
 
     use super::*;
+    use crate::legacy_save::payload_base::LegacyPayloadLimits;
 
     use crate::legacy_save::test_support::with_reader;
+
+    fn object_decode(
+        base_limits: &LegacyPayloadLimits,
+        creation_order: u32,
+        class: LegacyElementClass,
+    ) -> LegacyObjectDecode<'_> {
+        LegacyObjectDecode {
+            abi_profile: LegacySaveAbiProfile::PortLinuxI386V48,
+            limits: base_limits,
+            creation_order,
+            class,
+        }
+    }
+
+    fn projectile_decode<'a>(
+        limits: &'a LegacyObjectPayloadLimits,
+        base_limits: &'a LegacyPayloadLimits,
+        creation_order: u32,
+        class: LegacyElementClass,
+    ) -> LegacyProjectileDecode<'a> {
+        LegacyProjectileDecode {
+            object: object_decode(base_limits, creation_order, class),
+            limits,
+        }
+    }
 
     #[test]
     fn trajectory_count_is_rejected_before_payload_allocation() {
@@ -587,14 +367,12 @@ mod tests {
             trajectory_points: 1,
             ..LegacyObjectPayloadLimits::default()
         };
+        let base_limits = LegacyPayloadLimits::default();
         with_reader(&bytes, |reader| {
-            let error = LegacyProjectilePayload::read(
+            let error = LegacyProjectilePayload::read_field(
                 reader,
-                LegacySaveAbiProfile::PortLinuxI386V48,
-                &limits,
-                &LegacyPayloadLimits::default(),
-                1,
-                LegacyElementClass::Stone,
+                "projectile",
+                &projectile_decode(&limits, &base_limits, 1, LegacyElementClass::Stone),
             )
             .unwrap_err();
             assert_eq!(error.offset, 69);
@@ -608,14 +386,13 @@ mod tests {
     fn projectile_fingerprint_error_stops_at_the_signature() {
         let mut bytes = FINGERPRINT_PROJECTILE;
         bytes[4] ^= 0xff;
+        let limits = LegacyObjectPayloadLimits::default();
+        let base_limits = LegacyPayloadLimits::default();
         with_reader(&bytes, |reader| {
-            let error = LegacyProjectilePayload::read(
+            let error = LegacyProjectilePayload::read_field(
                 reader,
-                LegacySaveAbiProfile::PortLinuxI386V48,
-                &LegacyObjectPayloadLimits::default(),
-                &LegacyPayloadLimits::default(),
-                1,
-                LegacyElementClass::Arrow,
+                "projectile",
+                &projectile_decode(&limits, &base_limits, 1, LegacyElementClass::Arrow),
             )
             .unwrap_err();
             assert_eq!(error.offset, 0);
@@ -632,13 +409,13 @@ mod tests {
         let mut bad_projectile_fingerprint = FINGERPRINT_PROJECTILE;
         bad_projectile_fingerprint[0] ^= 0xff;
         bytes.extend_from_slice(&bad_projectile_fingerprint);
+        let limits = LegacyObjectPayloadLimits::default();
+        let base_limits = LegacyPayloadLimits::default();
         with_reader(&bytes, |reader| {
-            let error = LegacyCoinPayload::read(
+            let error = LegacyCoinPayload::read_field(
                 reader,
-                LegacySaveAbiProfile::PortLinuxI386V48,
-                &LegacyObjectPayloadLimits::default(),
-                &LegacyPayloadLimits::default(),
-                7,
+                "coin",
+                &projectile_decode(&limits, &base_limits, 7, LegacyElementClass::Coin),
             )
             .unwrap_err();
             assert_eq!(error.offset, 4);
@@ -651,13 +428,13 @@ mod tests {
     fn purse_leaf_fingerprint_precedes_its_coin_count_and_parent() {
         let mut bytes = FINGERPRINT_PURSE;
         bytes[15] ^= 0xff;
+        let limits = LegacyObjectPayloadLimits::default();
+        let base_limits = LegacyPayloadLimits::default();
         with_reader(&bytes, |reader| {
-            let error = LegacyPursePayload::read(
+            let error = LegacyPursePayload::read_field(
                 reader,
-                LegacySaveAbiProfile::PortLinuxI386V48,
-                &LegacyObjectPayloadLimits::default(),
-                &LegacyPayloadLimits::default(),
-                7,
+                "purse",
+                &projectile_decode(&limits, &base_limits, 7, LegacyElementClass::Purse),
             )
             .unwrap_err();
             assert_eq!(error.offset, 0);
@@ -677,12 +454,12 @@ mod tests {
         bytes.extend_from_slice(&0_u32.to_le_bytes());
         bytes.extend_from_slice(&[0; 12]);
         bytes.extend_from_slice(&[0; 16]);
+        let base_limits = LegacyPayloadLimits::default();
         with_reader(&bytes, |reader| {
-            let error = LegacyWaspPayload::read(
+            let error = LegacyWaspPayload::read_field(
                 reader,
-                LegacySaveAbiProfile::PortLinuxI386V48,
-                &LegacyPayloadLimits::default(),
-                1,
+                "wasp",
+                &object_decode(&base_limits, 1, LegacyElementClass::Wasp),
             )
             .unwrap_err();
             assert_eq!(error.offset, 41);
@@ -694,7 +471,7 @@ mod tests {
     #[test]
     fn net_victim_count_has_a_strict_u16_limit() {
         with_reader(&2_u16.to_le_bytes(), |reader| {
-            let error = read_bounded_u16(reader, "victims.count", 1).unwrap_err();
+            let error = reader.read_count_u16("victims.count", 1).unwrap_err();
             assert_eq!(error.offset, 0);
             assert_eq!(error.field, "victims.count");
             assert!(error.to_string().contains("caller-supplied limit"));
