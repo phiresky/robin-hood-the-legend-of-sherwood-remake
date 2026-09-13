@@ -469,6 +469,31 @@ impl EnemyAi {
             .or_else(|| tick.fighter_registry.iter().find(|f| f.handle == handle))
     }
 
+    /// [`Self::find_fighter`] for callers that tolerate a missing snapshot by
+    /// taking a fallback branch: a null handle stays silent, but a non-null
+    /// handle absent from both fighter lists is logged (with the calling
+    /// site) so the unchanged fallback is visible.
+    #[track_caller]
+    pub(super) fn find_fighter_logged<'a>(
+        &self,
+        handle: impl IntoOptionalAiHandle,
+        tick: &'a AiPerTickData,
+        what: &'static str,
+    ) -> Option<&'a FighterSnapshot> {
+        let raw = handle.into_optional_ai_handle()?;
+        let found = self.find_fighter(raw, tick);
+        if found.is_none() {
+            tracing::warn!(
+                me = self.base.me,
+                handle = raw.get(),
+                what,
+                caller = %std::panic::Location::caller(),
+                "fighter snapshot unavailable; taking the caller's absent-fighter fallback"
+            );
+        }
+        found
+    }
+
     /// [`Self::find_fighter`] for a fighter the caller's precondition
     /// guarantees is present; panics with `context` (at the caller's
     /// location) when it is absent.
@@ -2454,8 +2479,8 @@ impl EnemyAi {
         }
 
         // Shield bearers only
-        let me_snap = self.find_fighter(self.base.me, tick);
-        if !me_snap.map(|f| f.is_shield_bearer).unwrap_or(false) {
+        let me_snap = self.find_fighter_logged(self.base.me, tick, "self shield-bearer flag");
+        if !me_snap.is_some_and(|f| f.is_shield_bearer) {
             if debug {
                 crate::ai_enemy::parity_trace::arrow_protection_reject_shield_bearer(
                     &(ctx.frame),
@@ -2789,10 +2814,11 @@ impl EnemyAi {
 
         let mut try_to_surround = true;
 
-        let me_snap = self.find_fighter(self.base.me, tick);
         let i_am_a_formation_soldier = self.get_rank() == ProfileRank::Soldier
             && self.base.list_us.len() > 2
-            && me_snap.map(|f| f.has_formation).unwrap_or(false);
+            && self
+                .find_fighter_logged(self.base.me, tick, "self formation flag")
+                .is_some_and(|f| f.has_formation);
         if i_am_a_formation_soldier {
             let (left, right) = self.propose_left_and_right_neighbour(ctx, tick);
             if let (Some(left), Some(right)) = (left, right) {

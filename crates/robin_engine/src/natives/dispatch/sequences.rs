@@ -774,10 +774,13 @@ impl NativeContext<'_, '_> {
                     return 0;
                 };
 
+                // `actor_exists(actor)` was checked above and nothing since
+                // has touched the entity store.
                 let actor_dir = self
                     .get_entity(actor)
-                    .map(|e| e.element_data().direction())
-                    .unwrap_or(0);
+                    .expect("RecordLeaveGame actor was validated by actor_exists")
+                    .element_data()
+                    .direction();
                 let effective_dir = if direction == -1 {
                     actor_dir
                 } else {

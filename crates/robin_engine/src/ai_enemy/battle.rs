@@ -1404,10 +1404,10 @@ impl EnemyAi {
         // RunAndAlertSoldiers — you don't call for help if your
         // opponents are all enemy soldiers (friendly fire / brawl
         // semantics).
-        let only_enemy_soldiers = !self
-            .list_them
-            .iter()
-            .any(|&h| self.find_fighter(h, tick).map(|f| f.is_pc).unwrap_or(false));
+        let only_enemy_soldiers = !self.list_them.iter().any(|&h| {
+            self.find_fighter_logged(h, tick, "enemy-list PC scan")
+                .is_some_and(|f| f.is_pc)
+        });
 
         // Archer with no arrows → run for new arrows.
         if self.is_archer() && ctx.remaining_arrows == 0 {
@@ -1921,12 +1921,14 @@ impl EnemyAi {
 
         // primary_target then emoticon.
         self.base.primary_target = Some(AiEntityHandle::new(enemy));
-        debug_assert!(
-            ctx.entity_view(enemy)
-                .map(|v| ctx.is_hostile_with(v.camp))
-                .unwrap_or(true),
-            "attack_enemy: target is a friend",
-        );
+        // The target's presence was already required above (entity view or
+        // nearby-fighter snapshot); the camp check needs the view.
+        if let Some(view) = ctx.entity_view(enemy) {
+            debug_assert!(
+                ctx.is_hostile_with(view.camp),
+                "attack_enemy: target is a friend"
+            );
+        }
         self.base.set_emoticon(EmoticonType::XMark);
 
         // Compute distance from `seek_position` (which is now fresh).
@@ -2679,10 +2681,10 @@ impl EnemyAi {
             // Do not substitute combat readiness: that broader helper
             // rejects temporary hit/recovery substates which remain valid
             // primary targets for a rider charge.
-            let target_alive = self
-                .find_fighter(target, tick)
-                .map(|f| !f.is_dead && !f.is_unconscious && !f.is_tied)
-                .unwrap_or(false);
+            // Same (pure) lookup as `target_snapshot`, which is present here.
+            let target_alive = !target_snapshot.is_dead
+                && !target_snapshot.is_unconscious
+                && !target_snapshot.is_tied;
 
             if target_alive
                 && let Some((d, bc)) = self.get_good_rider_attack_destination(

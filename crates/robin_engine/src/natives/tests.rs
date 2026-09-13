@@ -150,6 +150,9 @@ fn call_host_native_with_queries(
         .pcs()
         .map(|(id, _)| EntityId::Pc(id))
         .collect::<Vec<_>>();
+    // Production sessions always attach the mission diplomacy; allegiance
+    // natives (`Sees` on forest levels, `GetAIAttitude`, ...) require it.
+    let mut diplomacy = crate::diplomacy::DiplomacyState::default();
     let capabilities = queries.attach_to(
         NativeSessionCapabilities::new(
             &sim,
@@ -158,7 +161,8 @@ fn call_host_native_with_queries(
             &mut host.fast_grid,
             &mut host.globals,
         )
-        .with_pc_registry(&pc_registry),
+        .with_pc_registry(&pc_registry)
+        .with_diplomacy(&mut diplomacy),
     );
     let mut context = NativeContext::with_bindings(
         &mut host.host,

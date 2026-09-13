@@ -358,10 +358,10 @@ impl EnemyAi {
                     // If `synchronize_charly` is not in STATE_DEFAULT
                     // or is dead, return to duty; else re-arm the
                     // timer.
+                    // A vanished (or unset) partner counts as gone.
                     let sync_gone = ctx
-                        .entity_view(self.base.synchronize_charly)
-                        .map(|v| v.ai_state != AiState::Default || !v.is_able_to_fight)
-                        .unwrap_or(true);
+                        .entity_view_logged(self.base.synchronize_charly, "synchronize charly")
+                        .is_none_or(|v| v.ai_state != AiState::Default || !v.is_able_to_fight);
                     if sync_gone {
                         self.return_to_duty_default(env);
                     } else {
@@ -644,10 +644,10 @@ impl EnemyAi {
         let ThinkEnv { ctx, tick, .. } = env;
         if stimulus_type == StimulusType::EventTimer {
             let want_money = self.answer_question(Question::ShallITakeMoney, ctx);
-            let obj_pos = ctx.entity_position(self.base.interesting_object);
-            let officer_near = obj_pos
-                .map(|p| self.is_any_angry_officer_near(p, tick))
-                .unwrap_or(false);
+            let obj_pos = ctx
+                .entity_view_logged(self.base.interesting_object, "money being reacted to")
+                .map(|v| v.position);
+            let officer_near = obj_pos.is_some_and(|p| self.is_any_angry_officer_near(p, tick));
             if want_money
                 && let Some(obj_pos) = obj_pos
                 && !officer_near
@@ -1152,13 +1152,12 @@ impl EnemyAi {
                 // EventObjectAway; else look for more.
                 let obj = self.base.interesting_object;
                 let close_enough = ctx
-                    .entity_position(obj)
-                    .map(|p| {
-                        let dx = (p.x - ctx.position.x).abs();
-                        let dy = (p.y - ctx.position.y).abs();
+                    .entity_view_logged(obj, "money being approached")
+                    .is_some_and(|v| {
+                        let dx = (v.position.x - ctx.position.x).abs();
+                        let dy = (v.position.y - ctx.position.y).abs();
                         dx.max(dy) < 25.0
-                    })
-                    .unwrap_or(false);
+                    });
                 if let Some(obj) = obj.filter(|_| close_enough) {
                     // Stop actions and launch the Take sequence.
                     self.base.stop_all();

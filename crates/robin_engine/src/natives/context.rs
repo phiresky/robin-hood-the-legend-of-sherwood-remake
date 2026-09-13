@@ -382,23 +382,17 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
     pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
-        self.diplomacy.as_deref().map_or_else(
-            || {
-                tracing::warn!(target: "script", ?camp, "allegiance query has no attached diplomacy; using default campaign relationships");
-                crate::diplomacy::DiplomacyState::default().is_player_aligned(camp)
-            },
-            |diplomacy| diplomacy.is_player_aligned(camp),
-        )
+        self.diplomacy
+            .as_deref()
+            .expect("allegiance natives require an attached DiplomacyState")
+            .is_player_aligned(camp)
     }
 
     pub(crate) fn is_hostile_to_player(&self, camp: crate::element::Camp) -> bool {
-        self.diplomacy.as_deref().map_or_else(
-            || {
-                tracing::warn!(target: "script", ?camp, "hostility query has no attached diplomacy; using default campaign relationships");
-                crate::diplomacy::DiplomacyState::default().is_hostile_to_player(camp)
-            },
-            |diplomacy| diplomacy.is_hostile_to_player(camp),
-        )
+        self.diplomacy
+            .as_deref()
+            .expect("hostility natives require an attached DiplomacyState")
+            .is_hostile_to_player(camp)
     }
 
     pub fn new(

@@ -1722,12 +1722,11 @@ impl EnemyAi {
                 .iter()
                 .filter(|cs| cs.rank == ProfileRank::Soldier && cs.is_able_to_help)
                 .filter(|cs| {
-                    ctx.entity_view(cs.handle)
-                        .map(|v| {
+                    ctx.entity_view_logged(cs.handle, "door reservist camp soldier")
+                        .is_some_and(|v| {
                             v.in_building
                                 && v.building_sector.map(u16::from) == Some(door.sector_in)
                         })
-                        .unwrap_or(false)
                 })
                 .count();
 

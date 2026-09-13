@@ -74,9 +74,8 @@ impl EnemyAi {
     /// the member, so the gate is evaluated through this accessor immediately
     /// before the member's `think`.
     pub(crate) fn detects_patrol_member_360(&self, member: NpcHandle, ctx: &AiContext) -> bool {
-        ctx.entity_view(member)
-            .map(|v| v.is_soldier())
-            .unwrap_or(false)
+        ctx.entity_view_logged(member, "patrol broadcast member")
+            .is_some_and(|v| v.is_soldier())
             && self.is_detecting_360_degrees(member as HumanHandle, ctx)
     }
 

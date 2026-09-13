@@ -584,6 +584,33 @@ impl AiContext {
         self.entity_views.get(&handle)
     }
 
+    /// [`Self::entity_view`] for callers where a *null* handle is a legal,
+    /// silent "nobody", but a non-null handle whose view is unavailable is an
+    /// anomaly the caller tolerates by taking its documented fallback branch.
+    /// That fallback stays unchanged; this only makes it visible in the log
+    /// (with the reason and the calling site).
+    #[track_caller]
+    pub fn entity_view_logged(
+        &self,
+        handle: impl IntoOptionalAiHandle + Copy,
+        what: &'static str,
+    ) -> Option<&crate::ai_entity_view::AiEntityView> {
+        let raw = handle.into_optional_ai_handle()?.get();
+        match self.entity_observation(handle) {
+            Ok(view) => Some(view),
+            Err(reason) => {
+                tracing::warn!(
+                    handle = raw,
+                    ?reason,
+                    what,
+                    caller = %std::panic::Location::caller(),
+                    "AI entity view unavailable; taking the caller's absent-entity fallback"
+                );
+                None
+            }
+        }
+    }
+
     /// Look up a handle that the calling logic has already established as a
     /// live participant (an active brawl partner, a primary target mid-
     /// engagement, a loot-list entry, …).  Such a handle failing to resolve

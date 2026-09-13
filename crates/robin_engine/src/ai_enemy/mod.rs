@@ -597,9 +597,12 @@ impl EnemyAi {
         // standing still within our sword reach we attack regardless
         // of pride.
         let target_swordfighting = self
-            .find_fighter(new_target.get(), tick)
-            .map(|f| f.is_swordfighting)
-            .unwrap_or(false);
+            .find_fighter_logged(
+                new_target.get(),
+                tick,
+                "primary target sword-range early-out",
+            )
+            .is_some_and(|f| f.is_swordfighting);
         if !target_swordfighting && let Some(target) = self.find_fighter(new_target.get(), tick) {
             // The original game uses maximum-norm distance:
             // subtract raw element world positions, stretch Y for the
@@ -905,9 +908,8 @@ impl EnemyAi {
         if let Some(chief_id) = self.base.patrol_chief {
             let chief = chief_id.index();
             let chief_is_soldier = ctx
-                .entity_view(chief)
-                .map(|v| v.is_soldier())
-                .unwrap_or(false);
+                .entity_view_logged(chief, "patrol chief")
+                .is_some_and(|v| v.is_soldier());
             // Short-circuit: a non-soldier chief never reaches the LOS
             // query, so no visibility-cache traffic is generated for it.
             if chief_is_soldier && self.is_detecting_360_degrees(chief as HumanHandle, ctx) {

@@ -42,7 +42,9 @@ impl EnemyAi {
         // the rank-specific branches and fall through to the reunion
         // tail — losing the view snapshot means we can't trust the rank
         // checks, but the reunion tail is a safe default.
-        let charly_view = ctx.entity_view(charly).cloned();
+        let charly_view = ctx
+            .entity_view_logged(charly, "encountered charly")
+            .cloned();
 
         if self.base.current_state == AiState::Seeking {
             match self.get_rank() {
@@ -58,10 +60,8 @@ impl EnemyAi {
                         return;
                     }
                     // Ignore if charly already reported.
-                    let already_reported = charly_view
-                        .as_ref()
-                        .map(|v| v.reported_to_officer)
-                        .unwrap_or(false);
+                    let already_reported =
+                        charly_view.as_ref().is_some_and(|v| v.reported_to_officer);
                     if already_reported {
                         return;
                     }
@@ -73,8 +73,7 @@ impl EnemyAi {
                     // If the encountered actor has soldier rank, acquire him and wait.
                     let charly_is_soldier = charly_view
                         .as_ref()
-                        .map(|v| v.is_soldier() && v.rank == ProfileRank::Soldier)
-                        .unwrap_or(false);
+                        .is_some_and(|v| v.is_soldier() && v.rank == ProfileRank::Soldier);
                     if charly_is_soldier {
                         self.base.say(Remark::FoundCharly);
                         self.base.outbox.reentrant.cross_npc_actions.push(
@@ -104,14 +103,9 @@ impl EnemyAi {
                     // Only if we have an antagonist (the officer who sent
                     // us out) and the encountered actor is an unreported soldier.
                     let has_antagonist = self.base.antagonist.is_some();
-                    let charly_ok = charly_view
-                        .as_ref()
-                        .map(|v| {
-                            v.is_soldier()
-                                && v.rank == ProfileRank::Soldier
-                                && !v.reported_to_officer
-                        })
-                        .unwrap_or(false);
+                    let charly_ok = charly_view.as_ref().is_some_and(|v| {
+                        v.is_soldier() && v.rank == ProfileRank::Soldier && !v.reported_to_officer
+                    });
                     if has_antagonist && charly_ok {
                         self.seek_flags &= !SeekFlags::REPORT_OFFICER_AFTER;
 
@@ -217,11 +211,12 @@ impl EnemyAi {
         }
 
         // synchronize_charly is in STATE_DEFAULT?
-        let sync_view = ctx.entity_view(self.base.synchronize_charly).cloned();
+        let sync_view = ctx
+            .entity_view_logged(self.base.synchronize_charly, "synchronize charly")
+            .cloned();
         let sync_in_default = sync_view
             .as_ref()
-            .map(|v| v.ai_state == AiState::Default)
-            .unwrap_or(false);
+            .is_some_and(|v| v.ai_state == AiState::Default);
         if !sync_in_default {
             // "Forget it" — drop back into macro flow.
             self.set_state(AiState::Default, Substate::DefaultInMacro);
@@ -1335,7 +1330,7 @@ impl EnemyAi {
         // A local flag captures whether this body is the soldier we
         // were tasked to find via a MissedCharly recon report — used
         // twice below to fire the unalert-cascade on the seeker network.
-        let body_view = ctx.entity_view(body);
+        let body_view = ctx.entity_view_logged(body, "seen body");
         let body_pos = body_view
             .map(|v| v.position)
             .unwrap_or(self.base.seek_position);
@@ -1407,7 +1402,7 @@ impl EnemyAi {
         }
 
         // Stuck-under-net → different remark.
-        let stuck = body_view.map(|v| v.stuck_under_net).unwrap_or(false);
+        let stuck = body_view.is_some_and(|v| v.stuck_under_net);
         if stuck {
             self.base.say(Remark::SeesFriendUnderNet);
         } else {
@@ -2790,9 +2785,8 @@ impl EnemyAi {
                 // Dead/unconscious charly gets a long stare; a
                 // healthy one only the standard 20.
                 let timer = ctx
-                    .entity_view(charly)
-                    .map(|v| v.is_dead || v.is_unconscious)
-                    .unwrap_or(false);
+                    .entity_view_logged(charly, "resurrected charly")
+                    .is_some_and(|v| v.is_dead || v.is_unconscious);
                 self.base
                     .launch_timer(if timer { 200 } else { 20 }, ctx.frame);
             }
@@ -2901,9 +2895,8 @@ impl EnemyAi {
                             // unless the sighted enemy is itself
                             // unconscious (still not a threat).
                             let target_unconscious = ctx
-                                .entity_view(enemy)
-                                .map(|v| v.is_unconscious)
-                                .unwrap_or(false);
+                                .entity_view_logged(enemy, "newly seen enemy")
+                                .is_some_and(|v| v.is_unconscious);
                             if !target_unconscious {
                                 self.event_view_standard_procedure(env, enemy.get(), global);
                             }
@@ -2951,9 +2944,8 @@ impl EnemyAi {
             // Advancing / RunningToPhalanx: always protect.
             let b_protect = match self.base.current_substate {
                 Substate::AttackingProtectingWithShield => ctx
-                    .entity_view(self.base.me)
-                    .map(|v| v.current_animation != crate::order::OrderType::WaitingShield)
-                    .unwrap_or(false),
+                    .entity_view_logged(self.base.me, "self shield animation")
+                    .is_some_and(|v| v.current_animation != crate::order::OrderType::WaitingShield),
                 Substate::AttackingAdvancingWithShield | Substate::AttackingRunningToPhalanx => {
                     true
                 }
@@ -3082,11 +3074,10 @@ impl EnemyAi {
             // Generic effect-of-hit branch.
             self.base.stop_all();
             if let StimulusInfo::Human(attacker) = stimulus.info {
-                let attacker_view = ctx.entity_view(attacker);
-                let attacker_is_soldier = attacker_view.map(|v| v.is_soldier()).unwrap_or(false);
-                let attacker_in_brawl = attacker_view
-                    .map(|v| v.ai_substate.is_fight_for_money())
-                    .unwrap_or(false);
+                let attacker_view = ctx.entity_view_logged(attacker, "hit attacker");
+                let attacker_is_soldier = attacker_view.is_some_and(|v| v.is_soldier());
+                let attacker_in_brawl =
+                    attacker_view.is_some_and(|v| v.ai_substate.is_fight_for_money());
                 if attacker_is_soldier {
                     if attacker_in_brawl {
                         // Brawl-friend hit me — capture as

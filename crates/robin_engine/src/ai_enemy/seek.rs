@@ -933,9 +933,8 @@ impl EnemyAi {
             // to combat (disguised PC), so commit the discriminator
             // here when the beggar is popped.
             self.beggar_is_npc = ctx
-                .entity_view(self.beggar_to_examine)
-                .map(|v| v.is_civilian())
-                .unwrap_or(false);
+                .entity_view_logged(self.beggar_to_examine, "beggar to examine")
+                .is_some_and(|v| v.is_civilian());
             if let Some(pos) = self.positions_of_beggars_to_control.pop() {
                 self.base.seek_position = pos;
                 self.go_near(
@@ -1619,8 +1618,10 @@ impl EnemyAi {
         // Body examination: if stuck under a net, delegate to net-victim
         // rescue; otherwise focus, mark X
         // emoticon, and run up to the body.
-        let view = ctx.entity_view(body);
-        let stuck = view.map(|v| v.stuck_under_net).unwrap_or(false);
+        // A body without a view falls back to its fighter snapshot for the
+        // position below (and panics if that is missing too).
+        let view = ctx.entity_view_logged(body, "body to examine");
+        let stuck = view.is_some_and(|v| v.stuck_under_net);
         if stuck {
             // Run to free the net victim.
             self.run_to_free_net_victim(body, env);
