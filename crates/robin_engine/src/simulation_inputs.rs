@@ -341,7 +341,7 @@ mod projection_serializer {
         fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
             Ok(CanonicalSimulationValue::Object(BTreeMap::from([(
                 "bytes_hex".into(),
-                CanonicalSimulationValue::String(hex_bytes(v)),
+                CanonicalSimulationValue::String(hex::encode(v)),
             )])))
         }
         fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
@@ -1541,7 +1541,7 @@ fn canonicalize_serde_value(
             let mut object = BTreeMap::new();
             object.insert(
                 "bytes_hex".to_owned(),
-                CanonicalSimulationValue::String(hex_bytes(&bytes)),
+                CanonicalSimulationValue::String(hex::encode(&bytes)),
             );
             CanonicalSimulationValue::Object(object)
         }
@@ -1610,16 +1610,6 @@ fn canonicalize_projected_map(
         "map_entries".to_owned(),
         CanonicalSimulationValue::Array(entries),
     )])))
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for &byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 #[cfg(test)]
