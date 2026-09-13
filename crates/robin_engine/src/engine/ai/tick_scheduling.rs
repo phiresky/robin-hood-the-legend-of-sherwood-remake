@@ -68,12 +68,7 @@ impl EngineInner {
         npc_id: EntityId,
     ) {
         self.debug_refresh_view_lifecycle("npc_tail_enter", npc_id, None);
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC owner {} disappeared before its fused legacy-slot envelope",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(npc_id, "NPC owner before its fused legacy-slot envelope");
         assert!(
             entity.ai_actor_data().is_some(),
             "fused AI owner {} has no AI actor data",
@@ -298,14 +293,10 @@ impl EngineInner {
         // The halt application above is a real same-frame barrier: only now
         // take the prefixes that the original `go_to` path launches next.
         let preemption = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             ai.outbox.actor.take_movement_prefixes()
         };
 
@@ -314,14 +305,10 @@ impl EngineInner {
         // still enqueue effects that this pass observes at their Original
         // application point.
         let (effects, finish_lost_enemy_overview) = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!("pending-drain NPC {} has no AI controller", npc_id.index())
-            });
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             (
                 ai.outbox.actor.take_core(),
                 ai.outbox.actor.take_lost_enemy_overview_after_quit(),
@@ -837,13 +824,15 @@ impl EngineInner {
         // `charly.set_reported_to_officer(false)` call inside
         // `missed_charly_alert`.  Writes the other NPC's
         // `EnemyAi::reported_to_officer` flag.
-        let reported_updates = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .and_then(Entity::ai_controller_mut)
-            .map(|ai| std::mem::take(&mut ai.outbox.actor.set_reported_to_officer))
-            .unwrap_or_else(|| panic!("report-update owner {} lost its AI", npc_id.index()));
+        let reported_updates = std::mem::take(
+            &mut self
+                .world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("report-update owner"))
+                .outbox
+                .actor
+                .set_reported_to_officer,
+        );
         for (target_handle, value) in reported_updates {
             let target_id = self.expect_human_id_for_ai_handle(
                 target_handle.get(),
@@ -1018,28 +1007,20 @@ impl EngineInner {
                     let detects_charly = self
                         .world
                         .entities
-                        .get(other_id)
-                        .and_then(Entity::enemy_ai)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "nearby-searcher stand-down candidate {} lost EnemyAi",
-                                other_id.index()
-                            )
-                        })
+                        .expect_enemy_ai(
+                            other_id,
+                            format_args!("nearby-searcher stand-down candidate"),
+                        )
                         .is_detecting_180_degrees(charly_handle, &other_ctx);
                     let detects_me_branch = !detects_charly
                         && !charly_is_self
                         && self
                             .world
                             .entities
-                            .get(other_id)
-                            .and_then(Entity::enemy_ai)
-                            .unwrap_or_else(|| {
-                                panic!(
-                                    "nearby-searcher stand-down candidate {} lost EnemyAi",
-                                    other_id.index()
-                                )
-                            })
+                            .expect_enemy_ai(
+                                other_id,
+                                format_args!("nearby-searcher stand-down candidate"),
+                            )
                             .is_detecting_180_degrees(npc_id.index(), &other_ctx);
                     other_ctx.commit_view_radius_cache(&mut self.ai.view_radius_cache);
                     if !(detects_charly || detects_me_branch) {
@@ -1093,20 +1074,9 @@ impl EngineInner {
         for (target_handle, remark) in effects.say_on_target {
             let target_id =
                 self.expect_human_id_for_ai_handle(target_handle.get(), "AI speech target");
-            let target = self.world.entities.get_mut(target_id).unwrap_or_else(|| {
-                panic!(
-                    "AI speech target {} disappeared before Say",
-                    target_id.index()
-                )
-            });
-            target
-                .ai_controller_mut()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "AI speech target {} has no AI controller",
-                        target_id.index()
-                    )
-                })
+            self.world
+                .entities
+                .expect_ai_controller_mut(target_id, format_args!("AI speech target before Say"))
                 .say(remark);
             self.drain_ai_owner_work_for(sim, assets, target_id);
         }
@@ -1132,11 +1102,7 @@ impl EngineInner {
         }
 
         if effects.raise_shield_immediately {
-            let entity = self
-                .world
-                .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("instant shield owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity_mut(npc_id, "instant shield owner");
             entity.set_posture(crate::element::Posture::Upright);
             entity
                 .actor_data_mut()
@@ -1194,13 +1160,10 @@ impl EngineInner {
         // drops the PC and stops firing duplicate `EventSeesBeggar`
         // stimuli on subsequent frames.
         let delete_beggar_requests: Vec<EntityId> = {
-            let entity =
-                self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!("pending-drain AI owner {} disappeared", npc_id.index())
-                });
-            let ai_actor = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!("pending-drain owner {} lost AI actor data", npc_id.index())
-            });
+            let ai_actor = self
+                .world
+                .entities
+                .expect_ai_actor_data_mut(npc_id, format_args!("pending-drain AI owner"));
             match ai_actor.ai_brain.base_mut() {
                 Some(ai) => std::mem::take(&mut ai.outbox.actor.delete_beggar_for_all_npc),
                 None => Vec::new(),
@@ -1298,9 +1261,7 @@ impl EngineInner {
                 })
                 .collect::<Vec<_>>();
             let (npc_camp, npc_uses_enemy_combat_ai) = {
-                let owner = self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("pending-drain owner {} disappeared", npc_id.index())
-                });
+                let owner = self.expect_entity(npc_id, "pending-drain owner");
                 (owner.camp(), owner.enemy_ai().is_some())
             };
             let npc = self.world.entities.expect_ai_actor_data_mut(
@@ -1494,14 +1455,10 @@ impl EngineInner {
         // so the next detection pass treats anyone still in the cone
         // as a "first-seen" edge and re-issues EVENT_VIEW.
         let blink_all = {
-            let entity = self
+            let ai = self
                 .world
                 .entities
-                .get_mut(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
-            let ai = entity
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("pending-drain NPC {} lost its AI", npc_id.index()));
+                .expect_ai_controller_mut(npc_id, format_args!("pending-drain NPC"));
             std::mem::take(&mut ai.outbox.actor.blink_all_enemies)
         };
         if blink_all {
@@ -1563,11 +1520,7 @@ impl EngineInner {
             .is_some_and(|ai| ai.outbox.actor.begin_panic.is_some());
         if has_begin_panic {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1582,11 +1535,7 @@ impl EngineInner {
 
         if observe_after_panic {
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("panic continuation owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity(npc_id, "panic continuation owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1621,11 +1570,7 @@ impl EngineInner {
             // Panic startup above can mutate the owner and world; do not reuse
             // its context snapshot at this later synchronous boundary.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1658,11 +1603,7 @@ impl EngineInner {
             // world. Script-driven area search gets a fresh owner snapshot and tick
             // data at its own original-game evaluation boundary.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("pending-drain NPC {} disappeared", npc_id.index()));
+            let entity = self.expect_entity(npc_id, "pending-drain NPC");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,
@@ -1682,11 +1623,7 @@ impl EngineInner {
             // condolence. Resume the outer EVENT_OUTOFVIEW handler at the
             // following battle-overview evaluation with a fresh live view.
             let scratch = self.build_owner_context_scratch_without_forecast(assets);
-            let entity = self
-                .world
-                .entities
-                .get(npc_id)
-                .unwrap_or_else(|| panic!("lost-enemy overview owner {npc_id:?} disappeared"));
+            let entity = self.expect_entity(npc_id, "lost-enemy overview owner");
             let building_sector = self.entity_building_sector(entity.element_data().sector());
             let mut ctx = self.ai_context_from_entity(
                 entity,

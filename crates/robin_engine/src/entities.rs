@@ -1025,6 +1025,42 @@ impl Entities {
             .ai_actor_data_mut()
             .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
     }
+    /// Immutable twin of [`Entities::expect_ai_controller_mut`].
+    #[track_caller]
+    pub(crate) fn expect_ai_controller(
+        &self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &crate::ai::AiController {
+        self.get(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_controller()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required AI controller"))
+    }
+    /// Immutable twin of [`Entities::expect_enemy_ai_mut`].
+    #[track_caller]
+    pub(crate) fn expect_enemy_ai(
+        &self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &crate::ai_enemy::EnemyAi {
+        self.get(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .enemy_ai()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required enemy AI"))
+    }
+    /// Immutable twin of [`Entities::expect_ai_actor_data_mut`].
+    #[track_caller]
+    pub(crate) fn expect_ai_actor_data(
+        &self,
+        id: EntityId,
+        context: std::fmt::Arguments<'_>,
+    ) -> &crate::element::AiActorData {
+        self.get(id)
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} disappeared"))
+            .ai_actor_data()
+            .unwrap_or_else(|| panic!("{context}: entity {id:?} has no required NPC actor state"))
+    }
 }
 
 #[cfg(test)]
@@ -1045,6 +1081,28 @@ mod required_ai_access_tests {
         assert_eq!(entities.generation(id), before + 2);
         entities.expect_ai_actor_data_mut(id, format_args!("actor test"));
         assert_eq!(entities.generation(id), before + 3);
+    }
+
+    #[test]
+    fn immutable_typed_ai_access_does_not_touch_the_arena_generation() {
+        let entities = Entities::from_legacy_slots(vec![Some(make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        ))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        let before = entities.generation(id);
+        entities.expect_ai_controller(id, format_args!("controller test"));
+        entities.expect_enemy_ai(id, format_args!("enemy test"));
+        entities.expect_ai_actor_data(id, format_args!("actor test"));
+        assert_eq!(entities.generation(id), before);
+    }
+
+    #[test]
+    #[should_panic(expected = "has no required enemy AI")]
+    fn immutable_absent_pc_brain_is_not_a_synthetic_enemy_ai() {
+        let entities =
+            Entities::from_legacy_slots(vec![Some(make_test_pc(crate::element::Posture::Upright))]);
+        let id = entities.id_at_legacy_slot(0).unwrap();
+        entities.expect_enemy_ai(id, format_args!("NPC dispatch"));
     }
 
     #[test]

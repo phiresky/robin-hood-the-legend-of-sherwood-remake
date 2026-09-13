@@ -405,9 +405,7 @@ impl EngineInner {
         // Read all the geometry / profile data we need without holding
         // a borrow into self.world.entities.
         let snapshot = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation distance owner {entity_id:?} is missing")
-            });
+            let entity = self.expect_entity(entity_id, "swordfight evaluation distance owner");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("swordfight evaluation distance owner {entity_id:?} is not human")
             });
@@ -709,9 +707,7 @@ impl EngineInner {
         assets: &LevelAssets,
         entity_id: EntityId,
     ) {
-        let entity = self
-            .get_entity(entity_id)
-            .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is missing"));
+        let entity = self.expect_entity(entity_id, "WaitingSword Execute owner");
         let human = entity
             .human_data()
             .unwrap_or_else(|| panic!("WaitingSword Execute owner {entity_id:?} is not human"));
@@ -802,8 +798,7 @@ impl EngineInner {
         entity_id: EntityId,
     ) {
         let opponents = self
-            .get_entity(entity_id)
-            .unwrap_or_else(|| panic!("swordfight evaluation owner {entity_id:?} is missing"))
+            .expect_entity(entity_id, "swordfight evaluation owner")
             .human_data()
             .unwrap_or_else(|| panic!("swordfight evaluation owner {entity_id:?} is not human"))
             .opponents
@@ -850,9 +845,8 @@ impl EngineInner {
         }
 
         let (self_pos, self_sector, self_uber, tiredness, is_pc, num_opponents) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation owner {entity_id:?} vanished before snapshot")
-            });
+            let entity =
+                self.expect_entity(entity_id, "swordfight evaluation owner before snapshot");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("swordfight evaluation owner {entity_id:?} lost human data")
             });
@@ -1093,9 +1087,10 @@ impl EngineInner {
         }
 
         let (self_pos, self_max, selected_pc) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("swordfight evaluation owner {entity_id:?} vanished before strike selection")
-            });
+            let entity = self.expect_entity(
+                entity_id,
+                "swordfight evaluation owner before strike selection",
+            );
             let max = required_hth_weapon_profile(
                 entity,
                 entity_id,
@@ -1156,10 +1151,7 @@ impl EngineInner {
 
         if let Some(destination) = self.is_step_back_needed(sim, entity_id, assets) {
             let layer = self
-                .get_entity(entity_id)
-                .unwrap_or_else(|| {
-                    panic!("swordfight evaluation step-back owner {entity_id:?} is missing")
-                })
+                .expect_entity(entity_id, "swordfight evaluation step-back owner")
                 .element_data()
                 .layer();
             // Do not publish `last_motion_was_step_back_in_combat` merely
@@ -1228,9 +1220,7 @@ impl EngineInner {
         target_id: EntityId,
     ) -> bool {
         // Skip if PC already has an active strike in flight.
-        let pc = self.get_entity(pc_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation strike proposal PC {pc_id:?} is missing")
-        });
+        let pc = self.expect_entity(pc_id, "swordfight evaluation strike proposal PC");
         let already_striking = self
             .orders
             .sequence_manager
@@ -1428,9 +1418,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> Option<crate::coordinates::MapPoint> {
         let entity_id = entity_id.into();
-        let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation step-back owner {entity_id:?} is missing")
-        });
+        let entity = self.expect_entity(entity_id, "swordfight evaluation step-back owner");
 
         if entity.is_pc() && self.selected_hero_ids().contains(&entity_id) {
             return None;
@@ -1593,9 +1581,7 @@ impl EngineInner {
     ) -> bool {
         let me_id = me_id.into();
         let opponent_id = opponent_id.into();
-        let me = self.get_entity(me_id).unwrap_or_else(|| {
-            panic!("swordfight evaluation range comparison owner {me_id:?} is missing")
-        });
+        let me = self.expect_entity(me_id, "swordfight evaluation range comparison owner");
         let opponent = self.get_entity(opponent_id).unwrap_or_else(|| {
             panic!(
                 "swordfight evaluation range comparison opponent {opponent_id:?} for {me_id:?} is missing"
@@ -2484,12 +2470,12 @@ impl EngineInner {
                         && debug.creation_order == self.world.original_creation_order(victim_id)
                 });
                 if let Some(debug) = step_back_debug {
-                    let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                        panic!("reactive step-back diagnostic victim {victim_id:?} disappeared")
-                    });
-                    let ai = victim.ai_controller().unwrap_or_else(|| {
-                        panic!("reactive step-back diagnostic victim {victim_id:?} lost AI")
-                    });
+                    let victim =
+                        self.expect_entity(victim_id, "reactive step-back diagnostic victim");
+                    let ai = self.world.entities.expect_ai_controller(
+                        victim_id,
+                        format_args!("reactive step-back diagnostic victim"),
+                    );
                     eprintln!(
                         "REACTIVE_STEP_BACK frame={} co={} phase=parry_selected victim={} attacker={} fighting_ability={} push_back_distance={} state={:?} substate={:?} position=({:08x},{:08x},sector={:?},level={}) animation={:?} command={:?} couldnt={} already={} inside_think={} owner_work={:?}",
                         debug.frame,
@@ -2527,25 +2513,13 @@ impl EngineInner {
                 {
                     let scratch = self.build_owner_context_scratch_without_forecast(assets);
                     let victim_sector = self
-                        .world
-                        .entities
-                        .get(victim_id)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "ConsiderToBeginParade step-back victim {} disappeared",
-                                victim_id.index()
-                            )
-                        })
+                        .expect_entity(victim_id, "ConsiderToBeginParade step-back victim")
                         .element_data()
                         .sector();
                     let building_sector = self.entity_building_sector(victim_sector);
                     let mut ctx = {
-                        let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                            panic!(
-                                "ConsiderToBeginParade step-back victim {} disappeared",
-                                victim_id.index()
-                            )
-                        });
+                        let victim =
+                            self.expect_entity(victim_id, "ConsiderToBeginParade step-back victim");
                         self.ai_context_from_entity(
                             victim,
                             self.control.frame_counter,
@@ -2703,16 +2677,14 @@ impl EngineInner {
                             sim, victim_id, assets,
                         );
                         if let Some(debug) = step_back_debug {
-                            let victim = self.world.entities.get(victim_id).unwrap_or_else(|| {
-                                panic!(
-                                    "reactive step-back diagnostic victim {victim_id:?} disappeared after drain"
-                                )
-                            });
-                            let ai = victim.ai_controller().unwrap_or_else(|| {
-                                panic!(
-                                    "reactive step-back diagnostic victim {victim_id:?} lost AI after drain"
-                                )
-                            });
+                            let victim = self.expect_entity(
+                                victim_id,
+                                "reactive step-back diagnostic victim after drain",
+                            );
+                            let ai = self.world.entities.expect_ai_controller(
+                                victim_id,
+                                format_args!("reactive step-back diagnostic victim after drain"),
+                            );
                             eprintln!(
                                 "REACTIVE_STEP_BACK frame={} co={} phase=after_drain victim={} state={:?} substate={:?} animation={:?} command={:?} couldnt={} already={} inside_think={} self_stimuli={:?} owner_work={:?}",
                                 debug.frame,
@@ -2790,10 +2762,7 @@ impl EngineInner {
                 if parade_timer_debug_enabled() {
                     let anim = strike_to_animation(animation_strike);
                     let sprite = &self
-                        .get_entity(attacker_id)
-                        .unwrap_or_else(|| {
-                            panic!("parade timer diagnostic attacker {attacker_id:?} disappeared")
-                        })
+                        .expect_entity(attacker_id, "parade timer diagnostic attacker")
                         .element_data()
                         .sprite;
                     let row = sprite.current_conversion()[anim as usize];

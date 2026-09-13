@@ -417,12 +417,7 @@ impl EngineInner {
         // Phase 2: write back.
         for (i, this_jl, opp_id, opp_jl) in updates {
             let owner_human = self
-                .world
-                .entities
-                .get_mut(entity_id)
-                .unwrap_or_else(|| {
-                    panic!("opponent jump-line owner {entity_id:?} disappeared during refresh")
-                })
+                .expect_entity_mut(entity_id, "opponent jump-line owner during refresh")
                 .human_data_mut()
                 .unwrap_or_else(|| {
                     panic!("opponent jump-line owner {entity_id:?} stopped being human")
@@ -437,12 +432,7 @@ impl EngineInner {
             // The analysis phase above is read-only,
             // so a missing record here is malformed state, not a race to hide.
             let opponent_human = self
-                .world
-                .entities
-                .get_mut(opp_id)
-                .unwrap_or_else(|| {
-                    panic!("opponent {opp_id:?} disappeared during jump-line refresh")
-                })
+                .expect_entity_mut(opp_id, "opponent during jump-line refresh")
                 .human_data_mut()
                 .unwrap_or_else(|| panic!("opponent {opp_id:?} is not human"));
             assert!(
@@ -1383,10 +1373,7 @@ impl EngineInner {
         // Snapshotting that list gives the same ownership without holding a
         // borrow across the synchronous callbacks.
         let opponents: Vec<EntityId> = self
-            .world
-            .entities
-            .get(entity_id)
-            .unwrap_or_else(|| panic!("swordfight exit owner {entity_id:?} is missing"))
+            .expect_entity(entity_id, "swordfight exit owner")
             .human_data()
             .unwrap_or_else(|| panic!("swordfight exit owner {entity_id:?} is not human"))
             .opponents

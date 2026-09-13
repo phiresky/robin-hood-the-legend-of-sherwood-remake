@@ -873,35 +873,33 @@ impl EngineInner {
         // mmotionState=IN_PROGRESS epilogue. This is observably different
         // from a true accepted-empty translation such as an already-held
         // parry, which publishes InProgress before detaching the element.
-        let (grounded_translation_terminates, grounded_posture, is_rider) = if pushed
-            || result.is_empty()
-        {
-            (false, Posture::Upright, false)
-        } else {
-            let victim = self.get_entity(victim_id).unwrap_or_else(|| {
-                    panic!(
-                        "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
-                    )
-                });
-            let posture = victim.element_data().posture();
-            let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
-            let dead_rider = is_rider && life_points_after <= 0;
-            (
-                matches!(
+        let (grounded_translation_terminates, grounded_posture, is_rider) =
+            if pushed || result.is_empty() {
+                (false, Posture::Upright, false)
+            } else {
+                let victim = self.expect_entity(
+                    victim_id,
+                    "ReceiveSwordDamage victim before grounded-posture translation",
+                );
+                let posture = victim.element_data().posture();
+                let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
+                let dead_rider = is_rider && life_points_after <= 0;
+                (
+                    matches!(
+                        posture,
+                        Posture::Lying
+                            | Posture::StuckUnderNet
+                            | Posture::Flying
+                            | Posture::Carried
+                            | Posture::OnShoulders
+                            | Posture::Tied
+                            | Posture::Dead
+                            | Posture::DeadBack
+                    ) && !dead_rider,
                     posture,
-                    Posture::Lying
-                        | Posture::StuckUnderNet
-                        | Posture::Flying
-                        | Posture::Carried
-                        | Posture::OnShoulders
-                        | Posture::Tied
-                        | Posture::Dead
-                        | Posture::DeadBack
-                ) && !dead_rider,
-                posture,
-                is_rider,
-            )
-        };
+                    is_rider,
+                )
+            };
         if grounded_translation_terminates {
             // Sword-damage translation changes a dead, grounded non-rider to the
             // canonical Dead posture before falling through to the common
@@ -1197,15 +1195,12 @@ impl EngineInner {
                         self.control.frame_counter,
                         creation_order,
                     ) {
-                        let attacker = self
-                            .get_entity(atk_id)
-                            .unwrap_or_else(|| panic!("GOOD_STRIKE attacker {atk_id:?} vanished"));
-                        let enemy = attacker.enemy_ai().unwrap_or_else(|| {
-                            panic!("GOOD_STRIKE attacker {atk_id:?} has no enemy AI")
-                        });
-                        let victim = self
-                            .get_entity(victim_id)
-                            .unwrap_or_else(|| panic!("GOOD_STRIKE victim {victim_id:?} vanished"));
+                        let attacker = self.expect_entity(atk_id, "GOOD_STRIKE attacker");
+                        let enemy = self
+                            .world
+                            .entities
+                            .expect_enemy_ai(atk_id, format_args!("GOOD_STRIKE attacker"));
+                        let victim = self.expect_entity(victim_id, "GOOD_STRIKE victim");
                         eprintln!(
                             "[GOOD_STRIKE frame={} owner={} owner_co={} phase=translate_before_dispatch victim={} result={:?} victim_dead={} victim_unconscious={} victim_posture={:?} owner_state={:?} owner_substate={:?} owner_installed_order={:?}]",
                             self.control.frame_counter,
@@ -2246,9 +2241,7 @@ impl EngineInner {
             victim_dir,
             frames,
         ) = {
-            let victim = self
-                .get_entity(victim_id)
-                .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} is missing"));
+            let victim = self.expect_entity(victim_id, "falling-hit victim");
             let sprite_anim = crate::engine::animation::sprite_anim_for_order(
                 victim.sprite(),
                 anim,
@@ -2371,13 +2364,11 @@ impl EngineInner {
         // Obstacle assignment invalidates the lazy cache underneath it. Rust installs
         // obstacles eagerly, so preserve that captured point explicitly.
         let takeoff_position = self
-            .get_entity(victim_id)
-            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+            .expect_entity(victim_id, "falling-hit victim")
             .position_iface()
             .get_position();
         self.set_obstacle_and_material(assets, victim_id, goal_obstacle);
-        self.get_entity_mut(victim_id)
-            .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
+        self.expect_entity_mut(victim_id, "falling-hit victim")
             .position_iface_mut()
             .set_position(takeoff_position);
 
@@ -3577,11 +3568,7 @@ impl EngineInner {
         assets: &LevelAssets,
         victim_id: EntityId,
     ) -> (ConcussionContext, i16, i16, bool) {
-        let victim = self
-            .world
-            .entities
-            .get(victim_id)
-            .unwrap_or_else(|| panic!("damage victim {victim_id:?} disappeared"));
+        let victim = self.expect_entity(victim_id, "damage victim");
         let unconscious = victim
             .human_data()
             .unwrap_or_else(|| panic!("damage victim {victim_id:?} is not human"))

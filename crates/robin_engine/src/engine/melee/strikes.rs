@@ -316,9 +316,7 @@ impl EngineInner {
             })
             .gesture_quality;
         let profile_idx = {
-            let entity = self.get_entity_mut(attacker_id).unwrap_or_else(|| {
-                panic!("melee MotionState::Start owner {attacker_id:?} disappeared")
-            });
+            let entity = self.expect_entity_mut(attacker_id, "melee MotionState::Start owner");
             let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager);
             entity.set_posture(Posture::Upright);
             let actor = entity.actor_data_mut().unwrap_or_else(|| {
@@ -601,9 +599,7 @@ impl EngineInner {
     pub(super) fn evaluate_smalltalk_hint<I: Into<EntityId>>(&mut self, entity_id: I) -> bool {
         let entity_id = entity_id.into();
         let (hint, hint_opponent) = {
-            let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                panic!("smalltalk-hint evaluation owner {entity_id:?} is missing")
-            });
+            let entity = self.expect_entity(entity_id, "smalltalk-hint evaluation owner");
             let human = entity.human_data().unwrap_or_else(|| {
                 panic!("smalltalk-hint evaluation owner {entity_id:?} is not human")
             });
@@ -736,9 +732,7 @@ impl EngineInner {
             return;
         }
 
-        let entity = self
-            .get_entity_mut(attacker_id)
-            .unwrap_or_else(|| panic!("selected melee attacker {attacker_id:?} disappeared"));
+        let entity = self.expect_entity_mut(attacker_id, "selected melee attacker");
         let direction = entity.element_data().direction() as u16;
         let motion = entity.element_data_mut().sprite.perform_action(
             sim,
@@ -952,16 +946,8 @@ impl EngineInner {
             Vec::new()
         };
         for victim_id in pending_swordfights {
-            let attacker = self
-                .world
-                .entities
-                .get(actor_id)
-                .unwrap_or_else(|| panic!("push completion attacker {actor_id:?} disappeared"));
-            let victim = self
-                .world
-                .entities
-                .get(victim_id)
-                .unwrap_or_else(|| panic!("push completion victim {victim_id:?} disappeared"));
+            let attacker = self.expect_entity(actor_id, "push completion attacker");
+            let victim = self.expect_entity(victim_id, "push completion victim");
             let should_enter = should_enter_swordfight_after_strike(
                 attacker,
                 victim,
@@ -1439,9 +1425,8 @@ impl EngineInner {
                             "selected non-straight melee attacker {attacker_id:?} lost its strike order"
                         )
                     });
-                let entity = self.get_entity(attacker_id).unwrap_or_else(|| {
-                    panic!("selected non-straight melee attacker {attacker_id:?} disappeared")
-                });
+                let entity =
+                    self.expect_entity(attacker_id, "selected non-straight melee attacker");
                 let profile_idx = get_hth_weapon_id_full(entity, &assets.profile_manager)
                     .unwrap_or_else(|| {
                         panic!(
@@ -3059,9 +3044,7 @@ impl EngineInner {
                 let ai = self
                     .world
                     .entities
-                    .get(owner)
-                    .and_then(Entity::enemy_ai)
-                    .unwrap_or_else(|| panic!("special-strike owner {owner:?} lost Enemy AI"));
+                    .expect_enemy_ai(owner, format_args!("special-strike owner"));
                 eprintln!(
                     "SPECIAL_STRIKE frame={} owner={} phase=authorization_consumed pending_consideration={} pending_special={} state={:?} substate={:?} selected={}",
                     current_frame,
@@ -3093,10 +3076,7 @@ impl EngineInner {
 
         let mut attacks: Vec<PendingAttack> = Vec::new();
         for npc_id in pending_considerations.iter().copied() {
-            let attacker =
-                self.world.entities.get(npc_id).unwrap_or_else(|| {
-                    panic!("authorized sword-strike owner {npc_id:?} disappeared")
-                });
+            let attacker = self.expect_entity(npc_id, "authorized sword-strike owner");
             if !pending_considerations.contains(&npc_id) {
                 continue;
             }
@@ -3130,9 +3110,7 @@ impl EngineInner {
                         target_handle
                     )
                 });
-            let target = self
-                .get_entity(target_id)
-                .unwrap_or_else(|| panic!("resolved principal opponent {target_id:?} disappeared"));
+            let target = self.expect_entity(target_id, "resolved principal opponent");
             assert!(
                 target.is_human(),
                 "authorized sword-strike principal opponent {target_id:?} is not human"
@@ -3165,12 +3143,10 @@ impl EngineInner {
             // that specialized original-game query rather than reading the raw
             // soldier-profile capacity.
             let fa = fighting_ability_from_profile(
-                self.get_entity(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "authorized sword-strike owner {:?} disappeared before ability lookup",
-                        npc_id
-                    )
-                }),
+                self.expect_entity(
+                    npc_id,
+                    "authorized sword-strike owner before ability lookup",
+                ),
                 &assets.profile_manager,
                 sim.config().difficulty,
                 &self.mission_domain.diplomacy,
@@ -3424,16 +3400,10 @@ impl EngineInner {
             // Strike selection mutates its boredom history even when no
             // viable strike is selected, so persist it before branching on
             // the proposal result.
-            let owner = self
-                .world
-                .entities
-                .get_mut(attack.soldier_id)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "sword-strike proposal owner {:?} disappeared during selection",
-                        attack.soldier_id
-                    )
-                });
+            let owner = self.expect_entity_mut(
+                attack.soldier_id,
+                "sword-strike proposal owner during selection",
+            );
             owner
                 .human_data_mut()
                 .unwrap_or_else(|| {
@@ -3502,17 +3472,10 @@ impl EngineInner {
             // observable legacy special-strike substate; the
             // immediate stop-all side effect stays engine-side so it
             // runs before the new strike sequence is queued.
-            let ai = self
-                .world
-                .entities
-                .get_mut(attack.soldier_id)
-                .and_then(Entity::enemy_ai_mut)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "special-strike owner {:?} lost Enemy AI before begin",
-                        attack.soldier_id
-                    )
-                });
+            let ai = self.world.entities.expect_enemy_ai_mut(
+                attack.soldier_id,
+                format_args!("special-strike owner before begin"),
+            );
             ai.begin_special_strike();
             ai.base.stop_all();
             if special_debug {
@@ -3565,15 +3528,12 @@ impl EngineInner {
                 strike,
                 SwordStrike::C | SwordStrike::F | SwordStrike::G | SwordStrike::H | SwordStrike::I
             ) {
-                let owner = self
+                let owner = self.expect_entity(attack.soldier_id, "warcry owner");
+                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
+                let ai = self
                     .world
                     .entities
-                    .get_mut(attack.soldier_id)
-                    .unwrap_or_else(|| panic!("warcry owner {:?} disappeared", attack.soldier_id));
-                let is_vip = is_vip_from_profile(owner, &assets.profile_manager);
-                let ai = owner.enemy_ai_mut().unwrap_or_else(|| {
-                    panic!("warcry owner {:?} lost Enemy AI", attack.soldier_id)
-                });
+                    .expect_enemy_ai_mut(attack.soldier_id, format_args!("warcry owner"));
                 ai.base.say(if is_vip {
                     crate::ai::Remark::VipWarcry
                 } else {

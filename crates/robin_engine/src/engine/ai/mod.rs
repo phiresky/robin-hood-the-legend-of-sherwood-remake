@@ -3633,10 +3633,7 @@ pub(super) fn lookup_primary_target_metadata(
         target_id,
         |id| {
             let element = engine
-                .world
-                .entities
-                .get(id)
-                .unwrap_or_else(|| panic!("AI metadata position owner {id:?} disappeared"))
+                .expect_entity(id, "AI metadata position owner")
                 .element_data();
             crate::ai::Position {
                 x: element.position_map().x,
@@ -3979,12 +3976,7 @@ fn build_one_entity_view(
             stamp.selected_door,
             |position_id| {
                 let position_element = engine
-                    .world
-                    .entities
-                    .get(position_id)
-                    .unwrap_or_else(|| {
-                        panic!("AI entity-view position owner {position_id:?} disappeared")
-                    })
+                    .expect_entity(position_id, "AI entity-view position owner")
                     .element_data();
                 crate::ai::Position {
                     x: position_element.position_map().x,
@@ -4955,12 +4947,7 @@ impl EngineInner {
             }
         }
 
-        let source_camp = self
-            .world
-            .entities
-            .get(source)
-            .map(Entity::camp)
-            .unwrap_or_else(|| panic!("building alert source {source:?} disappeared"));
+        let source_camp = self.expect_entity(source, "building alert source").camp();
         let source_ids = fighter_ids
             .iter()
             .filter(|(camp, _)| self.camps_are_allied(source_camp, **camp))
@@ -5529,10 +5516,7 @@ impl EngineInner {
             (elem.position_map(), elem.sector(), elem.layer())
         };
         let actor_auth = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("panic requester {npc_id:?} disappeared"))
+            .expect_entity(npc_id, "panic requester")
             .actor_auth_info();
 
         // Pre-compute the set of house sector indices that contain a
@@ -5678,15 +5662,10 @@ impl EngineInner {
             );
             self.drain_ai_owner_work_for(sim, assets, npc_id);
             {
-                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "panic owner {} disappeared before state tail",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!("panic owner {} lost AI before state tail", npc_id.index())
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("panic owner before state tail"),
+                );
                 ai.set_alert_status(request.alert);
                 ai.lasting_panic_runs = 0;
                 ai.go_to(door_in, crate::ai::GotoFlags::RUN, ctx);
@@ -5701,9 +5680,7 @@ impl EngineInner {
             let couldnt_reachpoint = self
                 .world
                 .entities
-                .get(npc_id)
-                .and_then(Entity::ai_controller)
-                .unwrap_or_else(|| panic!("panic owner {} lost AI after movement", npc_id.index()))
+                .expect_ai_controller(npc_id, format_args!("panic owner after movement"))
                 .couldnt_reachpoint;
             if couldnt_reachpoint {
                 self.world
@@ -5734,14 +5711,10 @@ impl EngineInner {
                     let retry_failed = self
                         .world
                         .entities
-                        .get(npc_id)
-                        .and_then(Entity::ai_controller)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "panic owner {} lost AI after movement retry",
-                                npc_id.index()
-                            )
-                        })
+                        .expect_ai_controller(
+                            npc_id,
+                            format_args!("panic owner after movement retry"),
+                        )
                         .couldnt_reachpoint;
                     if !retry_failed {
                         return;
@@ -5909,9 +5882,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get(npc_id)
-                .and_then(Entity::ai_controller)
-                .unwrap_or_else(|| panic!("panic owner {} has no AI", npc_id.index()));
+                .expect_ai_controller(npc_id, format_args!("panic owner"));
             if directed_panic_center_is_in_front(
                 ctx.direction as i16,
                 ctx.position.x,
@@ -5944,12 +5915,10 @@ impl EngineInner {
                 });
             self.drain_ai_owner_work_for(sim, assets, npc_id);
             let deferred_self_stimuli = {
-                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!("panic owner {} disappeared after speech", npc_id.index())
-                });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!("panic owner {} lost AI after speech", npc_id.index())
-                });
+                let ai = self
+                    .world
+                    .entities
+                    .expect_ai_controller_mut(npc_id, format_args!("panic owner after speech"));
                 ai.set_alert_status(request.alert);
                 ai.lasting_panic_runs = request.runs.saturating_add(1);
                 ai.first_try = true;
@@ -6009,11 +5978,7 @@ impl EngineInner {
         substate: crate::ai::Substate,
         context: &'static str,
     ) {
-        let entity = self
-            .world
-            .entities
-            .get_mut(npc_id)
-            .unwrap_or_else(|| panic!("{context} owner {} disappeared", npc_id.index()));
+        let entity = self.expect_entity_mut(npc_id, context);
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.set_state(state, substate);
             return;
@@ -6032,12 +5997,7 @@ impl EngineInner {
     /// Enter the pre-filter half of typed no-event decision-tick admission.
     pub(super) fn start_script_ai_native_think_pre_filter(&mut self, npc_id: EntityId) {
         let stimulus = crate::ai::Stimulus::new(crate::ai::StimulusType::NoEvent);
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "SetAIState decision-entry owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity_mut(npc_id, "SetAIState decision-entry owner");
         if let Some(enemy) = entity.enemy_ai_mut() {
             enemy.start_think_pre_filter(&stimulus);
         } else if let Some(friendly) = entity.friendly_ai_mut() {
@@ -6107,12 +6067,7 @@ impl EngineInner {
             return;
         }
         let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "SetAIState decision-completion owner {} disappeared",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(npc_id, "SetAIState decision-completion owner");
         let mut ctx = self.ai_context_from_entity(
             entity,
             self.control.frame_counter,
@@ -6186,18 +6141,10 @@ impl EngineInner {
         tick: &crate::ai::AiPerTickData,
     ) {
         let request = {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "accepted SetAIState SEEKING owner {} disappeared before area search",
-                    npc_id.index()
-                )
-            });
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "accepted SetAIState SEEKING owner {} lost its AI before area search",
-                    npc_id.index()
-                )
-            });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("accepted SetAIState SEEKING owner before area search"),
+            );
             ai.outbox.actor.script_seek_area.take().unwrap_or_else(|| {
                 panic!(
                     "accepted SetAIState SEEKING owner {} lost its required area-search request",

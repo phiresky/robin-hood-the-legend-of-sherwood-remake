@@ -563,19 +563,15 @@ impl EngineInner {
         });
 
         if let Some(chief_id) = ai.base.patrol_chief {
-            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
-                panic!(
-                    "owner-local friendly tick context owner {} has stale patrol chief {}",
-                    npc_id.index(),
-                    chief_id.index()
-                )
-            });
-            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
-                panic!(
-                    "owner-local friendly tick context patrol chief {} has no AI",
-                    chief_id.index()
-                )
-            });
+            let chief =
+                self.expect_entity(chief_id, "owner-local friendly tick context patrol chief");
+            let chief_ai = self.world.entities.expect_ai_controller(
+                chief_id,
+                format_args!(
+                    "owner-local friendly tick context owner {} patrol chief",
+                    npc_id.index()
+                ),
+            );
             let point = chief.element_data().position_map();
             crate::ai_friendly::FriendlyPerTickData::with_patrol_chief(
                 crate::ai::Position {
@@ -1047,19 +1043,11 @@ impl EngineInner {
         // general builder's stub origin here made every such member face
         // sector 15 even though the preceding approach used the real chief.
         if let Some(chief_id) = ai.patrol_chief {
-            let chief = self.world.entities.get(chief_id).unwrap_or_else(|| {
-                panic!(
-                    "enemy tick context owner {} has stale patrol chief {}",
-                    npc_id.index(),
-                    chief_id.index()
-                )
-            });
-            let chief_ai = chief.ai_controller().unwrap_or_else(|| {
-                panic!(
-                    "enemy tick context patrol chief {} has no AI",
-                    chief_id.index()
-                )
-            });
+            let chief = self.expect_entity(chief_id, "enemy tick context patrol chief");
+            let chief_ai = self.world.entities.expect_ai_controller(
+                chief_id,
+                format_args!("enemy tick context owner {} patrol chief", npc_id.index()),
+            );
             // Patrol coordination subtracts the patrol chief's AI position, not the
             // chief's literal sprite position
             // in the original game.
@@ -1073,12 +1061,7 @@ impl EngineInner {
                 chief_id,
                 |position_id| {
                     let element = self
-                        .world
-                        .entities
-                        .get(position_id)
-                        .unwrap_or_else(|| {
-                            panic!("patrol-chief position owner {position_id:?} disappeared")
-                        })
+                        .expect_entity(position_id, "patrol-chief position owner")
                         .element_data();
                     crate::ai::Position {
                         x: element.position_map().x,
@@ -1160,11 +1143,7 @@ impl EngineInner {
 
         if let Some((pos, posture, anim, carrier_pos, carrier_handle)) = target_meta {
             tick.primary_target_position = Some(pos);
-            let target = self
-                .world
-                .entities
-                .get(target_id)
-                .unwrap_or_else(|| panic!("resolved primary target {target_id:?} disappeared"));
+            let target = self.expect_entity(target_id, "resolved primary target");
             let element = target.element_data();
             tick.primary_target_live_position = Some(crate::ai::Position {
                 x: element.position_map().x,
@@ -1488,11 +1467,7 @@ impl EngineInner {
         use crate::ai_enemy::FighterSnapshot;
         use crate::element::Posture;
 
-        let owner = self
-            .world
-            .entities
-            .get(npc_id)
-            .unwrap_or_else(|| panic!("fighter snapshot owner {npc_id:?} disappeared"));
+        let owner = self.expect_entity(npc_id, "fighter snapshot owner");
         let Some(enemy_ai) = owner.enemy_ai() else {
             // This registry is an enemy-brain capability. The public nearby
             // query also accepts civilians and PCs, for whom it is inapplicable.
@@ -1507,12 +1482,7 @@ impl EngineInner {
                 id,
                 |position_id| {
                     let element = self
-                        .world
-                        .entities
-                        .get(position_id)
-                        .unwrap_or_else(|| {
-                            panic!("fighter snapshot owner {position_id:?} disappeared")
-                        })
+                        .expect_entity(position_id, "fighter snapshot position owner")
                         .element_data();
                     Position {
                         x: element.position_map().x,
@@ -1954,9 +1924,7 @@ impl EngineInner {
             let entity_id = self.entity_id_for_index(handle).unwrap_or_else(|| {
                 panic!("phalanx member references missing enemy handle {handle}")
             });
-            let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
-                panic!("phalanx enemy handle {handle} resolved to a vacant entity slot")
-            });
+            let entity = self.expect_entity(entity_id, "phalanx enemy handle");
             let human = entity
                 .human_data()
                 .unwrap_or_else(|| panic!("phalanx enemy handle {handle} is not a human entity"));

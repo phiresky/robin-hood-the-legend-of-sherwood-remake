@@ -131,6 +131,7 @@ impl EngineInner {
     ) {
         let scratch = self.build_sim_scratch(assets);
         let current_frame = self.control.frame_counter;
+        // Panic text is asserted by `galopp_execute_callback_rejects_missing_selected_owner`.
         let entity = self.world.entities.get(entity_id).unwrap_or_else(|| {
             panic!("rider {entity_id:?} disappeared before its synchronous GALOPP Execute callback")
         });
@@ -355,12 +356,7 @@ impl EngineInner {
         order_type: crate::order::OrderType,
     ) {
         let (material, in_building, active, previous, noise) = {
-            let entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
-                panic!(
-                    "PC produced-noise owner {} disappeared from its legacy slot",
-                    pc_id.index()
-                )
-            });
+            let entity = self.expect_entity(pc_id, "PC produced-noise owner from its legacy slot");
             let Entity::Pc(pc) = entity else {
                 panic!("produced-noise owner {} is not a PC actor", pc_id.index());
             };
@@ -396,12 +392,9 @@ impl EngineInner {
         };
         let (volume, refresh_hear_box) =
             Self::pc_noise_volume(order_type, material, in_building, active, previous);
-        let Entity::Pc(pc) = self.world.entities.get_mut(pc_id).unwrap_or_else(|| {
-            panic!(
-                "PC produced-noise owner {} disappeared before write-back",
-                pc_id.index()
-            )
-        }) else {
+        let Entity::Pc(pc) =
+            self.expect_entity_mut(pc_id, "PC produced-noise owner before write-back")
+        else {
             panic!(
                 "produced-noise owner {} changed kind before write-back",
                 pc_id.index()
@@ -453,24 +446,13 @@ impl EngineInner {
     ) {
         self.with_simulation_context(|engine, sim| {
             for &(owner, raw_flags) in completions {
-                let (current_remark, current_flags) = engine
-                    .world
-                    .entities
-                    .get(owner)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "preflighted loaded-remark owner {} disappeared",
-                            owner.index()
-                        )
-                    })
-                    .ai_controller()
-                    .map(|ai| (ai.current_remark, ai.current_remark_flags))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "preflighted loaded-remark owner {} lost its AI",
-                            owner.index()
-                        )
-                    });
+                let (current_remark, current_flags) = {
+                    let ai = engine.world.entities.expect_ai_controller(
+                        owner,
+                        format_args!("preflighted loaded-remark owner"),
+                    );
+                    (ai.current_remark, ai.current_remark_flags)
+                };
                 assert_eq!(
                     current_remark,
                     crate::ai::Remark::TheSoundOfSilence,
@@ -491,10 +473,7 @@ impl EngineInner {
                 };
                 let scratch = engine.build_sim_scratch(assets);
                 let in_uninterruptible_command = engine.is_very_very_busy(owner);
-                let entity =
-                    engine.world.entities.get(owner).unwrap_or_else(|| {
-                        panic!("loaded-remark owner {} disappeared", owner.index())
-                    });
+                let entity = engine.expect_entity(owner, "loaded-remark owner");
                 let building_sector = engine.entity_building_sector(entity.element_data().sector());
                 let mut ctx = engine.ai_context_from_entity(
                     entity,
@@ -611,34 +590,18 @@ impl EngineInner {
         };
 
         {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared before its wakeup stimulus prefix",
-                    npc_id.index()
-                )
-            });
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "NPC {} lost its AI controller before its wakeup stimulus prefix",
-                    npc_id.index()
-                )
-            });
+            let ai = self.world.entities.expect_ai_controller_mut(
+                npc_id,
+                format_args!("NPC before its wakeup stimulus prefix"),
+            );
             ai.outbox.detection.stimuli = prefix_through_wake;
         }
         self.tick_enemy_ai_drain_pending_stimuli_for_npc(sim, npc_id, assets, None, None);
 
-        let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-            panic!(
-                "NPC {} disappeared after synchronous EVENT_FITAGAIN",
-                npc_id.index()
-            )
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!(
-                "NPC {} lost its AI controller after synchronous EVENT_FITAGAIN",
-                npc_id.index()
-            )
-        });
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(npc_id, format_args!("NPC after synchronous EVENT_FITAGAIN"));
         suffix.append(&mut ai.outbox.detection.stimuli);
         ai.outbox.detection.stimuli = suffix;
         true
@@ -905,6 +868,8 @@ impl EngineInner {
         &mut self,
         npc_id: EntityId,
     ) {
+        // Panic text is asserted by the recovery-state should_panic tests in
+        // `engine/tests/ai_detection/{perception,state}.rs`.
         let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
             panic!(
                 "NPC {} disappeared while applying synchronous recovery state",
@@ -925,18 +890,10 @@ impl EngineInner {
             self.broadcast_resurrection(npc_id);
         }
         if let Some(status) = eye_status {
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared while applying its pending eye status",
-                    npc_id.index()
-                )
-            });
-            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!(
-                    "entity {} lost its NPC data while applying its pending eye status",
-                    npc_id.index()
-                )
-            });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("NPC while applying its pending eye status"),
+            );
             crate::ai_vision::set_view_status(npc, status);
         }
     }
@@ -1172,14 +1129,11 @@ impl EngineInner {
             return;
         }
 
-        let entity = self
+        let entity = self.expect_entity(owner, "speech gate diagnostic owner");
+        let ai = self
             .world
             .entities
-            .get(owner)
-            .unwrap_or_else(|| panic!("speech gate diagnostic lost owner {owner:?}"));
-        let ai = entity
-            .ai_controller()
-            .unwrap_or_else(|| panic!("speech gate diagnostic owner {owner:?} lost AI"));
+            .expect_ai_controller(owner, format_args!("speech gate diagnostic owner"));
         let (is_soldier, speech_id) = match entity {
             Entity::Pc(pc) => {
                 let profile = assets
@@ -1288,20 +1242,7 @@ impl EngineInner {
         let ai = self
             .world
             .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} disappeared during rejection",
-                    owner.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} lost its AI during rejection",
-                    owner.index()
-                )
-            });
+            .expect_ai_controller_mut(owner, format_args!("speech owner during rejection"));
         ai.cached_frame = self.control.frame_counter;
         ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
         tracing::trace!(
@@ -1370,11 +1311,7 @@ impl EngineInner {
             script_forbidden,
             active_remark,
         ) = {
-            let entity = self
-                .world
-                .entities
-                .get(owner)
-                .unwrap_or_else(|| panic!("queued speech owner {} is missing", owner.index()));
+            let entity = self.expect_entity(owner, "queued speech owner");
             let owner_profile = match entity {
                 Entity::Pc(pc) if entity.enemy_ai().is_some() => {
                     OwnerProfile::Character(pc.pc.profile_index)
@@ -1387,9 +1324,10 @@ impl EngineInner {
                     other.element_data().kind
                 ),
             };
-            let ai = entity.ai_controller().unwrap_or_else(|| {
-                panic!("queued speech owner {} has no AI controller", owner.index())
-            });
+            let ai = self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("queued speech owner"));
             (
                 owner_profile,
                 entity.element_data().blipped,
@@ -1461,17 +1399,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "speech owner {} disappeared before Speak log",
-                        owner.index()
-                    )
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| {
-                    panic!("speech owner {} lost AI before Speak log", owner.index())
-                });
+                .expect_ai_controller_mut(owner, format_args!("speech owner before Speak log"));
             ai.cached_frame = self.control.frame_counter;
             ai.register_log_line(crate::ai::LogLineType::Speak, attempt.remark as u16);
         }
@@ -1576,12 +1504,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(owner)
-                .unwrap_or_else(|| {
-                    panic!("speech owner {} disappeared before latch", owner.index())
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("speech owner {} lost AI before latch", owner.index()));
+                .expect_ai_controller_mut(owner, format_args!("speech owner before latch"));
             ai.current_remark = attempt.remark;
             ai.current_remark_flags = attempt.flags;
         }
@@ -1682,23 +1605,10 @@ impl EngineInner {
                     10
                 };
                 let log_before_callback = !matches!(reason, 8 | 9);
-                let ai = self
-                    .world
-                    .entities
-                    .get_mut(owner)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "speech owner {} disappeared after category rejection",
-                            owner.index()
-                        )
-                    })
-                    .ai_controller_mut()
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "speech owner {} lost AI after category rejection",
-                            owner.index()
-                        )
-                    });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    owner,
+                    format_args!("speech owner after category rejection"),
+                );
                 if log_before_callback {
                     ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
                 }
@@ -1788,23 +1698,10 @@ impl EngineInner {
     ) {
         use crate::ai::Remark;
 
-        let ai = self
-            .world
-            .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} disappeared during category-rejection tail",
-                    owner.index()
-                )
-            })
-            .ai_controller_mut()
-            .unwrap_or_else(|| {
-                panic!(
-                    "speech owner {} lost AI during category-rejection tail",
-                    owner.index()
-                )
-            });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            owner,
+            format_args!("speech owner during category-rejection tail"),
+        );
         if let Some(reason) = finalization.reason_after_callback {
             ai.register_log_line(crate::ai::LogLineType::SpeakImpossible, reason);
         }
@@ -1841,12 +1738,8 @@ impl EngineInner {
                     )
                 });
             let (active, expected_id, flags) = {
-                let entity = self.world.entities.get(actor_id).unwrap_or_else(|| {
-                    panic!(
-                        "speech completion owner {} vanished after slot resolution",
-                        actor_id.index()
-                    )
-                });
+                let entity =
+                    self.expect_entity(actor_id, "speech completion owner after slot resolution");
                 let Some(ai) = entity.ai_controller() else {
                     // Player-controlled PCs use the character speech path and
                     // do not own the NPC actor's completion latch.
@@ -1930,12 +1823,7 @@ impl EngineInner {
             let ai = self
                 .world
                 .entities
-                .get_mut(actor_id)
-                .unwrap_or_else(|| {
-                    panic!("speech completion owner {} disappeared", actor_id.index())
-                })
-                .ai_controller_mut()
-                .unwrap_or_else(|| panic!("speech completion owner {} lost AI", actor_id.index()));
+                .expect_ai_controller_mut(actor_id, format_args!("speech completion owner"));
             ai.current_remark = Remark::TheSoundOfSilence;
             ai.current_remark_flags = 0;
             ai.register_log_line(crate::ai::LogLineType::SpeakFinished, 0);

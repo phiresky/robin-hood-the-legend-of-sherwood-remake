@@ -1187,10 +1187,7 @@ impl EngineInner {
         assets: &LevelAssets,
         bonus_id: EntityId,
     ) {
-        let bonus =
-            self.world.entities.get(bonus_id).unwrap_or_else(|| {
-                panic!("bonus {bonus_id:?} disappeared before discovery refresh")
-            });
+        let bonus = self.expect_entity(bonus_id, "bonus before discovery refresh");
         let Entity::Bonus(bonus) = bonus else {
             panic!("discovery refresh owner {bonus_id:?} is not Entity::Bonus")
         };
@@ -1252,12 +1249,10 @@ impl EngineInner {
     ) {
         use crate::element::Posture;
 
-        let entity = self.world.entities.get(npc_id).unwrap_or_else(|| {
-            panic!(
-                "creation-ordered NPC {} disappeared before its blip detection slot",
-                npc_id.index()
-            )
-        });
+        let entity = self.expect_entity(
+            npc_id,
+            "creation-ordered NPC before its blip detection slot",
+        );
         let elem = entity.element_data();
         if !elem.blipped
             || !(elem.active
@@ -1303,12 +1298,8 @@ impl EngineInner {
         let mut detecting_pc = None;
         let pc_ids = self.world.original_pc_registry().to_vec();
         for pc_id in pc_ids {
-            let pc_entity = self.world.entities.get(pc_id).unwrap_or_else(|| {
-                panic!(
-                    "PC {} disappeared from the live PC list during NPC blip detection",
-                    pc_id.index()
-                )
-            });
+            let pc_entity =
+                self.expect_entity(pc_id, "PC from the live PC list during NPC blip detection");
             let Entity::Pc(pc) = pc_entity else {
                 panic!(
                     "non-PC entity {} is present in the live PC list during NPC blip detection",
@@ -1989,18 +1980,10 @@ impl EngineInner {
                     positions_before_movement,
                     &mut tick_data,
                 );
-                let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                    panic!(
-                        "detected NPC {} disappeared before its same-phase stimulus queue",
-                        npc_id.index()
-                    )
-                });
-                let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                    panic!(
-                        "detected NPC {} lost its AI controller before stimulus queue",
-                        npc_id.index()
-                    )
-                });
+                let ai = self.world.entities.expect_ai_controller_mut(
+                    npc_id,
+                    format_args!("detected NPC before its same-phase stimulus queue"),
+                );
                 let queue_start = ai.outbox.detection.stimuli.len();
                 ai.outbox.detection.stimuli.extend(stimuli.iter().copied());
                 Some(super::post_detection::PendingEnemyDetectionTickData::new(
@@ -2141,14 +2124,7 @@ impl EngineInner {
         let enemy_handles = self
             .world
             .entities
-            .get(npc_id)
-            .and_then(Entity::ai_actor_data)
-            .unwrap_or_else(|| {
-                panic!(
-                    "Enemy tick-data owner {} lost its AI actor data",
-                    npc_id.index()
-                )
-            })
+            .expect_ai_actor_data(npc_id, format_args!("Enemy tick-data owner"))
             .detectable_lists[crate::element::DetectableType::Enemy as usize]
             .iter()
             .filter_map(|detectable| detectable.element)
@@ -2442,18 +2418,10 @@ impl EngineInner {
             // nested scope below; the now-deferred stimulus pushes
             // at this level don't need it.
             let _ai_global = &mut self.ai.global;
-            let entity = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
-                panic!(
-                    "NPC {} disappeared during its Enemy optical scan",
-                    npc_id.index()
-                )
-            });
-            let npc = entity.ai_actor_data_mut().unwrap_or_else(|| {
-                panic!(
-                    "Enemy optical observer {} has no required NPC state",
-                    npc_id.index()
-                )
-            });
+            let npc = self.world.entities.expect_ai_actor_data_mut(
+                npc_id,
+                format_args!("Enemy optical observer during its Enemy optical scan"),
+            );
 
             // Beggar-trick learning.  Capture the AI's current
             // `got_the_beggar_trick` flag before taking a mut borrow

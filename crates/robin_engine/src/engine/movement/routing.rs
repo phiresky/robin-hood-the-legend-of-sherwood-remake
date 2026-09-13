@@ -115,9 +115,7 @@ impl EngineInner {
         }
 
         let (move_box, layer, position) = {
-            let entity = self
-                .get_entity(entity_id)
-                .unwrap_or_else(|| panic!("AI movement preflight owner {entity_id:?} disappeared"));
+            let entity = self.expect_entity(entity_id, "AI movement preflight owner");
             let pi = entity.position_iface();
             let pm = pi.map_position();
             (*pi.get_move_box(), entity.element_data().layer(), pm)
@@ -220,14 +218,10 @@ impl EngineInner {
                 std::panic::Location::caller(),
             );
         }
-        let entity = self
+        let ai = self
             .world
             .entities
-            .get_mut(entity_id)
-            .unwrap_or_else(|| panic!("AI movement failure owner {entity_id:?} disappeared"));
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("AI movement failure owner {entity_id:?} has no AI controller")
-        });
+            .expect_ai_controller_mut(entity_id, format_args!("AI movement failure owner"));
         ai.couldnt_reachpoint = true;
     }
 
@@ -236,12 +230,10 @@ impl EngineInner {
     /// are synchronous in the original game; do not interpret an earlier nested drain with no result
     /// as a successful authorization.
     pub(in crate::engine) fn resolve_ai_engine_completion_verdict(&mut self, entity_id: EntityId) {
-        let entity = self.world.entities.get_mut(entity_id).unwrap_or_else(|| {
-            panic!("AI order owner {entity_id:?} disappeared before its engine verdict")
-        });
-        let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-            panic!("AI order owner {entity_id:?} lost its controller before its engine verdict")
-        });
+        let ai = self.world.entities.expect_ai_controller_mut(
+            entity_id,
+            format_args!("AI order owner before its engine verdict"),
+        );
         ai.resolve_engine_completion_verdict();
     }
 
@@ -272,9 +264,8 @@ impl EngineInner {
         }
         if intent.source_position.is_none() {
             let (raw_source, raw_sector, raw_layer, door_source) = {
-                let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-                    panic!("AI movement source actor {entity_id:?} disappeared before enqueue")
-                });
+                let entity =
+                    self.expect_entity(entity_id, "AI movement source actor before enqueue");
                 let element = entity.element_data();
                 let door_source = current_door_for_route_source(entity);
                 (
@@ -815,9 +806,7 @@ impl EngineInner {
         entity_id: EntityId,
         intent: &crate::order::AiOrderIntent,
     ) -> bool {
-        let entity = self.get_entity(entity_id).unwrap_or_else(|| {
-            panic!("AI gate-route authorization owner {entity_id:?} disappeared")
-        });
+        let entity = self.expect_entity(entity_id, "AI gate-route authorization owner");
         let ed = entity.element_data();
         let door_source = current_door_for_route_source(entity);
         let raw_source = ed.position_map();
@@ -962,14 +951,10 @@ impl EngineInner {
         if !intent.append_special_action_tail {
             return Vec::new();
         }
-        let ai = self
-            .world
-            .entities
-            .get(entity_id)
-            .and_then(|entity| entity.ai_controller())
-            .unwrap_or_else(|| {
-                panic!("GOTO_SPECIAL_ACTION movement owner {entity_id:?} lost its AI controller")
-            });
+        let ai = self.world.entities.expect_ai_controller(
+            entity_id,
+            format_args!("GOTO_SPECIAL_ACTION movement owner"),
+        );
         let direction = ai.initial_view_direction;
 
         let mut turn = crate::sequence::SequenceElement::new_generic(
@@ -1296,10 +1281,7 @@ impl EngineInner {
         if !order_turns_before_motion(order_action) {
             return order_action;
         }
-        self.world
-            .entities
-            .get_mut(owner)
-            .unwrap_or_else(|| panic!("globally frozen movement owner {owner:?} disappeared"))
+        self.expect_entity_mut(owner, "globally frozen movement owner")
             .position_iface_mut()
             .turn();
         order_action

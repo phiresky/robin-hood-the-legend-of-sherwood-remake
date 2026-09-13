@@ -623,9 +623,7 @@ impl EngineInner {
                     target, command, ..
                 },
             ) => {
-                let target_entity = self.get_entity(*target).unwrap_or_else(|| {
-                    panic!("quick-action interaction target {target:?} disappeared")
-                });
+                let target_entity = self.expect_entity(*target, "quick-action interaction target");
                 if let Some(phase) = recorded_interaction_quick_phase(*command) {
                     phase as u16
                 } else if *command == Command::Take
@@ -682,9 +680,9 @@ impl EngineInner {
             | QaReplayCommand::DropAle { .. } => None,
         };
         let actor_layer = self
-            .get_entity(recording_pc)
-            .map(|entity| entity.element_data().layer())
-            .unwrap_or_else(|| panic!("quick-action recording PC {recording_pc:?} disappeared"));
+            .expect_entity(recording_pc, "quick-action recording PC")
+            .element_data()
+            .layer();
         let (pos3d, layer) = match &replay {
             QaReplayCommand::GroundTarget {
                 target_pos,

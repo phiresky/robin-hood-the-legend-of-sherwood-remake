@@ -422,11 +422,7 @@ impl EngineInner {
             &self.orders.sequence_manager,
             target_id,
             |position_id| {
-                let position_entity = self
-                    .world
-                    .entities
-                    .get(position_id)
-                    .unwrap_or_else(|| panic!("AI position owner {position_id:?} disappeared"));
+                let position_entity = self.expect_entity(position_id, "AI position owner");
                 let boundary = owner_boundary
                     .map(|(owner, positions)| {
                         self.boundary_position(
