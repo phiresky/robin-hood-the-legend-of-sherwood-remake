@@ -152,22 +152,21 @@ pub(crate) struct TestSwordDamageObservation {
 
 #[cfg(test)]
 thread_local! {
-    static TEST_SWORD_DAMAGE_OBSERVATIONS: std::cell::RefCell<Vec<TestSwordDamageObservation>> =
-        const { std::cell::RefCell::new(Vec::new()) };
+    static SWORD_DAMAGE_PROBE: crate::engine::test_support::Probe<TestSwordDamageObservation> =
+        const { crate::engine::test_support::Probe::new() };
+}
+
+/// Run `operation` and return every dispatched sword-damage application it
+/// performed, in dispatch order.
+#[cfg(test)]
+pub(crate) fn capture_sword_damage_observations<T>(
+    operation: impl FnOnce() -> T,
+) -> (T, Vec<TestSwordDamageObservation>) {
+    SWORD_DAMAGE_PROBE.with(|probe| probe.capture(operation))
 }
 
 #[cfg(test)]
-pub(crate) fn clear_test_sword_damage_observations() {
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.borrow_mut().clear());
-}
-
-#[cfg(test)]
-pub(crate) fn take_test_sword_damage_observations() -> Vec<TestSwordDamageObservation> {
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| observations.take())
-}
-
-#[cfg(test)]
-pub(crate) fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
+fn test_human_life_points(entity: &crate::element::Entity) -> Option<i16> {
     match entity {
         crate::element::Entity::Pc(pc) => Some(pc.pc.life_points),
         crate::element::Entity::Soldier(soldier) => Some(soldier.npc.life_points),
@@ -176,45 +175,83 @@ pub(crate) fn test_human_life_points(entity: &crate::element::Entity) -> Option<
     }
 }
 
-#[cfg(test)]
-pub(crate) fn record_test_sword_damage_observation(
-    engine: &EngineInner,
-    victim_id: EntityId,
-    attacker_id: EntityId,
-    strike: SwordStrike,
+/// Observation-only bracket around one `ReceiveSwordDamage` application.
+/// Outside test builds it is zero-sized and both halves compile to nothing,
+/// so the production dispatch arm carries no test-only branch.
+pub(super) struct SwordDamageProbe {
+    #[cfg(test)]
     life_points_before: i16,
-) {
-    let attacker = engine
-        .get_entity(attacker_id)
-        .expect("sword damage test attacker exists");
-    let actor = attacker
-        .actor_data()
-        .expect("sword damage attacker is actor");
-    let observation = TestSwordDamageObservation {
-        victim_id,
-        attacker_id,
-        strike,
-        attacker_direction: attacker.element_data().direction(),
-        active_rider_charge: actor.active_rider_charge.is_some(),
-        pending_victims: actor
-            .active_rider_charge
-            .as_ref()
-            .map(|charge| charge.pending_victims.clone())
-            .unwrap_or_default(),
-        life_points_before,
-        life_points_after: engine
-            .get_entity(victim_id)
-            .and_then(test_human_life_points)
-            .expect("sword damage test victim remains human"),
-        victim_direction_after: engine
-            .get_entity(victim_id)
-            .expect("sword damage test victim remains present")
-            .element_data()
-            .direction(),
-    };
-    TEST_SWORD_DAMAGE_OBSERVATIONS.with(|observations| {
-        observations.borrow_mut().push(observation);
-    });
+}
+
+impl SwordDamageProbe {
+    #[cfg(test)]
+    pub(super) fn before(engine: &EngineInner, victim_id: EntityId) -> Self {
+        Self {
+            life_points_before: engine
+                .get_entity(victim_id)
+                .and_then(test_human_life_points)
+                .expect("sword damage test victim is human"),
+        }
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn before(_engine: &EngineInner, _victim_id: EntityId) -> Self {
+        Self {}
+    }
+
+    #[cfg(test)]
+    pub(super) fn after(
+        self,
+        engine: &EngineInner,
+        victim_id: EntityId,
+        attacker_id: Option<EntityId>,
+        strike: Option<SwordStrike>,
+    ) {
+        let (Some(attacker_id), Some(strike)) = (attacker_id, strike) else {
+            return;
+        };
+        let attacker = engine
+            .get_entity(attacker_id)
+            .expect("sword damage test attacker exists");
+        let actor = attacker
+            .actor_data()
+            .expect("sword damage attacker is actor");
+        let observation = TestSwordDamageObservation {
+            victim_id,
+            attacker_id,
+            strike,
+            attacker_direction: attacker.element_data().direction(),
+            active_rider_charge: actor.active_rider_charge.is_some(),
+            pending_victims: actor
+                .active_rider_charge
+                .as_ref()
+                .map(|charge| charge.pending_victims.clone())
+                .unwrap_or_default(),
+            life_points_before: self.life_points_before,
+            life_points_after: engine
+                .get_entity(victim_id)
+                .and_then(test_human_life_points)
+                .expect("sword damage test victim remains human"),
+            victim_direction_after: engine
+                .get_entity(victim_id)
+                .expect("sword damage test victim remains present")
+                .element_data()
+                .direction(),
+        };
+        SWORD_DAMAGE_PROBE.with(|probe| probe.record(observation));
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn after(
+        self,
+        _engine: &EngineInner,
+        _victim_id: EntityId,
+        _attacker_id: Option<EntityId>,
+        _strike: Option<SwordStrike>,
+    ) {
+    }
 }
 use crate::combat::{self, SwordAttackerContext, SwordDamageParams, SwordDefenderContext};
 use crate::element::{ActionState, Entity, EntityId, EyeStatus, Posture};

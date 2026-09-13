@@ -2529,9 +2529,7 @@ fn push_strike_half_width(repulsion: u16) -> f32 {
 
 mod damage;
 #[cfg(test)]
-pub(crate) use damage::{
-    clear_test_sword_damage_observations, take_test_sword_damage_observations,
-};
+pub(crate) use damage::capture_sword_damage_observations;
 mod dispatch;
 pub(super) use dispatch::ShieldCommandContext;
 mod effects;

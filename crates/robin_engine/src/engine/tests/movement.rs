@@ -1713,9 +1713,7 @@ fn deferred_ai_move_builds_route_from_enqueue_time_topology() {
 
 #[test]
 fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
 
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
@@ -1737,8 +1735,9 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
         .expect("rider remains an actor")
         .execution_frozen = true;
 
-    clear_test_sword_damage_observations();
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets)
+    });
 
     let actor = engine
         .get_entity(rider)
@@ -1746,7 +1745,7 @@ fn production_owner_execution_frozen_blocks_rider_charge_execute_entirely() {
         .expect("rider remains an actor");
     assert!(actor.active_rider_charge.is_none());
     assert!(actor.last_executed_rider_charge_order_id.is_none());
-    assert!(take_test_sword_damage_observations().is_empty());
+    assert!(observations.is_empty());
 }
 
 #[test]
@@ -2605,9 +2604,7 @@ fn rider_charge_frozen_all_still_initializes_and_runs_polygon_on_frozen_frame() 
 
 #[test]
 fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let origin = MapPoint::new(100.0, 100.0);
@@ -2620,13 +2617,13 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
     let victim = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 30.0));
     engine.set_actors_frozen(true);
     let sim = crate::sim_rng::test_context();
-    clear_test_sword_damage_observations();
 
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &sim, &assets);
+        tick_movement_and_sequences(&mut engine, &sim, &assets);
+        tick_movement_and_sequences(&mut engine, &sim, &assets);
+    });
 
-    let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1, "frozen ticks must not rebuild hits");
     assert_eq!(observations[0].victim_id, victim);
     assert!(observations[0].life_points_after > 0, "victim is nonlethal");
@@ -2795,9 +2792,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
 
 #[test]
 fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let origin = MapPoint::new(100.0, 100.0);
@@ -2814,11 +2809,10 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
     // Frame zero's polygon is the one-sided width segment at the pre-Turn
     // origin. Source Turn uses the previously installed goal (zero) before
     // Motion processing initializes the new eastward goal.
-    clear_test_sword_damage_observations();
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets)
+    });
 
-    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
-
-    let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
     let hit = &observations[0];
     assert_eq!((hit.attacker_id, hit.victim_id), (rider, victim));
@@ -2870,11 +2864,12 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
             .is_empty()
     );
 
-    clear_test_sword_damage_observations();
     // The first frame's manager drain only translates ReceiveSwordDamage and
     // installs hit-induced falling. Takeoff preparation belongs to that order's next
     // source-authored owner Execute slot, not the movement-only fixture path.
-    tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets);
+    let ((), later_observations) = capture_sword_damage_observations(|| {
+        tick_production_owner_coordinator(&mut engine, &crate::sim_rng::test_context(), &assets)
+    });
     assert_eq!(
         engine
             .get_entity(victim)
@@ -2884,10 +2879,7 @@ fn rider_charge_first_execute_turns_before_initializing_new_motion_goal() {
         expected_facing,
         "the fall order's first Execute faces the victim opposite live rider direction 0"
     );
-    assert!(
-        take_test_sword_damage_observations().is_empty(),
-        "victim is hit once"
-    );
+    assert!(later_observations.is_empty(), "victim is hit once");
 }
 
 #[test]
@@ -3167,9 +3159,7 @@ fn rider_charge_post_execute_callback_replacement_is_not_consumed() {
 
 #[test]
 fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
 
     fn run() -> Vec<(u32, i16, i16, Vec<u32>)> {
         let mut engine = EngineInner::new();
@@ -3185,11 +3175,11 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
         let hole = add_charge_victim(&mut engine, MapPoint::new(900.0, 900.0));
         let second = add_charge_victim(&mut engine, rider_charge_point(origin, 0, 0.0, 40.0));
         engine.remove_entity(hole);
-        clear_test_sword_damage_observations();
 
-        tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+        let ((), observations) = capture_sword_damage_observations(|| {
+            tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets)
+        });
 
-        let observations = take_test_sword_damage_observations();
         assert_eq!(
             observations
                 .iter()
@@ -3228,9 +3218,7 @@ fn rider_charge_multiple_hits_follow_creation_order_rng_state_and_holes() {
 
 #[test]
 fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let origin = MapPoint::new(100.0, 100.0);
@@ -3241,11 +3229,11 @@ fn rider_charge_last_frame_damage_lands_after_the_rewrite_and_clear() {
         vec![0],
     );
     add_charge_victim(&mut engine, rider_charge_point(origin, 0, 10.0, 30.0));
-    clear_test_sword_damage_observations();
 
-    tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets);
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &crate::sim_rng::test_context(), &assets)
+    });
 
-    let observations = take_test_sword_damage_observations();
     assert_eq!(observations.len(), 1);
     // The rider's own Execute rewrites its order and drops the charge on the
     // last frame; the damage element it registered only runs afterwards, in
@@ -3308,9 +3296,7 @@ fn rider_charge_retains_unhit_candidates_in_shared_human_sword_list() {
 
 #[test]
 fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let (rider, _, _) = install_rider_charge_fixture(
@@ -3324,9 +3310,10 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         rider_charge_point(MapPoint::new(100.0, 100.0), 0, 80.0, 30.0),
     );
     let sim = crate::sim_rng::test_context();
-    clear_test_sword_damage_observations();
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    assert!(take_test_sword_damage_observations().is_empty());
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &sim, &assets)
+    });
+    assert!(observations.is_empty());
 
     // Eligibility changes after initialization are intentionally ignored.
     // Wrong layer merely postpones geometry; returning to the sampled layer
@@ -3341,8 +3328,10 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .unwrap()
         .element_data_mut()
         .set_layer(1);
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    assert!(take_test_sword_damage_observations().is_empty());
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &sim, &assets)
+    });
+    assert!(observations.is_empty());
     let rider_origin = engine
         .get_entity(rider)
         .unwrap()
@@ -3372,15 +3361,15 @@ fn rider_charge_initial_eligibility_is_not_rechecked_and_returning_layer_can_hit
         .unwrap()
         .element_data_mut()
         .active = true;
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    assert_eq!(take_test_sword_damage_observations().len(), 1);
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &sim, &assets)
+    });
+    assert_eq!(observations.len(), 1);
 }
 
 #[test]
 fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_movement() {
-    use crate::engine::melee::{
-        clear_test_sword_damage_observations, take_test_sword_damage_observations,
-    };
+    use crate::engine::melee::capture_sword_damage_observations;
     let mut engine = EngineInner::new();
     let mut assets = LevelAssets::new();
     let origin = MapPoint::new(100.0, 100.0);
@@ -3409,7 +3398,6 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
         .frame_count = 1;
     assert!(earlier.index() < rider.index() && rider.index() < later.index());
     let sim = crate::sim_rng::test_context();
-    clear_test_sword_damage_observations();
 
     // First tick initializes all three motions and the charge candidates.
     // Ordinary Start frames now correctly commit their nonzero distance: the
@@ -3417,8 +3405,10 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
     // Hold the later victim on a non-distance wait counter, then restore both
     // positions on each animation wait tick until the rider reaches its
     // actual charge decision frame.
-    tick_movement_and_sequences(&mut engine, &sim, &assets);
-    assert!(take_test_sword_damage_observations().is_empty());
+    let ((), observations) = capture_sword_damage_observations(|| {
+        tick_movement_and_sequences(&mut engine, &sim, &assets)
+    });
+    assert!(observations.is_empty());
     let observations = (0..4)
         .find_map(|_| {
             let earlier_entity = engine.get_entity_mut(earlier).unwrap();
@@ -3429,9 +3419,9 @@ fn rider_charge_owner_slot_sees_earlier_movement_and_interrupts_later_before_mov
             let later_entity = engine.get_entity_mut(later).unwrap();
             later_entity.element_data_mut().set_position_map(hit_point);
             later_entity.sprite_mut().frame_count = 1;
-            clear_test_sword_damage_observations();
-            tick_movement_and_sequences(&mut engine, &sim, &assets);
-            let observations = take_test_sword_damage_observations();
+            let ((), observations) = capture_sword_damage_observations(|| {
+                tick_movement_and_sequences(&mut engine, &sim, &assets)
+            });
             (!observations.is_empty()).then_some(observations)
         })
         .expect("rider must reach its charge decision frame");

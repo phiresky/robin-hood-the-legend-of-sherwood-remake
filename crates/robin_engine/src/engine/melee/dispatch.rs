@@ -1307,11 +1307,7 @@ impl EngineInner {
                         .element_terminated(seq_id, elem_idx);
                     return OwnerActionBarrier::Skip;
                 }
-                #[cfg(test)]
-                let test_life_before = self
-                    .get_entity(victim_id)
-                    .and_then(super::damage::test_human_life_points)
-                    .expect("sword damage test victim is human");
+                let damage_probe = super::damage::SwordDamageProbe::before(self, victim_id);
                 self.apply_sword_damage(
                     sim,
                     assets,
@@ -1321,16 +1317,7 @@ impl EngineInner {
                     sword_profile_idx,
                     (seq_id, elem_idx),
                 );
-                #[cfg(test)]
-                if let (Some(attacker_id), Some(strike)) = (origin, sword_strike) {
-                    super::damage::record_test_sword_damage_observation(
-                        self,
-                        victim_id,
-                        attacker_id,
-                        strike,
-                        test_life_before,
-                    );
-                }
+                damage_probe.after(self, victim_id, origin, sword_strike);
                 // Pushed falling or rolling marks the
                 // damage element NonInterruptable directly when those
                 // anims start.  Here, `queue_damage_anim` does the
