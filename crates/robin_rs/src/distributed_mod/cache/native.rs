@@ -22,22 +22,12 @@ pub use crate::distributed_mod_policy::{
 const CACHE_DIRECTORY: &str = "distributed-mod-cache";
 const CACHE_INDEX_FILE: &str = "index.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CacheIndex {
-    schema_version: u32,
-    access_counter: u64,
-    entries: BTreeMap<String, CacheIndexEntry>,
-}
+/// The native index has no fields beyond the shared header: partial staging
+/// state lives in the file system, not in `index.json`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct NativeIndexExtension {}
 
-impl Default for CacheIndex {
-    fn default() -> Self {
-        Self {
-            schema_version: DISTRIBUTED_MOD_CACHE_SCHEMA_VERSION,
-            access_counter: 0,
-            entries: BTreeMap::new(),
-        }
-    }
-}
+type CacheIndex = super::CacheIndex<NativeIndexExtension>;
 
 #[derive(Debug, Default)]
 struct CachePins {
@@ -886,16 +876,8 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+use super::parse_hash;
 use robin_engine::spellforge::hex_hash;
-
-fn parse_hash(value: &str) -> Result<[u8; 32], String> {
-    let mut hash = [0u8; 32];
-    // Existing native indexes accept either hex case; unlike wire digests,
-    // their parser must not silently become lowercase-only.
-    hex::decode_to_slice(value, &mut hash)
-        .map_err(|_| format!("invalid distributed-mod cache hash `{value}`"))?;
-    Ok(hash)
-}
 
 #[cfg(test)]
 mod tests {
@@ -904,25 +886,26 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
-    fn cache_hash_parser_preserves_case_compatibility_and_rejects_malformed_input() {
-        let hash = std::array::from_fn(|index| index as u8 * 7);
-        let lower = hex_hash(&hash);
-        assert_eq!(parse_hash(&lower).unwrap(), hash);
-        assert_eq!(parse_hash(&lower.to_ascii_uppercase()).unwrap(), hash);
-        let mixed = lower[..32].to_ascii_uppercase() + &lower[32..];
-        assert_eq!(parse_hash(&mixed).unwrap(), hash);
-        for invalid in [
-            String::new(),
-            "0".repeat(63),
-            "0".repeat(65),
-            "g".repeat(64),
-            "é".repeat(32),
-        ] {
-            assert_eq!(
-                parse_hash(&invalid).unwrap_err(),
-                format!("invalid distributed-mod cache hash `{invalid}`")
-            );
-        }
+    fn native_index_json_layout_is_unchanged() {
+        let mut index = CacheIndex::default();
+        index.access_counter = 2;
+        index.entries.insert(
+            "0F".repeat(32),
+            CacheIndexEntry {
+                encoded_bytes: 9,
+                last_used: 1,
+            },
+        );
+        let json = serde_json::to_string(&index).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"schema_version":{DISTRIBUTED_MOD_CACHE_SCHEMA_VERSION},"access_counter":2,"entries":{{"{}":{{"encoded_bytes":9,"last_used":1}}}}}}"#,
+                "0F".repeat(32)
+            )
+        );
+        let reparsed: CacheIndex = serde_json::from_str(&json).unwrap();
+        assert_eq!(serde_json::to_string(&reparsed).unwrap(), json);
     }
 
     fn rhm(map: &str) -> Vec<u8> {
