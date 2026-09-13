@@ -6,8 +6,11 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Write as _};
+use crate::desktop_persistence::{
+    PublicationMode, PublicationOptions, PublicationStage, publish_reader, restrict_to_owner,
+};
+use std::fs::OpenOptions;
+use std::io::{self, Read};
 use std::path::Path;
 
 pub(crate) const MAX_PRIVATE_STORE_BYTES: u64 = 1024 * 1024;
@@ -41,7 +44,7 @@ pub(crate) fn read_private_utf8(path: &Path) -> io::Result<Option<String>> {
             "leaderboard state file exceeds {MAX_PRIVATE_STORE_BYTES} bytes"
         )));
     }
-    tighten_private_permissions(&file)?;
+    restrict_to_owner(&file)?;
 
     let capacity = usize::try_from(metadata.len()).map_err(io::Error::other)?;
     let mut bytes = Vec::with_capacity(capacity);
@@ -81,19 +84,25 @@ pub(crate) fn replace_private(path: &Path, prefix: &str, encoded: &[u8]) -> io::
         )));
     }
 
-    let mut temporary = tempfile::Builder::new()
-        .prefix(prefix)
-        .suffix(".json.tmp")
-        .tempfile_in(parent)?;
-    tighten_private_permissions(temporary.as_file())?;
-    temporary.write_all(encoded)?;
-    temporary.as_file().sync_all()?;
-
-    // Re-check immediately before the atomic rename. This catches a target
-    // replaced by a symlink while the temporary file was being written.
-    reject_unsafe_store_path(path)?;
-    temporary.persist(path).map_err(|error| error.error)?;
-    sync_parent_directory(parent)
+    publish_reader(
+        path,
+        PublicationOptions {
+            mode: PublicationMode::Replace,
+            staging_prefix: prefix,
+            staging_suffix: ".json.tmp",
+            private: true,
+        },
+        encoded,
+        |stage| match stage {
+            // Re-check immediately before the atomic rename. This catches a
+            // target replaced by a symlink while the staged file was written.
+            PublicationStage::Replace => reject_unsafe_store_path(path),
+            PublicationStage::Prepare
+            | PublicationStage::Write
+            | PublicationStage::SyncFile
+            | PublicationStage::SyncDirectory => Ok(()),
+        },
+    )
 }
 
 fn reject_unsafe_store_path(path: &Path) -> io::Result<()> {
@@ -110,34 +119,10 @@ fn reject_unsafe_store_path(path: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(unix)]
-fn tighten_private_permissions(file: &File) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    if file.metadata()?.permissions().mode() & 0o777 != 0o600 {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn tighten_private_permissions(_file: &File) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
-fn sync_parent_directory(parent: &Path) -> io::Result<()> {
-    OpenOptions::new().read(true).open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent_directory(_parent: &Path) -> io::Result<()> {
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
 
     #[test]
     fn private_replacement_is_atomic_and_round_trips() {
