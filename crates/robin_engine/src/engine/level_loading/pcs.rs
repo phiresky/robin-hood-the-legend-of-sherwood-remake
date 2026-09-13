@@ -577,12 +577,6 @@ impl EngineInner {
                         beam_me.sector,
                     );
                 }
-                // Out-of-range material silently falls back to the grid
-                // default material.
-                let material = crate::element::GameMaterial::from_u32_with_default(
-                    beam_me.material,
-                    assets.environment.material_sectors.default_material,
-                );
                 // Validate that the beam-me's obstacle index is a
                 // projection area and the beam-me position is inside its
                 // screen box.  We warn so a corrupt mission still loads.
@@ -619,23 +613,13 @@ impl EngineInner {
                         }
                     }
                 }
-                sprite.apply_placement(
-                    beam_me.position,
-                    beam_me.layer,
-                    Some(Self::resolve_sparse_position_handle(assets, beam_me.sector)),
-                    // Apply initial facing from the beam-me point (0-15 sector).
-                    (beam_me.direction & 15) as i16,
-                    material,
-                    crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                        beam_me.projection_area,
-                    ),
-                    crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                        crate::position_interface::ObstacleHandle::from_serialized_pointer(
-                            beam_me.projection_area,
-                        ),
-                        assets.environment.static_sight_obstacles.as_slice(),
-                    ),
-                );
+                // Applies the initial facing from the beam-me point (0-15
+                // sector) and the material with its out-of-range grid-default
+                // fallback. The obstacle/plane lookup and the material
+                // conversion are pure and cannot panic, so resolving them
+                // around the (panicking) sparse sector-handle lookup is
+                // unobservable.
+                Self::place_raw_sprite(&mut sprite, beam_me, assets);
                 prime_mission_start_sprite(
                     &mut sprite,
                     beam_me.action,
