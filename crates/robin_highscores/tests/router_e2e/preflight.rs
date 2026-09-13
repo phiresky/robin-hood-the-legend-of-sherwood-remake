@@ -71,7 +71,7 @@ async fn custom_config_preflight_is_admitted_only_by_an_open_ruleset_and_digest_
 }
 
 #[tokio::test]
-async fn fresh_run_preflight_is_exact_signed_time_bounded_and_server_authorized() {
+async fn fresh_run_preflight_keeps_signed_authority_and_allows_later_ordinary_uploads() {
     let rig = TestRig::new().await;
     let owner = SigningKey::from_bytes(&[81; 32]);
     rig.rename(&owner, "Preflight Robin", Ipv4Addr::new(127, 0, 8, 1))
@@ -193,5 +193,42 @@ async fn fresh_run_preflight_is_exact_signed_time_bounded_and_server_authorized(
         ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let delayed_offer: SubmissionOfferV1 = json_body(response).await;
+    delayed_offer.validate().unwrap();
+    assert!(delayed_offer.expires_at_unix_ms > 2);
+    assert_eq!(
+        delayed_offer.session_genesis,
+        expired_request.session_genesis
+    );
+
+    let now = robin_highscores::model::now_unix_ms().unwrap();
+    let grant = expired_request
+        .session_genesis
+        .claim
+        .fresh_run_preflight_grant
+        .as_mut()
+        .unwrap();
+    grant.claim.admitted_at_unix_ms = now + 60_000;
+    grant.claim.expires_at_unix_ms = now + 120_000;
+    grant.authority_signature = sign(
+        &SigningKey::from_bytes(&[0x46; 32]),
+        &grant.signing_bytes().unwrap(),
+    );
+    expired_request.session_genesis.host_signature = sign(
+        &owner,
+        &expired_request.session_genesis.signing_bytes().unwrap(),
+    );
+    let future_response = rig
+        .app
+        .clone()
+        .oneshot(json_request(
+            Method::POST,
+            "/api/v1/submission-offers",
+            &expired_request,
+            Ipv4Addr::new(127, 8, 1, 86),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(future_response.status(), StatusCode::CONFLICT);
 }

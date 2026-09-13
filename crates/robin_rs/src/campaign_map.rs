@@ -230,6 +230,8 @@ pub(crate) struct CampaignMapModalState {
     scroll_views: [ScrollView; 5],
     selected_play: usize,
     replay_status: String,
+    application: ApplicationContext,
+    mission_basenames: std::collections::HashMap<u32, String>,
     recording_index: std::sync::Arc<crate::mission_replays::RecordingIndex>,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
@@ -310,6 +312,12 @@ impl CampaignMapModalState {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            application: application_context.clone(),
+            mission_basenames: profiles
+                .missions
+                .iter()
+                .map(|p| (p.id, p.mission_filename.clone()))
+                .collect(),
             recording_index,
             lifetime_totals: lifetime_history.totals(),
             lifetime_achievements: lifetime_history.achievement_aggregation(),
@@ -394,6 +402,12 @@ impl CampaignMapModalState {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            application: application_context.clone(),
+            mission_basenames: profiles
+                .missions
+                .iter()
+                .map(|p| (p.id, p.mission_filename.clone()))
+                .collect(),
             recording_index,
             lifetime_totals,
             lifetime_achievements,
@@ -433,6 +447,7 @@ impl CampaignMapModalState {
             },
             &self.replay_status,
             Some(&self.scroll_views),
+            Some(&self.recording_index),
         );
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
@@ -515,6 +530,7 @@ impl CampaignMapModalState {
                     },
                     &self.replay_status,
                     Some(&self.scroll_views),
+                    Some(&self.recording_index),
                 )
             }
         }
@@ -596,6 +612,80 @@ impl CampaignMapModalState {
         self.scroll_views[id].scroll_by(direction as isize);
     }
 
+    fn open_leaderboard(&mut self, full_campaign: bool) {
+        let result = if full_campaign {
+            crate::leaderboard::history::open_page(&[
+                ("subject", "full_campaign"),
+                ("metric", "original_score"),
+            ])
+        } else {
+            self.graph
+                .nodes
+                .get(self.selected_progress)
+                .filter(|node| node.kind.is_field_mission())
+                .and_then(|node| self.mission_basenames.get(&node.mission_id))
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| {
+                    "No leaderboard mission identity is available for this entry.".to_owned()
+                })
+                .and_then(|mission| {
+                    crate::leaderboard::history::open_page(&[
+                        ("subject", "campaign"),
+                        ("metric", "original_score"),
+                        ("mission", mission),
+                    ])
+                })
+        };
+        self.replay_status = match result {
+            Ok(()) => "Leaderboard opened in your browser.".into(),
+            Err(error) => {
+                tracing::error!("{error}");
+                error
+            }
+        };
+    }
+
+    fn submit_or_open_selected_play(&mut self) {
+        let result = (|| -> Result<String, String> {
+            let play = self
+                .graph
+                .nodes
+                .get(self.selected_progress)
+                .and_then(|node| node.plays.get(self.selected_play))
+                .ok_or("No play is selected")?;
+            let path = play
+                .recording
+                .as_deref()
+                .ok_or("No recording is available for this play")?;
+            let info = self.recording_index.submission_info(path);
+            if let Some(url) = info.url {
+                crate::leaderboard::history::open_url(&url)?;
+                return Ok("Submission opened in your browser.".into());
+            }
+            if !info.can_submit {
+                return Err(info.message);
+            }
+            if play.attempt.outcome() != robin_engine::campaign_history::MissionAttemptOutcome::Won
+            {
+                return Err("Only successful mission recordings can be submitted.".into());
+            }
+            let key = play.attempt.key(
+                play.campaign_run_id
+                    .ok_or("Recording has no campaign identity")?,
+            );
+            self.recording_index
+                .submit_recording(path, (key, play.attempt.completed_at_unix_seconds()))?;
+            Ok("Submission started. Check the replay status below.".into())
+        })();
+        self.replay_status = match result {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::error!("Replay submission: {error}");
+                error
+            }
+        };
+    }
+
     fn watch_selected_play(&mut self) {
         let Some(play) = self
             .graph
@@ -655,6 +745,40 @@ impl CampaignMapModalState {
         event: GameEvent,
         transform: MenuTransform,
     ) -> Option<GameEvent> {
+        if self.presentation != CampaignPresentationMode::ClassicMap {
+            let action = match &event {
+                GameEvent::KeyDown {
+                    keycode: Keycode::Char(b'l'),
+                    ..
+                } => Some(false),
+                GameEvent::KeyDown {
+                    keycode: Keycode::Char(b'f'),
+                    ..
+                } => Some(true),
+                GameEvent::MouseDown(x, y, 1, _) => {
+                    let (x, y) = transform.from_screen(*x, *y);
+                    if (32..340).contains(&x) && (712..752).contains(&y) {
+                        Some(true)
+                    } else if !self.achievement_overview
+                        && ((self.details_open
+                            && (738..992).contains(&x)
+                            && (176..212).contains(&y))
+                            || (!self.details_open
+                                && (222..574).contains(&x)
+                                && (490..526).contains(&y)))
+                    {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(full) = action {
+                self.open_leaderboard(full);
+                return None;
+            }
+        }
         if self.details_open {
             let history = (560.0..992.0).contains(&self.input.virt_x);
             let step = match event {
@@ -751,6 +875,13 @@ impl CampaignMapModalState {
                     return None;
                 }
                 GameEvent::KeyDown {
+                    keycode: Keycode::Char(b's'),
+                    ..
+                } => {
+                    self.submit_or_open_selected_play();
+                    return None;
+                }
+                GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
                     ..
                 } => {
@@ -771,8 +902,12 @@ impl CampaignMapModalState {
                         }
                         return None;
                     }
-                    if (560..992).contains(&x) && (630..666).contains(&y) {
+                    if (560..768).contains(&x) && (630..666).contains(&y) {
                         self.watch_selected_play();
+                        return None;
+                    }
+                    if (780..992).contains(&x) && (630..666).contains(&y) {
+                        self.submit_or_open_selected_play();
                         return None;
                     }
                 }
@@ -800,6 +935,8 @@ impl CampaignMapModalState {
         browsing: bool,
     ) -> Option<CampaignMapChoice> {
         self.poll_recording_index();
+        #[cfg(not(target_arch = "wasm32"))]
+        robin_util::sync::lock(&self.recording_index.submissions).poll(&self.application);
         let mut final_choice = None;
         let input_enabled = self.pseudo_debrief_started_at_ms.is_none()
             || self.pseudo_debrief_due(crate::window::process_uptime_ms());
@@ -1571,6 +1708,7 @@ fn render_campaign_progress(
     view: ProgressViewState,
     replay_status: &str,
     scroll_views: Option<&[ScrollView; 5]>,
+    recording_index: Option<&crate::mission_replays::RecordingIndex>,
 ) {
     let ProgressViewState {
         selected,
@@ -1621,6 +1759,14 @@ fn render_campaign_progress(
         .as_ref()
         .expect("campaign manager needs a readable font");
 
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Full campaign board (F)",
+        (32, 712, 308, 36),
+        false,
+    );
     if achievement_overview {
         render_progress_achievements(renderer, transform, graph, assets, views);
         return;
@@ -1647,11 +1793,16 @@ fn render_campaign_progress(
             views,
             selected_play,
             replay_status,
+            recording_index,
         );
         return;
     }
     render_progress_cards(renderer, transform, graph, assets, view, views, card_offset);
     render_progress_summary(renderer, transform, graph, assets, view);
+    if !replay_status.is_empty() {
+        progress_rect(renderer, transform, (350, 712, 478, 40), (12, 20, 13));
+        progress_text(renderer, font, transform, replay_status, 356, 722, 470);
+    }
 }
 
 fn render_progress_header(
@@ -1886,9 +2037,9 @@ fn render_progress_achievements(
         font,
         transform,
         "PgUp/PgDn or wheel: browse   A: missions   Esc: back",
-        32,
+        356,
         722,
-        960,
+        476,
     );
     views[AWARDS_VIEW].draw_skin(renderer, transform, &assets.scrollbar);
 }
@@ -2027,6 +2178,14 @@ fn render_progress_cards(
         (588, 490, 216, 36),
         false,
     );
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Leaderboard (L)",
+        (222, 490, 352, 36),
+        false,
+    );
 }
 
 fn render_progress_summary(
@@ -2137,7 +2296,7 @@ fn render_progress_summary(
     } else {
         "D: view mission details"
     };
-    progress_text(renderer, font, transform, action, 32, 724, 780);
+    progress_text(renderer, font, transform, action, 356, 722, 476);
     if !browsing && node.selectable {
         progress_button(
             renderer,
@@ -2328,9 +2487,18 @@ fn render_mission_details(
     views: &[ScrollView; 5],
     selected_play: usize,
     status: &str,
+    recording_index: Option<&crate::mission_replays::RecordingIndex>,
 ) {
     let font = assets.progress_font.as_ref().expect("mission details font");
-    progress_text(renderer, font, transform, &node.name, 32, 180, 960);
+    progress_text(renderer, font, transform, &node.name, 32, 180, 690);
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Leaderboard (L)",
+        (738, 176, 254, 36),
+        false,
+    );
     progress_text(
         renderer,
         font,
@@ -2422,7 +2590,21 @@ fn render_mission_details(
             renderer,
             font,
             transform,
-            &date,
+            &format!(
+                "{} / {}",
+                date,
+                play.recording
+                    .as_deref()
+                    .and_then(|path| recording_index.map(|index| index.submission_info(path)))
+                    .map(|info| if info.url.is_some() {
+                        "Submitted"
+                    } else if info.can_submit {
+                        "Not submitted"
+                    } else {
+                        "See status"
+                    })
+                    .unwrap_or("No recording")
+            ),
             572,
             y + 36,
             history_view.content_width() - 24,
@@ -2437,13 +2619,37 @@ fn render_mission_details(
         font,
         transform,
         if can_watch {
-            "Watch selected replay"
+            "Watch replay"
         } else {
-            "Recording unavailable"
+            "No recording"
         },
-        (560, 630, 432, 36),
+        (560, 630, 208, 36),
         can_watch,
     );
+    let info = node
+        .plays
+        .get(selected_play)
+        .and_then(|play| play.recording.as_deref())
+        .and_then(|path| recording_index.map(|index| index.submission_info(path)));
+    let can_submit = info.as_ref().is_some_and(|info| info.can_submit)
+        && node.plays.get(selected_play).is_some_and(|play| {
+            play.attempt.outcome() == robin_engine::campaign_history::MissionAttemptOutcome::Won
+        });
+    progress_button(
+        renderer,
+        font,
+        transform,
+        if info.as_ref().is_some_and(|info| info.url.is_some()) {
+            "Open online (S)"
+        } else {
+            "Submit (S)"
+        },
+        (780, 630, 212, 36),
+        can_submit || info.as_ref().is_some_and(|info| info.url.is_some()),
+    );
+    if let Some(info) = info {
+        progress_text(renderer, font, transform, &info.message, 356, 680, 636);
+    }
     history_view.draw_skin(renderer, transform, &assets.scrollbar);
     progress_text(
         renderer,
@@ -2454,9 +2660,9 @@ fn render_mission_details(
         } else {
             status
         },
-        32,
+        356,
         722,
-        960,
+        476,
     );
 }
 
@@ -3298,6 +3504,41 @@ mod browser_tests {
     }
 
     #[test]
+    fn submission_controls_do_not_watch_or_launch_an_unavailable_recording() {
+        let mut state = browser();
+        state.graph.nodes[0].plays = fixture_plays(2);
+        state.details_open = true;
+        let transform = progress_transform(1024, 768);
+        for event in [
+            key(Keycode::Char(b's')),
+            GameEvent::MouseDown(800, 640, 1, 1),
+        ] {
+            assert_eq!(state.handle_events(vec![event], transform, true), None);
+            assert!(state.details_open);
+            assert_eq!(state.selected_play, 0);
+            assert!(state.replay_status.contains("No recording"));
+        }
+    }
+
+    #[test]
+    fn mission_board_requires_a_real_mission_identity() {
+        let mut state = browser();
+        let transform = progress_transform(1024, 768);
+        for event in [
+            key(Keycode::Char(b'l')),
+            GameEvent::MouseDown(250, 500, 1, 1),
+        ] {
+            assert_eq!(state.handle_events(vec![event], transform, true), None);
+            assert!(
+                state
+                    .replay_status
+                    .contains("No leaderboard mission identity")
+            );
+            assert!(!state.details_open);
+        }
+    }
+
+    #[test]
     fn details_can_select_every_play_without_launching_the_mission() {
         let mut state = browser();
         state.graph.nodes[0].plays = fixture_plays(13);
@@ -3539,6 +3780,8 @@ mod browser_tests {
             details_open: false,
             selected_play: 0,
             replay_status: String::new(),
+            application: ApplicationContext::default(),
+            mission_basenames: Default::default(),
             recording_index,
             lifetime_totals: history.totals(),
             lifetime_achievements: history.achievement_aggregation(),
@@ -3835,6 +4078,30 @@ mod capture_tests {
             );
             write_capture_json(output, "mission-profiles.json", &profiles.missions);
             seed_capture_history(&mut state);
+            // Explicit visual fixtures: no upload, identity signing, or local store writes.
+            for node in &mut state.graph.nodes {
+                for (index, play) in node.plays.iter_mut().enumerate() {
+                    let path =
+                        std::path::PathBuf::from(format!("capture/{}/{}", node.mission_id, index));
+                    let submitted = index % 2 == 1;
+                    robin_util::sync::lock(&state.recording_index.submissions).seed_capture_info(
+                        path.clone(),
+                        crate::leaderboard::history::ReplaySubmissionInfo {
+                            message: if submitted {
+                                "Submitted / open verification status online"
+                            } else {
+                                "Not submitted"
+                            }
+                            .into(),
+                            can_submit: !submitted,
+                            url: submitted.then(|| {
+                                "https://example.test/leaderboards/?submission=capture".into()
+                            }),
+                        },
+                    );
+                    play.recording = Some(path);
+                }
+            }
             write_capture_json(output, "campaign-graph.json", &state.graph);
             capture_progress_views(&mut renderer, &state, output, width, height);
         }
@@ -3993,6 +4260,7 @@ mod capture_tests {
             ("achievements", CampaignPresentationMode::ProgressTree),
             ("details", CampaignPresentationMode::ProgressTree),
             ("details-more", CampaignPresentationMode::ProgressTree),
+            ("details-submitted", CampaignPresentationMode::ProgressTree),
         ] {
             for selected in capture_selections(state) {
                 renderer.begin_gpu_frame_clear();
@@ -4013,10 +4281,17 @@ mod capture_tests {
                             .starts_with("details")
                             .then_some(usize::from(name == "details-more")),
                         history_scroll: if name == "details-more" { 8 } else { 0 },
-                        selected_play: if name == "details-more" { 10 } else { 0 },
+                        selected_play: if name == "details-more" {
+                            10
+                        } else if name == "details-submitted" {
+                            1
+                        } else {
+                            0
+                        },
                     },
                     "",
                     None,
+                    Some(&state.recording_index),
                 );
                 let path = output.join(format!("{name}-{width}x{height}-{selected}.png"));
                 write_capture_png(renderer, &path);

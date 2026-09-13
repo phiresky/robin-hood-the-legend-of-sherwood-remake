@@ -3,6 +3,53 @@
 use super::*;
 
 impl Database {
+    /// Shareable progress contains no owner identity, rejection detail, or
+    /// unsigned score claim. Deleted submissions are indistinguishable from
+    /// missing submissions, including after a successful verification.
+    pub async fn public_submission_status(
+        &self,
+        submission_id: &OpaqueId,
+    ) -> Result<Option<robin_run_protocol::PublicSubmissionStatusV1>, DbError> {
+        use robin_run_protocol::{PublicSubmissionStateV1 as State, PublicSubmissionStatusV1};
+        let row = sqlx::query(
+            "SELECT CASE WHEN f.submission_id IS NULL THEN s.status ELSE 'failed' END AS status, \
+                    r.id AS run_id \
+             FROM submissions s LEFT JOIN verified_runs r ON r.submission_id = s.id \
+             LEFT JOIN submission_terminal_failures f ON f.submission_id = s.id \
+             WHERE s.id = ? AND s.tombstoned_at_ms IS NULL",
+        )
+        .bind(submission_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else { return Ok(None) };
+        let status: String = row.try_get("status")?;
+        let state = match status.as_str() {
+            "queued" => State::Queued,
+            "verifying" => State::Verifying,
+            "retry_pending" => State::RetryPending,
+            "accepted" => {
+                let id: Option<String> = row.try_get("run_id")?;
+                let id =
+                    id.ok_or_else(|| DbError::Corrupt("accepted submission has no run".into()))?;
+                State::Verified {
+                    run_id: OpaqueId::new(id).map_err(|e| DbError::Corrupt(e.to_string()))?,
+                }
+            }
+            "rejected" => State::Rejected,
+            "failed" => State::Failed,
+            other => {
+                return Err(DbError::Corrupt(format!(
+                    "unknown submission state {other}"
+                )));
+            }
+        };
+        Ok(Some(PublicSubmissionStatusV1 {
+            schema_version: robin_run_protocol::SCHEMA_VERSION_V1,
+            submission_id: submission_id.clone(),
+            state,
+        }))
+    }
+
     /// Serve custom settings only after a verifier accepted the signed offer.
     pub async fn public_custom_rules_config(
         &self,

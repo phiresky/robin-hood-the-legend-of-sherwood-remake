@@ -9,7 +9,7 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 use native as platform;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use native::default_directory;
+pub(crate) use native::{default_directory, replay_attempt_identity};
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
@@ -21,6 +21,9 @@ pub(crate) use platform::watch;
 #[derive(Debug, Serialize)]
 pub(crate) struct RecordingIndex {
     directory: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    pub(crate) submissions: std::sync::Mutex<crate::leaderboard::history::ReplaySubmissions>,
     #[serde(skip)]
     #[cfg_attr(
         target_arch = "wasm32",
@@ -38,9 +41,47 @@ impl<'de> Deserialize<'de> for RecordingIndex {
 }
 
 impl RecordingIndex {
+    pub(crate) fn submission_info(
+        &self,
+        path: &std::path::Path,
+    ) -> crate::leaderboard::history::ReplaySubmissionInfo {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            robin_util::sync::lock(&self.submissions).info(path)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            crate::leaderboard::history::ReplaySubmissionInfo {
+                message: "Local replay submission is unavailable in this browser.".into(),
+                can_submit: false,
+                url: None,
+            }
+        }
+    }
+    pub(crate) fn submit_recording(
+        &self,
+        path: &std::path::Path,
+        expected: (
+            robin_engine::campaign_history::MissionAttemptKey,
+            Option<i64>,
+        ),
+    ) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            robin_util::sync::lock(&self.submissions).submit(path, expected)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (path, expected);
+            Err("Local replay submission is unavailable in this browser".into())
+        }
+    }
     pub(crate) fn disabled() -> Self {
         Self {
             directory: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            submissions: Default::default(),
             runtime: Default::default(),
         }
     }

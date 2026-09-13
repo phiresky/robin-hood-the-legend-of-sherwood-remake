@@ -361,6 +361,10 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
         )
         .route("/api/v1/submission-offers", post(submission_offer))
         .route(
+            "/api/v1/submissions/{submission_id}/public-status",
+            get(submission_public_status),
+        )
+        .route(
             "/api/v1/submission-owner-status-challenges",
             post(submission_owner_status_challenge),
         )
@@ -1472,9 +1476,12 @@ async fn submission_offer(
             &grant.signing_bytes()?,
         )?;
         let now = crate::model::now_unix_ms()?;
-        if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
+        // Admission expiry limits starting a ranked session, not uploading its
+        // immutable recording later. Current authority, profile and signatures
+        // remain mandatory; competition deadlines are checked separately below.
+        if now < grant.claim.admitted_at_unix_ms {
             return Err(ApiError::Conflict(
-                "fresh-run preflight grant is not active under server time".to_owned(),
+                "fresh-run preflight grant is from the future".to_owned(),
             ));
         }
     }
@@ -1502,9 +1509,11 @@ async fn submission_offer(
             &grant.signing_bytes()?,
         )?;
         let now = crate::model::now_unix_ms()?;
-        if now < grant.claim.admitted_at_unix_ms || now > grant.claim.expires_at_unix_ms {
+        // The original continuation authorization remains attached to the
+        // replay; a later upload does not create or renew admission.
+        if now < grant.claim.admitted_at_unix_ms {
             return Err(ApiError::Conflict(
-                "campaign continuation preflight grant is not active under server time".to_owned(),
+                "campaign continuation preflight grant is from the future".to_owned(),
             ));
         }
     }
@@ -1939,6 +1948,24 @@ async fn submission_owner_status_challenge(
         .validate()
         .map_err(|error| configuration_error("owner status challenge", error))?;
     Ok((StatusCode::CREATED, Json(challenge)))
+}
+
+async fn submission_public_status(
+    State(state): State<AppState>,
+    Path(value): Path<String>,
+) -> Result<Response, ApiError> {
+    let id = opaque(&value).map_err(|_| ApiError::NotFound)?;
+    let status = state
+        .database
+        .public_submission_status(&id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    // Pending progress must not be cached as a terminal result by a proxy.
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(status),
+    )
+        .into_response())
 }
 
 async fn submission_private_status(

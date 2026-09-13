@@ -1,6 +1,7 @@
 //! Leaderboard client protocol, persistence and task coordination.
 pub mod browse;
 pub mod chains;
+pub mod history;
 pub mod http;
 pub mod mission_end;
 pub mod preferences;

@@ -1,4 +1,5 @@
 import type { DigestVerified } from './canonical.js';
+import { parsePublicSubmissionStatus, type PublicSubmissionStatus } from './submission-status.js';
 import { apiUrl } from './config.js';
 import { DEFAULT_NETWORK_DEADLINE_MS, NetworkDeadline } from '../network_deadline.js';
 import {
@@ -70,6 +71,10 @@ export class HighscoreApi {
 
     async metadata(signal?: AbortSignal): Promise<BoardMetadata> {
         return parseBoardMetadata(await this.getJson(['leaderboard-metadata'], signal));
+    }
+
+    async submissionStatus(id: string, signal?: AbortSignal): Promise<PublicSubmissionStatus> {
+        return parsePublicSubmissionStatus(await this.getJson(['submissions', id, 'public-status'], signal), id);
     }
 
     async board(filters: BoardFilters, signal?: AbortSignal): Promise<BoardPage> {

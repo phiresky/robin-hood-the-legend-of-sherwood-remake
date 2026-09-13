@@ -4,6 +4,7 @@ import { participantView, aggregateParticipantView, appendAchievements, playerTa
 import { loadVerifiedRunView, loadVerifiedCampaignSession } from './run-controller.js';
 import { runContentDigest } from './subject-contract.js';
 import { RouteController } from './route-controller.js';
+import { submissionPresentation } from './submission-status.js';
 import { validateBoardView, selectionFromSubject } from './view-model.js';
 import { HighscoreApi, PublicApiError } from './api.js';
 import { apiBaseFromBrowser, ownerWritesArePinnedFromBrowser } from './config.js';
@@ -68,6 +69,7 @@ async function renderCurrentRoute(): Promise<void> {
         const route = routeFromUrl(window.location.href, rememberedSubject());
         const api = new HighscoreApi(apiBaseFromBrowser());
         switch (route.kind) {
+            case 'submission': await renderSubmission(api, route.id, signal); break;
             case 'leaderboard': await renderLeaderboard(api, route, signal); break;
             case 'run': await renderRun(api, route.id, signal); break;
             case 'campaign_session': await renderCampaignSession(
@@ -87,6 +89,31 @@ async function renderCurrentRoute(): Promise<void> {
         busy: busy => app.setAttribute('aria-busy', String(busy)),
         error: renderError,
     });
+}
+
+async function renderSubmission(api: HighscoreApi, id: string, signal: AbortSignal): Promise<void> {
+    const status = await api.submissionStatus(id, signal);
+    signal.throwIfAborted();
+    const view = submissionPresentation(status);
+    const panel = statePanel(view.title, view.message);
+    panel.append(element('p', { className: 'fingerprint', text: `Submission ${id}` }));
+    if (status.runId !== null) panel.append(runLink(status.runId, 'View verified result'));
+    replace(app, pageHeading('Replay submission', 'A received replay stays unverified until the server confirms it.'), panel);
+    if (view.pending) scheduleSubmissionRefresh(api, id, signal);
+}
+
+function scheduleSubmissionRefresh(api: HighscoreApi, id: string, signal: AbortSignal): void {
+    const cancel = (): void => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => {
+        signal.removeEventListener('abort', cancel);
+        if (!signal.aborted) void renderSubmission(api, id, signal).catch(error => {
+            if (signal.aborted) return;
+            renderError(error);
+            // A temporary network failure must not leave a pending result frozen.
+            scheduleSubmissionRefresh(api, id, signal);
+        });
+    }, 3000);
+    signal.addEventListener('abort', cancel, { once: true });
 }
 
 async function renderLeaderboard(

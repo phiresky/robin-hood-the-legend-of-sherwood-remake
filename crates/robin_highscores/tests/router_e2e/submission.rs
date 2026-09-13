@@ -894,3 +894,104 @@ async fn wrong_body_never_reserves_and_exact_compact_retries_queue_once() {
         replay
     );
 }
+
+#[tokio::test]
+async fn public_submission_progress_is_minimal_and_disappears_when_deleted() {
+    use robin_run_protocol::{PublicSubmissionStateV1, PublicSubmissionStatusV1};
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[19; 32]);
+    rig.rename(&owner, "Public status test", Ipv4Addr::new(127, 0, 0, 19))
+        .await;
+    let accepted = rig.submit(&owner, 1).await;
+    let path = format!(
+        "/api/v1/submissions/{}/public-status",
+        accepted.submission_id
+    );
+    let response = rig
+        .app
+        .clone()
+        .oneshot(empty_request(Method::GET, &path, Ipv4Addr::LOCALHOST))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let value: serde_json::Value = json_body(response).await;
+    assert_eq!(
+        value,
+        serde_json::json!({"schema_version": 1, "submission_id": accepted.submission_id, "state": {"state": "queued"}})
+    );
+    for phase in ["verifying", "retry_pending", "rejected"] {
+        sqlx::query("UPDATE submissions SET status = ?, lease_owner = CASE WHEN ? = 'verifying' THEN 'worker' ELSE NULL END, lease_expires_at_ms = CASE WHEN ? = 'verifying' THEN created_at_ms + 30000 ELSE NULL END, rejection_code = CASE WHEN ? = 'rejected' THEN 'PRIVATE_REJECTION_DETAIL' ELSE NULL END WHERE id = ?")
+            .bind(phase).bind(phase).bind(phase).bind(phase).bind(accepted.submission_id.as_str()).execute(rig.database.fixture_pool()).await.unwrap();
+        let response = rig
+            .app
+            .clone()
+            .oneshot(empty_request(Method::GET, &path, Ipv4Addr::LOCALHOST))
+            .await
+            .unwrap();
+        let value: serde_json::Value = json_body(response).await;
+        assert_eq!(
+            value,
+            serde_json::json!({"schema_version": 1, "submission_id": accepted.submission_id, "state": {"state": phase}})
+        );
+    }
+    sqlx::query("INSERT INTO submission_terminal_failures (submission_id, code, private_detail, failed_at_ms) VALUES (?, 'verification_infrastructure', 'PRIVATE_INFRASTRUCTURE_DETAIL', 1)")
+        .bind(accepted.submission_id.as_str()).execute(rig.database.fixture_pool()).await.unwrap();
+    let response = rig
+        .app
+        .clone()
+        .oneshot(empty_request(Method::GET, &path, Ipv4Addr::LOCALHOST))
+        .await
+        .unwrap();
+    let value: serde_json::Value = json_body(response).await;
+    assert_eq!(
+        value,
+        serde_json::json!({"schema_version": 1, "submission_id": accepted.submission_id, "state": {"state": "failed"}})
+    );
+    sqlx::query("DELETE FROM submission_terminal_failures WHERE submission_id = ?")
+        .bind(accepted.submission_id.as_str())
+        .execute(rig.database.fixture_pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE submissions SET status = 'queued', rejection_code = NULL WHERE id = ?")
+        .bind(accepted.submission_id.as_str())
+        .execute(rig.database.fixture_pool())
+        .await
+        .unwrap();
+    let run_id = rig.publish(&accepted, 123, 21).await;
+    let response = rig
+        .app
+        .clone()
+        .oneshot(empty_request(Method::GET, &path, Ipv4Addr::LOCALHOST))
+        .await
+        .unwrap();
+    let status: PublicSubmissionStatusV1 = json_body(response).await;
+    assert_eq!(status.state, PublicSubmissionStateV1::Verified { run_id });
+    sqlx::query("UPDATE submissions SET tombstoned_at_ms = created_at_ms + 1 WHERE id = ?")
+        .bind(accepted.submission_id.as_str())
+        .execute(rig.database.fixture_pool())
+        .await
+        .unwrap();
+    let deleted = rig
+        .app
+        .clone()
+        .oneshot(empty_request(Method::GET, &path, Ipv4Addr::LOCALHOST))
+        .await
+        .unwrap();
+    let missing = rig
+        .app
+        .clone()
+        .oneshot(empty_request(
+            Method::GET,
+            "/api/v1/submissions/missing/public-status",
+            Ipv4Addr::LOCALHOST,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::NOT_FOUND);
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        deleted.into_body().collect().await.unwrap().to_bytes(),
+        missing.into_body().collect().await.unwrap().to_bytes()
+    );
+}

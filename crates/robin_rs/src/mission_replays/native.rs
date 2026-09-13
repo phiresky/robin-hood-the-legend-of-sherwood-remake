@@ -201,7 +201,7 @@ impl ReplayAttemptState {
     }
 }
 
-fn replay_attempt_identity(
+pub(crate) fn replay_attempt_identity(
     data: &robin_engine::replay::ReplayData,
 ) -> Result<Option<(MissionAttemptKey, Option<i64>)>, String> {
     use robin_engine::player_command::PlayerCommand;

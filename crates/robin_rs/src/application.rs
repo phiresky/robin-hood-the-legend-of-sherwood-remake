@@ -1155,6 +1155,8 @@ impl ApplicationContext {
                 return;
             }
         };
+        #[cfg(not(target_arch = "wasm32"))]
+        robin_util::sync::lock(&services.recording_index.submissions).poll(self);
         let mut watcher = match services.leaderboard_receipts.lock() {
             Ok(watcher) => watcher,
             Err(_) => {

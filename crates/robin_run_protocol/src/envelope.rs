@@ -1734,25 +1734,9 @@ impl Validate for SubmissionOfferV1 {
                 field: "submission_offer.competition_run_grant_expiry",
             });
         }
-        let preflight_expiry = self
-            .session_genesis
-            .claim
-            .fresh_run_preflight_grant
-            .as_ref()
-            .map(|grant| grant.claim.expires_at_unix_ms)
-            .or_else(|| {
-                self.session_genesis
-                    .claim
-                    .campaign_continuation_preflight_grant
-                    .as_ref()
-                    .map(|grant| grant.claim.expires_at_unix_ms)
-            })
-            .expect("validated offer has exactly one run-preflight grant");
-        if self.expires_at_unix_ms > preflight_expiry {
-            return Err(ValidationError::ClaimMismatch {
-                field: "submission_offer.run_preflight_grant_expiry",
-            });
-        }
+        // Run-preflight expiry gates session setup. A completed recording may
+        // receive a fresh short-lived upload offer later, retaining its exact
+        // signed admission. Competition expiry remains an upload deadline above.
         if self.session_genesis.claim.ranked_session.mission_id != self.mission_id
             || self
                 .session_genesis

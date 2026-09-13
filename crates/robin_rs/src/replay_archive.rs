@@ -74,11 +74,14 @@ impl MissionArchive {
     pub(crate) fn read_ranked_input(
         &self,
     ) -> Result<crate::leaderboard_mission_end::MissionEndSubmissionInput> {
+        Self::read_ranked_input_from(&self.directory)
+    }
+
+    pub(crate) fn read_ranked_input_from(
+        directory: &Path,
+    ) -> Result<crate::leaderboard_mission_end::MissionEndSubmissionInput> {
         let input: crate::leaderboard_mission_end::MissionEndSubmissionInput =
-            serde_json::from_slice(&read_bounded(
-                &self.directory.join("ranked.json"),
-                MAX_BYTES,
-            )?)?;
+            serde_json::from_slice(&read_bounded(&directory.join("ranked.json"), MAX_BYTES)?)?;
         input
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid archived ranked evidence: {error}"))?;

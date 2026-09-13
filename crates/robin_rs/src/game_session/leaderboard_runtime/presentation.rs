@@ -170,6 +170,7 @@ impl MissionEndLeaderboardTaskState {
                         return MissionEndLeaderboardTaskProgress::Finished;
                     }
                 };
+                controller.enable_history_tracking();
                 if controller.is_visible() {
                     self.phase = MissionEndLeaderboardTaskPhase::Visible(
                         MissionEndLeaderboardScreen::new(controller, resources),

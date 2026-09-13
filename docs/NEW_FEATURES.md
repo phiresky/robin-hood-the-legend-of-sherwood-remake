@@ -4,6 +4,18 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Campaign leaderboard and replay submission links.** Campaign Manager and
+  Hall of Deeds open the selected mission's campaign board or the full-campaign
+  board in the browser. Previous Plays shows submission information and offers
+  Submit for current, eligible single-player recordings, or Open online after
+  submission. Later submission reuses the recording's original signed evidence;
+  older/ineligible recordings cannot manufacture new ranked admission.
+  Ordinary recordings can be submitted after their session-admission window;
+  fresh upload offers and competition deadlines still expire. Queued
+  IDs survive restart and link immediately to a public status page, which polls
+  until verification finishes and then links to the verified run. Private
+  rejection details and campaign receipts remain in the authenticated API.
+
 - **Bundled modding tools.** Native release packages include `cpf_to_json`,
   `encode_mod_sprites`, `disasm_scb`, and `dump_res` from the new
   `robin_modding_tools` crate. Rust command-line tools use Clap derive for

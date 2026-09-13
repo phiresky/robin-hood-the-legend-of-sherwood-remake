@@ -236,7 +236,11 @@ async fn campaign_owner_authorization_authentic_genesis_and_full_aggregate_cross
         ))
         .await
         .unwrap();
-    assert_eq!(expired_response.status(), StatusCode::CONFLICT);
+    assert_eq!(expired_response.status(), StatusCode::CREATED);
+    let delayed_offer: SubmissionOfferV1 = json_body(expired_response).await;
+    delayed_offer.validate().unwrap();
+    assert_eq!(delayed_offer.session_genesis, expired.session_genesis);
+    assert!(delayed_offer.expires_at_unix_ms > 2);
 
     let continuation_offer = rig
         .issue_continuation_offer(

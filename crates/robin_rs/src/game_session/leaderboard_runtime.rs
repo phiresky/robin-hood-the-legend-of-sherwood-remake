@@ -199,7 +199,7 @@ impl RankedMissionAdmission {
 
 /// Restored files carry signed evidence, not permission to invent a genesis.
 /// Submission still passes the normal authorizer and server preflight checks.
-fn validate_archived_ranked_input(
+pub(crate) fn validate_archived_ranked_input(
     input: &MissionEndSubmissionInput,
     replay: &robin_engine::replay::ReplayData,
 ) -> Result<(), RankedError> {
@@ -697,7 +697,7 @@ fn browse_boards(
     Ok(boards)
 }
 
-fn authorized_boards(
+pub(crate) fn authorized_boards(
     input: &MissionEndSubmissionInput,
     metadata: Option<&LeaderboardMetadataV1>,
 ) -> Result<Vec<MissionEndBoard>, RankedError> {

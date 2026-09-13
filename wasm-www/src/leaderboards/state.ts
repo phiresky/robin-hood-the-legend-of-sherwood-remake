@@ -20,6 +20,7 @@ export type BoardFilters = {
 };
 
 export type PageRoute =
+    | { readonly kind: 'submission'; readonly id: string }
     | { readonly kind: 'leaderboard'; readonly filters: BoardFilters }
     | { readonly kind: 'run'; readonly id: string }
     | { readonly kind: 'campaign_session'; readonly aggregateRunId: string; readonly ordinal: number }
@@ -34,19 +35,18 @@ export function routeFromUrl(
     const url = new URL(urlString);
     const run = optionalOpaqueId(url.searchParams.get('run'), 'run');
     const session = optionalNonNegativeInteger(url.searchParams.get('session'), 'session');
-    if (url.searchParams.has('submission')) {
-        throw new Error('Private submission status is available only through an authenticated owner client.');
-    }
+    const submission = optionalOpaqueId(url.searchParams.get('submission'), 'submission');
     const player = optionalSha256(url.searchParams.get('player'), 'player');
     const cursor = optionalBoundedString(url.searchParams.get('cursor'), 'cursor', 4096);
-    if ([run, player].filter(value => value !== null).length > 1) {
-        throw new Error('A page URL cannot select more than one run or player.');
+    if ([run, player, submission].filter(value => value !== null).length > 1) {
+        throw new Error('A page URL cannot select more than one run, player or submission.');
     }
     if (session !== null && run === null) {
         throw new Error('A campaign session ordinal requires its aggregate run identity.');
     }
     if (run !== null && session !== null) return { kind: 'campaign_session', aggregateRunId: run, ordinal: session };
     if (run !== null) return { kind: 'run', id: run };
+    if (submission !== null) return { kind: 'submission', id: submission };
     if (player !== null) return { kind: 'player', publicKey: player, cursor };
     return {
         kind: 'leaderboard',

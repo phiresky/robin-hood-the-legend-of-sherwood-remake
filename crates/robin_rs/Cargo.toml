@@ -82,6 +82,7 @@ unicode-segmentation.workspace = true
 # Native-only runtime integrations (filesystem/process services and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+webbrowser = "1"
 # Legacy direct-call adapter conformance tests only (`lua` feature). Cargo does
 # not allow optional dev-dependencies, so these are optional normal deps used
 # solely under `cfg(all(test, feature = "lua"))`; without the feature

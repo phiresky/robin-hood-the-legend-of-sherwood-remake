@@ -1244,7 +1244,7 @@ mod tests {
     }
 
     #[test]
-    fn authorization_builder_binds_host_identity_and_signed_expiry() {
+    fn authorization_builder_binds_host_identity_and_fresh_upload_expiry() {
         for seed in [0x44, 0x55] {
             let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
             let request = authorization_for_key(&key);
@@ -1252,14 +1252,13 @@ mod tests {
                 request.expected_participants(),
                 vec![PublicKey32::from_bytes(key.verifying_key().to_bytes())]
             );
-            let mut wrong_expiry = request.clone();
-            wrong_expiry.offer.expires_at_unix_ms += 1;
-            assert!(
-                wrong_expiry
-                    .validate_exact_context()
-                    .unwrap_err()
-                    .to_string()
-                    .contains("run_preflight_grant_expiry")
+            let mut later_offer = request.clone();
+            later_offer.offer.expires_at_unix_ms += 1;
+            later_offer.validate_exact_context().unwrap();
+            assert_ne!(
+                request.envelope(None).signing_bytes().unwrap(),
+                later_offer.envelope(None).signing_bytes().unwrap(),
+                "the new upload expiry still changes the exact bytes every participant signs"
             );
         }
     }

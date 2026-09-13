@@ -1598,9 +1598,10 @@ fn validate_leaderboard_order(
 
 mod submission_status;
 pub use submission_status::{
-    SubmissionAcceptedV1, SubmissionFailureCodeV1, SubmissionLifecycleV1,
-    SubmissionOwnerStatusChallengeRequestV1, SubmissionOwnerStatusChallengeV1,
-    SubmissionOwnerStatusEnvelopeV1, SubmissionOwnerStatusResponseV1,
+    PublicSubmissionStateV1, PublicSubmissionStatusV1, SubmissionAcceptedV1,
+    SubmissionFailureCodeV1, SubmissionLifecycleV1, SubmissionOwnerStatusChallengeRequestV1,
+    SubmissionOwnerStatusChallengeV1, SubmissionOwnerStatusEnvelopeV1,
+    SubmissionOwnerStatusResponseV1,
 };
 mod public_proof;
 pub use public_proof::{

@@ -23,11 +23,11 @@ test('leaderboard URL parsing has stable public defaults', () => {
     });
 });
 
-test('run routes are public and private submission status is rejected', () => {
+test('run routes and minimal public submission routes preserve their identifiers', () => {
     assert.deepEqual(routeFromUrl('https://pages.example/leaderboards/?run=run_42'), { kind: 'run', id: 'run_42' });
-    assert.throws(
-        () => routeFromUrl('https://pages.example/leaderboards/?submission=sub_7'),
-        /authenticated owner client/u,
+    assert.deepEqual(
+        routeFromUrl('https://pages.example/leaderboards/?submission=sub_7'),
+        { kind: 'submission', id: 'sub_7' },
     );
     assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?run=%20bad'), /invalid/u);
 });

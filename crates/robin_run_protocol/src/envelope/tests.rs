@@ -988,6 +988,28 @@ fn submission() -> SubmissionEnvelopeV1 {
 }
 
 #[test]
+fn later_upload_offer_preserves_the_original_expired_admission() {
+    let mut offer = submission().offer;
+    let grant = offer
+        .session_genesis
+        .claim
+        .fresh_run_preflight_grant
+        .as_ref()
+        .unwrap()
+        .clone();
+    offer.expires_at_unix_ms = grant.claim.expires_at_unix_ms + 60_000;
+    offer.validate().unwrap();
+    assert_eq!(
+        offer
+            .session_genesis
+            .claim
+            .fresh_run_preflight_grant
+            .as_ref(),
+        Some(&grant)
+    );
+}
+
+#[test]
 fn submission_signing_bytes_are_fixed_and_bind_one_use_offer() {
     let mut submission = submission();
     let bytes = submission.signing_bytes().unwrap();

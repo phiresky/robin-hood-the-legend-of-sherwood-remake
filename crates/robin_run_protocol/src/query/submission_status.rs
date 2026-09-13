@@ -8,6 +8,33 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Minimal shareable progress. Detailed failures and campaign receipts remain
+/// available only through the authenticated owner-status endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicSubmissionStatusV1 {
+    pub schema_version: u32,
+    pub submission_id: OpaqueId,
+    pub state: PublicSubmissionStateV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PublicSubmissionStateV1 {
+    Queued,
+    Verifying,
+    RetryPending,
+    Verified { run_id: OpaqueId },
+    Rejected,
+    Failed,
+}
+
+impl Validate for PublicSubmissionStatusV1 {
+    fn validate(&self) -> Result<(), ValidationError> {
+        crate::validation::schema("PublicSubmissionStatusV1", self.schema_version)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SubmissionFailureCodeV1 {

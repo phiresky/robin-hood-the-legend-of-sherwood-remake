@@ -596,6 +596,7 @@ impl BoardTask {
 }
 
 pub struct MissionEndLeaderboardController {
+    history_tracking: bool,
     run: MissionEndRunBundle,
     preferences: LeaderboardPreferences,
     selected_tab: LeaderboardTab,
@@ -712,6 +713,7 @@ impl MissionEndLeaderboardController {
             )
         };
         let mut controller = Self {
+            history_tracking: false,
             run,
             preferences,
             selected_tab,
@@ -840,7 +842,11 @@ impl MissionEndLeaderboardController {
         })
     }
 
-    fn persist_queued_receipt_watch_with(
+    pub(crate) fn enable_history_tracking(&mut self) {
+        self.history_tracking = true;
+    }
+
+    pub(crate) fn persist_queued_receipt_watch_with(
         &mut self,
         enqueue: impl FnOnce(
             crate::leaderboard_receipt_watcher::QueuedSubmissionReceiptWatch,
@@ -890,6 +896,11 @@ impl MissionEndLeaderboardController {
                 controller_public_key,
             )
             .map_err(|error| error.to_string())?;
+        if self.history_tracking {
+            if let Some(input) = &self.run.eligible_submission {
+                super::history::persist_link(input, &self.preferences, accepted, &handoff)?;
+            }
+        }
         enqueue(handoff)?;
         self.submission_task.mark_receipt_persisted();
         Ok(true)
