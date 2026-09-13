@@ -1165,7 +1165,12 @@ pub(super) fn initialize_engine(
     assets.fixed_vip_names = robin_rs::game_session::load_fixed_vip_name_map(&mut text_res)
         .expect("decode localized VIP names");
     let _ = text_res.attach_resource_file("Data/Interface/Start.sxt");
-    let menu_text = robin_rs::ingame_menu::resources::MenuText::load(&mut text_res);
+    // The runner has already installed its datadir and locale mounts; the
+    // presentation locale comes from that same global tool file system.
+    let menu_text = robin_rs::ingame_menu::resources::MenuText::load(
+        &mut text_res,
+        robin_engine::sbfile::SbFile::snapshot_legacy_file_system().presentation_locale(),
+    );
     let mut host = Host::scratch(1024.0, 768.0);
     host.frontend
         .resources
