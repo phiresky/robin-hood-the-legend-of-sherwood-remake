@@ -25,19 +25,12 @@ pub const HARD_MAX_CAMPAIGN_BYTES: u64 = 64 * 1024 * 1024;
 pub const HARD_MAX_METADATA_BYTES: usize = 256 * 1024;
 pub const HARD_MAX_PAGE_SIZE: u32 = 100;
 const HARD_MAX_OPERATOR_DOCUMENT_BYTES: u64 = 1024 * 1024;
-pub const DEFAULT_RUNTIME_FENCE_DIRECTORY: &str =
-    "/home/robinhood/.local/share/robin-highscores/runtime-fence";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServerConfig {
     pub bind: SocketAddr,
     pub database_path: PathBuf,
-    /// Pre-provisioned kernel-lock authority shared read-only by the API,
-    /// worker, and backup process. Runtime code never creates or repairs it.
-    pub runtime_fence_directory: PathBuf,
-    #[serde(skip)]
-    pub(crate) allow_test_fence_provisioning: bool,
     pub replay_directory: PathBuf,
     /// Shared private content-addressed campaign store used by the API,
     /// verifier worker, and backup tooling. It must never be a public static
@@ -277,8 +270,6 @@ impl Default for ServerConfig {
         Self {
             bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8787),
             database_path: PathBuf::from("data/highscores.sqlite3"),
-            runtime_fence_directory: PathBuf::from(DEFAULT_RUNTIME_FENCE_DIRECTORY),
-            allow_test_fence_provisioning: true,
             replay_directory: PathBuf::from("data/replays"),
             campaign_state_directory: PathBuf::from("data/campaign-states"),
             cursor_secret_path: PathBuf::from("data/cursor-hmac.key"),
@@ -347,7 +338,6 @@ impl ServerConfig {
     fn load_with_secret_scope(path: &Path, scope: ConfigSecretScope) -> anyhow::Result<Self> {
         let bytes = read_regular_file_no_symlinks(path, HARD_MAX_OPERATOR_DOCUMENT_BYTES)?;
         let mut config: Self = toml::from_str(std::str::from_utf8(&bytes)?)?;
-        config.allow_test_fence_provisioning = false;
         config.manifests = match &config.manifest_directory {
             Some(root) => std::sync::Arc::new(ManifestRegistry::load(root)?),
             None => std::sync::Arc::default(),
@@ -476,15 +466,6 @@ impl ServerConfig {
         anyhow::ensure!(
             self.database_path.file_name().is_some(),
             "database_path must name a file"
-        );
-        anyhow::ensure!(
-            self.runtime_fence_directory.is_absolute()
-                && self
-                    .runtime_fence_directory
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    == Some("runtime-fence"),
-            "runtime_fence_directory must be an absolute path ending in runtime-fence"
         );
         anyhow::ensure!(
             self.replay_directory.file_name().is_some(),

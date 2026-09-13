@@ -92,7 +92,7 @@ mod tests {
             ..Default::default()
         };
         let database = Database::migrate(&config).await.unwrap();
-        database.close_fenced().await.unwrap();
+        database.close().await;
 
         assert_eq!(
             applied_schema_version(&config.database_path, 1_000)

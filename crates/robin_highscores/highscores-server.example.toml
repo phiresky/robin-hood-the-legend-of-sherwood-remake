@@ -1,6 +1,5 @@
 bind = "127.0.0.1:8787"
 database_path = "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3"
-runtime_fence_directory = "/home/robinhood/.local/share/robin-highscores/runtime-fence"
 replay_directory = "/home/robinhood/.local/share/robin-highscores/replays"
 campaign_state_directory = "/home/robinhood/.local/share/robin-highscores/campaign-states"
 cursor_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key"

@@ -122,18 +122,14 @@ pub(super) async fn run() -> anyhow::Result<()> {
         Command::Migrate => {
             let config = ServerConfig::load(&arguments.config)?;
             let database = Database::migrate(&config).await?;
-            database.close_fenced().await?;
+            database.close().await;
             println!("database migrations applied successfully");
         }
         Command::Reports { state, limit } => {
             let config = ServerConfig::load(&arguments.config)?;
             let db = Database::connect(&config).await?;
-            let reports = db
-                .run_fenced_operation(async {
-                    Ok(db.moderation_reports(state.as_deref(), limit).await?)
-                })
-                .await;
-            db.close_fenced().await?;
+            let reports = db.moderation_reports(state.as_deref(), limit).await;
+            db.close().await;
             println!("{}", serde_json::to_string_pretty(&reports?)?);
         }
         Command::Moderate {
@@ -143,57 +139,44 @@ pub(super) async fn run() -> anyhow::Result<()> {
         } => {
             let config = ServerConfig::load(&arguments.config)?;
             let db = Database::connect(&config).await?;
-            let result: anyhow::Result<()> = db
-                .run_fenced_operation(async {
-                    let lease = db
-                        .acquire_maintenance_write_lease(
-                            robin_highscores::db::MaintenanceWriteClass::Admin,
-                            "robin-highscores-admin-moderation",
-                            Duration::from_secs(5 * 60),
-                        )
-                        .await?;
-                    let mutation = db
-                        .moderate_report(
-                            &report_id,
-                            &state,
-                            &detail,
-                            &config.moderation_operator_id,
-                        )
-                        .await;
-                    let release = db.release_maintenance_write_lease(&lease).await;
-                    match (mutation, release) {
-                        (Ok(()), Ok(true)) => {}
-                        (Ok(()), Ok(false)) => {
-                            anyhow::bail!("moderation write lease disappeared before release")
-                        }
-                        (Ok(()), Err(error)) => return Err(error.into()),
-                        (Err(operation), Ok(true)) => return Err(operation.into()),
-                        (Err(operation), Ok(false)) => {
-                            return Err(anyhow::Error::from(operation)
-                                .context("moderation failed and its write lease disappeared"));
-                        }
-                        (Err(operation), Err(release)) => {
-                            return Err(anyhow::Error::from(operation).context(format!(
-                        "moderation failed and releasing its write lease also failed: {release}"
-                    )));
-                        }
+            let result: anyhow::Result<()> = async {
+                let lease = db
+                    .acquire_maintenance_write_lease(
+                        robin_highscores::db::MaintenanceWriteClass::Admin,
+                        "robin-highscores-admin-moderation",
+                        Duration::from_secs(5 * 60),
+                    )
+                    .await?;
+                let mutation = db
+                    .moderate_report(&report_id, &state, &detail, &config.moderation_operator_id)
+                    .await;
+                let release = db.release_maintenance_write_lease(&lease).await;
+                match (mutation, release) {
+                    (Ok(()), Ok(true)) => Ok(()),
+                    (Ok(()), Ok(false)) => {
+                        anyhow::bail!("moderation write lease disappeared before release")
                     }
-                    Ok(())
-                })
-                .await;
-            db.close_fenced().await?;
+                    (Ok(()), Err(error)) => Err(error.into()),
+                    (Err(operation), Ok(true)) => Err(operation.into()),
+                    (Err(operation), Ok(false)) => Err(anyhow::Error::from(operation)
+                        .context("moderation failed and its write lease disappeared")),
+                    (Err(operation), Err(release)) => {
+                        Err(anyhow::Error::from(operation).context(format!(
+                            "moderation failed and releasing its write lease also failed: {release}"
+                        )))
+                    }
+                }
+            }
+            .await;
+            db.close().await;
             result?;
             println!("moderation action recorded");
         }
         Command::Audit { report_id, limit } => {
             let config = ServerConfig::load(&arguments.config)?;
             let db = Database::connect(&config).await?;
-            let audit = db
-                .run_fenced_operation(async {
-                    Ok(db.moderation_audit(report_id.as_deref(), limit).await?)
-                })
-                .await;
-            db.close_fenced().await?;
+            let audit = db.moderation_audit(report_id.as_deref(), limit).await;
+            db.close().await;
             println!("{}", serde_json::to_string_pretty(&audit?)?);
         }
     }

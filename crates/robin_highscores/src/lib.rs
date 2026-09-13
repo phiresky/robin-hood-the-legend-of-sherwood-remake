@@ -18,7 +18,6 @@ mod authentication;
 pub mod campaign_store;
 pub mod config;
 pub mod db;
-pub mod db_fence;
 pub mod deployment;
 pub mod error;
 pub mod identity;
@@ -275,5 +274,94 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(state, "purged");
+    }
+
+    /// `ops/backup.sh` snapshots the DB first and copies the object trees
+    /// afterwards, so a restore can pair a DB with slightly different trees:
+    /// an orphan purged in between is missing, and an object stored in between
+    /// has no row. Startup reconcile + GC must accept both.
+    #[tokio::test]
+    async fn restored_snapshot_tolerates_object_trees_out_of_sync() {
+        let directory = tempfile::tempdir().unwrap();
+        let live = ServerConfig {
+            database_path: directory.path().join("live/highscores.sqlite3"),
+            replay_directory: directory.path().join("live/replays"),
+            orphan_replay_retention_hours: 1,
+            ..Default::default()
+        };
+        let database = Database::migrate(&live).await.unwrap();
+        let store = ReplayStore::create(live.replay_directory.clone(), 1024)
+            .await
+            .unwrap();
+        let store_bytes = |store: ReplayStore, bytes: &'static [u8]| async move {
+            let bytes = Bytes::from_static(bytes);
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            store
+                .store_stream(
+                    stream::iter([Ok::<_, std::convert::Infallible>(bytes.clone())]),
+                    digest,
+                    bytes.len() as u64,
+                )
+                .await
+                .unwrap();
+            digest
+        };
+        let purged_later = store_bytes(store.clone(), b"orphan purged after the snapshot").await;
+        reconcile_replay_inventory(&database, &store).await.unwrap();
+        sqlx::query("UPDATE replay_objects SET created_at_ms = 0")
+            .execute(database.fixture_pool())
+            .await
+            .unwrap();
+        let snapshot = directory.path().join("snapshot.sqlite3");
+        db::snapshot_database(&live.database_path, &snapshot, 1_000)
+            .await
+            .unwrap();
+        database.close().await;
+
+        // Restored layout: snapshot DB plus an object tree that lost the purged
+        // orphan and gained an object written after the snapshot.
+        let restored = ServerConfig {
+            database_path: directory.path().join("restored/highscores.sqlite3"),
+            replay_directory: directory.path().join("restored/replays"),
+            orphan_replay_retention_hours: 1,
+            ..Default::default()
+        };
+        std::fs::create_dir_all(restored.database_path.parent().unwrap()).unwrap();
+        std::fs::copy(&snapshot, &restored.database_path).unwrap();
+        let restored_database = Database::connect(&restored).await.unwrap();
+        let restored_store = ReplayStore::create(restored.replay_directory.clone(), 1024)
+            .await
+            .unwrap();
+        let written_later = store_bytes(restored_store.clone(), b"stored after the snapshot").await;
+        assert!(!restored_store.path_for_digest(&purged_later).exists());
+
+        assert_eq!(
+            reconcile_replay_inventory(&restored_database, &restored_store)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            garbage_collect_replays(&restored_database, &restored_store, &restored, 10)
+                .await
+                .unwrap(),
+            1
+        );
+        let state_of = |digest: [u8; 32]| {
+            let database = restored_database.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT purge_state FROM replay_objects WHERE sha256 = ?",
+                )
+                .bind(digest.as_slice())
+                .fetch_one(database.fixture_pool())
+                .await
+                .unwrap()
+            }
+        };
+        assert_eq!(state_of(purged_later).await, "purged");
+        assert_eq!(state_of(written_later).await, "live");
+        assert!(restored_store.path_for_digest(&written_later).exists());
+        restored_database.close().await;
     }
 }

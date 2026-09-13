@@ -324,10 +324,6 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
             state.clone(),
             maintenance_upload_write_gate,
         ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            database_fence_gate,
-        ))
         .layer(tower::limit::GlobalConcurrencyLimitLayer::new(
             state.config.max_concurrent_uploads,
         ))
@@ -400,10 +396,6 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
             state.clone(),
             maintenance_sensitive_write_gate,
         ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            database_fence_gate,
-        ))
         .layer(tower::limit::GlobalConcurrencyLimitLayer::new(
             state.config.max_concurrent_requests,
         ))
@@ -464,10 +456,6 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
         .layer(RequestBodyTimeoutLayer::new(Duration::from_secs(
             state.config.upload_timeout_seconds,
         )))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            database_fence_gate,
-        ))
         .layer(tower::limit::GlobalConcurrencyLimitLayer::new(
             state.config.max_concurrent_requests,
         ))
@@ -529,53 +517,6 @@ pub fn router(state: AppState) -> Result<Router, ApiError> {
 
 const API_WRITE_LEASE_TTL: Duration = Duration::from_secs(5 * 60);
 
-async fn database_fence_gate(
-    State(state): State<AppState>,
-    request: Request<Body>,
-    next: Next,
-) -> Result<Response, ApiError> {
-    let database = state.database;
-    // Own the complete handler and fence token independently of the response
-    // waiter. Client cancellation or an outer response timeout detaches this
-    // task; it cannot release the kernel fence while SQLx rollback/return/ping
-    // or handler-spawned filesystem publication is still completing.
-    let owner = tokio::spawn(async move {
-        let mut fence = database.begin_fenced_operation().await?;
-        let operation = tokio::spawn(async move { next.run(request).await });
-        let result = operation
-            .await
-            .map_err(|error| anyhow::anyhow!(error).context("database-backed API handler failed"));
-        let finish = database.finish_fenced_operation(&mut fence).await;
-        match (result, finish) {
-            (Ok(response), Ok(())) => Ok(response),
-            (Ok(_), Err(error)) => Err(error.into()),
-            (Err(operation), Ok(())) => Err(operation),
-            (Err(operation), Err(finish)) => Err(operation.context(format!(
-                "database-backed API handler failed and fence drain also failed: {finish}"
-            ))),
-        }
-    });
-    match owner.await {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(error)) => {
-            tracing::warn!(
-                error_code = crate::safe_error_code(&error),
-                "database access is quiesced or failed"
-            );
-            Err(ApiError::Unavailable)
-        }
-        Err(error) => {
-            tracing::error!(
-                error_code = "database_fence_owner",
-                task_panicked = error.is_panic(),
-                task_cancelled = error.is_cancelled(),
-                "database fence-owner task failed"
-            );
-            Err(ApiError::Unavailable)
-        }
-    }
-}
-
 async fn run_owned_maintenance_write<T, F>(
     database: Database,
     writer_class: crate::db::MaintenanceWriteClass,
@@ -586,11 +527,8 @@ where
     F: std::future::Future<Output = T> + Send + 'static,
 {
     let owner = tokio::spawn(async move {
-        // `database_fence_gate` is inside the route timeout and owns/detaches
-        // the entire `next.run` future, so it already retains SH through this
-        // helper and its owned task. Re-entering admission here would invert
-        // lock order if backup acquired EX admission while the outer SH was
-        // held. Acquire the durable lease before polling the handler instead.
+        // Acquire the durable lease before polling the handler; this owner task
+        // survives response cancellation and keeps the lease until it finishes.
         let lease = database
             .acquire_maintenance_write_lease(
                 writer_class,
@@ -599,7 +537,7 @@ where
             )
             .await?;
         // A panic becomes a JoinError observed by this lease owner;
-        // the lease and nested fence remain until the task is gone.
+        // the lease remains until the task is gone.
         let mut operation = tokio::spawn(operation);
         let refresh_every = API_WRITE_LEASE_TTL
             .checked_div(3)
@@ -4614,7 +4552,6 @@ mod tests {
         OfficialContentSubjectV1, PublishedRulesetV1,
     };
     use sha2::Sha256;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use tower::ServiceExt as _;
 
     #[tokio::test]
@@ -4684,182 +4621,7 @@ mod tests {
         );
         assert!(database.release_backup_lock(&backup).await.unwrap());
 
-        database.close_fenced().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn detached_outer_fence_survives_timeout_and_avoids_nested_admission_deadlock() {
-        let (_directory, _config, database) = TestDeployment::new().migrate().await;
-        let outer_shared_acquired = std::sync::Arc::new(tokio::sync::Barrier::new(2));
-        let allow_mutation_start = std::sync::Arc::new(tokio::sync::Notify::new());
-        let operation_database = database.clone();
-        let entered_filesystem_gap = std::sync::Arc::new(tokio::sync::Barrier::new(2));
-        let resume_later_sql = std::sync::Arc::new(tokio::sync::Notify::new());
-        let later_sql_complete = std::sync::Arc::new(AtomicBool::new(false));
-        let outer_complete = std::sync::Arc::new(AtomicBool::new(false));
-        let gate_database = database.clone();
-        let gate_outer_acquired = outer_shared_acquired.clone();
-        let gate_allow_mutation = allow_mutation_start.clone();
-        let gate_complete = outer_complete.clone();
-        let gate_filesystem_gap = entered_filesystem_gap.clone();
-        let gate_resume_later_sql = resume_later_sql.clone();
-        let gate_later_sql_complete = later_sql_complete.clone();
-        let gate_owner = tokio::spawn(async move {
-            let mut fence = gate_database.begin_fenced_operation().await.unwrap();
-            gate_outer_acquired.wait().await;
-            gate_allow_mutation.notified().await;
-            let operation = run_owned_maintenance_write(
-                gate_database.clone(),
-                crate::db::MaintenanceWriteClass::ApiSensitive,
-                {
-                    async move {
-                        // Model filesystem publication after early SQL but
-                        // before a later status update, with no pool checkout.
-                        gate_filesystem_gap.wait().await;
-                        gate_resume_later_sql.notified().await;
-                        operation_database.health_check().await.unwrap();
-                        gate_later_sql_complete.store(true, Ordering::SeqCst);
-                    }
-                },
-            )
-            .await;
-            let finish = gate_database.finish_fenced_operation(&mut fence).await;
-            gate_complete.store(true, Ordering::SeqCst);
-            operation.unwrap();
-            finish.unwrap();
-        });
-        let response_waiter = tokio::spawn(async move {
-            tokio::time::timeout(Duration::from_millis(20), gate_owner).await
-        });
-        outer_shared_acquired.wait().await;
-        let runtime = database.runtime_fence().clone();
-        let admission = runtime.try_lock_exclusive_admission().unwrap().unwrap();
-        allow_mutation_start.notify_one();
-        tokio::time::timeout(Duration::from_secs(2), entered_filesystem_gap.wait())
-            .await
-            .expect("mutation deadlocked trying to re-enter admission under outer SH");
-        assert!(
-            response_waiter.await.unwrap().is_err(),
-            "outer response deadline did not detach the paused mutation"
-        );
-
-        assert!(
-            runtime.try_lock_exclusive_quiescence().unwrap().is_none(),
-            "outer SH fence was released during the detached filesystem gap"
-        );
-        resume_later_sql.notify_one();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        let quiescence = loop {
-            if let Some(guard) = runtime.try_lock_exclusive_quiescence().unwrap() {
-                break guard;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "outer fence outlived later SQL, lease release, and pool return"
-            );
-            tokio::task::yield_now().await;
-        };
-        assert!(later_sql_complete.load(Ordering::SeqCst));
-        assert!(outer_complete.load(Ordering::SeqCst));
-        runtime
-            .validate_exclusive_pair(&admission, &quiescence)
-            .unwrap();
-        drop(quiescence);
-        drop(admission);
-        database.close_fenced().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn saturated_lane_does_not_admit_queued_request_before_backup_gate() {
-        let (directory, config, database) = TestDeployment::new()
-            .with_replay_directory()
-            .migrate()
-            .await;
-        let state = AppState {
-            database: database.clone(),
-            replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
-                .await
-                .unwrap(),
-            campaign_store: CampaignStore::create(directory.path().join("campaigns"), 1024)
-                .await
-                .unwrap(),
-            config,
-            cursor_hmac_key: [1; 32],
-            competition_run_grant_secret_key: None,
-            run_preflight_grant_secret_key: None,
-            challenge_rate_limiter: ChallengeRateLimiter::new(10),
-        };
-        let first_entered = std::sync::Arc::new(tokio::sync::Barrier::new(2));
-        let release_first = std::sync::Arc::new(tokio::sync::Notify::new());
-        let handler_entries = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-        let handler = {
-            let first_entered = first_entered.clone();
-            let release_first = release_first.clone();
-            let handler_entries = handler_entries.clone();
-            move || {
-                let first_entered = first_entered.clone();
-                let release_first = release_first.clone();
-                let handler_entries = handler_entries.clone();
-                async move {
-                    if handler_entries.fetch_add(1, Ordering::SeqCst) == 0 {
-                        first_entered.wait().await;
-                        release_first.notified().await;
-                    }
-                    StatusCode::OK
-                }
-            }
-        };
-        // Layer order is deliberate: the most recently added concurrency
-        // layer is outermost, so queued calls have no database fence yet.
-        let app = Router::new()
-            .route("/", get(handler))
-            .layer(middleware::from_fn_with_state(state, database_fence_gate))
-            .layer(tower::limit::GlobalConcurrencyLimitLayer::new(1));
-        let first = tokio::spawn(
-            app.clone()
-                .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()),
-        );
-        first_entered.wait().await;
-        let second =
-            tokio::spawn(app.oneshot(Request::builder().uri("/").body(Body::empty()).unwrap()));
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert_eq!(handler_entries.load(Ordering::SeqCst), 1);
-        let backup = database
-            .acquire_backup_lock("saturated-lane-test", Duration::from_secs(60))
-            .await
-            .unwrap();
-        release_first.notify_one();
-        assert_eq!(first.await.unwrap().unwrap().status(), StatusCode::OK);
-        assert_eq!(
-            second.await.unwrap().unwrap().status(),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(
-            handler_entries.load(Ordering::SeqCst),
-            1,
-            "queued request crossed the fence after backup admission closed"
-        );
-
-        let runtime = database.runtime_fence().clone();
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        let admission = loop {
-            if let Some(guard) = runtime.try_lock_exclusive_admission().unwrap() {
-                break guard;
-            }
-            assert!(tokio::time::Instant::now() < deadline);
-            tokio::task::yield_now().await;
-        };
-        let quiescence = runtime.try_lock_exclusive_quiescence().unwrap().unwrap();
-        assert!(database.release_backup_lock(&backup).await.unwrap());
-        crate::db_fence::wait_for_pool_idle(database.fixture_pool())
-            .await
-            .unwrap();
-        runtime
-            .validate_exclusive_pair(&admission, &quiescence)
-            .unwrap();
-        drop(quiescence);
-        drop(admission);
-        database.close_fenced().await.unwrap();
+        database.close().await;
     }
 
     #[test]
