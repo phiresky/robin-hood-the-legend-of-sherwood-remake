@@ -168,7 +168,7 @@ fn configure_initial_surface(
         width: actual.width.max(1),
         height: actual.height.max(1),
         present_mode: wgpu::PresentMode::Fifo,
-        desired_maximum_frame_latency: 2,
+        desired_maximum_frame_latency: 1,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
     };
