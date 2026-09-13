@@ -1265,6 +1265,17 @@ impl std::ops::Deref for ApplicationContext {
 #[path = "application/tests.rs"]
 mod application_context_tests;
 
+/// Unwrap a screen-side `ApplicationContext` accessor result.
+///
+/// Screens run only after rust initialization, so a missing service or a
+/// poisoned lock is a programming error rather than a recoverable condition.
+/// Every screen used to hand-write `unwrap_or_else(|error| panic!(..))` with
+/// its own wording; this is the single panic format for that contract.
+#[track_caller]
+pub fn require<T>(result: Result<T, String>, screen: &str) -> T {
+    result.unwrap_or_else(|error| panic!("{screen} lost its ApplicationContext: {error}"))
+}
+
 fn lock_service<'a, T>(
     lock: &'a std::sync::Mutex<T>,
     label: &str,
