@@ -1083,6 +1083,13 @@ impl EngineInner {
             return;
         }
 
+        // Civilian periodic work starts at the every-64-frame suffix. Keep
+        // the synchronous drain, but avoid constructing an unused context.
+        if matches!(entity, Entity::Civilian(_)) && (frame_phase & 63) != 0 {
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
+            return;
+        }
+
         // sequence launch notification with no incoming element.
         // Civilians consume this entry-time value directly. Enemy
         // The periodic update can synchronously register work during
@@ -1270,24 +1277,29 @@ impl EngineInner {
             return;
         }
 
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        let building_sector = self.entity_building_sector(entity.element_data().sector());
-        let ctx =
-            self.ai_context_from_entity(entity, current_frame, building_sector, &scratch, assets);
+        let is_beggar =
+            civilian.civilian.cached_civilian_type == crate::profiles::CivilianType::Beggar;
+        // The former full owner context required a position layer even when
+        // the spatial view was unavailable. Preserve that invariant check.
+        let _ = entity.element_data().layer();
+        let animation = entity_has_ai_view(entity).then(|| {
+            self.live_actor_animation(npc_id)
+                .unwrap_or(crate::order::OrderType::NonanimationEnd)
+        });
         let entity = self.expect_entity_mut(npc_id, "random-speech NPC before call");
         if let Some(creation_order) = debug_creation_order {
             Self::trace_civilian_random_speech_before_call(
                 [current_frame, creation_order],
                 npc_id,
                 entity,
-                &ctx,
+                animation,
             );
         }
         {
             entity
                 .friendly_ai_mut()
                 .unwrap_or_else(|| panic!("civilian {} has no friendly AI", npc_id.index()))
-                .random_speech(sim, 0, &ctx);
+                .random_speech_for_owner(sim, is_beggar, animation);
         }
         if let Some(creation_order) = debug_creation_order {
             self.trace_civilian_random_speech_after_call(current_frame, creation_order, npc_id);
@@ -1346,7 +1358,7 @@ impl EngineInner {
         [current_frame, creation_order]: [u32; 2],
         npc_id: EntityId,
         entity: &Entity,
-        ctx: &crate::ai::AiContext,
+        source_animation: Option<crate::order::OrderType>,
     ) {
         let Entity::Civilian(civilian) = entity else {
             panic!(
@@ -1357,9 +1369,6 @@ impl EngineInner {
         let crate::element::AiBrain::Friendly(ai) = &civilian.npc.ai_brain else {
             panic!("random-speech civilian {} changed AI kind", npc_id.index())
         };
-        let source_animation = ctx
-            .entity_view(ai.base.me)
-            .map(|view| view.current_animation);
         eprintln!(
             "[CIVRANDSPEECH frame={current_frame} co={creation_order} owner={} phase=before_call source_animation={source_animation:?} source_is_weeping={} live_animation={:?} owner_work_count={} owner_work={:?}]",
             npc_id.index(),
@@ -1586,6 +1595,15 @@ impl EngineInner {
             )
         };
         if !fire {
+            return;
+        }
+
+        if !execute {
+            self.world
+                .entities
+                .expect_ai_controller_mut(npc_id, format_args!("elapsed macro-timer NPC"))
+                .macro_timer_is_running = false;
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, npc_id, assets);
             return;
         }
 

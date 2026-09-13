@@ -439,8 +439,23 @@ impl StateHash for fastrand::Rng {
 /// Neither is suitable for replay hashes shared by native 64-bit and wasm32.
 /// This adapter gives every integer an explicit little-endian encoding and
 /// widens pointer-sized integers to 64 bits.
-#[derive(Default)]
-struct StableHasher(xxhash_rust::xxh3::Xxh3);
+struct StableHasher {
+    inner: xxhash_rust::xxh3::Xxh3,
+    // StateHash emits mostly individual scalars. Batch their identical byte
+    // stream rather than entering XXH3's streaming machinery for each field.
+    buffer: [u8; 1024],
+    buffered: usize,
+}
+
+impl Default for StableHasher {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+            buffer: [0; 1024],
+            buffered: 0,
+        }
+    }
+}
 
 macro_rules! stable_write {
     ($($method:ident($ty:ty)),* $(,)?) => {
@@ -456,12 +471,37 @@ macro_rules! stable_write {
 impl Hasher for StableHasher {
     #[inline]
     fn finish(&self) -> u64 {
-        self.0.digest()
+        if self.buffered == 0 {
+            self.inner.digest()
+        } else {
+            // Hasher::finish must not consume the stream: callers may finish
+            // repeatedly or append more bytes after inspecting a prefix.
+            let mut inner = self.inner.clone();
+            inner.update(&self.buffer[..self.buffered]);
+            inner.digest()
+        }
     }
 
     #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.update(bytes);
+    fn write(&mut self, mut bytes: &[u8]) {
+        let remaining = self.buffer.len() - self.buffered;
+        if bytes.len() <= remaining {
+            self.buffer[self.buffered..self.buffered + bytes.len()].copy_from_slice(bytes);
+            self.buffered += bytes.len();
+            return;
+        }
+        if self.buffered != 0 {
+            self.buffer[self.buffered..].copy_from_slice(&bytes[..remaining]);
+            self.inner.update(&self.buffer);
+            bytes = &bytes[remaining..];
+            self.buffered = 0;
+        }
+        if bytes.len() >= self.buffer.len() {
+            self.inner.update(bytes);
+        } else {
+            self.buffer[..bytes.len()].copy_from_slice(bytes);
+            self.buffered = bytes.len();
+        }
     }
 
     stable_write! {
@@ -504,6 +544,30 @@ pub fn compute<T: StateHash + ?Sized>(value: &T) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffered_hash_matches_xxh3_across_write_and_finish_boundaries() {
+        let bytes: Vec<u8> = (0..8193).map(|i| (i * 37 + 11) as u8).collect();
+        for chunk_size in [
+            1, 2, 3, 7, 8, 63, 64, 65, 255, 256, 257, 1023, 1024, 1025, 4096,
+        ] {
+            let mut hasher = StableHasher::default();
+            assert_eq!(hasher.finish(), xxhash_rust::xxh3::xxh3_64(&[]));
+            let mut consumed = 0;
+            for chunk in bytes.chunks(chunk_size) {
+                hasher.write(chunk);
+                hasher.write(&[]);
+                consumed += chunk.len();
+                let expected = xxhash_rust::xxh3::xxh3_64(&bytes[..consumed]);
+                assert_eq!(
+                    hasher.finish(),
+                    expected,
+                    "chunk size {chunk_size}, prefix {consumed}"
+                );
+                assert_eq!(hasher.finish(), expected);
+            }
+        }
+    }
 
     #[test]
     fn floats_canonicalize_zero_and_nan() {

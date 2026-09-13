@@ -4,6 +4,9 @@ Linux `perf` and the existing frame timers identify NPC detection and repeated
 AI observation construction as the main cost in the reported slow replay.
 This is a measurement of the development binary, not a release benchmark.
 
+For the subsequent AI allocation and hashing changes and semi-optimized
+measurements, see [the parity-profile follow-up](nottingham-parity-replay.md).
+
 ## Setup
 
 - Code: `160e4be13`, built separately with `cargo build -p robin_rs --bin robin`.

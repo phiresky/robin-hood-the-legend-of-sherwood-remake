@@ -2030,12 +2030,25 @@ impl FriendlyAi {
             return;
         }
 
+        self.random_speech_for_owner(
+            sim,
+            ctx.self_is_beggar,
+            ctx.entity_view(self.base.me)
+                .map(|view| view.current_animation),
+        );
+    }
+
+    /// Ambient speech only observes its owner; production need not snapshot
+    /// every other entity to supply these two inputs.
+    pub(crate) fn random_speech_for_owner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        is_beggar: bool,
+        animation: Option<crate::order::OrderType>,
+    ) {
         // ---- executed only every 256 frames ----
 
-        // `ctx.self_is_beggar` is populated by the engine in
-        // `build_ai_context_from_entity` from
-        // `CivilianData::cached_civilian_type`.
-        if ctx.self_is_beggar {
+        if is_beggar {
             if self.beggar_dont_talk_counter > 0 {
                 self.beggar_dont_talk_counter -= 1;
             } else if self.base.current_remark == Remark::TheSoundOfSilence
@@ -2056,11 +2069,9 @@ impl FriendlyAi {
         }
 
         // If our own current animation is Weeping, say "cries".
-        // Resolves through the per-tick entity view map —
-        // `self.base.me` is the civilian's own handle.
-        if let Some(me_view) = ctx.entity_view(self.base.me)
-            && me_view.current_animation == crate::order::OrderType::Weeping
-        {
+        // An owner excluded from the spatial observation has no animation
+        // input, matching the full-context entity_view lookup.
+        if animation == Some(crate::order::OrderType::Weeping) {
             self.base.say(Remark::CivCries);
         }
     }
