@@ -23,8 +23,8 @@ use crate::renderer::Renderer;
 use crate::ui::{UiEvent, UiMsg};
 
 use super::layout::{
-    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, MenuTransform, TextAlign, TooltipState, VAlign,
-    dim_screen, draw_background, enter_modal_gpu_phase, render_clipped_text_in_box_font,
+    FALLBACK_PANEL_EDGE, FALLBACK_PANEL_FILL, MenuRect, MenuTransform, TextAlign, TooltipState,
+    VAlign, dim_screen, draw_background, enter_modal_gpu_phase, render_clipped_text_in_box_font,
 };
 use super::resources::{IngameMenuResources, MT_INFOBULLE_BUTTON_NO, MT_INFOBULLE_BUTTON_YES};
 use super::widget_bridge::{self, ModalCursor, ModalInputState, ModalScreenIo, ScreenFrame};
@@ -290,10 +290,12 @@ impl YesNoModalState {
                 font,
                 self.transform,
                 &self.message,
-                self.win_x + MSG_X,
-                self.win_y + MSG_Y,
-                MSG_W,
-                MSG_H,
+                MenuRect {
+                    x: self.win_x + MSG_X,
+                    y: self.win_y + MSG_Y,
+                    w: MSG_W,
+                    h: MSG_H,
+                },
                 TextAlign::Center,
                 // Top-origin with word-wrap: the original renders the
                 // message with centered text rendering inside

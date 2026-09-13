@@ -433,11 +433,14 @@ impl EngineInner {
                     if self.try_handle_same_sector_actor_seek_wait(
                         sim,
                         assets,
-                        owner,
-                        sequence_id,
-                        element_index,
-                        target,
-                        flags,
+                        crate::engine::refresh_seek::EntitySeekRequest {
+                            owner,
+                            sequence_id,
+                            element_index,
+                            target,
+                            action,
+                            flags,
+                        },
                     ) {
                         // Original resumes translation after seek refresh's
                         // early return and rewrites SEEK to MOVE. The return

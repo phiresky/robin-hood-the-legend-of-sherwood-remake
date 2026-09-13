@@ -719,11 +719,13 @@ mod tests {
             } = world.mutation();
             let mut modal_policy = crate::http_server::StepModalPolicy::default();
             crate::game_session::tick::run_forward_ticks(
-                manager,
-                host,
-                assets,
-                dev,
-                game,
+                crate::game_session::tick::StepWorld {
+                    manager,
+                    host,
+                    assets,
+                    dev,
+                    game,
+                },
                 timeline,
                 1,
                 &mut modal_policy,

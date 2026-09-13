@@ -42,7 +42,7 @@ use robin_assets::resource_manager::ResourceManager;
 use super::blazon_set::{self, BlazonTooltipTracker};
 use super::buy_blazons::{BuyBlazonsModalState, BuyBlazonsOutcome};
 use super::layout::{
-    MENU_H, MENU_W, TextAlign, TooltipState, VAlign, draw_background,
+    MENU_H, MENU_W, MenuRect, TextAlign, TooltipState, VAlign, draw_background,
     render_clipped_text_in_box_font, render_clipped_text_in_box_with_drop_cap_font,
 };
 use super::resources::{IngameMenuResources, MenuSurface};
@@ -403,10 +403,12 @@ impl MissionDescriptionModalState {
                 font,
                 transform,
                 &self.screen.title,
-                self.win_x + layout_consts::TITLE_X,
-                self.win_y + layout_consts::TITLE_Y,
-                (title_right - layout_consts::TITLE_X).max(0),
-                layout_consts::TITLE_BOTTOM - layout_consts::TITLE_Y,
+                MenuRect {
+                    x: self.win_x + layout_consts::TITLE_X,
+                    y: self.win_y + layout_consts::TITLE_Y,
+                    w: (title_right - layout_consts::TITLE_X).max(0),
+                    h: layout_consts::TITLE_BOTTOM - layout_consts::TITLE_Y,
+                },
                 TextAlign::Left,
                 VAlign::Top,
             );
@@ -419,10 +421,12 @@ impl MissionDescriptionModalState {
                     font,
                     transform,
                     &self.screen.description,
-                    self.win_x + layout_consts::DESCRIPTION_X,
-                    self.win_y + top,
-                    layout_consts::DESCRIPTION_RIGHT - layout_consts::DESCRIPTION_X,
-                    layout_consts::DESCRIPTION_BOTTOM - top,
+                    MenuRect {
+                        x: self.win_x + layout_consts::DESCRIPTION_X,
+                        y: self.win_y + top,
+                        w: layout_consts::DESCRIPTION_RIGHT - layout_consts::DESCRIPTION_X,
+                        h: layout_consts::DESCRIPTION_BOTTOM - top,
+                    },
                     TextAlign::Justified,
                     VAlign::Top,
                 );
@@ -439,12 +443,13 @@ impl MissionDescriptionModalState {
                     font,
                     transform,
                     &self.screen.description,
-                    self.win_x + layout_consts::DESCRIPTION_X,
-                    self.win_y + layout_consts::DESCRIPTION_TOP_NO_BLAZONS,
-                    desc_w,
-                    desc_h,
-                    drop_cap_w,
-                    drop_cap_h,
+                    MenuRect {
+                        x: self.win_x + layout_consts::DESCRIPTION_X,
+                        y: self.win_y + layout_consts::DESCRIPTION_TOP_NO_BLAZONS,
+                        w: desc_w,
+                        h: desc_h,
+                    },
+                    (drop_cap_w, drop_cap_h),
                     TextAlign::Justified,
                 );
             }

@@ -171,6 +171,17 @@ pub struct StoredOffer {
     pub public_metadata_json: String,
 }
 
+/// Operator-published manifest set a verified result is accepted against.
+/// Borrowed per-call bundle only; intentionally not serde.
+#[derive(Clone, Copy)]
+pub struct AcceptanceManifests<'a> {
+    pub build_manifest: &'a LoadedBuildManifest,
+    pub content_manifest: &'a ContentManifestV1,
+    pub campaign_content_manifest: Option<&'a CampaignContentManifestV1>,
+    pub published_ruleset: &'a PublishedRulesetV1,
+    pub competition_manifest: Option<&'a CompetitionManifestV1>,
+}
+
 /// Exact database-persisted campaign authority for one leased verifier job.
 /// The canonical pin is static lineage authority; the optional session is the
 /// run-specific chain position derived from accepted predecessor state.
@@ -2840,13 +2851,14 @@ fn validate_ranked_policy(
     result: &VerificationResultV1,
     signed: &robin_run_protocol::SignedSubmissionV1,
     verifier_executable_sha256: [u8; 32],
-    build_digest: Digest32,
-    build: &BuildManifestV1,
-    content: &ContentManifestV1,
-    campaign_content: Option<&CampaignContentManifestV1>,
-    published: &PublishedRulesetV1,
-    competition: Option<&CompetitionManifestV1>,
+    manifests: AcceptanceManifests<'_>,
 ) -> Result<(), DbError> {
+    let build_digest: Digest32 = manifests.build_manifest.public_digest();
+    let build: &BuildManifestV1 = manifests.build_manifest.semantics();
+    let content = manifests.content_manifest;
+    let campaign_content = manifests.campaign_content_manifest;
+    let published = manifests.published_ruleset;
+    let competition = manifests.competition_manifest;
     build
         .validate()
         .map_err(|error| DbError::ResultInvariant(error.to_string()))?;

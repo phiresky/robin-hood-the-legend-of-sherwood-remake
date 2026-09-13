@@ -408,27 +408,12 @@ impl RustCallbacks {
 
     pub(crate) fn enqueue_autosave(
         &mut self,
-        host: &crate::host::Host,
-        game: &crate::game::Game,
-        engine: &engine_api::Engine,
-        mission_id: u32,
-        profiles: &engine_profiles::ProfileManager,
+        request: crate::autosave::AutosaveRequest<'_>,
         thumbnail: Option<crate::save_file::Thumbnail>,
         reason: AutosaveReason,
     ) -> Result<(), MissionError> {
         self.autosave
-            .enqueue(
-                &self.save_manager,
-                crate::autosave::AutosaveRequest {
-                    host,
-                    game,
-                    engine,
-                    mission_id,
-                    profiles,
-                },
-                thumbnail,
-                reason,
-            )
+            .enqueue(&self.save_manager, request, thumbnail, reason)
             .map_err(|error| MissionError::save(format!("{error:#}")))
     }
 
@@ -1296,7 +1281,17 @@ mod operation_outcome_tests {
             .plan_autosave(true, true, 17, 0, false, false)
             .unwrap();
         callbacks
-            .enqueue_autosave(&host, &game, &engine, 17, &profiles, None, reason)
+            .enqueue_autosave(
+                crate::autosave::AutosaveRequest {
+                    host: &host,
+                    game: &game,
+                    engine: &engine,
+                    mission_id: 17,
+                    profiles: &profiles,
+                },
+                None,
+                reason,
+            )
             .unwrap();
         let root = std::path::Path::new(callbacks.save_manager.save_directory()).to_path_buf();
         std::fs::create_dir_all(root.join("Continue.json")).unwrap();
