@@ -416,6 +416,22 @@ pub(crate) fn with_draw_trace<R>(f: impl FnOnce() -> R) -> (R, Vec<RngSite>) {
     }
 }
 
+/// Test-only observer for [`with_draw_trace`]; compiles to nothing in
+/// production so `with_rng` has no test branch.
+#[cfg(test)]
+#[inline]
+fn trace_test_draw(site: RngSite) {
+    DRAW_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(site);
+        }
+    });
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn trace_test_draw(_site: RngSite) {}
+
 /// Run one reviewed authoritative auxiliary generator from a deterministic
 /// seed without installing or advancing the serialized simulation stream.
 pub fn with_auxiliary_seed<R>(
@@ -432,14 +448,7 @@ fn with_rng<R>(
     site: RngSite,
     f: impl FnOnce(&mut fastrand::Rng) -> R,
 ) -> R {
-    #[cfg(test)]
-    DRAW_TRACE.with(|trace| {
-        if let Some(trace) = trace.borrow_mut().as_mut() {
-            trace.push(site);
-        }
-    });
-    #[cfg(not(test))]
-    let _ = site;
+    trace_test_draw(site);
     f(&mut context.rng.lock().expect("simulation RNG mutex poisoned"))
 }
 
