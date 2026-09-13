@@ -6,13 +6,48 @@ import { validateDatadirHeaders } from './verify-cloudflare-deployment.mjs';
 
 export const CLOUDFLARE_FREE_ASSET_LIMIT = 20_000;
 export const CLOUDFLARE_ASSET_BYTES_LIMIT = 25 * 1024 * 1024;
-export const DEMO_ROOT = 'datadirs/demo-leicester';
-export const DEMO_PATH = `${DEMO_ROOT}/v8-web-opus-q80.rhdata.zst`;
+export const DEMO_PARENT_ROOT = 'datadirs/demo-leicester';
+// Every Demo datadir generation is served `immutable` under fixed names
+// (`robinhood-web-content.json`, the datadir object), so a new native datadir
+// format gets its own directory instead of replacing published bytes.
+export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v16`;
+export const DEMO_PATH = `${DEMO_ROOT}/v16-web-opus-q80.rhdata.zst`;
 export const DEMO_CONTENT_MANIFEST_PATH = `${DEMO_ROOT}/robinhood-web-content.json`;
 export const WEB_CONTENT_MANIFEST_NAME = 'robinhood-web-content.json';
 export const WEB_CONTENT_MANIFEST_SCHEMA = 2;
+const DEMO_PUBLIC_ORIGIN = 'https://robinhood.phiresky.xyz';
+const CONVERSION_PLAN_PATH = 'Data/conversion-plan.json';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
+
+/**
+ * Previously published Demo generations. Older wasm builds and replay links
+ * pin these exact bytes, so every datadir corpus must keep serving them.
+ */
+export const RETAINED_DEMO_GENERATIONS = Object.freeze([
+    Object.freeze({
+        // Native shipping datadir format 15 (`RHDDNA15`), published 2026-08-31.
+        root: DEMO_PARENT_ROOT,
+        datadirPath: `${DEMO_PARENT_ROOT}/v8-web-opus-q80.rhdata.zst`,
+        contentManifestPath: `${DEMO_PARENT_ROOT}/robinhood-web-content.json`,
+        contentManifestSha256: 'cd3fb3b379079237c0c480e2332b6bf381e0b7403eed8f834857011af0a9fb20',
+        datadirSha256: '4b6e0fcba222b5df2b640ecf630d5101b94c4eae68bd0f9518f96658e28fd742',
+        datadirByteLength: 7_966_731,
+        nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
+    }),
+]);
+
+/** The authority/receipt `demo` identity of a retained generation. */
+export function retainedDemoDetails(generation) {
+    return {
+        content_manifest_url: `${DEMO_PUBLIC_ORIGIN}/${generation.contentManifestPath}`,
+        content_manifest_sha256: generation.contentManifestSha256,
+        datadir_url: `${DEMO_PUBLIC_ORIGIN}/${generation.datadirPath}`,
+        datadir_sha256: generation.datadirSha256,
+        datadir_byte_length: generation.datadirByteLength,
+        native_content_sha256: generation.nativeContentSha256,
+    };
+}
 
 function exactKeys(value, keys, label) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -192,9 +227,9 @@ async function verifyContentObject(root, path, expected, label) {
 
 function demoDetails(manifest, manifestSha256) {
     return {
-        content_manifest_url: `https://robinhood.phiresky.xyz/${DEMO_CONTENT_MANIFEST_PATH}`,
+        content_manifest_url: `${DEMO_PUBLIC_ORIGIN}/${DEMO_CONTENT_MANIFEST_PATH}`,
         content_manifest_sha256: manifestSha256,
-        datadir_url: `https://robinhood.phiresky.xyz/${DEMO_PATH}`,
+        datadir_url: `${DEMO_PUBLIC_ORIGIN}/${DEMO_PATH}`,
         datadir_sha256: manifest.datadir.sha256,
         datadir_byte_length: manifest.datadir.byte_length,
         native_content_sha256: manifest.native_content_sha256,
@@ -206,7 +241,9 @@ export async function verifyDemoWebContentPackage(directory) {
     const root = resolve(directory);
     const facts = await regularFilesBelow(root, 'Demo converter output');
     enforceCloudflareCapacity(facts, 'Demo converter output');
-    const actual = new Set(facts.map(file => file.path));
+    // The converter's dependency plan is an unpublished build record; the Rust
+    // packager excludes it from the web content manifest as well.
+    const actual = new Set(facts.map(file => file.path).filter(path => path !== CONVERSION_PLAN_PATH));
     const manifestPath = `Data/${WEB_CONTENT_MANIFEST_NAME}`;
     if (!actual.has(manifestPath)) throw new Error(`Demo converter output is missing ${manifestPath}`);
     const manifestBytes = await readFile(resolve(root, manifestPath));
@@ -247,41 +284,28 @@ export async function verifyDemoWebContentPackage(directory) {
     };
 }
 
-/** Validate the standalone, deployable datadir Worker corpus. */
-export async function verifyDatadirCorpus(directory) {
-    const root = resolve(directory);
-    const facts = await regularFilesBelow(root, 'datadir corpus');
-    const metrics = enforceCloudflareCapacity(facts, 'datadir corpus');
-    const files = new Set(facts.map(file => file.path));
-    if (!files.has('_headers') || !files.has(DEMO_CONTENT_MANIFEST_PATH) || !files.has(DEMO_PATH)) {
-        throw new Error('datadir corpus requires _headers and the complete Demo content closure');
+/** Verify one generation's exact content manifest closure inside a corpus. */
+async function verifyDemoGeneration(root, files, generation, label) {
+    const closure = [generation.contentManifestPath, generation.datadirPath];
+    const absent = closure.filter(path => !files.has(path));
+    if (absent.length > 0) {
+        throw new Error(`${label} closure mismatch; missing [${absent.join(', ')}], extra []`);
     }
-    validateDatadirHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
-    const allowedPrefix = `${DEMO_ROOT}/`;
-    const invalid = [...files].filter(path => path !== '_headers' && !path.startsWith(allowedPrefix));
-    if (invalid.length > 0) throw new Error(`datadir corpus contains non-Demo paths: ${invalid.join(', ')}`);
-
-    const manifestBytes = await readFile(resolve(root, DEMO_CONTENT_MANIFEST_PATH));
-    const manifest = parseWebContentManifest(manifestBytes, DEMO_CONTENT_MANIFEST_PATH);
-    const expected = new Set([
-        DEMO_CONTENT_MANIFEST_PATH,
-        DEMO_PATH,
-        ...manifest.files.map(file => `${DEMO_ROOT}/${file.path}`),
-    ]);
-    const actual = [...files].filter(path => path !== '_headers');
-    const missing = [...expected].filter(path => !files.has(path));
-    const extra = actual.filter(path => !expected.has(path));
-    if (missing.length > 0 || extra.length > 0) {
-        throw new Error(`datadir corpus closure mismatch; missing [${missing.join(', ')}], extra [${extra.join(', ')}]`);
+    const manifestBytes = await readFile(resolve(root, generation.contentManifestPath));
+    const manifest = parseWebContentManifest(manifestBytes, generation.contentManifestPath);
+    const paths = [...closure, ...manifest.files.map(file => `${generation.root}/${file.path}`)];
+    const missing = paths.filter(path => !files.has(path));
+    if (missing.length > 0) {
+        throw new Error(`${label} closure mismatch; missing [${missing.join(', ')}], extra []`);
     }
-    await verifyContentObject(root, DEMO_PATH, manifest.datadir, 'datadir corpus');
+    await verifyContentObject(root, generation.datadirPath, manifest.datadir, label);
     for (const file of manifest.files) {
-        await verifyContentObject(root, `${DEMO_ROOT}/${file.path}`, file, 'datadir corpus');
+        await verifyContentObject(root, `${generation.root}/${file.path}`, file, label);
     }
     return {
-        ...metrics,
-        demo: demoDetails(manifest, sha256(manifestBytes)),
         manifest,
+        manifestSha256: sha256(manifestBytes),
+        paths,
         stableClosure: JSON.stringify({
             schema: manifest.schema,
             edition: manifest.edition,
@@ -292,12 +316,62 @@ export async function verifyDatadirCorpus(directory) {
     };
 }
 
+/**
+ * Validate the standalone, deployable datadir Worker corpus: every retained
+ * generation byte-for-byte plus the current generation, and nothing else.
+ * `requireCurrent: false` admits a prior corpus that predates the current
+ * generation (the input of an update); its result then has no `demo`.
+ */
+export async function verifyDatadirCorpus(directory, { retainedGenerations = [], requireCurrent = true } = {}) {
+    const root = resolve(directory);
+    const facts = await regularFilesBelow(root, 'datadir corpus');
+    const metrics = enforceCloudflareCapacity(facts, 'datadir corpus');
+    const files = new Set(facts.map(file => file.path));
+    if (!files.has('_headers')) throw new Error('datadir corpus requires _headers');
+    validateDatadirHeaders(await readFile(resolve(root, '_headers'), 'utf8'));
+    const allowedPrefix = `${DEMO_PARENT_ROOT}/`;
+    const invalid = [...files].filter(path => path !== '_headers' && !path.startsWith(allowedPrefix));
+    if (invalid.length > 0) throw new Error(`datadir corpus contains non-Demo paths: ${invalid.join(', ')}`);
+
+    const expected = new Set();
+    for (const generation of retainedGenerations) {
+        const label = `retained Demo generation ${generation.datadirPath}`;
+        const retained = await verifyDemoGeneration(root, files, generation, label);
+        exact(retained.manifestSha256, generation.contentManifestSha256, `${label} content manifest digest`);
+        exact(retained.manifest.datadir.sha256, generation.datadirSha256, `${label} datadir digest`);
+        exact(retained.manifest.datadir.byte_length, generation.datadirByteLength, `${label} datadir byte length`);
+        exact(
+            retained.manifest.native_content_sha256,
+            generation.nativeContentSha256,
+            `${label} native content identity`,
+        );
+        for (const path of retained.paths) expected.add(path);
+    }
+    let current;
+    if (requireCurrent || files.has(DEMO_CONTENT_MANIFEST_PATH) || files.has(DEMO_PATH)) {
+        current = await verifyDemoGeneration(root, files, {
+            root: DEMO_ROOT, datadirPath: DEMO_PATH, contentManifestPath: DEMO_CONTENT_MANIFEST_PATH,
+        }, 'datadir corpus');
+        for (const path of current.paths) expected.add(path);
+    }
+    const extra = [...files].filter(path => path !== '_headers' && !expected.has(path));
+    if (extra.length > 0) {
+        throw new Error(`datadir corpus closure mismatch; missing [], extra [${extra.join(', ')}]`);
+    }
+    return {
+        ...metrics,
+        demo: current === undefined ? undefined : demoDetails(current.manifest, current.manifestSha256),
+        manifest: current?.manifest,
+        stableClosure: current?.stableClosure,
+    };
+}
+
 async function main() {
     const [directory, extra] = process.argv.slice(2);
     if (directory === undefined || extra !== undefined) {
         throw new Error('usage: node scripts/verify-datadir-corpus.mjs DIRECTORY');
     }
-    const metrics = await verifyDatadirCorpus(directory);
+    const metrics = await verifyDatadirCorpus(directory, { retainedGenerations: RETAINED_DEMO_GENERATIONS });
     console.log(`verified standalone Demo datadir corpus: ${metrics.assetCount} assets, ${metrics.totalBytes} bytes`);
 }
 

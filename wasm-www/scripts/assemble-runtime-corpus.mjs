@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyDatadirDeploymentReceipt } from './datadir-release-authority.mjs';
 import { stageCloudflareHeaders } from './stage-cloudflare-headers.mjs';
+import { RETAINED_DEMO_GENERATIONS } from './verify-datadir-corpus.mjs';
 import { DATADIR_BINDING_PATH, verifyRuntimeCorpus } from './verify-runtime-corpus.mjs';
 
 async function requireAbsent(path) {
@@ -35,34 +36,44 @@ function requireDemoBinding(runtime, deployment) {
     }
 }
 
-/** Assemble only `/wasm/*`, binding but never copying the datadir corpus. */
+/**
+ * Assemble only `/wasm/*`, binding but never copying the datadir corpus.
+ * When the datadir corpus gained a new generation, the existing runtime corpus
+ * still carries the receipt of the prior datadir deployment; pass that prior
+ * release authority as `existingDatadirAuthority`.
+ */
 export async function assembleRuntimeCorpus({
     existing,
     addition,
     datadirAuthority,
     datadirDeployment,
     output,
+    existingDatadirAuthority = datadirAuthority,
+    retainedGenerations = [],
 }) {
     const additionRoot = resolve(addition);
     const authorityPath = resolve(datadirAuthority);
+    const existingAuthorityPath = resolve(existingDatadirAuthority);
     const deploymentPath = resolve(datadirDeployment);
     const outputRoot = resolve(output);
     const additionAuthority = await verifyRuntimeCorpus(additionRoot, { addition: true });
     const deployedDatadir = await verifyDatadirDeploymentReceipt({
         authorityPath,
         receiptPath: deploymentPath,
+        retainedGenerations,
     });
     requireDemoBinding(additionAuthority, deployedDatadir);
 
     let existingRoot;
     if (existing !== null) {
         existingRoot = resolve(existing);
-        await verifyRuntimeCorpus(existingRoot, { datadirAuthorityPath: authorityPath });
+        await verifyRuntimeCorpus(existingRoot, { datadirAuthorityPath: existingAuthorityPath, retainedGenerations });
     }
     await requireAbsent(outputRoot);
     requireDisjointOutput(outputRoot, [
         additionRoot,
         authorityPath,
+        existingAuthorityPath,
         deploymentPath,
         ...(existingRoot === undefined ? [] : [existingRoot]),
     ]);
@@ -95,7 +106,7 @@ export async function assembleRuntimeCorpus({
         }
         await copyFile(deploymentPath, resolve(stagingRoot, DATADIR_BINDING_PATH));
         await stageCloudflareHeaders('runtime', stagingRoot);
-        const metrics = await verifyRuntimeCorpus(stagingRoot, { datadirAuthorityPath: authorityPath });
+        const metrics = await verifyRuntimeCorpus(stagingRoot, { datadirAuthorityPath: authorityPath, retainedGenerations });
         await requireAbsent(outputRoot);
         await rename(stagingRoot, outputRoot);
         return metrics;
@@ -116,18 +127,19 @@ async function main() {
             datadirDeployment: args[2],
             output: args[3],
         };
-    } else if (mode === '--update' && args.length === 5) {
+    } else if (mode === '--update' && (args.length === 5 || args.length === 6)) {
         options = {
             existing: args[0],
             addition: args[1],
             datadirAuthority: args[2],
             datadirDeployment: args[3],
             output: args[4],
+            ...(args.length === 6 ? { existingDatadirAuthority: args[5] } : {}),
         };
     } else {
-        throw new Error('usage: node scripts/assemble-runtime-corpus.mjs --initial ADDITION DATADIR_AUTHORITY DATADIR_DEPLOYMENT OUTPUT | --update EXISTING ADDITION DATADIR_AUTHORITY DATADIR_DEPLOYMENT OUTPUT');
+        throw new Error('usage: node scripts/assemble-runtime-corpus.mjs --initial ADDITION DATADIR_AUTHORITY DATADIR_DEPLOYMENT OUTPUT | --update EXISTING ADDITION DATADIR_AUTHORITY DATADIR_DEPLOYMENT OUTPUT [EXISTING_DATADIR_AUTHORITY]');
     }
-    const metrics = await assembleRuntimeCorpus(options);
+    const metrics = await assembleRuntimeCorpus({ ...options, retainedGenerations: RETAINED_DEMO_GENERATIONS });
     console.log(`assembled complete wasm runtime corpus: ${metrics.assetCount} assets, ${metrics.totalBytes} bytes`);
 }
 

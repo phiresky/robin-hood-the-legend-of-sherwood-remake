@@ -288,6 +288,48 @@ function preloadLocalShippingFiles(
     for (const file of files) wasm.wasm_preload_shipping_file(file.path, file.bytes);
 }
 
+// The engine decodes exactly one native datadir format. Published builds pin
+// their Demo generation in manifest.json, so replays of older builds keep
+// loading the retained older datadir. `?wasm-base=` development builds have no
+// manifest and use the current generation.
+const CURRENT_DEMO_DATADIR_PATH = '/datadirs/demo-leicester/v16/v16-web-opus-q80.rhdata.zst';
+const PUBLISHED_DEMO_ORIGIN = 'https://robinhood.phiresky.xyz';
+
+type DemoDatadirIdentity = { readonly sha256: string; readonly byteLength: number };
+
+async function selectedDemoDatadir(
+    base: string,
+    build: BuildSelection,
+    signal: AbortSignal,
+): Promise<{ readonly url: string; readonly identity?: DemoDatadirIdentity }> {
+    if (build.short === 'local') return { url: `${BINARIES_BASE}${CURRENT_DEMO_DATADIR_PATH}` };
+    const manifest = await fetchJson<{ readonly multiplayerContent?: { readonly demo?: Record<string, unknown> } }>(
+        `${base}/manifest.json`, signal,
+    );
+    const demo = manifest.multiplayerContent?.demo;
+    const url = demo?.url;
+    const sha256 = demo?.sha256;
+    const byteLength = demo?.byteLength;
+    if (typeof url !== 'string' || !url.startsWith(`${PUBLISHED_DEMO_ORIGIN}/datadirs/`)
+        || typeof sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(sha256)
+        || typeof byteLength !== 'number' || !Number.isSafeInteger(byteLength)) {
+        throw new Error(`build ${build.short} manifest does not pin a same-origin Demo datadir`);
+    }
+    return { url: `${BINARIES_BASE}${url.slice(PUBLISHED_DEMO_ORIGIN.length)}`, identity: { sha256, byteLength } };
+}
+
+async function verifyDemoDatadir(
+    datadir: Uint8Array<ArrayBuffer>,
+    identity: DemoDatadirIdentity,
+    signal: AbortSignal,
+): Promise<void> {
+    const digest = new Uint8Array(await withAbort(signal, () => crypto.subtle.digest('SHA-256', datadir)));
+    const hex = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+    if (datadir.byteLength !== identity.byteLength || hex !== identity.sha256) {
+        throw new Error('Demo datadir does not match the selected build manifest');
+    }
+}
+
 const bootAbort = new AbortController();
 window.addEventListener('pagehide', event => {
     if (!event.persisted) bootAbort.abort();
@@ -319,15 +361,17 @@ async function main(): Promise<void> {
             return prepared.runtime;
         },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
-        loadDefaultContent: async (latest, signal) => {
-            const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
+        loadDefaultContent: async (base, build, signal) => {
+            const demo = await selectedDemoDatadir(base, build, signal);
             const response = await fetchWithProgress(
-                dataUrl, latest ? 'no-cache' : 'force-cache', 'application/zstd',
+                demo.url, build.source === 'latest' ? 'no-cache' : 'force-cache', 'application/zstd',
                 (loaded, total) => bootProgress('gamedata', 'loading game data…',
                     total > 0 ? loaded / total : 0, progressDetail(loaded, total)),
                 signal,
             );
-            return { datadir: new Uint8Array(await withAbort(signal, () => response.arrayBuffer())), dataBaseUrl: dataUrl.slice(0, dataUrl.lastIndexOf('/')) };
+            const datadir = new Uint8Array(await withAbort(signal, () => response.arrayBuffer()));
+            if (demo.identity !== undefined) await verifyDemoDatadir(datadir, demo.identity, signal);
+            return { datadir, dataBaseUrl: demo.url.slice(0, demo.url.lastIndexOf('/')) };
         },
         preloadLocalAssets,
         preloadShippingFiles: preloadLocalShippingFiles,
