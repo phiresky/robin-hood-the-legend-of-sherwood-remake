@@ -5,4 +5,6 @@
 
 pub use robin_engine_types::bitcode_adapters;
 pub mod natives;
+pub mod scb;
 pub mod spellforge;
+pub mod vm;

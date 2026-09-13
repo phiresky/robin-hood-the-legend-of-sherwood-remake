@@ -174,17 +174,17 @@ class QualitySuitesTests(unittest.TestCase):
     def test_legacy_linux_gate_selects_only_its_five_required_fixture_cases(self):
         self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
         self.run_suite("fixtures-legacy-linux")
-        names = [
-            "legacy_save::engine::tests::golden_lincoln_restart_engine_boundary",
-            "legacy_save::engine::tests::parses_current_linux_continue_engine_boundary",
-            "legacy_save::engine::tests::rejects_sound_source_count_before_allocation",
-            "legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries",
-            "legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries",
+        selections = [
+            ("robin_legacy_save", "engine::tests::golden_lincoln_restart_engine_boundary"),
+            ("robin_legacy_save", "engine::tests::parses_current_linux_continue_engine_boundary"),
+            ("robin_legacy_save", "engine::tests::rejects_sound_source_count_before_allocation"),
+            ("robin_engine", "legacy_save::campaign::tests::golden_lincoln_restart_campaign_boundaries"),
+            ("robin_engine", "legacy_save::campaign::tests::parses_current_linux_continue_campaign_boundaries"),
         ]
         self.assertEqual(self.calls(), [
-            ["test", "--locked", "-p", "robin_engine", "--lib", name,
+            ["test", "--locked", "-p", package, "--lib", name,
              "--", "--ignored", "--exact"]
-            for name in names
+            for package, name in selections
         ])
 
     def test_fixture_gates_reject_empty_compiled_selections(self):
@@ -235,6 +235,32 @@ class QualitySuitesTests(unittest.TestCase):
                 self.assertEqual(calls, [
                     ["test", "--locked", "-p", "robin_rs", "--features", "tools",
                      "--bin", "convert_datadir", name, "--", "--ignored", "--exact"]
+                    for name in names
+                ])
+
+    def test_profile_fixtures_select_the_level_data_crate(self):
+        self.environment["ROBINHOOD_DATA_DIR"] = str(self.directory)
+        expected = {
+            "fixtures-demo": [
+                "load_demo_profile_cpf",
+                "original_cpf_and_exported_document_share_profile_validation",
+                "demo_profile_serde_round_trip",
+            ],
+            "fixtures-fullgame": [
+                "load_fullgame_profile_cpf",
+                "original_cpf_and_exported_document_share_profile_validation",
+            ],
+        }
+        for suite, names in expected.items():
+            with self.subTest(suite=suite):
+                if self.log.exists():
+                    self.log.unlink()
+                self.run_suite(suite)
+                selected = [call for call in self.calls()
+                            if any(arg.startswith("profiles::tests::") for arg in call)]
+                self.assertEqual(selected, [
+                    ["test", "--locked", "-p", "robin_level_data", "--lib",
+                     f"profiles::tests::{name}", "--", "--ignored", "--exact"]
                     for name in names
                 ])
 

@@ -82,7 +82,7 @@ pub mod pc_status;
 pub mod player_command;
 pub mod player_profile;
 pub mod position_interface;
-pub mod profiles;
+pub use robin_level_data::profiles;
 pub mod ranked_resim;
 pub mod replay;
 pub mod replay_rankability;

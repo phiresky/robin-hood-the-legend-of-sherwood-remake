@@ -17,6 +17,8 @@ def assert_boundary(output, package, forbidden):
 
 def main():
     for package, forbidden, features in (
+        ("robin_level_data", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
+        ("robin_legacy_save", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
         ("robin_engine_types", {"robin_engine", "robin_rs", "robin_assets", "robin_spellforge"}, []),
         ("robin_assets", {"robin_engine"}, []),
         ("robin_asset_codecs", {"robin_engine", "robin_assets"}, []),

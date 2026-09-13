@@ -246,6 +246,8 @@ fn authoritative_rng_source_inventory_is_reviewed() {
         manifest.join("src"),
         manifest.join("../robin_engine_types/src"),
         manifest.join("../robin_script_types/src"),
+        manifest.join("../robin_legacy_save/src"),
+        manifest.join("../robin_level_data/src"),
         manifest.join("../robin_lua/src"),
         manifest.join("../robin_rs/src"),
     ];

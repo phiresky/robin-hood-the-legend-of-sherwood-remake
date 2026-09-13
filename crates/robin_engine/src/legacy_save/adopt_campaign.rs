@@ -8,7 +8,7 @@ use crate::{campaign::Campaign, engine::EngineInner, profiles::ProfileManager};
 
 use super::{
     adopt_common::{AdoptErrorKind, LegacyAdoptError},
-    campaign::{LegacyCampaignBootstrap, LegacySaveCampaigns},
+    campaign::{LegacyCampaignAdoption, LegacyCampaignBootstrap, LegacySaveCampaigns},
 };
 
 #[derive(Clone, Debug)]
