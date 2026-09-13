@@ -474,7 +474,7 @@ fn observe_post_execute_crossing(engine: &mut EngineInner, entity_id: EntityId) 
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct MovementOwnerSelection {
     pub seq_id: crate::sequence::SequenceId,
     pub elem_idx: usize,
