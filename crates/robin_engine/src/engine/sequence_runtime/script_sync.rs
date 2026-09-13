@@ -286,7 +286,7 @@ impl EngineInner {
                     SmalltalkCommandContext {
                         entities: &self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
-                        next_order_id: &mut self.orders.next_order_id,
+                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                     }
                     .dispatch(owner, command, sequence_id, element_index)
                 } else if command == Command::Provoke {
@@ -323,7 +323,7 @@ impl EngineInner {
                     TurnCommandContext {
                         entities: &mut self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
-                        next_order_id: &mut self.orders.next_order_id,
+                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                     }
                     .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
@@ -353,7 +353,7 @@ impl EngineInner {
                     NpcAttentionCommandContext {
                         entities: &mut self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
-                        next_order_id: &mut self.orders.next_order_id,
+                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                     }
                     .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
@@ -369,7 +369,7 @@ impl EngineInner {
                     NpcAttentionCommandContext {
                         entities: &mut self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
-                        next_order_id: &mut self.orders.next_order_id,
+                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                     }
                     .dispatch(owner, command, sequence_id, element_index)
                 } else if matches!(
@@ -379,7 +379,7 @@ impl EngineInner {
                     WaitCommandContext {
                         entities: &mut self.world.entities,
                         sequence_manager: &mut self.orders.sequence_manager,
-                        next_order_id: &mut self.orders.next_order_id,
+                        orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                         profiles: &assets.profile_manager,
                     }
                     .dispatch(owner, command, sequence_id, element_index)

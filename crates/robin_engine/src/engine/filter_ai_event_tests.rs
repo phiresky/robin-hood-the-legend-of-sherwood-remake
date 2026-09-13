@@ -1767,7 +1767,7 @@ fn install_test_wait_timer(
     super::sequence_runtime::WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
         profiles: &assets.profile_manager,
     }
     .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
@@ -3474,7 +3474,9 @@ fn same_owner_callback_retargets_execute_termination_to_live_wait_timer() {
             super::sequence_runtime::WaitCommandContext {
                 entities: &mut engine.world.entities,
                 sequence_manager: &mut engine.orders.sequence_manager,
-                next_order_id: &mut engine.orders.next_order_id,
+                orders: super::sequence_runtime::OrderEmitter::new(
+                    &mut engine.orders.next_order_id,
+                ),
                 profiles: &assets.profile_manager,
             }
             .dispatch(actor, crate::element::Command::WaitTimer, sequence, 0);
@@ -3556,7 +3558,9 @@ fn earlier_owner_callback_installs_later_timer_while_reverse_order_defers() {
                 super::sequence_runtime::WaitCommandContext {
                     entities: &mut engine.world.entities,
                     sequence_manager: &mut engine.orders.sequence_manager,
-                    next_order_id: &mut engine.orders.next_order_id,
+                    orders: super::sequence_runtime::OrderEmitter::new(
+                        &mut engine.orders.next_order_id,
+                    ),
                     profiles: &assets.profile_manager,
                 }
                 .dispatch(target, crate::element::Command::WaitTimer, sequence, 0);

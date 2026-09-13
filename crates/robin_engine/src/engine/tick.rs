@@ -6264,7 +6264,7 @@ mod bow_command_body_parity_tests {
         let barrier = TurnCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
         }
         .dispatch(owner, Command::Turn, seq_id, 0);
 
@@ -6312,7 +6312,7 @@ mod bow_command_body_parity_tests {
         let barrier = WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -6487,7 +6487,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -6842,7 +6842,7 @@ mod bow_command_body_parity_tests {
 
         let barrier = NpcStateCommandContext {
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
         }
         .dispatch(Command::StartMenace, seq_id, 0);
 
@@ -6891,7 +6891,7 @@ mod bow_command_body_parity_tests {
         let barrier = NpcAttentionCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
         }
         .dispatch(owner, Command::LookLeft, seq_id, 0);
 
@@ -6922,7 +6922,7 @@ mod bow_command_body_parity_tests {
         let barrier = StealthCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             titbit_manager: &mut engine.feedback.titbit_manager,
             profiles: &assets.profile_manager,
         }
@@ -6964,7 +6964,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitTimer, seq_id, 0);
@@ -6983,7 +6983,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::Wait, seq_id, 0);
@@ -7043,7 +7043,7 @@ mod bow_command_body_parity_tests {
         let barrier = DirectAbilityCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WhistleCmd, true, seq_id, 0);
@@ -7085,7 +7085,7 @@ mod bow_command_body_parity_tests {
         let barrier = DirectAbilityCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::EatCmd, false, seq_id, 0);
@@ -7113,7 +7113,7 @@ mod bow_command_body_parity_tests {
         let barrier = DirectAbilityCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::ThrowApple, true, seq_id, 0);
@@ -7251,7 +7251,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -7319,7 +7319,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -7364,7 +7364,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -7463,7 +7463,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);
@@ -7551,7 +7551,7 @@ mod bow_command_body_parity_tests {
         WaitCommandContext {
             entities: &mut engine.world.entities,
             sequence_manager: &mut engine.orders.sequence_manager,
-            next_order_id: &mut engine.orders.next_order_id,
+            orders: super::sequence_runtime::OrderEmitter::new(&mut engine.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, Command::WaitFreeLift, seq_id, 0);

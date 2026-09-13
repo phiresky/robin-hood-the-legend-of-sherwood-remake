@@ -1466,7 +1466,9 @@ fn lethal_sword_damage_pins_forced_attentive_view_and_hands_corpse_to_wait() {
     crate::engine::sequence_runtime::WaitCommandContext {
         entities: &mut engine.world.entities,
         sequence_manager: &mut engine.orders.sequence_manager,
-        next_order_id: &mut engine.orders.next_order_id,
+        orders: crate::engine::sequence_runtime::OrderEmitter::new(
+            &mut engine.orders.next_order_id,
+        ),
         profiles: &assets.profile_manager,
     }
     .dispatch(victim, Command::Wait, wait_sequence, 0);

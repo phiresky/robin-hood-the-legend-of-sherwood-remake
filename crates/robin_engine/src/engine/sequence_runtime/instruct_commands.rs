@@ -788,7 +788,7 @@ impl EngineInner {
         let barrier = DirectAbilityCommandContext {
             entities: &mut self.world.entities,
             sequence_manager: &mut self.orders.sequence_manager,
-            next_order_id: &mut self.orders.next_order_id,
+            orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
             profiles: &assets.profile_manager,
         }
         .dispatch(owner, cmd, ammo_available, seq_id, elem_idx);

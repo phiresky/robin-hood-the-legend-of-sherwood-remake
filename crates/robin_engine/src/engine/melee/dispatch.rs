@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::element::{ActionState, Command, EntityId};
-use crate::engine::sequence_runtime::OwnerActionBarrier;
+use crate::engine::sequence_runtime::{OrderEmitter, OwnerActionBarrier};
 use crate::sequence::SequenceElementData;
 use crate::weapons::SwordStrike;
 
@@ -809,10 +809,16 @@ impl EngineInner {
 /// a refreshed danger/protectee command. The follow-up is returned so the
 /// sequence-phase owner can launch it through the normal instruction path before
 /// performing the after-action synchronous splice.
+///
+/// All four Original shield translators explicitly disable direction
+/// recomputation (`compute_direction = false`). These are posture-local
+/// animations: facing is controlled by Focus/the shield danger point before
+/// translation, and selecting the new order must not derive a fresh goal from
+/// its zero-valued destination.
 pub(crate) struct ShieldCommandContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
-    next_order_id: &'a mut u32,
+    orders: OrderEmitter<'a>,
 }
 
 impl<'a> ShieldCommandContext<'a> {
@@ -824,7 +830,7 @@ impl<'a> ShieldCommandContext<'a> {
         Self {
             entities,
             sequence_manager,
-            next_order_id,
+            orders: OrderEmitter::new(next_order_id),
         }
     }
 
@@ -1043,7 +1049,14 @@ impl<'a> ShieldCommandContext<'a> {
             // `engine/animation.rs` gates advance on TERMINATED only
             // so the upright / holding-shield state-change side effect
             // on Done doesn't also pop the order mid-play.
-            self.push_order(seq_id, elem_idx, crate::order::OrderType::RaisingShield);
+            self.orders.push(
+                self.sequence_manager,
+                seq_id,
+                elem_idx,
+                crate::order::OrderType::RaisingShield,
+                (0.0, 0.0),
+                false,
+            );
             self.sequence_manager.element_in_progress(seq_id, elem_idx);
         } else {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
@@ -1067,7 +1080,14 @@ impl<'a> ShieldCommandContext<'a> {
             }
             entity.set_posture(Posture::Upright);
         }
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::WaitingShield);
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::WaitingShield,
+            (0.0, 0.0),
+            false,
+        );
         // Original-game instant-raise-shield translation leaves the
         // WAITING_SHIELD order installed. Actor instruction handling then marks the
         // accepted, still-selected element IN_PROGRESS; it does not terminate
@@ -1100,7 +1120,14 @@ impl<'a> ShieldCommandContext<'a> {
         // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
         // actor has no LOWERING_SHIELD anim is applied by the animation
         // driver. The order itself remains LOWERING_SHIELD.
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::LoweringShield,
+            (0.0, 0.0),
+            false,
+        );
         self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 
@@ -1131,28 +1158,15 @@ impl<'a> ShieldCommandContext<'a> {
             .get(owner)
             .and_then(crate::element::Entity::actor_data)
             .unwrap_or_else(|| panic!("ParryShield owner {owner:?} is not a live actor"));
-        self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
-        self.sequence_manager.element_in_progress(seq_id, elem_idx);
-    }
-
-    fn push_order(
-        &mut self,
-        seq_id: crate::sequence::SequenceId,
-        elem_idx: usize,
-        order_type: crate::order::OrderType,
-    ) {
-        // All four Original shield translators explicitly disable direction
-        // recomputation. These are
-        // posture-local animations: facing is controlled by Focus/the shield
-        // danger point before translation, and selecting the new order must
-        // not derive a fresh goal from its zero-valued destination.
-        let order = crate::engine::sequence_runtime::new_translation_order(
-            self.next_order_id,
-            order_type,
+        self.orders.push(
+            self.sequence_manager,
+            seq_id,
+            elem_idx,
+            crate::order::OrderType::ParryingShield,
             (0.0, 0.0),
             false,
         );
-        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
     }
 }
 
@@ -1531,38 +1545,6 @@ mod shield_order_tests {
     use crate::sequence::{Sequence, SequenceElement, SequenceManager};
     use crate::{element::Command, sequence::SequenceState};
 
-    #[test]
-    fn translated_shield_orders_never_recompute_facing() {
-        for order_type in [
-            OrderType::RaisingShield,
-            OrderType::WaitingShield,
-            OrderType::LoweringShield,
-            OrderType::ParryingShield,
-        ] {
-            let mut sequence_manager = SequenceManager::new();
-            let mut sequence = Sequence::new();
-            sequence.append_element(SequenceElement::new_generic(1, Command::Wait, None));
-            let sequence_id = sequence_manager.launch_sequence(sequence);
-            let mut entities = Entities::new();
-            let mut next_order_id = 1;
-
-            ShieldCommandContext {
-                entities: &mut entities,
-                sequence_manager: &mut sequence_manager,
-                next_order_id: &mut next_order_id,
-            }
-            .push_order(sequence_id, 0, order_type);
-
-            let element = sequence_manager
-                .get_element(sequence_id, 0)
-                .expect("shield test sequence element");
-            assert_eq!(element.state, SequenceState::Todo);
-            assert_eq!(element.orders.len(), 1);
-            assert_eq!(element.orders[0].order_type, order_type);
-            assert!(!element.orders[0].compute_direction);
-        }
-    }
-
     fn lying_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {
             element: {
@@ -1597,7 +1579,14 @@ mod shield_order_tests {
         // The posture transition has already prepended this order. Translation
         // may append RaisingShield, but Original does not stand the actor up
         // until StandingUp itself executes and returns MotionState::Start.
-        context.push_order(sequence_id, 0, OrderType::StandingUp);
+        context.orders.push(
+            context.sequence_manager,
+            sequence_id,
+            0,
+            OrderType::StandingUp,
+            (0.0, 0.0),
+            false,
+        );
         context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
 
         assert_eq!(
@@ -1613,6 +1602,14 @@ mod shield_order_tests {
                 .map(|order| order.order_type)
                 .collect::<Vec<_>>(),
             [OrderType::StandingUp, OrderType::RaisingShield]
+        );
+        assert!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .all(|order| !order.compute_direction)
         );
     }
 
@@ -1653,6 +1650,15 @@ mod shield_order_tests {
                 .collect::<Vec<_>>(),
             [OrderType::WaitingShield]
         );
+        // Shield translation never recomputes facing.
+        assert!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .all(|order| !order.compute_direction)
+        );
     }
 
     #[test]
@@ -1687,6 +1693,7 @@ mod shield_order_tests {
                 .collect::<Vec<_>>(),
             [OrderType::ParryingShield]
         );
+        assert!(element.orders.iter().all(|order| !order.compute_direction));
         assert_eq!(
             entities
                 .get(owner)

@@ -98,7 +98,7 @@ impl EngineInner {
                             WaitCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                                 profiles: &assets.profile_manager,
                             }
                             .dispatch(
@@ -218,7 +218,7 @@ impl EngineInner {
                             let barrier = NpcAttentionCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             debug_assert_eq!(barrier, OwnerActionBarrier::Reach);
@@ -237,7 +237,7 @@ impl EngineInner {
                             let barrier = NpcAttentionCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             self.trace_attentive_owner_handoff(
@@ -298,7 +298,7 @@ impl EngineInner {
                             let barrier = StealthCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                                 titbit_manager: &mut self.feedback.titbit_manager,
                                 profiles: &assets.profile_manager,
                             }
@@ -333,7 +333,7 @@ impl EngineInner {
                             let barrier = BowTransitionContext {
                                 entities: &self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -412,7 +412,7 @@ impl EngineInner {
                             SmalltalkCommandContext {
                                 entities: &self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                         }
@@ -435,7 +435,7 @@ impl EngineInner {
                             let barrier = RecoveryCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -579,7 +579,7 @@ impl EngineInner {
                             let barrier = TurnCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -594,7 +594,7 @@ impl EngineInner {
                             let barrier = TurnCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -611,7 +611,7 @@ impl EngineInner {
                             let barrier = TurnCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -632,7 +632,7 @@ impl EngineInner {
                             let barrier = TurnCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -658,7 +658,7 @@ impl EngineInner {
                             let barrier = WaitCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                                 profiles: &assets.profile_manager,
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
@@ -685,7 +685,7 @@ impl EngineInner {
                         Command::SitDown | Command::BeggarShowFace | Command::EnterLeisure => {
                             let barrier = NpcStateCommandContext {
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -707,7 +707,7 @@ impl EngineInner {
                         | Command::RaiseBowLeanOut => {
                             let barrier = NpcStateCommandContext {
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(cmd, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
@@ -729,7 +729,7 @@ impl EngineInner {
                             ObjectInteractionCommandContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, seq_id, elem_idx);
                         }
@@ -849,7 +849,7 @@ impl EngineInner {
                             let barrier = TargetAnimationContext {
                                 entities: &mut self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                                 preserve_trigger_visual,
                             }
                             .dispatch_play_animation(owner, cmd, animation, seq_id, elem_idx);
@@ -884,7 +884,7 @@ impl EngineInner {
                             let barrier = TargetInteractionContext {
                                 entities: &self.world.entities,
                                 sequence_manager: &mut self.orders.sequence_manager,
-                                next_order_id: &mut self.orders.next_order_id,
+                                orders: super::OrderEmitter::new(&mut self.orders.next_order_id),
                             }
                             .dispatch(owner, cmd, target, seq_id, elem_idx);
                             if barrier == OwnerActionBarrier::Skip {
