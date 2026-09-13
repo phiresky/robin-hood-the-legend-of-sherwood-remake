@@ -1807,27 +1807,41 @@ async fn fetch_and_validate_ruleset_candidate<'a>(
         mission_id,
         sim_config,
         expected_content_sha256,
-        facet,
-        content_manifest,
-        &rules_config,
-        &published_ruleset,
+        SinglePlayerAuthorityDocuments {
+            facet,
+            content: content_manifest,
+            rules: &rules_config,
+            published: &published_ruleset,
+        },
         required_board_scope,
         campaign_content_manifest_sha256,
     )?;
     Ok((facet, rules_config, published_ruleset))
 }
 
+/// Server documents fetched for one ruleset facet, validated together
+/// against the local mission tuple.
+struct SinglePlayerAuthorityDocuments<'a> {
+    facet: &'a robin_run_protocol::RulesetFacetV1,
+    content: &'a ContentManifestV1,
+    rules: &'a RulesConfigIdentityV1,
+    published: &'a PublishedRulesetV1,
+}
+
 fn validate_single_player_authority(
     mission_id: &str,
     sim_config: robin_engine::engine::SimConfig,
     expected_content_sha256: Digest32,
-    facet: &robin_run_protocol::RulesetFacetV1,
-    content: &ContentManifestV1,
-    rules: &RulesConfigIdentityV1,
-    published: &PublishedRulesetV1,
+    documents: SinglePlayerAuthorityDocuments<'_>,
     required_board_scope: RulesetBoardScopeV1,
     campaign_content_manifest_sha256: Option<Digest32>,
 ) -> Result<(), RankedError> {
+    let SinglePlayerAuthorityDocuments {
+        facet,
+        content,
+        rules,
+        published,
+    } = documents;
     let subject_is_official = official_content_subjects_v1(content.edition)
         .iter()
         .any(|subject| subject == &content.subject);

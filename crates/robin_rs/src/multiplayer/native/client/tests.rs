@@ -5,7 +5,7 @@ use super::{
     ClientRankedAdmission as _, ClientTransport, NativeClientTransport, NativeRankedAdmission,
 };
 use crate::leaderboard_ranked_session::RankedSessionLifecycle;
-use crate::multiplayer::client_protocol::validate_reconnect_state;
+use crate::multiplayer::client_protocol::{ReconnectIdentity, validate_reconnect_state};
 use crate::multiplayer::client_session::tests::{
     assert_premature_begin_sim_downgrades, assert_premature_cosign_request_downgrades, begin_sim,
     handle,
@@ -220,21 +220,27 @@ fn client_wire_handler_never_exposes_unarmed_or_wrong_direction_cosign() {
 
 #[test]
 fn reconnect_rejects_wrong_session_mission_config_or_speech_locale() {
+    fn identity(
+        seat: PlayerId,
+        mission_id: &'static str,
+        config: robin_engine::engine::SimConfig,
+        speech_timing_locale: Option<&'static str>,
+        session: u8,
+    ) -> ReconnectIdentity<'static> {
+        ReconnectIdentity {
+            seat,
+            mission_id,
+            seed: 7,
+            config,
+            speech_timing_locale,
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([session; 32]),
+        }
+    }
     let expected = robin_engine::engine::SimConfig::default();
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(1),
-            "MissionB",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(1), "MissionB", expected, Some("en-US"), 1),
         )
         .is_err()
     );
@@ -243,86 +249,36 @@ fn reconnect_rejects_wrong_session_mission_config_or_speech_locale() {
     changed.amount_of_speaking = 9;
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(1),
-            "MissionA",
-            7,
-            changed,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(1), "MissionA", changed, Some("en-US"), 1),
         )
         .is_err()
     );
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(2),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(2), "MissionA", expected, Some("en-US"), 1),
         )
         .is_err()
     );
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("de-DE"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(1), "MissionA", expected, Some("de-DE"), 1),
         )
         .is_err()
     );
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([2; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 2),
         )
         .is_err()
     );
     assert!(
         validate_reconnect_state(
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
-            PlayerId(1),
-            "MissionA",
-            7,
-            expected,
-            Some("en-US"),
-            robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
+            identity(PlayerId(1), "MissionA", expected, Some("en-US"), 1),
         )
         .is_ok()
     );

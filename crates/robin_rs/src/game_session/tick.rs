@@ -197,6 +197,27 @@ pub(super) fn post_render_engine_cleanup(
     }
 }
 
+/// Local UI state that can refuse, or answer, a scripted step request.
+pub(super) struct StepUiGates<'a> {
+    pub(super) active_modal: &'a mut Option<ActiveModal>,
+    pub(super) terminal_debriefing:
+        Option<&'a mut super::terminal_debriefing::TerminalDebriefingState>,
+    pub(super) terminal_save_manager: Option<&'a crate::savegame::SaveGameManager>,
+    pub(super) mission_ui_block_reason: Option<&'a str>,
+    pub(super) session_modals: Option<&'a mut super::session_policy::SessionModalScheduler>,
+}
+
+/// Mutable mission state a scripted forward step ticks. Unlike
+/// `MissionMutation` the assets are borrowed without their `Arc` owner, so
+/// detached fixtures can drive the same path.
+pub(super) struct StepWorld<'a> {
+    pub(super) manager: &'a mut engine_manager_api::EngineManager,
+    pub(super) host: &'a mut Host,
+    pub(super) assets: &'a engine_api::LevelAssets,
+    pub(super) dev: &'a mut engine_api::DevState,
+    pub(super) game: &'a mut Game,
+}
+
 /// Process every queued `/step-forward` / `/step-back` HTTP request,
 /// replying to each with the post-step frame number.
 ///
@@ -221,13 +242,16 @@ pub(super) fn drain_steps(
     mutation: super::runtime::MissionMutation<'_>,
     timeline: &mut super::runtime::TimelineRuntime,
     manual_pause: &mut bool,
-    active_modal: &mut Option<ActiveModal>,
-    mut terminal_debriefing: Option<&mut super::terminal_debriefing::TerminalDebriefingState>,
-    terminal_save_manager: Option<&crate::savegame::SaveGameManager>,
-    mission_ui_block_reason: Option<&str>,
-    mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
+    gates: StepUiGates<'_>,
     mut resolve_local_ui: impl FnMut(&crate::http_server::StepModalPolicy) -> Result<(), String>,
 ) {
+    let StepUiGates {
+        active_modal,
+        mut terminal_debriefing,
+        terminal_save_manager,
+        mission_ui_block_reason,
+        mut session_modals,
+    } = gates;
     if steps.is_empty() {
         return;
     }
@@ -352,11 +376,13 @@ pub(super) fn drain_steps(
             crate::http_server::StepKind::Forward { n, .. } => {
                 let start = timeline.frame_number();
                 let result = run_forward_ticks_with_session_modals(
-                    manager,
-                    host,
-                    assets,
-                    dev,
-                    game,
+                    StepWorld {
+                        manager: &mut *manager,
+                        host: &mut *host,
+                        assets,
+                        dev: &mut *dev,
+                        game: &mut *game,
+                    },
                     timeline,
                     n,
                     modal_policy
@@ -450,11 +476,13 @@ pub(super) fn drain_steps(
                             .current_frame();
                         if target > current {
                             let (_, dismissed) = run_forward_ticks_with_session_modals(
-                                manager,
-                                host,
-                                assets,
-                                dev,
-                                game,
+                                StepWorld {
+                                    manager: &mut *manager,
+                                    host: &mut *host,
+                                    assets,
+                                    dev: &mut *dev,
+                                    game: &mut *game,
+                                },
                                 timeline,
                                 target - current,
                                 modal_policy.as_mut().expect("seek modal policy"),
@@ -495,11 +523,13 @@ pub(super) fn drain_steps(
                     Ordering::Greater => {
                         let delta = target - from;
                         match run_forward_ticks_with_session_modals(
-                            manager,
-                            host,
-                            assets,
-                            dev,
-                            game,
+                            StepWorld {
+                                manager: &mut *manager,
+                                host: &mut *host,
+                                assets,
+                                dev: &mut *dev,
+                                game: &mut *game,
+                            },
                             timeline,
                             delta,
                             modal_policy
@@ -657,11 +687,13 @@ pub(super) fn run_forward_ticks(
     modal_policy: &mut crate::http_server::StepModalPolicy,
 ) -> Result<(u32, Vec<crate::http_server::HttpModalDismissal>), String> {
     run_forward_ticks_with_session_modals(
-        manager,
-        host,
-        assets,
-        dev,
-        game,
+        StepWorld {
+            manager,
+            host,
+            assets,
+            dev,
+            game,
+        },
         timeline,
         n,
         modal_policy,
@@ -722,16 +754,19 @@ impl ManualFrameSource {
 }
 
 pub(super) fn run_forward_ticks_with_session_modals(
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    dev: &mut engine_api::DevState,
-    game: &mut Game,
+    world: StepWorld<'_>,
     timeline: &mut super::runtime::TimelineRuntime,
     n: u32,
     modal_policy: &mut crate::http_server::StepModalPolicy,
     mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
 ) -> Result<(u32, Vec<crate::http_server::HttpModalDismissal>), RpcError> {
+    let StepWorld {
+        manager,
+        host,
+        assets,
+        dev,
+        game,
+    } = world;
     let mut advanced = 0;
     let mut dismissed = Vec::new();
     for _ in 0..n {
@@ -1681,11 +1716,13 @@ mod tests {
             ..Default::default()
         };
         let stationary = run_forward_ticks_with_session_modals(
-            &mut manager,
-            &mut host,
-            &assets,
-            &mut dev,
-            &mut game,
+            StepWorld {
+                manager: &mut manager,
+                host: &mut host,
+                assets: &assets,
+                dev: &mut dev,
+                game: &mut game,
+            },
             &mut timeline,
             1,
             &mut strict,
@@ -1698,11 +1735,13 @@ mod tests {
         assert_eq!(timeline.frame_number(), 0);
         assert!(!scheduler.is_active());
         let forward = run_forward_ticks_with_session_modals(
-            &mut manager,
-            &mut host,
-            &assets,
-            &mut dev,
-            &mut game,
+            StepWorld {
+                manager: &mut manager,
+                host: &mut host,
+                assets: &assets,
+                dev: &mut dev,
+                game: &mut game,
+            },
             &mut timeline,
             1,
             &mut strict,
@@ -1753,11 +1792,13 @@ mod tests {
         assert!(scheduler.is_active());
         assert!(host.effects.pending_modal_kinds().is_empty());
         let repeated = run_forward_ticks_with_session_modals(
-            &mut manager,
-            &mut host,
-            &assets,
-            &mut dev,
-            &mut game,
+            StepWorld {
+                manager: &mut manager,
+                host: &mut host,
+                assets: &assets,
+                dev: &mut dev,
+                game: &mut game,
+            },
             &mut timeline,
             2,
             &mut strict,
@@ -2126,11 +2167,13 @@ mod tests {
         );
 
         let error = run_forward_ticks_with_session_modals(
-            &mut manager,
-            &mut host,
-            &assets,
-            &mut dev,
-            &mut game,
+            StepWorld {
+                manager: &mut manager,
+                host: &mut host,
+                assets: &assets,
+                dev: &mut dev,
+                game: &mut game,
+            },
             &mut timeline,
             1,
             &mut modal_policy,

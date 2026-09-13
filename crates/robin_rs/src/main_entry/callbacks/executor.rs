@@ -12,17 +12,31 @@ use robin_engine::{engine as engine_api, game_operation::GameCode, profiles::Pro
 mod load;
 mod persistence;
 
+/// Mission state and save context one save/load operation reads or replaces.
+pub(super) struct OperationWorld<'a> {
+    pub(super) host: &'a mut crate::host::Host,
+    pub(super) game: &'a mut crate::game::Game,
+    pub(super) engine: &'a mut engine_api::Engine,
+    pub(super) assets: &'a engine_api::LevelAssets,
+    pub(super) profiles: &'a ProfileManager,
+    /// Thumbnail captured for this operation's save payload, if any.
+    pub(super) thumb_ref: Option<&'a crate::save_file::Thumbnail>,
+}
+
 pub(super) async fn execute(
     request: SaveLoadRequest,
     save_manager: &mut SaveGameManager,
     notices: &mut AutosaveNotices,
-    host: &mut crate::host::Host,
-    game: &mut crate::game::Game,
-    engine: &mut engine_api::Engine,
-    assets: &engine_api::LevelAssets,
-    profiles: &ProfileManager,
-    thumb_ref: Option<&crate::save_file::Thumbnail>,
+    world: OperationWorld<'_>,
 ) -> OperationOutcome {
+    let OperationWorld {
+        host,
+        game,
+        engine,
+        assets,
+        profiles,
+        thumb_ref,
+    } = world;
     let mut outcome = OperationOutcome::NO_EVENT;
     let mut event = None;
     match request {
@@ -156,12 +170,14 @@ pub(super) async fn execute(
                         save,
                         load::LoadCompletion::Selected(None),
                         save_manager,
-                        host,
-                        game,
-                        engine,
-                        assets,
-                        profiles,
-                        thumb_ref,
+                        OperationWorld {
+                            host,
+                            game,
+                            engine,
+                            assets,
+                            profiles,
+                            thumb_ref,
+                        },
                     )
                     .await;
                 }
@@ -190,12 +206,14 @@ pub(super) async fn execute(
                         save,
                         load::LoadCompletion::Restart,
                         save_manager,
-                        host,
-                        game,
-                        engine,
-                        assets,
-                        profiles,
-                        thumb_ref,
+                        OperationWorld {
+                            host,
+                            game,
+                            engine,
+                            assets,
+                            profiles,
+                            thumb_ref,
+                        },
                     )
                     .await;
                 }
@@ -306,12 +324,14 @@ pub(super) async fn execute(
                                 save,
                                 load::LoadCompletion::Quick,
                                 save_manager,
-                                host,
-                                game,
-                                engine,
-                                assets,
-                                profiles,
-                                thumb_ref,
+                                OperationWorld {
+                                    host,
+                                    game,
+                                    engine,
+                                    assets,
+                                    profiles,
+                                    thumb_ref,
+                                },
                             )
                             .await;
                         }
@@ -350,13 +370,16 @@ async fn execute_load(
     save: PreparedLoad,
     mut completion: load::LoadCompletion,
     save_manager: &mut SaveGameManager,
-    host: &mut crate::host::Host,
-    game: &mut crate::game::Game,
-    engine: &mut engine_api::Engine,
-    assets: &engine_api::LevelAssets,
-    profiles: &ProfileManager,
-    thumb_ref: Option<&crate::save_file::Thumbnail>,
+    world: OperationWorld<'_>,
 ) -> OperationOutcome {
+    let OperationWorld {
+        host,
+        game,
+        engine,
+        assets,
+        profiles,
+        thumb_ref,
+    } = world;
     let restart = matches!(completion, load::LoadCompletion::Restart);
     let multiplayer = host.transport.net().is_some();
     let result: anyhow::Result<OperationOutcome> = async {

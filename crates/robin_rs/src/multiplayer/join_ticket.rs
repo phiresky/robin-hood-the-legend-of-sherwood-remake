@@ -59,6 +59,16 @@ pub struct BrowserJoinTicket {
     signature: Signature,
 }
 
+/// Mission content and roster facts a browser invitation advertises.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserJoinTicketContent {
+    pub content_edition: BrowserContentEdition,
+    pub content_identity_sha256: String,
+    pub mission_id: String,
+    pub mission_profile_id: Option<u32>,
+    pub expected_players: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvitationUse {
     /// A previously unused invitation. Its wall-clock window is mandatory.
@@ -74,12 +84,15 @@ impl BrowserJoinTicket {
         endpoint_addr: &EndpointAddr,
         session_id: [u8; 32],
         issued_at_epoch_s: u64,
-        content_edition: BrowserContentEdition,
-        content_identity_sha256: String,
-        mission_id: String,
-        mission_profile_id: Option<u32>,
-        expected_players: u32,
+        content: BrowserJoinTicketContent,
     ) -> Result<Self, MultiplayerError> {
+        let BrowserJoinTicketContent {
+            content_edition,
+            content_identity_sha256,
+            mission_id,
+            mission_profile_id,
+            expected_players,
+        } = content;
         if endpoint_addr.id != host_key.public() {
             return Err(invitation(
                 "browser join ticket host key does not own the advertised endpoint",
@@ -408,11 +421,13 @@ mod tests {
             &addr,
             [9; 32],
             NOW,
-            BrowserContentEdition::Demo,
-            CONTENT_IDENTITY.to_string(),
-            "Dem_Lei_MP".to_string(),
-            Some(4),
-            2,
+            BrowserJoinTicketContent {
+                content_edition: BrowserContentEdition::Demo,
+                content_identity_sha256: CONTENT_IDENTITY.to_string(),
+                mission_id: "Dem_Lei_MP".to_string(),
+                mission_profile_id: Some(4),
+                expected_players: 2,
+            },
         )
         .unwrap()
     }
@@ -501,11 +516,13 @@ mod tests {
             &bad,
             [9; 32],
             NOW,
-            BrowserContentEdition::Full,
-            CONTENT_IDENTITY.to_string(),
-            "M01".into(),
-            None,
-            2,
+            BrowserJoinTicketContent {
+                content_edition: BrowserContentEdition::Full,
+                content_identity_sha256: CONTENT_IDENTITY.to_string(),
+                mission_id: "M01".into(),
+                mission_profile_id: None,
+                expected_players: 2,
+            },
         )
         .unwrap_err();
         assert!(error.to_string().contains("canonical HTTPS"));
@@ -522,11 +539,13 @@ mod tests {
             &addr,
             [9; 32],
             NOW,
-            BrowserContentEdition::Full,
-            CONTENT_IDENTITY.to_string(),
-            "M01".into(),
-            None,
-            2,
+            BrowserJoinTicketContent {
+                content_edition: BrowserContentEdition::Full,
+                content_identity_sha256: CONTENT_IDENTITY.to_string(),
+                mission_id: "M01".into(),
+                mission_profile_id: None,
+                expected_players: 2,
+            },
         )
         .unwrap();
         assert!(

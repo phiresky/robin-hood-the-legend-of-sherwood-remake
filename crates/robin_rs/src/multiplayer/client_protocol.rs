@@ -268,20 +268,7 @@ mod tests {
             panic!("expected Welcome")
         };
         let check = |actual: &WelcomeData| {
-            validate_reconnect_state(
-                expected.seat,
-                &expected.mission_id,
-                expected.mission_seed,
-                expected.sim_config,
-                expected.speech_timing_locale.as_deref(),
-                expected.session_id,
-                actual.seat,
-                &actual.mission_id,
-                actual.mission_seed,
-                actual.sim_config,
-                actual.speech_timing_locale.as_deref(),
-                actual.session_id,
-            )
+            validate_reconnect_state(expected.reconnect_identity(), actual.reconnect_identity())
         };
         assert!(check(&expected).is_ok());
         for field in 0..6 {
@@ -569,20 +556,52 @@ pub(super) fn validate_reconnect_content(
     Err(MultiplayerError::ContentMismatch(message.into()))
 }
 
+/// The authoritative Welcome identity a reconnect must reproduce exactly.
+#[derive(Debug, Clone)]
+pub(super) struct ReconnectIdentity<'a> {
+    pub(super) seat: PlayerId,
+    pub(super) mission_id: &'a str,
+    pub(super) seed: u64,
+    pub(super) config: SimConfig,
+    pub(super) speech_timing_locale: Option<&'a str>,
+    pub(super) session_id: MultiplayerSessionId,
+}
+
+#[cfg(test)]
+impl WelcomeData {
+    /// Borrow the fields a reconnect Welcome must repeat unchanged.
+    pub(super) fn reconnect_identity(&self) -> ReconnectIdentity<'_> {
+        ReconnectIdentity {
+            seat: self.seat,
+            mission_id: &self.mission_id,
+            seed: self.mission_seed,
+            config: self.sim_config,
+            speech_timing_locale: self.speech_timing_locale.as_deref(),
+            session_id: self.session_id,
+        }
+    }
+}
+
 pub(super) fn validate_reconnect_state(
-    expected_seat: PlayerId,
-    expected_mission_id: &str,
-    expected_seed: u64,
-    expected_config: SimConfig,
-    expected_speech_timing_locale: Option<&str>,
-    expected_session_id: MultiplayerSessionId,
-    seat: PlayerId,
-    mission_id: &str,
-    seed: u64,
-    config: SimConfig,
-    speech_timing_locale: Option<&str>,
-    session_id: MultiplayerSessionId,
+    expected: ReconnectIdentity<'_>,
+    actual: ReconnectIdentity<'_>,
 ) -> Result<(), MultiplayerError> {
+    let ReconnectIdentity {
+        seat: expected_seat,
+        mission_id: expected_mission_id,
+        seed: expected_seed,
+        config: expected_config,
+        speech_timing_locale: expected_speech_timing_locale,
+        session_id: expected_session_id,
+    } = expected;
+    let ReconnectIdentity {
+        seat,
+        mission_id,
+        seed,
+        config,
+        speech_timing_locale,
+        session_id,
+    } = actual;
     if seat != expected_seat
         || mission_id != expected_mission_id
         || seed != expected_seed

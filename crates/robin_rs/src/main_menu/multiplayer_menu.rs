@@ -1749,11 +1749,13 @@ mod tests {
             &address,
             [9; 32],
             2_000_000_000,
-            crate::multiplayer::join_ticket::BrowserContentEdition::Demo,
-            "01".repeat(32),
-            "Dem_Lei_MP".to_owned(),
-            Some(4),
-            2,
+            crate::multiplayer::join_ticket::BrowserJoinTicketContent {
+                content_edition: crate::multiplayer::join_ticket::BrowserContentEdition::Demo,
+                content_identity_sha256: "01".repeat(32),
+                mission_id: "Dem_Lei_MP".to_owned(),
+                mission_profile_id: Some(4),
+                expected_players: 2,
+            },
         )
         .unwrap();
         let code = ticket.encode();

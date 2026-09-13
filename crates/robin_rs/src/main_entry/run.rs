@@ -445,11 +445,13 @@ async fn run_rust_game_active(
             &mut callbacks,
             campaign,
             std::sync::Arc::make_mut(&mut profiles),
-            idx,
-            location,
+            crate::game_session::MissionStart {
+                mission_idx: idx,
+                location,
+                rng_seed: 0,
+                sim_config,
+            },
             request,
-            0,
-            sim_config,
         ))
         .await;
         outcome.result?;
@@ -483,11 +485,13 @@ async fn run_rust_game_active(
             &mut callbacks,
             campaign,
             std::sync::Arc::make_mut(&mut profiles),
-            1,
-            location,
+            crate::game_session::MissionStart {
+                mission_idx: 1,
+                location,
+                rng_seed: 0,
+                sim_config: crate::game_session::initial_sim_config(&config),
+            },
             request,
-            0,
-            crate::game_session::initial_sim_config(&config),
         ))
         .await;
         outcome.result?;
@@ -514,11 +518,13 @@ async fn run_rust_game_active(
             &mut callbacks,
             campaign,
             std::sync::Arc::make_mut(&mut profiles),
-            0,
-            MissionLocation::Sherwood,
+            crate::game_session::MissionStart {
+                mission_idx: 0,
+                location: MissionLocation::Sherwood,
+                rng_seed: 0,
+                sim_config: crate::game_session::initial_sim_config(&config),
+            },
             request,
-            0,
-            crate::game_session::initial_sim_config(&config),
         ))
         .await;
         outcome.result?;
@@ -559,11 +565,13 @@ async fn run_prepared_replay(
         &mut callbacks,
         prepared.campaign,
         std::sync::Arc::make_mut(&mut profiles),
-        prepared.mission_idx,
-        prepared.location,
+        crate::game_session::MissionStart {
+            mission_idx: prepared.mission_idx,
+            location: prepared.location,
+            rng_seed: prepared.rng_seed,
+            sim_config: prepared.sim_config,
+        },
         prepared.launch,
-        prepared.rng_seed,
-        prepared.sim_config,
     ))
     .await;
     outcome.result?;
@@ -624,11 +632,13 @@ impl MainMenuContext<'_> {
             callbacks,
             campaign,
             std::sync::Arc::make_mut(&mut self.profiles),
-            idx,
-            location,
+            crate::game_session::MissionStart {
+                mission_idx: idx,
+                location,
+                rng_seed: 0,
+                sim_config,
+            },
             request,
-            0,
-            sim_config,
         ))
         .await;
         let campaign = outcome.campaign;

@@ -24,7 +24,7 @@
 use super::client_gameplay::{deliver, deliver_lifecycle};
 use super::client_outgoing::ClientPublicationAuthority;
 use super::client_protocol::{
-    ClientHandshake, ClientSessionMetadata, HandshakeAction, WelcomeData,
+    ClientHandshake, ClientSessionMetadata, HandshakeAction, ReconnectIdentity, WelcomeData,
     validate_reconnect_content, validate_reconnect_state,
 };
 use super::content_transfer::{ContentDecision, accept_chunk};
@@ -1040,18 +1040,22 @@ pub(super) async fn run_client_io<T: ClientTransport>(
                                 session_id: new_session_id,
                             } = welcome;
                             if let Err(error) = validate_reconnect_state(
-                                your_seat,
-                                &mission_id,
-                                mission_seed,
-                                sim_config,
-                                speech_timing_locale.as_deref(),
-                                session_id,
-                                new_seat,
-                                &new_mission_id,
-                                new_seed,
-                                new_config,
-                                new_speech_timing_locale.as_deref(),
-                                new_session_id,
+                                ReconnectIdentity {
+                                    seat: your_seat,
+                                    mission_id: &mission_id,
+                                    seed: mission_seed,
+                                    config: sim_config,
+                                    speech_timing_locale: speech_timing_locale.as_deref(),
+                                    session_id,
+                                },
+                                ReconnectIdentity {
+                                    seat: new_seat,
+                                    mission_id: &new_mission_id,
+                                    seed: new_seed,
+                                    config: new_config,
+                                    speech_timing_locale: new_speech_timing_locale.as_deref(),
+                                    session_id: new_session_id,
+                                },
                             ) {
                                 let _ = incoming.send(NetEvent::Fatal(NetFatal::new(error)));
                                 return;

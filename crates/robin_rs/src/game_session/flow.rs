@@ -329,13 +329,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 assets,
                 dev,
                 &mut external_actions,
-                &mut frontend.presentation.renderer,
-                &mut frontend.resources.cursor,
-                &mut frontend.presentation.sprites.cursor_renderer,
-                &frontend.input.threaded,
-                &frontend.presentation.sprites.portrait_cache,
+                super::render::CursorFrontend {
+                    renderer: &frontend.presentation.renderer,
+                    cursor_res: &mut frontend.resources.cursor,
+                    cursor_renderer: &mut frontend.presentation.sprites.cursor_renderer,
+                    threaded_input: &frontend.input.threaded,
+                    portrait_cache: &frontend.presentation.sprites.portrait_cache,
+                    last_cursor_id: &mut frontend.hud.last_cursor_id,
+                },
                 shift_held,
-                &mut frontend.hud.last_cursor_id,
             );
         }
         let MissionPresentationPhase {
@@ -368,11 +370,13 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 host,
                 assets,
                 game,
-                presentation,
-                hud,
-                input,
-                ui,
-                resources.hud_fonts.is_some(),
+                super::render::FixedTickHudFrontend {
+                    presentation: &*presentation,
+                    hud: &mut *hud,
+                    input: &*input,
+                    ui: &mut *ui,
+                    has_hud_fonts: resources.hud_fonts.is_some(),
+                },
             );
             presentation.prepare_zoom(engine, host, hud, input);
             let mut render_ctx = presentation.render_context(
@@ -746,15 +750,15 @@ impl InteractiveMission {
                     &services.callbacks.save_manager,
                     world.mutation(),
                     &mut control.manual_pause,
-                    &mut self.frontend.ui,
+                    &mut self.frontend,
                     services.window,
-                    &mut self.frontend.presentation,
-                    &mut self.frontend.input,
-                    terminal_pending,
-                    super::frame_simulate::KeyboardStep::from_pressed(
-                        step_forward_pressed,
-                        step_back_pressed,
-                    ),
+                    super::frame_simulate::ManualStepRequest {
+                        terminal_exit_pending: terminal_pending,
+                        keyboard_step: super::frame_simulate::KeyboardStep::from_pressed(
+                            step_forward_pressed,
+                            step_back_pressed,
+                        ),
+                    },
                 );
                 FrameControl::Continue
             }

@@ -115,6 +115,33 @@ impl HudTooltipUpdate {
     }
 }
 
+/// Mission frontend state the fixed-tick HUD preparation reads or ages.
+pub(super) struct FixedTickHudFrontend<'a> {
+    pub(super) presentation: &'a super::interactive::MissionPresentation,
+    pub(super) hud: &'a mut super::interactive::MissionHud,
+    pub(super) input: &'a super::interactive::MissionInput,
+    pub(super) ui: &'a mut super::interactive::MissionUi,
+    pub(super) has_hud_fonts: bool,
+}
+
+/// Frontend resources the per-frame cursor update reads or animates.
+pub(super) struct CursorFrontend<'a> {
+    pub(super) renderer: &'a crate::renderer::Renderer,
+    pub(super) cursor_res: &'a mut robin_assets::resource_manager::ResourceManager,
+    pub(super) cursor_renderer: &'a mut crate::cursor::CursorRenderer,
+    pub(super) threaded_input: &'a crate::input::ThreadedInput,
+    pub(super) portrait_cache: &'a crate::ui_panel::PortraitCache,
+    /// Last uploaded cursor resource id, so unchanged cursors are not re-uploaded.
+    pub(super) last_cursor_id: &'a mut i32,
+}
+
+/// Zoom-HUD inputs sampled once at the prepare boundary for the overlay pass.
+#[derive(Clone, Copy)]
+struct ZoomOverlayInputs {
+    presentation: crate::presentation::ZoomPresentation,
+    mouse: engine_coordinates::ScreenPoint,
+}
+
 /// Advance host-owned HUD state once at the live 25 Hz boundary, before any
 /// capture or display-refresh draw borrows it. This boundary intentionally is
 /// not keyed by the engine frame: paused frames must still age hover timers
@@ -124,12 +151,15 @@ pub(super) fn prepare_fixed_tick_hud(
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     game: &Game,
-    presentation: &super::interactive::MissionPresentation,
-    hud: &mut super::interactive::MissionHud,
-    input: &super::interactive::MissionInput,
-    ui: &mut super::interactive::MissionUi,
-    has_hud_fonts: bool,
+    frontend: FixedTickHudFrontend<'_>,
 ) {
+    let FixedTickHudFrontend {
+        presentation,
+        hud,
+        input,
+        ui,
+        has_hud_fonts,
+    } = frontend;
     let mp = input.threaded.position();
     let sw = presentation.renderer.screen_width();
     let sh = presentation.renderer.screen_height();
@@ -1066,14 +1096,17 @@ pub(super) fn update_mouse_and_cursor(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     external_actions: &mut Vec<engine_api::ExternalAction>,
-    renderer: &crate::renderer::Renderer,
-    cursor_res: &mut robin_assets::resource_manager::ResourceManager,
-    cursor_renderer: &mut crate::cursor::CursorRenderer,
-    threaded_input: &crate::input::ThreadedInput,
-    portrait_cache: &crate::ui_panel::PortraitCache,
+    cursor: CursorFrontend<'_>,
     shift_held: bool,
-    last_cursor_id: &mut i32,
 ) {
+    let CursorFrontend {
+        renderer,
+        cursor_res,
+        cursor_renderer,
+        threaded_input,
+        portrait_cache,
+        last_cursor_id,
+    } = cursor;
     let mouse_screen = threaded_input.position();
     let portrait_hit = hit_test_portrait_detailed(
         &engine.presentation_view(),
@@ -1304,8 +1337,10 @@ fn render_frame_with_hud(
             assets,
             dev,
             &presentation,
-            zoom_presentation,
-            zoom_mouse,
+            ZoomOverlayInputs {
+                presentation: zoom_presentation,
+                mouse: zoom_mouse,
+            },
             ctx,
         );
     }
@@ -1540,10 +1575,13 @@ fn render_overlay_pass(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     presentation: &FramePresentationInputs,
-    zoom_presentation: crate::presentation::ZoomPresentation,
-    zoom_mouse: engine_coordinates::ScreenPoint,
+    zoom: ZoomOverlayInputs,
     ctx: &mut RenderContext<'_>,
 ) {
+    let ZoomOverlayInputs {
+        presentation: zoom_presentation,
+        mouse: zoom_mouse,
+    } = zoom;
     let renderer = &mut *ctx.renderer;
     let cursor_renderer = ctx.cursor_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;

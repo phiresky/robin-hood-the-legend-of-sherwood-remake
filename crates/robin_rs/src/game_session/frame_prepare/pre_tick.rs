@@ -153,6 +153,15 @@ fn replay_cursor_is_paused(sources: PreTickPauseSources) -> bool {
     sources.pause_menu || sources.manual || sources.multiplayer_clock
 }
 
+/// Rewind and pause facts admitted for this frame before timeline work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PreTickPauseState {
+    rewind_active: bool,
+    paused: bool,
+    /// Whether the replay cursor stays put (see `replay_cursor_is_paused`).
+    replay_cursor_paused: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct PreTickTimelineOutput {
     paused: bool,
@@ -169,10 +178,13 @@ fn prepare_pre_tick_timeline(
     assets: &robin_engine::engine::LevelAssets,
     frame: &mut MissionFrame,
     manual_pause: &mut bool,
-    rewind_active: bool,
-    mut paused: bool,
-    replay_cursor_paused: bool,
+    pause: PreTickPauseState,
 ) -> Result<PreTickTimelineOutput, MissionError> {
+    let PreTickPauseState {
+        rewind_active,
+        mut paused,
+        replay_cursor_paused,
+    } = pause;
     if runtime.replay().playback().is_some() && !replay_cursor_paused {
         // Recorded save markers pin the boundary state and load-back
         // records swap a pinned state in, before this frame's commands.
@@ -373,9 +385,11 @@ pub(super) fn finalize_pre_tick(
         assets.as_ref(),
         &mut frame,
         manual_pause,
-        rewind_active,
-        paused,
-        replay_cursor_paused,
+        PreTickPauseState {
+            rewind_active,
+            paused,
+            replay_cursor_paused,
+        },
     )?;
 
     if runtime.lifecycle_mut().take_state_restored()

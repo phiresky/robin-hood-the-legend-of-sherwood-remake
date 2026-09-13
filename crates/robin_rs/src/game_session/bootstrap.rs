@@ -6,7 +6,7 @@ use super::interactive::{
     InteractiveFrontendAssembly, InteractiveMission, InteractiveRendererAssembly,
     MissionRendererConfig, ProcessFrontendMission, ProcessInterfaceResources,
 };
-use super::replay_init::init_replay_and_rollback;
+use super::replay_init::{ReplayMissionIdentity, init_replay_and_rollback};
 use super::runtime::{
     FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
 };
@@ -433,10 +433,12 @@ impl MissionBootstrap {
             &self.loaded.replay_campaign,
             Arc::clone(&assets),
             args,
-            &mission_id,
-            mission_assets,
-            self.loaded.engine_rng_seed,
-            self.loaded.engine_sim_config,
+            ReplayMissionIdentity {
+                mission_id: &mission_id,
+                mission_assets,
+                rng_seed: self.loaded.engine_rng_seed,
+                sim_config: self.loaded.engine_sim_config,
+            },
             self.host.transport.net().is_some(),
             self.recorder.take(),
         ) {
@@ -790,21 +792,34 @@ impl MultiplayerSetupFailurePolicy {
     }
 }
 
+/// The multiplayer session an interactive load joins or hosts, and what a
+/// failed setup does.
+struct MultiplayerSessionEntry<'a> {
+    campaign: &'a crate::multiplayer::MultiplayerCampaignSession,
+    failure_policy: MultiplayerSetupFailurePolicy,
+}
+
 impl InteractiveLoadStage {
     async fn begin(
         window: &mut GameWindow,
-        multiplayer_campaign: &crate::multiplayer::MultiplayerCampaignSession,
+        multiplayer: MultiplayerSessionEntry<'_>,
         campaign: &Campaign,
         profiles: &ProfileManager,
-        mission_idx: usize,
-        location: MissionLocation,
+        start: super::MissionStart,
         args: &crate::main_entry::MissionRequest,
-        rng_seed: u64,
-        sim_config: engine_api::SimConfig,
         cold_save_lua: Option<(String, robin_engine::spellforge::SpellforgePackage)>,
-        multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
         mut loading: MissionLoadingScreen,
     ) -> Result<InteractiveLoadStart, MissionError> {
+        let MultiplayerSessionEntry {
+            campaign: multiplayer_campaign,
+            failure_policy: multiplayer_setup_failure_policy,
+        } = multiplayer;
+        let super::MissionStart {
+            mission_idx,
+            location,
+            rng_seed,
+            sim_config,
+        } = start;
         let mission_id = campaign.missions[mission_idx]
             .profile(profiles)
             .mission_filename
@@ -866,13 +881,16 @@ impl InteractiveLoadStage {
         window: &mut GameWindow,
         campaign: Campaign,
         profiles: &ProfileManager,
-        mission_idx: usize,
-        location: MissionLocation,
+        start: super::MissionStart,
         args: &crate::main_entry::MissionRequest,
-        rng_seed: u64,
-        sim_config: engine_api::SimConfig,
         ranked_plan: super::leaderboard_runtime::RankedPreFramePlan,
     ) -> Result<LoadedInteractiveStage, MissionLoadError> {
+        let super::MissionStart {
+            mission_idx,
+            location,
+            rng_seed,
+            sim_config,
+        } = start;
         self.loading.status("Loading interface resources...", 0.12);
         let (ground_mark, titbit_rows, minimap_widget) =
             self.process.engine_setup_resources(&mut self.host);
@@ -1493,13 +1511,16 @@ impl InteractiveMissionBuilder {
         callbacks: &mut RustCallbacks,
         campaign: Campaign,
         profiles: &ProfileManager,
-        mission_idx: usize,
-        location: MissionLocation,
+        start: super::MissionStart,
         args: &crate::main_entry::MissionRequest,
-        rng_seed: u64,
-        sim_config: engine_api::SimConfig,
         multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
     ) -> InteractiveBuildOutcome {
+        let super::MissionStart {
+            mission_idx,
+            rng_seed,
+            sim_config,
+            ..
+        } = start;
         // A checkpoint belongs to one running mission, including when entry
         // into the next mission fails or takes the lost-Sherwood shortcut.
         callbacks.save_manager.clear_session_restart();
@@ -1606,16 +1627,15 @@ impl InteractiveMissionBuilder {
         let mut timer = super::setup::PhaseTimer::new("mission bootstrap");
         let mut loading = match InteractiveLoadStage::begin(
             window,
-            &callbacks.multiplayer_campaign,
+            MultiplayerSessionEntry {
+                campaign: &callbacks.multiplayer_campaign,
+                failure_policy: multiplayer_setup_failure_policy,
+            },
             &campaign,
             profiles,
-            mission_idx,
-            location,
+            start,
             args,
-            rng_seed,
-            sim_config,
             cold_save_lua,
-            multiplayer_setup_failure_policy,
             loading,
         )
         .await
@@ -1671,27 +1691,18 @@ impl InteractiveMissionBuilder {
                 }
             }
         };
-        let mut stage = match loading.load_level(
-            window,
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            args,
-            rng_seed,
-            sim_config,
-            ranked_plan,
-        ) {
-            Ok(stage) => stage,
-            Err(error) => {
-                return InteractiveBuildOutcome::Finished(MissionOutcome::new(
-                    error.campaign,
-                    rng_seed,
-                    sim_config,
-                    Err(error.message),
-                ));
-            }
-        };
+        let mut stage =
+            match loading.load_level(window, campaign, profiles, start, args, ranked_plan) {
+                Ok(stage) => stage,
+                Err(error) => {
+                    return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                        error.campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(error.message),
+                    ));
+                }
+            };
         timer.step("level load");
 
         stage.bootstrap.report_spellforge_startup();
@@ -2183,10 +2194,12 @@ mod tests {
             &bootstrap.loaded.replay_campaign,
             std::sync::Arc::new(bootstrap.loaded.assets),
             &args,
-            &descriptor.mission_basename,
-            descriptor.clone(),
-            0,
-            bootstrap.loaded.engine_sim_config,
+            super::super::replay_init::ReplayMissionIdentity {
+                mission_id: &descriptor.mission_basename,
+                mission_assets: descriptor.clone(),
+                rng_seed: 0,
+                sim_config: bootstrap.loaded.engine_sim_config,
+            },
             false,
             None,
         )

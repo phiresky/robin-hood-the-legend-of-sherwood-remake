@@ -329,6 +329,15 @@ pub(crate) fn continuation_writer(
     })
 }
 
+/// Identity of the mission a replay records or must match on playback: the
+/// fields a replay header pins before Engine construction.
+pub(super) struct ReplayMissionIdentity<'a> {
+    pub(super) mission_id: &'a str,
+    pub(super) mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
+    pub(super) rng_seed: u64,
+    pub(super) sim_config: robin_engine::engine::SimConfig,
+}
+
 /// Bundle of determinism-related mission state built by
 /// [`init_replay_and_rollback`] — replay recorder, replay player,
 /// rollback checker, and the hold-to-rewind snapshot buffer.
@@ -364,13 +373,16 @@ pub(super) fn init_replay_and_rollback(
     replay_campaign: &robin_engine::campaign::Campaign,
     assets: Arc<LevelAssets>,
     args: &crate::main_entry::MissionRequest,
-    mission_id: &str,
-    mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
-    engine_rng_seed: u64,
-    engine_sim_config: robin_engine::engine::SimConfig,
+    mission: ReplayMissionIdentity<'_>,
     is_multiplayer: bool,
     prepared_recorder: Option<crate::replay_recording::SharedReplayRecorder>,
 ) -> Result<ReplayAndRollback, super::MissionError> {
+    let ReplayMissionIdentity {
+        mission_id,
+        mission_assets,
+        rng_seed: engine_rng_seed,
+        sim_config: engine_sim_config,
+    } = mission;
     // Every queued replay must be converted into `args.replay_data` before
     // mission construction. Reseeding an already-built Engine cannot recreate
     // random draws performed during level initialization.
@@ -573,13 +585,15 @@ mod tests {
             &Default::default(),
             Arc::new(LevelAssets::new()),
             &args,
-            "Fixture",
-            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
-                "Fixture", "Fixture", "Fixture",
-            )
-            .unwrap(),
-            0,
-            Default::default(),
+            ReplayMissionIdentity {
+                mission_id: "Fixture",
+                mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                    "Fixture", "Fixture", "Fixture",
+                )
+                .unwrap(),
+                rng_seed: 0,
+                sim_config: Default::default(),
+            },
             false,
             None,
         )

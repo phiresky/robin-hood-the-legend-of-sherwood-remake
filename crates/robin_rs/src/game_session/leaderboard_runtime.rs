@@ -571,14 +571,16 @@ fn signed_admission_boards(
         }
     };
     let boards = metric_boards(
-        LeaderboardQuerySubjectV1::Mission,
-        Some(mission_id.to_owned()),
-        Some(category),
-        config.content_manifest_sha256,
-        config.rules_config_sha256,
-        config.ruleset_manifest_sha256,
-        config.competition_manifest_sha256,
-        None,
+        BoardQueryIdentity {
+            subject_kind: LeaderboardQuerySubjectV1::Mission,
+            mission_id: Some(mission_id.to_owned()),
+            mission_scope: Some(category),
+            content_identity_sha256: config.content_manifest_sha256,
+            rules_config_sha256: config.rules_config_sha256,
+            ruleset_manifest_sha256: config.ruleset_manifest_sha256,
+            competition_manifest_sha256: config.competition_manifest_sha256,
+            max_concurrent_players: None,
+        },
         &signed.requested_metrics,
     );
     if boards.is_empty() {
@@ -647,14 +649,16 @@ fn browse_boards(
         .flatten();
     let subject = LeaderboardQuerySubjectV1::Mission;
     let mut boards = metric_boards(
-        subject,
-        Some(mission_id.to_owned()),
-        Some(category),
-        mission.content_manifest_sha256,
-        ruleset.rules_config_sha256,
-        ruleset.ruleset_manifest_sha256,
-        None,
-        max_players,
+        BoardQueryIdentity {
+            subject_kind: subject,
+            mission_id: Some(mission_id.to_owned()),
+            mission_scope: Some(category),
+            content_identity_sha256: mission.content_manifest_sha256,
+            rules_config_sha256: ruleset.rules_config_sha256,
+            ruleset_manifest_sha256: ruleset.ruleset_manifest_sha256,
+            competition_manifest_sha256: None,
+            max_concurrent_players: max_players,
+        },
         &ruleset.metrics,
     );
     if let Some(competition) = select_competition(
@@ -671,14 +675,16 @@ fn browse_boards(
             tab: LeaderboardTab::Challenge,
             label: competition.manifest.display_name.clone(),
             query: query(
-                subject,
-                Some(mission_id.to_owned()),
-                Some(category),
-                mission.content_manifest_sha256,
-                competition.manifest.rules_config_sha256,
-                competition.manifest.ruleset_manifest_sha256,
-                Some(competition.competition_manifest_sha256),
-                max_players,
+                BoardQueryIdentity {
+                    subject_kind: subject,
+                    mission_id: Some(mission_id.to_owned()),
+                    mission_scope: Some(category),
+                    content_identity_sha256: mission.content_manifest_sha256,
+                    rules_config_sha256: competition.manifest.rules_config_sha256,
+                    ruleset_manifest_sha256: competition.manifest.ruleset_manifest_sha256,
+                    competition_manifest_sha256: Some(competition.competition_manifest_sha256),
+                    max_concurrent_players: max_players,
+                },
                 competition.manifest.metric,
             ),
         });
@@ -704,14 +710,16 @@ fn authorized_boards(
         }
     };
     let mut boards = metric_boards(
-        LeaderboardQuerySubjectV1::Mission,
-        Some(request.mission_id.clone()),
-        Some(category),
-        ranked.content_manifest_sha256,
-        ranked.rules_config_sha256,
-        ranked.ruleset_manifest_sha256,
-        None,
-        Some(request.max_concurrent_players),
+        BoardQueryIdentity {
+            subject_kind: LeaderboardQuerySubjectV1::Mission,
+            mission_id: Some(request.mission_id.clone()),
+            mission_scope: Some(category),
+            content_identity_sha256: ranked.content_manifest_sha256,
+            rules_config_sha256: ranked.rules_config_sha256,
+            ruleset_manifest_sha256: ranked.ruleset_manifest_sha256,
+            competition_manifest_sha256: None,
+            max_concurrent_players: Some(request.max_concurrent_players),
+        },
         &input.requested_metrics,
     );
     if let Some(competition_sha256) = request.competition_manifest_sha256 {
@@ -729,14 +737,16 @@ fn authorized_boards(
                 tab: LeaderboardTab::Challenge,
                 label: competition.manifest.display_name.clone(),
                 query: query(
-                    LeaderboardQuerySubjectV1::Mission,
-                    Some(request.mission_id.clone()),
-                    Some(category),
-                    ranked.content_manifest_sha256,
-                    ranked.rules_config_sha256,
-                    ranked.ruleset_manifest_sha256,
-                    Some(competition_sha256),
-                    Some(request.max_concurrent_players),
+                    BoardQueryIdentity {
+                        subject_kind: LeaderboardQuerySubjectV1::Mission,
+                        mission_id: Some(request.mission_id.clone()),
+                        mission_scope: Some(category),
+                        content_identity_sha256: ranked.content_manifest_sha256,
+                        rules_config_sha256: ranked.rules_config_sha256,
+                        ruleset_manifest_sha256: ranked.ruleset_manifest_sha256,
+                        competition_manifest_sha256: Some(competition_sha256),
+                        max_concurrent_players: Some(request.max_concurrent_players),
+                    },
                     competition.manifest.metric,
                 ),
             });
@@ -750,7 +760,9 @@ fn authorized_boards(
     Ok(boards)
 }
 
-fn metric_boards(
+/// Every facet of a leaderboard query except its metric.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BoardQueryIdentity {
     subject_kind: LeaderboardQuerySubjectV1,
     mission_id: Option<String>,
     mission_scope: Option<BoardCategoryV1>,
@@ -759,8 +771,9 @@ fn metric_boards(
     ruleset_manifest_sha256: robin_run_protocol::Digest32,
     competition_manifest_sha256: Option<robin_run_protocol::Digest32>,
     max_concurrent_players: Option<u16>,
-    metrics: &[BoardMetricV1],
-) -> Vec<MissionEndBoard> {
+}
+
+fn metric_boards(identity: BoardQueryIdentity, metrics: &[BoardMetricV1]) -> Vec<MissionEndBoard> {
     [
         (BoardMetricV1::OriginalScore, LeaderboardTab::Score, "Score"),
         (BoardMetricV1::FastestSuccess, LeaderboardTab::Time, "Time"),
@@ -770,32 +783,22 @@ fn metric_boards(
     .map(|(metric, tab, label)| MissionEndBoard {
         tab,
         label: label.to_owned(),
-        query: query(
-            subject_kind,
-            mission_id.clone(),
-            mission_scope,
-            content_identity_sha256,
-            rules_config_sha256,
-            ruleset_manifest_sha256,
-            competition_manifest_sha256,
-            max_concurrent_players,
-            metric,
-        ),
+        query: query(identity.clone(), metric),
     })
     .collect()
 }
 
-fn query(
-    subject_kind: LeaderboardQuerySubjectV1,
-    mission_id: Option<String>,
-    mission_scope: Option<BoardCategoryV1>,
-    content_identity_sha256: robin_run_protocol::Digest32,
-    rules_config_sha256: robin_run_protocol::Digest32,
-    ruleset_manifest_sha256: robin_run_protocol::Digest32,
-    competition_manifest_sha256: Option<robin_run_protocol::Digest32>,
-    max_concurrent_players: Option<u16>,
-    metric: BoardMetricV1,
-) -> LeaderboardQueryV1 {
+fn query(identity: BoardQueryIdentity, metric: BoardMetricV1) -> LeaderboardQueryV1 {
+    let BoardQueryIdentity {
+        subject_kind,
+        mission_id,
+        mission_scope,
+        content_identity_sha256,
+        rules_config_sha256,
+        ruleset_manifest_sha256,
+        competition_manifest_sha256,
+        max_concurrent_players,
+    } = identity;
     LeaderboardQueryV1 {
         schema_version: SCHEMA_VERSION_V1,
         subject_kind,

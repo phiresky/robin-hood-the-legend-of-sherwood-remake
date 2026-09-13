@@ -836,11 +836,13 @@ mod tests {
             &address,
             [9; 32],
             2_000_000_000,
-            crate::multiplayer::join_ticket::BrowserContentEdition::Full,
-            "01".repeat(32),
-            "Custom_MP".to_owned(),
-            None,
-            2,
+            crate::multiplayer::join_ticket::BrowserJoinTicketContent {
+                content_edition: crate::multiplayer::join_ticket::BrowserContentEdition::Full,
+                content_identity_sha256: "01".repeat(32),
+                mission_id: "Custom_MP".to_owned(),
+                mission_profile_id: None,
+                expected_players: 2,
+            },
         )
         .unwrap();
         let code = ticket.encode();

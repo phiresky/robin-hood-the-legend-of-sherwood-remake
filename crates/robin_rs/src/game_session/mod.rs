@@ -114,8 +114,8 @@ use runtime::{
     MissionPresentationPhase, MissionRuntime, MissionWorld,
 };
 use tick::{
-    dismiss_pending_modals, drain_steps, modal_state_pending, post_render_engine_cleanup,
-    pre_render_engine_setup, sync_render_camera,
+    StepUiGates, dismiss_pending_modals, drain_steps, modal_state_pending,
+    post_render_engine_cleanup, pre_render_engine_setup, sync_render_camera,
 };
 
 use crate::app_effect::{AppEffect, SoundMode};
@@ -565,11 +565,13 @@ async fn run_session_body(
             callbacks,
             campaign,
             profiles,
-            mission_idx,
-            location,
+            MissionStart {
+                mission_idx,
+                location,
+                rng_seed: authoritative_rng_seed,
+                sim_config: authoritative_sim_config,
+            },
             mission_args,
-            authoritative_rng_seed,
-            authoritative_sim_config,
             MultiplayerSetupFailurePolicy::ReturnToMenu,
         )
         .await;
@@ -721,30 +723,26 @@ async fn run_session_body(
     }
 }
 
+/// Which mission to construct and the deterministic simulation it starts
+/// with. Restart and replay admission replace all four together.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct MissionStart {
+    pub(crate) mission_idx: usize,
+    pub(crate) location: MissionLocation,
+    pub(crate) rng_seed: u64,
+    pub(crate) sim_config: engine_api::SimConfig,
+}
+
 pub(crate) async fn run_mission(
     window: &mut GameWindow,
     callbacks: &mut RustCallbacks,
     campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
-    mission_idx: usize,
-    location: MissionLocation,
+    start: MissionStart,
     args: crate::main_entry::MissionRequest,
-    rng_seed: u64,
-    sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
     retirement::run(callbacks, async move |callbacks| {
-        run_mission_body(
-            window,
-            callbacks,
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            args,
-            rng_seed,
-            sim_config,
-        )
-        .await
+        run_mission_body(window, callbacks, campaign, profiles, start, args).await
     })
     .await
 }
@@ -754,12 +752,15 @@ async fn run_mission_body(
     callbacks: &mut RustCallbacks,
     mut campaign: Campaign,
     profiles: &mut engine_profiles::ProfileManager,
-    mut mission_idx: usize,
-    mut location: MissionLocation,
+    start: MissionStart,
     mut args: crate::main_entry::MissionRequest,
-    mut rng_seed: u64,
-    mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
+    let MissionStart {
+        mut mission_idx,
+        mut location,
+        mut rng_seed,
+        mut sim_config,
+    } = start;
     if let Some(error) = unprepared_replay_launch_error(&args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
@@ -792,11 +793,13 @@ async fn run_mission_body(
             callbacks,
             campaign,
             profiles,
-            mission_idx,
-            location,
+            MissionStart {
+                mission_idx,
+                location,
+                rng_seed,
+                sim_config,
+            },
             &args,
-            rng_seed,
-            sim_config,
             MultiplayerSetupFailurePolicy::Fatal,
         )
         .await;
@@ -835,11 +838,8 @@ async fn run_mission_with_seed(
     callbacks: &mut RustCallbacks,
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
-    mission_idx: usize,
-    location: MissionLocation,
+    start: MissionStart,
     args: &crate::main_entry::MissionRequest,
-    rng_seed: u64,
-    sim_config: engine_api::SimConfig,
     multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
 ) -> MissionOutcome {
     let outcome = match InteractiveMissionBuilder::build(
@@ -847,11 +847,8 @@ async fn run_mission_with_seed(
         callbacks,
         campaign,
         profiles,
-        mission_idx,
-        location,
+        start,
         args,
-        rng_seed,
-        sim_config,
         multiplayer_setup_failure_policy,
     )
     .await

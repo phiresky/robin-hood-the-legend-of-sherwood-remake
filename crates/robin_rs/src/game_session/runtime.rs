@@ -438,14 +438,16 @@ impl MissionRuntime {
         drain_post_tick_rpc(
             &mut self.http,
             &mut self.timeline,
-            &mut self.world.host.frontend,
-            &mut self.world.host.audio,
-            &mut self.world.host.effects,
-            &application_context,
-            &self.world.host.transport,
-            &mut self.world.manager.engine,
-            &self.world.assets,
-            &mut self.world.dev,
+            PostTickRpcPhase {
+                frontend: &mut self.world.host.frontend,
+                audio: &mut self.world.host.audio,
+                effects: &mut self.world.host.effects,
+                application_context: &application_context,
+                transport: &self.world.host.transport,
+                engine: &mut self.world.manager.engine,
+                assets: &self.world.assets,
+                dev: &mut self.world.dev,
+            },
             frame,
         );
         self.timeline
@@ -485,6 +487,20 @@ impl MissionRuntime {
     }
 }
 
+/// Borrows admitted at the shared post-tick RPC boundary: host effect domains,
+/// shared transport, and the live engine. `Game`, `EngineManager` and the
+/// aggregate `Host` are deliberately absent.
+pub(super) struct PostTickRpcPhase<'a> {
+    pub(super) frontend: &'a mut crate::host::HostFrontend,
+    pub(super) audio: &'a mut crate::host::HostAudio,
+    pub(super) effects: &'a mut crate::host::HostEffectBatches,
+    pub(super) application_context: &'a crate::host::ApplicationContext,
+    pub(super) transport: &'a crate::host::HostTransport,
+    pub(super) engine: &'a mut Engine,
+    pub(super) assets: &'a LevelAssets,
+    pub(super) dev: &'a mut DevState,
+}
+
 /// Shared post-tick effect/RPC boundary. Neither driver grants access to Game,
 /// EngineManager (snapshot replacement), or the aggregate Host here. Only
 /// presentation/audio effect domains and shared transport access without session
@@ -494,16 +510,19 @@ impl MissionRuntime {
 pub(super) fn drain_post_tick_rpc(
     http: &mut crate::http_server::SessionIngress,
     timeline: &mut TimelineRuntime,
-    frontend: &mut crate::host::HostFrontend,
-    audio: &mut crate::host::HostAudio,
-    effects: &mut crate::host::HostEffectBatches,
-    application_context: &crate::host::ApplicationContext,
-    transport: &crate::host::HostTransport,
-    engine: &mut Engine,
-    assets: &LevelAssets,
-    dev: &mut DevState,
+    phase: PostTickRpcPhase<'_>,
     frame: &mut MissionFrame,
 ) {
+    let PostTickRpcPhase {
+        frontend,
+        audio,
+        effects,
+        application_context,
+        transport,
+        engine,
+        assets,
+        dev,
+    } = phase;
     let pending_actions = frame.unapplied_post_external_actions();
     if !pending_actions.is_empty() {
         crate::sim_timeline::run_post_external_action_stage(
@@ -1673,14 +1692,16 @@ mod tests {
         drain_post_tick_rpc(
             &mut http,
             &mut timeline,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            &mut engine,
-            &assets,
-            &mut dev,
+            PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut engine,
+                assets: &assets,
+                dev: &mut dev,
+            },
             &mut frame,
         );
         assert_eq!(
@@ -1709,14 +1730,16 @@ mod tests {
         drain_post_tick_rpc(
             &mut http,
             &mut timeline,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            &mut engine,
-            &assets,
-            &mut dev,
+            PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut engine,
+                assets: &assets,
+                dev: &mut dev,
+            },
             &mut frame,
         );
         assert_eq!(
@@ -2975,11 +2998,13 @@ mod tests {
         };
         for _ in 0..2 {
             super::super::tick::run_forward_ticks_with_session_modals(
-                &mut seek_manager,
-                &mut seek_host,
-                &assets,
-                &mut dev,
-                &mut seek_game,
+                super::super::tick::StepWorld {
+                    manager: &mut seek_manager,
+                    host: &mut seek_host,
+                    assets: &assets,
+                    dev: &mut dev,
+                    game: &mut seek_game,
+                },
                 &mut seek_runtime,
                 11,
                 &mut policy,

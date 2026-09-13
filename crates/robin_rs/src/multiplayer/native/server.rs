@@ -143,11 +143,13 @@ impl ServerHandle {
             &self.endpoint_addr,
             self.session_id.0,
             try_current_epoch_ms()? / 1000,
-            content_edition,
-            content_identity_sha256,
-            self.mission_id.clone(),
-            mission_profile_id,
-            expected_players,
+            crate::multiplayer::join_ticket::BrowserJoinTicketContent {
+                content_edition,
+                content_identity_sha256,
+                mission_id: self.mission_id.clone(),
+                mission_profile_id,
+                expected_players,
+            },
         )
     }
 

@@ -470,8 +470,10 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         assets,
         host,
         dev,
-        &events,
-        &keyboard_actions,
+        super::input_handlers::ConsoleOverlayInput {
+            events: &events,
+            kb_actions: &keyboard_actions,
+        },
         &mut input.translator,
         frame,
     );

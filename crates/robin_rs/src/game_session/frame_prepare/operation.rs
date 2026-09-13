@@ -102,6 +102,15 @@ fn suppress_load_requests_during_playback(
     }
 }
 
+/// The four process services save/load needs, borrowed individually out of
+/// `MissionServices` so the phase never receives the whole service bag.
+pub(super) struct OperationServices<'a> {
+    pub(super) window: &'a mut GameWindow,
+    pub(super) callbacks: &'a mut RustCallbacks,
+    pub(super) profiles: &'a engine_profiles::ProfileManager,
+    pub(super) args: &'a crate::main_entry::CliArgs,
+}
+
 /// Save/load may replace engine state and render a thumbnail, but receives no
 /// pause/stepping control or leaderboard ownership and no process service bag.
 pub(super) async fn process_operation_and_save(
@@ -109,12 +118,15 @@ pub(super) async fn process_operation_and_save(
     runtime: &mut TimelineRuntime,
     frontend: &mut InteractiveFrontend,
     campaign_transition: &mut Option<crate::main_entry::PendingLevelLoad>,
-    window: &mut GameWindow,
-    callbacks: &mut RustCallbacks,
-    profiles: &engine_profiles::ProfileManager,
-    args: &crate::main_entry::CliArgs,
+    services: OperationServices<'_>,
     prepared: InputPrepared,
 ) -> Result<ControlFlow<FrameControl, SavesPrepared>, MissionError> {
+    let OperationServices {
+        window,
+        callbacks,
+        profiles,
+        args,
+    } = services;
     let PreparationPhaseState {
         mut frame,
         mp_clock_pause,
@@ -208,13 +220,15 @@ pub(super) async fn process_operation_and_save(
             assets,
             dev,
             &mut frame.stage_external_actions(),
-            &mut presentation.renderer,
-            &mut resources.cursor,
-            &mut presentation.sprites.cursor_renderer,
-            &input.threaded,
-            &presentation.sprites.portrait_cache,
+            crate::game_session::render::CursorFrontend {
+                renderer: &presentation.renderer,
+                cursor_res: &mut resources.cursor,
+                cursor_renderer: &mut presentation.sprites.cursor_renderer,
+                threaded_input: &input.threaded,
+                portrait_cache: &presentation.sprites.portrait_cache,
+                last_cursor_id: &mut hud.last_cursor_id,
+            },
             shift_held,
-            &mut hud.last_cursor_id,
         );
         let display_snapshot = host.frontend.presentation.engine_display.clone();
         presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);

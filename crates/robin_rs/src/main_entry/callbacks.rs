@@ -879,12 +879,14 @@ pub(crate) async fn perform_pending_save_load(
         request,
         &mut callbacks.save_manager,
         &mut callbacks.autosave_notices,
-        host,
-        game,
-        engine,
-        assets,
-        profiles,
-        thumbnail.as_ref(),
+        executor::OperationWorld {
+            host,
+            game,
+            engine,
+            assets,
+            profiles,
+            thumb_ref: thumbnail.as_ref(),
+        },
     )
     .await
 }

@@ -257,6 +257,35 @@ enum ScriptedModalMode {
     AutoDismiss,
 }
 
+/// Mission state the normal frame tick and its post-tick RPC drain mutate.
+/// There is deliberately no `EngineManager`: frame execution never replaces
+/// snapshots.
+struct SimulationTickWorld<'a> {
+    host: &'a mut Host,
+    game: &'a mut crate::game::Game,
+    engine: &'a mut robin_engine::engine::Engine,
+    assets: &'a robin_engine::engine::LevelAssets,
+    dev: &'a mut robin_engine::engine::DevState,
+}
+
+/// Admission facts for this frame's manual (debugger) timeline movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ManualStepRequest {
+    /// A terminal mission transition is queued behind this frame.
+    pub(super) terminal_exit_pending: bool,
+    pub(super) keyboard_step: KeyboardStep,
+}
+
+/// Frontend borrows a scripted modal lane needs to construct, tick and draw
+/// its modal. Timeline and snapshot authority stay out by construction.
+struct ScriptedModalFrontend<'a> {
+    window: &'a mut GameWindow,
+    audio: &'a mut super::interactive::MissionAudio,
+    resources: &'a mut super::interactive::MissionResources,
+    ui: &'a mut super::interactive::MissionUi,
+    presentation: &'a mut super::interactive::MissionPresentation,
+}
+
 /// Drain the ordered dialogue -> popup/report -> debriefing lanes. An
 /// interactive frame renders at most one lane; headless map export drains all
 /// lanes without presenting them.
@@ -265,15 +294,18 @@ async fn drive_scripted_modal_lanes(
     game: &Game,
     engine: &robin_engine::engine::Engine,
     profiles: &engine_profiles::ProfileManager,
-    window: &mut GameWindow,
-    audio: &mut super::interactive::MissionAudio,
-    resources: &mut super::interactive::MissionResources,
-    ui: &mut super::interactive::MissionUi,
-    presentation: &mut super::interactive::MissionPresentation,
+    frontend: ScriptedModalFrontend<'_>,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     mut rendered: bool,
 ) -> bool {
+    let ScriptedModalFrontend {
+        window,
+        audio,
+        resources,
+        ui,
+        presentation,
+    } = frontend;
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
     if !rendered
         && ui.active_modal.is_none()
@@ -484,15 +516,18 @@ fn drive_leave_mission_prompt(
     host: &mut Host,
     engine: &robin_engine::engine::Engine,
     assets: &robin_engine::engine::LevelAssets,
-    window: &mut GameWindow,
-    audio: &mut super::interactive::MissionAudio,
-    resources: &mut super::interactive::MissionResources,
-    ui: &mut super::interactive::MissionUi,
-    presentation: &mut super::interactive::MissionPresentation,
+    frontend: ScriptedModalFrontend<'_>,
     frame: &mut MissionFrame,
     mode: ScriptedModalMode,
     rendered: bool,
 ) -> bool {
+    let ScriptedModalFrontend {
+        window,
+        audio,
+        resources,
+        ui,
+        presentation,
+    } = frontend;
     if rendered
         || (!host.effects.has_signal(HostSignal::MissionStatePopup) && ui.active_modal.is_none())
     {
@@ -650,11 +685,13 @@ impl InteractiveFrameSimulation {
         let tick_exit_code = Self::advance_timeline(
             http,
             runtime,
-            host,
-            game,
-            &mut manager.engine,
-            assets,
-            dev,
+            SimulationTickWorld {
+                host: &mut *host,
+                game: &mut *game,
+                engine: &mut manager.engine,
+                assets,
+                dev: &mut *dev,
+            },
             &mut frame,
             execution,
         );
@@ -862,13 +899,15 @@ impl InteractiveFrameSimulation {
                     assets.as_ref(),
                     dev,
                     &mut frame.stage_post_external_actions(),
-                    &mut presentation.renderer,
-                    &mut resources.cursor,
-                    &mut presentation.sprites.cursor_renderer,
-                    &input.threaded,
-                    &presentation.sprites.portrait_cache,
+                    super::render::CursorFrontend {
+                        renderer: &presentation.renderer,
+                        cursor_res: &mut resources.cursor,
+                        cursor_renderer: &mut presentation.sprites.cursor_renderer,
+                        threaded_input: &input.threaded,
+                        portrait_cache: &presentation.sprites.portrait_cache,
+                        last_cursor_id: &mut hud.last_cursor_id,
+                    },
                     shift_held,
-                    &mut hud.last_cursor_id,
                 );
                 let display_snapshot = host.frontend.presentation.engine_display.clone();
                 presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
@@ -1226,11 +1265,13 @@ impl InteractiveFrameSimulation {
                 game,
                 &manager.engine,
                 profiles,
-                window,
-                audio,
-                resources,
-                ui,
-                presentation,
+                ScriptedModalFrontend {
+                    window: &mut *window,
+                    audio: &mut *audio,
+                    resources: &mut *resources,
+                    ui: &mut *ui,
+                    presentation: &mut *presentation,
+                },
                 &mut frame,
                 ScriptedModalMode::Interactive,
                 modal_rendered_this_frame,
@@ -1247,11 +1288,13 @@ impl InteractiveFrameSimulation {
                 host,
                 &manager.engine,
                 assets.as_ref(),
-                window,
-                audio,
-                resources,
-                ui,
-                presentation,
+                ScriptedModalFrontend {
+                    window: &mut *window,
+                    audio: &mut *audio,
+                    resources: &mut *resources,
+                    ui: &mut *ui,
+                    presentation: &mut *presentation,
+                },
                 &mut frame,
                 modal_mode,
                 modal_rendered_this_frame,
@@ -1380,14 +1423,17 @@ impl InteractiveFrameSimulation {
     fn advance_timeline(
         http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
-        host: &mut Host,
-        game: &mut crate::game::Game,
-        engine: &mut robin_engine::engine::Engine,
-        assets: &robin_engine::engine::LevelAssets,
-        dev: &mut robin_engine::engine::DevState,
+        world: SimulationTickWorld<'_>,
         frame: &mut MissionFrame,
         execution: FrameExecutionMode,
     ) -> Option<GameCode> {
+        let SimulationTickWorld {
+            host,
+            game,
+            engine,
+            assets,
+            dev,
+        } = world;
         // ── Record frame commands + periodic state hash ──
         // The matching `recorder.end_frame()` runs after the modal
         // drain block so `ModalDismiss` entries land in the same
@@ -1460,14 +1506,16 @@ impl InteractiveFrameSimulation {
         super::runtime::drain_post_tick_rpc(
             http,
             runtime,
-            &mut host.frontend,
-            &mut host.audio,
-            &mut host.effects,
-            &application_context,
-            &host.transport,
-            engine,
-            assets,
-            dev,
+            super::runtime::PostTickRpcPhase {
+                frontend: &mut host.frontend,
+                audio: &mut host.audio,
+                effects: &mut host.effects,
+                application_context: &application_context,
+                transport: &host.transport,
+                engine: &mut *engine,
+                assets,
+                dev: &mut *dev,
+            },
             frame,
         );
 
@@ -1502,12 +1550,9 @@ impl InteractiveFrameSimulation {
         save_manager: &crate::savegame::SaveGameManager,
         mutation: super::runtime::MissionMutation<'_>,
         manual_pause: &mut bool,
-        ui: &mut super::interactive::MissionUi,
+        frontend: &mut super::interactive::InteractiveFrontend,
         window: &crate::window::GameWindow,
-        presentation: &mut super::interactive::MissionPresentation,
-        input: &mut super::interactive::MissionInput,
-        terminal_exit_pending: bool,
-        keyboard_step: KeyboardStep,
+        request: ManualStepRequest,
     ) {
         // ── Pending `/step-forward` / `/step-back` requests ──
         let super::runtime::MissionMutation {
@@ -1517,6 +1562,16 @@ impl InteractiveFrameSimulation {
             assets,
             dev,
         } = mutation;
+        let super::interactive::InteractiveFrontend {
+            ui,
+            presentation,
+            input,
+            ..
+        } = frontend;
+        let ManualStepRequest {
+            terminal_exit_pending,
+            keyboard_step,
+        } = request;
         // Run each queued step synchronously with its own tick +
         // bookkeeping (forward) or rewind-buffer seek (back).  These
         // requests intentionally bypass the `paused` gate — their whole
@@ -1546,11 +1601,13 @@ impl InteractiveFrameSimulation {
             },
             runtime,
             manual_pause,
-            &mut ui.active_modal,
-            ui.terminal_debriefing.as_mut(),
-            Some(save_manager),
-            mission_ui_block_reason,
-            None,
+            StepUiGates {
+                active_modal: &mut ui.active_modal,
+                terminal_debriefing: ui.terminal_debriefing.as_mut(),
+                terminal_save_manager: Some(save_manager),
+                mission_ui_block_reason,
+                session_modals: None,
+            },
             |policy| {
                 let Some(kind) = active_ui_task.as_ref().map(ActiveUiTask::kind) else {
                     return Ok(());
@@ -1780,11 +1837,13 @@ mod tests {
             InteractiveFrameSimulation::advance_timeline(
                 &mut http,
                 &mut timeline,
-                &mut host,
-                &mut game,
-                &mut engine,
-                &assets,
-                &mut dev,
+                super::SimulationTickWorld {
+                    host: &mut host,
+                    game: &mut game,
+                    engine: &mut engine,
+                    assets: &assets,
+                    dev: &mut dev,
+                },
                 &mut frame,
                 mode,
             );

@@ -85,19 +85,34 @@ fn begin_interactive_frame(
     })
 }
 
+/// This frame's camera-relevant input and the focus gates that suppress it.
+struct HostViewInput<'a> {
+    mouse_position: engine_coordinates::ScreenPoint,
+    keyboard_actions: &'a [GameAction],
+    mouse_actions: &'a [GameAction],
+    events: &'a [GameEvent],
+    /// Console or pause menu owns keyboard/mouse view actions.
+    view_suppressed: bool,
+    /// Touch panning is additionally off when the preference disables it.
+    pan_suppressed: bool,
+}
+
 /// Apply host-only camera controls. These deliberately remain available while
 /// deterministic replay or rewind suppresses simulation commands.
 fn apply_host_view_input(
     host: &mut Host,
     engine: &Engine,
     hud: &crate::game_session::interactive::MissionHud,
-    mouse_position: engine_coordinates::ScreenPoint,
-    keyboard_actions: &[GameAction],
-    mouse_actions: &[GameAction],
-    events: &[GameEvent],
-    view_suppressed: bool,
-    pan_suppressed: bool,
+    view: HostViewInput<'_>,
 ) {
+    let HostViewInput {
+        mouse_position,
+        keyboard_actions,
+        mouse_actions,
+        events,
+        view_suppressed,
+        pan_suppressed,
+    } = view;
     let now_ms = crate::window::process_uptime_ms();
     if pan_suppressed || engine.user_locked() {
         host.frontend.viewport.cancel_touch_motion();
@@ -463,20 +478,20 @@ pub(super) async fn collect_input_and_menus(
     // so they're safe during replay playback and rewind, when the
     // user wants to pan/zoom around the paused world.  Suppressed
     // only when the console or the pause menu has focus.
-    apply_host_view_input(
-        host,
-        engine,
-        hud,
-        input.threaded.position(),
-        &kb_actions,
-        &mouse_actions,
-        &events,
-        ui.console_overlay.is_visible() || ui.pause_menu.is_some() || pause_closed_this_frame,
-        ui.console_overlay.is_visible()
+    let view = HostViewInput {
+        mouse_position: input.threaded.position(),
+        keyboard_actions: &kb_actions,
+        mouse_actions: &mouse_actions,
+        events: &events,
+        view_suppressed: ui.console_overlay.is_visible()
+            || ui.pause_menu.is_some()
+            || pause_closed_this_frame,
+        pan_suppressed: ui.console_overlay.is_visible()
             || ui.pause_menu.is_some()
             || pause_closed_this_frame
             || !host.frontend.preferences().touch_camera_gestures(),
-    );
+    };
+    apply_host_view_input(host, engine, hud, view);
 
     // ── Skip all sim-affecting input during replay / rewind ──
     // Recorded commands are injected at the tick boundary instead

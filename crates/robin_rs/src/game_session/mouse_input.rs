@@ -189,9 +189,9 @@ fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
 
 // ─── Per-event handlers ─────────────────────────────────────────────
 
-/// Left-mouse-down: begin drags (multi-selection box, swordfight
-/// gesture polyline, per-action drag) and route minimap presses.
 impl MouseCtx<'_> {
+    /// Left-mouse-down: begin drags (multi-selection box, swordfight
+    /// gesture polyline, per-action drag) and route minimap presses.
     fn on_left_mouse_down(&mut self, mx: i32, my: i32, clicks: u8) {
         let (engine, assets) = (self.engine, self.assets);
         let planning_held = self.modifiers.plan;
@@ -615,14 +615,14 @@ impl MouseCtx<'_> {
     }
 }
 
-/// Left-mouse-up on a portrait: quick-action slots, macro commit,
-/// Shield/Heal portrait targeting, burned-portrait widgets, and
-/// portrait (re)selection.
-///
-/// Returns `true` when the click was fully consumed and the caller
-/// must skip its trailing multi-selection cleanup (the paths that were
-/// `continue` statements before extraction).
 impl MouseCtx<'_> {
+    /// Left-mouse-up on a portrait: quick-action slots, macro commit,
+    /// Shield/Heal portrait targeting, burned-portrait widgets, and
+    /// portrait (re)selection.
+    ///
+    /// Returns `true` when the click was fully consumed and the caller
+    /// must skip its trailing multi-selection cleanup (the paths that were
+    /// `continue` statements before extraction).
     fn on_portrait_click(&mut self, hit: &ui_panel::PortraitHit, is_double: bool) -> bool {
         let engine = self.engine;
         let host = &mut *self.host;
@@ -1143,9 +1143,9 @@ fn portrait_action_right_click(
     }
 }
 
-/// Left-mouse-up on the world (no portrait hit): swordfight-gesture
-/// commit or the regular left-click resolver.
 impl MouseCtx<'_> {
+    /// Left-mouse-up on the world (no portrait hit): swordfight-gesture
+    /// commit or the regular left-click resolver.
     fn on_world_click(&mut self, mx: i32, my: i32, is_double: bool) {
         let (engine, assets) = (self.engine, self.assets);
         let InputModifiers {

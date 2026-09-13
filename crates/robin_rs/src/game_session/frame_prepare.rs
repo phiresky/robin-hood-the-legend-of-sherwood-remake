@@ -113,10 +113,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             timeline,
             frontend,
             campaign_transition,
-            services.window,
-            services.callbacks,
-            services.profiles,
-            &services.args.config.cli,
+            operation::OperationServices {
+                window: &mut *services.window,
+                callbacks: &mut *services.callbacks,
+                profiles: services.profiles,
+                args: &services.args.config.cli,
+            },
             input,
         )
         .await?

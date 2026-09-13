@@ -1,6 +1,5 @@
 //! Complete ownership and policy for a loaded true-headless mission.
 
-use super::drain_steps;
 use super::modal_state::ActiveModal;
 use super::multiplayer::drain_mission_network;
 use super::runtime::{
@@ -8,6 +7,7 @@ use super::runtime::{
     MissionIngress, MissionRuntime, TickPolicy,
 };
 use super::session_policy::SessionModalScheduler;
+use super::{StepUiGates, drain_steps};
 use crate::multiplayer::current_epoch_ms;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
@@ -375,11 +375,13 @@ impl HeadlessMission {
             world.mutation(),
             timeline,
             &mut control.manual_pause,
-            &mut active_modal,
-            None,
-            None,
-            None,
-            Some(&mut self.modals),
+            StepUiGates {
+                active_modal: &mut active_modal,
+                terminal_debriefing: None,
+                terminal_save_manager: None,
+                mission_ui_block_reason: None,
+                session_modals: Some(&mut self.modals),
+            },
             |_| Ok(()),
         );
     }
