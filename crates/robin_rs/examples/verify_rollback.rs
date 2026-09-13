@@ -42,6 +42,14 @@ fn main() -> anyhow::Result<()> {
         .data_dir
         .or_else(|| std::env::var_os("ROBINHOOD_DATA_DIR").map(PathBuf::from))
     {
+        // Same root validation and diagnostics as the original-data tests.
+        robin_test_support::original_data::resolve_data_path_from(
+            Some(dir.as_os_str()),
+            Path::new("Data"),
+            robin_test_support::original_data::FixtureKind::Directory,
+        )
+        .map_err(anyhow::Error::msg)
+        .with_context(|| format!("open Original data root {}", dir.display()))?;
         // TODO: replace this tool's process-wide bootstrap once all downstream
         // Original profile, sprite-bank and mission loaders accept an explicit filesystem.
         std::env::set_current_dir(&dir)
