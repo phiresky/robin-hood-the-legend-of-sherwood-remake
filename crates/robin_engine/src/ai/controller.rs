@@ -4014,7 +4014,21 @@ impl AiController {
     /// set `already_turned` so `end_think` fires a same-frame
     /// `EVENT_DONE` re-entry instead of queuing a no-op Turn order.
     pub fn face_direction(&mut self, direction: u16, ctx: &AiContext) {
-        if direction == ctx.direction && Self::face_to_same_direction_can_short_circuit(ctx) {
+        self.face_direction_from_actor(direction, ctx.direction, ctx.self_action_state);
+    }
+
+    fn face_direction_from_actor(
+        &mut self,
+        direction: u16,
+        current_direction: u16,
+        action_state: crate::element::ActionState,
+    ) {
+        if direction == current_direction
+            && matches!(
+                action_state,
+                crate::element::ActionState::Waiting | crate::element::ActionState::Bored
+            )
+        {
             self.already_turned = true;
             self.completion_latch_inside_think = self.think_recursion_depth > 0;
             return;
@@ -4749,10 +4763,15 @@ impl AiController {
     }
 
     /// Receive a facing direction from the patrol chief.
-    pub fn set_instructed_patrol_direction(&mut self, direction: u16, ctx: &AiContext) {
+    pub fn set_instructed_patrol_direction(
+        &mut self,
+        direction: u16,
+        current_direction: u16,
+        action_state: crate::element::ActionState,
+    ) {
         self.patrol_direction = direction;
         if self.current_substate == Substate::DefaultPatrolEnrouteWaiting {
-            self.face_direction(direction, ctx);
+            self.face_direction_from_actor(direction, current_direction, action_state);
         }
     }
 

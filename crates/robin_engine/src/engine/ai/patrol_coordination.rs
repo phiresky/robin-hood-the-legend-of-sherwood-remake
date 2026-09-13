@@ -1,582 +1,227 @@
 use super::*;
 
 impl EngineInner {
-    // ─── Patrol coordination ───────────────────────────────────
+    /// Apply facing from the two actor values it actually reads. In particular,
+    /// this runs after coordinate Think, so callback changes are visible.
+    fn instruct_patrol_direction(&mut self, member: EntityId, direction: u16) {
+        let entity = self
+            .world
+            .entities
+            .expect_entity(member, format_args!("patrol direction member"));
+        let current_direction = entity.element_data().direction() as u16;
+        let action_state = entity
+            .actor_data()
+            .expect("patrol member has no actor data")
+            .action_state;
+        self.world
+            .entities
+            .expect_ai_controller_mut(member, format_args!("patrol direction member"))
+            .set_instructed_patrol_direction(direction, current_direction, action_state);
+    }
 
-    /// Close `CMD_PATROL_DIRECTION` at the macro owner's synchronous engine
-    /// boundary. Original iterates the live patrol immediately and each
-    /// waiting member may turn to face a direction before the macro advances.
     pub(in crate::engine) fn drain_patrol_direction_broadcast_for(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         owner: EntityId,
         assets: &LevelAssets,
     ) {
-        let (direction, members) = {
-            let Some(entity) = self.world.entities.get_mut(owner) else {
-                return;
-            };
-            let Some(ai) = entity.ai_controller_mut() else {
-                return;
-            };
-            let Some(direction) = ai.outbox.patrol.direction_broadcast.take() else {
-                return;
-            };
-            (direction, ai.patrol.clone())
+        let Some(ai) = self
+            .world
+            .entities
+            .get_mut(owner)
+            .and_then(Entity::ai_controller_mut)
+        else {
+            return;
         };
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
-        for member in members {
-            let in_uninterruptible_command = self.is_very_very_busy(member);
-            let building_sector = self.entity_building_sector(
-                self.world
-                    .entities
-                    .expect_entity(
-                        member,
-                        format_args!("patrol direction owner {} member", owner.index()),
-                    )
-                    .element_data()
-                    .sector(),
-            );
-            let entity = self.world.entities.expect_entity(
-                member,
-                format_args!("patrol direction owner {} member", owner.index()),
-            );
-            let mut ctx = self.ai_context_from_entity(
-                entity,
-                self.control.frame_counter,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            ctx.in_uninterruptible_command = in_uninterruptible_command;
-            self.world
+        let Some(direction) = ai.outbox.patrol.direction_broadcast.take() else {
+            return;
+        };
+        let member_count = ai.patrol.len();
+        for index in 0..member_count {
+            let member = *self
+                .world
                 .entities
-                .expect_ai_controller_mut(
-                    member,
-                    format_args!(
-                        "patrol direction member {} lost AI for owner {}",
-                        member.index(),
-                        owner.index()
-                    ),
-                )
-                .set_instructed_patrol_direction(direction, &ctx);
-            // Patrol-direction selection requests facing synchronously, but
-            // Facing only registers its turn element with the sequence manager.
-            // A patrol direction broadcast can run from the chief's actor
-            // slot, after sequence-manager updates have already run for
-            // this frame. Close the member's AI side effects now while
-            // leaving the registered Turn uninstructed until the next
-            // sequence-manager pass.
+                .expect_ai_controller(owner, format_args!("patrol direction chief"))
+                .patrol
+                .get(index)
+                .expect("patrol shrank during direction callback");
+            self.instruct_patrol_direction(member, direction);
+            // Register turns now; owner instruction belongs to the later
+            // sequence-manager pass, as with coordinate Think below.
             self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
         }
     }
 
-    /// Per-frame patrol coordination tick.
-    ///
-    /// The chief-side patrol management of the base AI class:
-    /// 1. **`initialize_patrol`** — build active patrol from
-    ///    theoretical members (check state, sort by distance,
-    ///    pair-swap) on the `needs_patrol_reinit` one-shot flag.
-    /// 2. **`refresh_patrol`** — every frame record chief history,
-    ///    every 8th frame compute formation positions and dispatch
-    ///    `CALL_PATROL_COORDINATE` to each minion.
-    ///
-    /// `transform_patrol_ids_to_real_patrol` is no longer part of
-    /// this tick — it lives in `EngineInner::init_one_ai`, invoked
-    /// once at AI bootstrap.
+    /// Run one chief's patrol refresh. Only authored formation destinations and
+    /// dispatch arguments cross callbacks; actors and obstacles are read from
+    /// their owners, without an all-NPC patrol snapshot.
     pub(in crate::engine) fn tick_patrol_coordination_for_npc(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
         owner: EntityId,
     ) {
-        use crate::ai::{AiState, Position, Stimulus, StimulusType, Substate};
+        use crate::ai::{AiState, Stimulus, StimulusType, Substate};
 
-        if self.actors_frozen() {
+        if self.actors_frozen() || self.is_very_very_busy(owner) {
             return;
         }
-        let has_patrol_work = self
+        let Some(ai) = self
             .world
             .entities
             .get(owner)
             .and_then(Entity::ai_controller)
-            .is_some_and(|ai| {
-                ai.needs_patrol_reinit
-                    || !ai.patrol.is_empty()
-                    || !ai.missed_patrol_members.is_empty()
-            });
-        if !has_patrol_work {
+        else {
+            return;
+        };
+        if !ai.needs_patrol_reinit && ai.patrol.is_empty() && ai.missed_patrol_members.is_empty() {
             return;
         }
-        if self.is_very_very_busy(owner) {
+        if ai.needs_patrol_reinit {
+            let theoretical = ai.theoretical_patrol.clone();
+            self.assemble_patrol_for_npc(assets, owner, &theoretical);
+        }
+
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("patrol chief"));
+        if (ai.patrol.is_empty() && ai.missed_patrol_members.is_empty())
+            || ai.patrol_stopped
+            || ai.current_state != AiState::Default
+            || ai.current_substate == Substate::DefaultPatrolChiefReturnToPatrol
+            || ai.patrol_path.is_none()
+        {
             return;
         }
-        let scratch = self.build_owner_context_scratch_without_forecast(assets);
 
         let frame = self.control.frame_counter;
-        let all_npc_ids: Vec<_> = self.world.entities.ai_owner_ids().collect();
-        let npc_ids = [owner];
-
-        // ── Phase 2: Snapshot NPC states ──
-        // Needed for patrol initialization and missed-member checks.
-        #[derive(Clone, Copy)]
-        struct NpcSnap {
-            position: Position,
-            detection_position_world: crate::coordinates::WorldPoint3D,
-            direction: u16,
-            ground_z: f32,
-            posture: crate::element::Posture,
-            is_rider: bool,
-            in_building: bool,
-            ai_state: AiState,
-            is_alive: bool,
-            is_active: bool,
-            real_view_radius: u16,
-            move_box: crate::coordinates::MoveBox,
-            // Missed-member reacquisition checks assistance eligibility.
-            // Civilians cannot assist; soldiers depend on their state/substate.
-            is_able_to_help: bool,
-            // Patrol admit gate (`initialize_patrol`):
-            // `is_civilian() || is_able_to_fight()`.
-            is_civilian: bool,
-            is_able_to_fight: bool,
-        }
-        let mut snaps: std::collections::HashMap<EntityId, NpcSnap> =
-            std::collections::HashMap::new();
-        for &npc_id in &all_npc_ids {
-            let Some(entity) = self.world.entities.get(npc_id) else {
-                continue;
-            };
-            // Every patrol position read uses the AI position.
-            // In particular, a member whose current
-            // sequence command is PassDoor reports the committed gate side,
-            // not its interpolating sprite position. The owner-slot view also
-            // preserves creation-order map positions for ordinary actors.
-            let view = scratch
-                .ai_entity_views
-                .get(&npc_id.index())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "patrol owner {} is missing AI position view for NPC {}",
-                        owner.index(),
-                        npc_id.index()
-                    )
-                });
-            let position = view.position;
-            let detection_position_world = view.detection_position_world;
-            let dir = entity.element_data().direction();
-            let npc = entity.ai_actor_data().unwrap_or_else(|| {
-                panic!(
-                    "patrol owner {} found AI-owner slot {} without AI actor data",
-                    owner.index(),
-                    npc_id.index()
-                )
-            });
-            let ai_state = npc.ai_state();
-            // All-around detection uses the refreshed real view radius,
-            // which is the growing/goal radius already multiplied by the
-            // long-range, stare/follow, rider and drunkenness factors. Using
-            // the pre-factor base radius loses every member a staring chief
-            // can still feel.
-            let real_view_radius = npc.view_radius;
-            let move_box = *entity.position_iface().get_move_box();
-            let is_civilian = entity.is_civilian();
-            let is_able_to_help = match entity {
-                crate::element::Entity::Soldier(soldier) => {
-                    crate::ai_enemy::soldier_is_able_to_help_state(
-                        !entity.is_dead() && !soldier.human.unconscious,
-                        ai_state,
-                        npc.ai_substate(),
-                    )
-                }
-                _ => false,
-            };
-            let is_able_to_fight = match entity {
-                crate::element::Entity::Soldier(s) => {
-                    use crate::element::Human as _;
-                    s.is_able_to_fight()
-                }
-                crate::element::Entity::Pc(pc) => {
-                    use crate::element::Human as _;
-                    pc.is_able_to_fight()
-                }
-                // Civilians, props, etc.: the default
-                // `is_able_to_fight()` is `false` — but civilians flow
-                // through the `is_civilian()` arm of the patrol gate
-                // instead.
-                _ => false,
-            };
-
-            snaps.insert(
-                npc_id,
-                NpcSnap {
-                    position: Position {
-                        x: position.x,
-                        y: position.y,
-                        sector: position.sector,
-                        level: position.level,
-                    },
-                    detection_position_world,
-                    direction: dir as u16,
-                    ground_z: entity.element_data().position().z,
-                    posture: entity.element_data().posture(),
-                    is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
-                    in_building: self.entity_data_in_building_sector(entity.element_data()),
-                    ai_state,
-                    is_alive: !entity.is_dead(),
-                    is_active: entity.is_active(),
-                    real_view_radius,
-                    move_box,
-                    is_able_to_help,
-                    is_civilian,
-                    is_able_to_fight,
-                },
-            );
+        let position = self.live_ai_position(owner);
+        let entity = self.expect_entity(owner, "patrol chief");
+        let direction = entity.element_data().direction() as u8;
+        let bounds = *entity.position_iface().get_move_box();
+        let bounds = if bounds.is_somewhere() {
+            crate::coordinates::MoveBox::from_coords(
+                bounds.x_min() - 3.0,
+                bounds.y_min() - 3.0,
+                bounds.x_max() + 3.0,
+                bounds.y_max() + 3.0,
+            )
+        } else {
+            crate::coordinates::MoveBox::new()
+        };
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("patrol chief"));
+        let path = ai
+            .patrol_path
+            .as_mut()
+            .expect("validated patrol path disappeared");
+        path.add_history_entry(position, direction);
+        if frame & 7 != 0 {
+            return;
         }
 
-        // ── Phase 3: Initialize patrols + compute formation positions ──
-        struct PatrolCmd {
-            minion: EntityId,
-            target: Position,
-            direction: u16,
-        }
-        let mut patrol_cmds: Vec<PatrolCmd> = Vec::new();
-        let mut chief_assigns: Vec<(EntityId, EntityId)> = Vec::new(); // (minion, chief)
-
-        for &npc_id in &npc_ids {
-            // `refresh_patrol`: chiefs in {Flying, OnLadder, OnWall}
-            // or mid-{PassDoor, Fall} sequence command skip the
-            // entire tick — formation targets would trail an unusable
-            // position and the 16-pixel side offset would still get
-            // dispatched.  Check before acquiring the entity/ai borrow
-            // so the engine-level helper can read `self`.
-            let Some(entity) = self.world.entities.get_mut(npc_id) else {
-                continue;
-            };
-            let ai = entity.ai_controller_mut().unwrap_or_else(|| {
-                panic!(
-                    "patrol owner {} has no required AI controller",
-                    npc_id.index()
-                )
-            });
-
-            // ── Initialize patrol on the one-shot reinit trigger ──
-            // `initialize_patrol()` is called explicitly from
-            // `init_one_ai`, `return_to_duty`, the `CMD_PATROL_START`
-            // macro opcode, and the `Substate::DefaultGotoRoute`
-            // EVENT_REACHPOINT handler — all of which set
-            // `needs_patrol_reinit` on the chief.  Switching on the
-            // flag (instead of "both lists empty") prevents a chief
-            // whose minions all died/were promoted out from silently
-            // re-initialising every tick — such chiefs stay in the
-            // `patrol_size == 0 && missed == 0` early-return.  When
-            // the flag fires we clear `patrol` and
-            // `missed_patrol_members` before re-populating from
-            // `theoretical_patrol`.
-            if ai.needs_patrol_reinit {
-                ai.needs_patrol_reinit = false;
-                ai.patrol.clear();
-                ai.missed_patrol_members.clear();
-                let theoretical = ai.theoretical_patrol.clone();
-                let chief_snap = snaps.get(&npc_id).copied().unwrap_or_else(|| {
-                    panic!(
-                        "patrol owner {} is missing its owner-boundary position snapshot",
-                        npc_id.index()
-                    )
-                });
-                let chief_pos = chief_snap.position;
-                let obstacles_owned = scratch.ai_sight_obstacles.clone();
-                let obstacles = obstacles_owned.list();
-
-                let (patrol, missed) = patrol_assembly::assemble_patrol(
-                    theoretical
-                        .iter()
-                        .copied()
-                        .filter(|&member| member != npc_id)
-                        .filter_map(|member| snaps.get(&member).map(|snap| (member, snap))),
-                    |&(member, snap)| {
-                        // `initialize_patrol`: admit only if
-                        // `is_detecting_360_degrees(member) &&
-                        // ai_state == Default && (is_civilian() ||
-                        // is_able_to_fight())`.  Members failing the
-                        // gate but still alive flow into the missed
-                        // list for later re-acquisition.
-                        // full-circle human detection
-                        // is the first operand in Original's admission chain.
-                        // It uses the chief's upright eye point and the
-                        // member's posture-dependent detection point for both
-                        // its 3-D distance and opaque-obstacle ray. Preserve
-                        // that call before the state/fighting predicates so
-                        // rejected active members still produce the same LOS.
-                        let admit = patrol_member_admitted(
-                            chief_snap.is_active && snap.is_active,
-                            || {
-                                patrol_member_visible_from_raw_world(
-                                    chief_snap.detection_position_world,
-                                    chief_snap.is_rider,
-                                    chief_snap.real_view_radius,
-                                    chief_snap.in_building,
-                                    snap.detection_position_world,
-                                    snap.posture,
-                                    snap.is_rider,
-                                    snap.direction as i16,
-                                    snap.in_building,
-                                    obstacles,
-                                )
-                            },
-                            snap.ai_state,
-                            snap.is_civilian,
-                            snap.is_able_to_fight,
-                        );
-                        if admit {
-                            chief_assigns.push((member, npc_id));
-                        }
-                        (admit, snap.is_alive)
-                    },
-                    |&(_, snap)| {
-                        (
-                            patrol_assembly::projected_patrol_world(snap.position, snap.ground_z),
-                            snap.position,
-                        )
-                    },
-                    patrol_assembly::projected_patrol_world(chief_pos, chief_snap.ground_z),
-                    chief_pos,
-                );
-                ai.patrol = patrol.into_iter().map(|(id, _)| id).collect();
-                ai.missed_patrol_members = missed.into_iter().map(|(id, _)| id).collect();
-            }
-
-            // ── Refresh patrol positions ──
-            let patrol_size = ai.patrol.len();
-            if patrol_size == 0 && ai.missed_patrol_members.is_empty() {
-                continue;
-            }
-            if ai.patrol_stopped {
-                continue;
-            }
-            if ai.current_state != AiState::Default {
-                continue;
-            }
-            if ai.current_substate == Substate::DefaultPatrolChiefReturnToPatrol {
-                continue;
-            }
-
-            // Must have a patrol path to track history
-            let Some(ref mut path) = ai.patrol_path else {
-                continue;
-            };
-
-            // Record history entry every frame
-            if let Some(snap) = snaps.get(&npc_id) {
-                path.add_history_entry(snap.position, snap.direction as u8);
-            }
-
-            // Every 8th frame: compute positions and coordinate minions
-            if (frame & 7) != 0 {
-                continue;
-            }
-
+        // Formation geometry and loop extent are fixed before callbacks.
+        // Membership and distance are read at each indexed call site.
+        let positions =
+            path.compute_patrol_positions(ai.patrol.len(), Some(&self.world.fast_grid), &bounds);
+        for (index, (target, direction)) in positions.into_iter().enumerate() {
+            let member = *self
+                .world
+                .entities
+                .expect_ai_controller(owner, format_args!("patrol chief"))
+                .patrol
+                .get(index)
+                .expect("patrol shrank during coordinate callback");
+            let current = self.live_ai_position(member);
+            if !((current.x - target.x)
+                .abs()
+                .max((current.y - target.y).abs())
+                > 3.0)
             {
-                // The original game computes patrol positions even with zero
-                // active members.  Its post-loop cleanup then discards every
-                // history entry except the newest one before missed members
-                // are considered for re-acquisition below.
-                // Expand the chief's move box by 3 on each side
-                // before feeding it to
-                // `is_straight_movement_autorized` for the 3-step
-                // side-offset fallback.
-                let chief_box = match snaps.get(&npc_id).map(|s| s.move_box) {
-                    Some(b) if b.is_somewhere() => crate::coordinates::MoveBox::from_coords(
-                        b.x_min() - 3.0,
-                        b.y_min() - 3.0,
-                        b.x_max() + 3.0,
-                        b.y_max() + 3.0,
-                    ),
-                    _ => crate::coordinates::MoveBox::new(),
-                };
-                let positions = path.compute_patrol_positions(
-                    patrol_size,
-                    Some(&self.world.fast_grid),
-                    &chief_box,
-                );
-                let patrol_members = ai.patrol.clone();
-
-                for (i, &member) in patrol_members.iter().enumerate() {
-                    if let Some(&(ref pos, dir)) = positions.get(i) {
-                        // Only coordinate if member is far enough from target (maximum norm > 3)
-                        if let Some(member_snap) = snaps.get(&member) {
-                            let dx = (member_snap.position.x - pos.x).abs();
-                            let dy = (member_snap.position.y - pos.y).abs();
-                            if dx.max(dy) > 3.0 {
-                                patrol_cmds.push(PatrolCmd {
-                                    minion: member,
-                                    target: *pos,
-                                    direction: dir,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check missed patrol members for re-acquisition.
-            // `is_detecting_360_degrees`: isometric squared distance
-            // check (Y stretched by INVERSE_ASPECT_RATIO) plus the
-            // `FastFindGrid::is_reachable(OPAQUE)` LOS gate — a
-            // separated minion behind a wall must NOT re-join even
-            // within view radius.
-            let chief_snap = snaps.get(&npc_id).copied();
-            let missed = ai.missed_patrol_members.clone();
-            let mut reacquired = Vec::new();
-            let obstacles_owned = scratch.ai_sight_obstacles.clone();
-            let obstacles = obstacles_owned.list();
-            for (i, &member) in missed.iter().enumerate() {
-                if let (Some(chief_s), Some(member_s)) = (chief_snap, snaps.get(&member))
-                    && missed_patrol_member_reacquired(
-                        chief_s.is_active && member_s.is_active,
-                        || {
-                            patrol_member_visible_from_raw_world(
-                                chief_s.detection_position_world,
-                                chief_s.is_rider,
-                                chief_s.real_view_radius,
-                                chief_s.in_building,
-                                member_s.detection_position_world,
-                                member_s.posture,
-                                member_s.is_rider,
-                                member_s.direction as i16,
-                                member_s.in_building,
-                                obstacles,
-                            )
-                        },
-                        member_s.is_able_to_help,
-                        member_s.ai_state,
-                    )
-                {
-                    reacquired.push(i);
-                    ai.patrol.push(member);
-                    chief_assigns.push((member, npc_id));
-                }
-            }
-            for &i in reacquired.iter().rev() {
-                ai.missed_patrol_members.remove(i);
-            }
-        }
-
-        // ── Phase 4: Set patrol_chief on minions ──
-        for (minion, chief) in chief_assigns {
-            if let Some(entity) = self.world.entities.get_mut(minion)
-                && let Some(ai) = entity.ai_controller_mut()
-            {
-                ai.patrol_chief = Some(chief);
-            }
-        }
-
-        // ── Phase 5: Build per-minion patrol tick data map ──
-        // Build a map of minion → (chief_position, chief_state) for use
-        // in the coordinate dispatch below.
-        let mut patrol_tick_map: std::collections::HashMap<
-            EntityId,
-            (crate::ai::Position, crate::ai::AiState),
-        > = std::collections::HashMap::new();
-        for cmd in &patrol_cmds {
-            let minion_id = cmd.minion;
-            let Some(entity) = self.world.entities.get(minion_id) else {
                 continue;
-            };
-            let Some(ai) = entity.ai_controller() else {
-                continue;
-            };
-            if let Some(chief_id) = ai.patrol_chief
-                && let Some(cs) = snaps.get(&chief_id)
-            {
-                patrol_tick_map.insert(minion_id, (cs.position, cs.ai_state));
             }
-        }
-
-        // ── Phase 6: Dispatch CALL_PATROL_COORDINATE to minions ──
-        let patrol_frame = self.control.frame_counter;
-        for cmd in patrol_cmds {
-            let minion_id = cmd.minion;
-            let ctx = {
-                let Some(entity) = self.world.entities.get(minion_id) else {
-                    continue;
-                };
-
-                self.ai_context_from_entity(entity, patrol_frame, None, &scratch, assets)
-            };
-
-            // Build tick data with patrol chief info.  Use the
-            // centralized builder so combat-path fields stay
-            // populated — patrol minions can be alerted mid-patrol
-            // and dispatched into battle decisions without losing
-            // their primary target snapshot.
-            let mut tick_data = self.build_npc_tick_data(sim, minion_id, assets);
-            if let Some(&(chief_pos, chief_state)) = patrol_tick_map.get(&cmd.minion) {
-                tick_data.patrol_chief_position = chief_pos;
-                tick_data.patrol_chief_state = chief_state;
-            }
-
-            // Dispatch CALL_PATROL_COORDINATE through the script filter.
-            let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, cmd.target);
-            self.debug_patrol_turn_lifecycle("before_coordinate_think", minion_id);
+            let entity = self.expect_entity(member, "patrol coordinate member");
+            let scratch = self.build_owner_context_scratch_without_forecast(assets);
+            let ctx = self.ai_context_from_entity(entity, frame, None, &scratch, assets);
+            let tick = self.build_npc_tick_data(sim, member, assets);
+            let stimulus = Stimulus::with_position(StimulusType::CallPatrolCoordinate, target);
+            self.debug_patrol_turn_lifecycle("before_coordinate_think", member);
             self.dispatch_think_with_drain_mode(
                 sim,
-                minion_id,
+                member,
                 &stimulus,
                 &ctx,
-                &tick_data,
+                &tick,
                 assets,
                 crate::engine::ai::OwnerBoundaryPolicy::WithoutForecast,
             );
-            // Patrol coordination constructs its Move element inline in the
-            // original game, making the command query report MOVE_OK immediately.
-            // Owner instruction still belongs to the sequence-manager phase
-            // later this hourglass, so promote the request to an element but
-            // deliberately leave its deferred InstructOwner action queued.
-            self.drain_pending_move_requests_for_owner(sim, minion_id);
-            self.debug_patrol_turn_lifecycle("after_coordinate_think", minion_id);
-
-            // Original applies the instructed direction only after the
-            // member's synchronous CALL_PATROL_COORDINATE Think returns.
-            let in_uninterruptible_command = self.is_very_very_busy(minion_id);
-            let building_sector = self
+            // Construct Move before applying direction, but leave its deferred
+            // InstructOwner for the normal sequence-manager phase.
+            self.drain_pending_move_requests_for_owner(sim, member);
+            self.debug_patrol_turn_lifecycle("after_coordinate_think", member);
+            let member = *self
                 .world
                 .entities
-                .get(minion_id)
-                .and_then(|entity| self.entity_building_sector(entity.element_data().sector()));
-            let entity = self.world.entities.expect_entity(
-                minion_id,
-                format_args!(
-                    "patrol chief {} member after coordinate Think",
-                    owner.index()
+                .expect_ai_controller(owner, format_args!("patrol chief after coordinate"))
+                .patrol
+                .get(index)
+                .expect("patrol shrank during coordinate callback");
+            self.instruct_patrol_direction(member, direction);
+            self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", member);
+            self.drain_direct_ai_owner_boundary_without_forecast(sim, member, assets);
+            self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", member);
+        }
+        self.reacquire_patrol_members(assets, owner);
+    }
+
+    fn reacquire_patrol_members(&mut self, assets: &LevelAssets, owner: EntityId) {
+        let missed = self
+            .world
+            .entities
+            .expect_ai_controller(owner, format_args!("patrol chief"))
+            .missed_patrol_members
+            .clone();
+        let mut reacquired = Vec::new();
+        for (index, member) in missed.into_iter().enumerate() {
+            let entity = self.expect_entity(member, "missed patrol member");
+            let npc = entity
+                .ai_actor_data()
+                .expect("missed patrol member has no AI actor data");
+            let able_to_help = match entity {
+                Entity::Soldier(soldier) => crate::ai_enemy::soldier_is_able_to_help_state(
+                    !entity.is_dead() && !soldier.human.unconscious,
+                    npc.ai_state(),
+                    npc.ai_substate(),
                 ),
-            );
-            let mut live_ctx = self.ai_context_from_entity(
-                entity,
-                patrol_frame,
-                building_sector,
-                &scratch,
-                assets,
-            );
-            live_ctx.in_uninterruptible_command = in_uninterruptible_command;
-            self.world
-                .entities
-                .expect_ai_controller_mut(
-                    minion_id,
-                    format_args!(
-                        "patrol member {} lost AI after coordinate Think from chief {}",
-                        minion_id.index(),
-                        owner.index()
-                    ),
-                )
-                .set_instructed_patrol_direction(cmd.direction, &live_ctx);
-            self.debug_patrol_turn_lifecycle("after_instructed_direction_emit", minion_id);
-            // Patrol-direction selection may synchronously request facing when the
-            // member is still waiting. Close its AI/callback work before the
-            // chief advances, but leave owner instruction to the later
-            // SequenceManager hourglass just like the Original.
-            self.drain_direct_ai_owner_boundary_without_forecast(sim, minion_id, assets);
-            self.debug_patrol_turn_lifecycle("after_instructed_direction_drain", minion_id);
+                _ => false,
+            };
+            if missed_patrol_member_reacquired(
+                true,
+                || self.patrol_member_visible(assets, owner, member),
+                able_to_help,
+                npc.ai_state(),
+            ) {
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(member, format_args!("reacquired patrol member"))
+                    .patrol_chief = Some(owner);
+                self.world
+                    .entities
+                    .expect_ai_controller_mut(owner, format_args!("patrol chief"))
+                    .patrol
+                    .push(member);
+                reacquired.push(index);
+            }
+        }
+        let ai = self
+            .world
+            .entities
+            .expect_ai_controller_mut(owner, format_args!("patrol chief"));
+        for index in reacquired.into_iter().rev() {
+            ai.missed_patrol_members.remove(index);
         }
     }
 }
