@@ -1,8 +1,4 @@
 use crate::config::{AdmissionProfile, LoadedBuildManifest, ServerConfig};
-use crate::db_fence::{
-    DatabaseFenceOperation, ProcessDatabaseFenceManager, RuntimeDatabaseFence,
-    provision_test_runtime_fence, wait_for_pool_idle,
-};
 use crate::identity::{normalized_username, verify_signature};
 use crate::model::{ChallengePurpose, NewSubmission, SubmissionLifecycle, WorkerJob, now_epoch_ms};
 use robin_run_protocol::{
@@ -25,8 +21,6 @@ use sqlx::sqlite::{
 };
 use sqlx::{QueryBuilder, Row as _, Sqlite, SqlitePool};
 use std::collections::{BTreeMap, BTreeSet};
-use std::future::Future;
-use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,8 +30,11 @@ mod acceptance;
 mod aggregate;
 mod maintenance;
 mod public_queries;
+mod snapshot;
 mod uploads;
 mod worker;
+
+pub use snapshot::{applied_schema_version, snapshot_database};
 
 pub const CURRENT_SCHEMA_VERSION: i64 = robin_run_protocol::HIGHSCORES_DATABASE_SCHEMA_VERSION;
 
@@ -91,7 +88,7 @@ impl DbError {
     }
 }
 
-/// Fenced database operations. Raw SQL is not part of the production interface.
+/// Typed database operations. Raw SQL is not part of the production interface.
 ///
 /// ```compile_fail,E0599
 /// fn bypass_fencing(database: &robin_highscores::Database) {
@@ -124,7 +121,6 @@ pub struct Database {
     max_pending_submissions: u32,
     max_concurrent_sensitive_writers: u64,
     max_concurrent_upload_writers: u64,
-    fence: ProcessDatabaseFenceManager,
     /// Keep the exact parent, database inode and live WAL/SHM inodes pinned for
     /// the entire pool lifetime. The pool connects through the retained main
     /// file descriptor, never through the mutable configured pathname.
@@ -782,37 +778,6 @@ impl Database {
     }
 
     async fn connect_inner(config: &ServerConfig, migrate: bool) -> Result<Self, DbError> {
-        let runtime_fence_path = if config.allow_test_fence_provisioning {
-            let database_parent = config.database_path.parent().ok_or_else(|| {
-                DbError::Corrupt("database path has no parent directory".to_owned())
-            })?;
-            let path = database_parent.join("runtime-fence");
-            if !path.exists() {
-                std::fs::create_dir_all(database_parent).map_err(sqlx::Error::Io)?;
-                provision_test_runtime_fence(&path).map_err(|error| {
-                    DbError::Corrupt(format!("could not provision test runtime fence: {error:#}"))
-                })?;
-            }
-            std::fs::canonicalize(path).map_err(sqlx::Error::Io)?
-        } else {
-            config.runtime_fence_directory.clone()
-        };
-        let runtime_fence = if config.allow_test_fence_provisioning {
-            RuntimeDatabaseFence::open_test(&runtime_fence_path)
-        } else {
-            RuntimeDatabaseFence::open(&runtime_fence_path)
-        }
-        .map_err(|error| {
-            DbError::Corrupt(format!("runtime database fence is invalid: {error:#}"))
-        })?;
-        let bootstrap_fence = runtime_fence
-            .acquire_one_off_shared()
-            .await
-            .map_err(|error| {
-                DbError::Corrupt(format!(
-                    "could not acquire runtime database fence: {error:#}"
-                ))
-            })?;
         let parent = config
             .database_path
             .parent()
@@ -886,18 +851,6 @@ impl Database {
         }
         verify_pinned_database_leaf(&database_parent, &leaf, &database_file).await?;
         let sidecars = pin_database_sidecars(&database_parent, &leaf).await?;
-        wait_for_pool_idle(&pool).await.map_err(|error| {
-            DbError::Corrupt(format!(
-                "database pool did not quiesce after connect: {error:#}"
-            ))
-        })?;
-        bootstrap_fence.revalidate().map_err(|error| {
-            DbError::Corrupt(format!(
-                "runtime database fence changed during connect: {error:#}"
-            ))
-        })?;
-        drop(bootstrap_fence);
-        let fence = ProcessDatabaseFenceManager::new(runtime_fence);
         Ok(Self {
             pool,
             max_pending_submissions: config.max_pending_submissions,
@@ -908,116 +861,15 @@ impl Database {
             max_concurrent_upload_writers: u64::try_from(config.max_concurrent_uploads).map_err(
                 |_| DbError::ResultInvariant("upload writer limit overflows".to_owned()),
             )?,
-            fence,
             _database_parent: database_parent,
             _database_file: database_file,
             _database_sidecars: Arc::new(sidecars),
         })
     }
 
-    /// Enter one cancellation-safe process database generation. Long-running
-    /// binaries place this around an owned request/job task; dropping the
-    /// response waiter never drops the operation token.
-    pub async fn begin_fenced_operation(&self) -> Result<DatabaseFenceOperation, DbError> {
-        let mut operation = self.fence.begin().await.map_err(|error| {
-            DbError::Corrupt(format!("database fence admission failed: {error:#}"))
-        })?;
-        match self.backup_lock_active().await {
-            Ok(false) => Ok(operation),
-            Ok(true) => {
-                self.fence.mark_quiescing();
-                self.fence
-                    .finish(&mut operation, &self.pool)
-                    .await
-                    .map_err(|error| {
-                        DbError::Corrupt(format!("database fence drain failed: {error:#}"))
-                    })?;
-                self.spawn_fence_reopen_probe();
-                Err(DbError::QueueFull)
-            }
-            Err(error) => {
-                self.fence.mark_quiescing();
-                let finish = self.fence.finish(&mut operation, &self.pool).await;
-                if let Err(finish) = finish {
-                    return Err(DbError::Corrupt(format!(
-                        "database gate check failed ({error}) and fence drain failed: {finish:#}"
-                    )));
-                }
-                Err(error)
-            }
-        }
-    }
-
-    pub async fn finish_fenced_operation(
-        &self,
-        operation: &mut DatabaseFenceOperation,
-    ) -> Result<(), DbError> {
-        self.fence
-            .finish(operation, &self.pool)
-            .await
-            .map_err(|error| DbError::Corrupt(format!("database fence drain failed: {error:#}")))
-    }
-
-    pub async fn run_fenced_operation<T, F>(&self, operation: F) -> anyhow::Result<T>
-    where
-        F: Future<Output = anyhow::Result<T>>,
-    {
-        use futures_util::FutureExt as _;
-
-        let mut fence = self.begin_fenced_operation().await?;
-        // A handler/job panic must unwind only after its SQLx future has been
-        // dropped and the pool-return barrier has completed. Otherwise the
-        // operation token's fail-closed Drop path intentionally retains the
-        // process guard forever, turning a recoverable task panic into a
-        // shutdown hang.
-        let result = AssertUnwindSafe(operation).catch_unwind().await;
-        let finish = self.finish_fenced_operation(&mut fence).await;
-        match result {
-            Ok(operation) => match (operation, finish) {
-                (Ok(value), Ok(())) => Ok(value),
-                (Ok(_), Err(error)) => Err(error.into()),
-                (Err(operation), Ok(())) => Err(operation),
-                (Err(operation), Err(finish)) => {
-                    Err(operation.context(format!("database fence drain also failed: {finish}")))
-                }
-            },
-            Err(_) => match finish {
-                Ok(()) => anyhow::bail!("database operation panicked after fenced drain"),
-                Err(error) => Err(anyhow::Error::from(error)
-                    .context("database operation panicked and its fence drain also failed")),
-            },
-        }
-    }
-
-    fn spawn_fence_reopen_probe(&self) {
-        let database = self.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                let guard = match database.fence.runtime().acquire_one_off_shared().await {
-                    Ok(guard) => guard,
-                    Err(_) => continue,
-                };
-                let active = database.backup_lock_active().await;
-                if wait_for_pool_idle(&database.pool).await.is_err() || guard.revalidate().is_err()
-                {
-                    continue;
-                }
-                drop(guard);
-                if matches!(active, Ok(false)) {
-                    database.fence.clear_quiescing();
-                    break;
-                }
-            }
-        });
-    }
-
-    pub fn runtime_fence(&self) -> &RuntimeDatabaseFence {
-        self.fence.runtime()
-    }
-
-    pub async fn close_fenced(&self) -> anyhow::Result<()> {
-        self.fence.close_pool_when_idle(&self.pool).await
+    /// Close the pool, waiting for checked-out connections to be returned.
+    pub async fn close(&self) {
+        self.pool.close().await;
     }
 
     pub async fn health_check(&self) -> Result<(), DbError> {
@@ -2591,28 +2443,16 @@ impl Database {
         .ok_or(DbError::NotFound)?;
         lifecycle_from_row(row)
     }
-
-    /// Wait for SQLx return/rollback before releasing an externally held fence.
-    /// This does not acquire or release that fence on the caller's behalf.
-    pub async fn wait_for_idle(&self) -> anyhow::Result<()> {
-        wait_for_pool_idle(&self.pool).await
-    }
-
-    /// Close under an already-held administrative fence. The caller must keep
-    /// its guard alive through completion; ordinary shutdown uses close_fenced.
-    pub async fn close_pool_under_fence(&self) {
-        self.pool.close().await;
-    }
 }
 
 // Library unit fixtures use cfg(test); cross-crate integration and binary
 // fixtures must explicitly opt in. Normal server/worker/admin builds expose no
-// raw pool accessor and retain the narrow operations and fenced shutdown API.
+// raw pool accessor and retain the narrow operations and shutdown API.
 #[cfg(any(test, feature = "test-support"))]
 impl Database {
     /// Raw access solely for corruption/concurrency fixtures.
     ///
-    /// This bypasses database fencing. Never enable `test-support` in deployments.
+    /// This bypasses the typed interface. Never enable `test-support` in deployments.
     pub fn fixture_pool(&self) -> &SqlitePool {
         &self.pool
     }

@@ -196,12 +196,10 @@ async fn initialize_api(
     let result = initialize_connected_api(config, database.clone(), notifier).await;
     match result {
         Ok(runtime) => Ok(runtime),
-        Err(error) => match database.close_fenced().await {
-            Ok(()) => Err(error),
-            Err(close) => Err(error.context(format!(
-                "API initialization failed and closing its fenced database pool also failed: {close:#}"
-            ))),
-        },
+        Err(error) => {
+            database.close().await;
+            Err(error)
+        }
     }
 }
 
@@ -211,7 +209,6 @@ async fn initialize_connected_api(
     notifier: &impl StartupStatusNotifier,
 ) -> anyhow::Result<ApiRuntime> {
     let cursor_hmac_key = config.load_cursor_key()?;
-    let backup_authority_hmac_key = config.load_backup_authority_hmac_key()?;
     let competition_run_grant_secret_key = if config.competitions.is_empty() {
         None
     } else {
@@ -251,13 +248,8 @@ async fn initialize_connected_api(
             .ok_or_else(|| anyhow::anyhow!("campaign retention overflows"))?,
     );
     notifier.status("Opening stores and reconciling object inventories under maintenance lease")?;
-    let (replay_store, campaign_store) = database
-        .run_fenced_operation(initialize_api_storage(
-            &database,
-            &config,
-            campaign_retention,
-        ))
-        .await?;
+    let (replay_store, campaign_store) =
+        initialize_api_storage(&database, &config, campaign_retention).await?;
 
     notifier.status("Building API routes and binding the listener")?;
     let state = AppState {
@@ -266,7 +258,6 @@ async fn initialize_connected_api(
         replay_store: replay_store.clone(),
         campaign_store: campaign_store.clone(),
         cursor_hmac_key,
-        backup_authority_hmac_key,
         competition_run_grant_secret_key,
         run_preflight_grant_secret_key,
         challenge_rate_limiter: ChallengeRateLimiter::new(
@@ -290,26 +281,24 @@ async fn initialize_connected_api(
             let operation_store = gc_store.clone();
             let operation_campaign_store = gc_campaign_store.clone();
             let operation_config = Arc::clone(&gc_config);
-            // This task owns the complete database generation. Aborting the
-            // scheduler or shutting down a client waiter never drops its
-            // kernel guard while SQLx rollback/return work can still run.
+            // Run in an owned task so aborting the scheduler on shutdown does
+            // not cancel a purge between its filesystem and database steps.
             let operation = tokio::spawn(async move {
-                operation_database
-                    .run_fenced_operation(run_with_maintenance_write_lease(
-                        &operation_database,
-                        "robin-highscores-api-hourly-maintenance",
-                        async {
-                            perform_storage_maintenance(
-                                &operation_database,
-                                &operation_store,
-                                &operation_campaign_store,
-                                &operation_config,
-                                campaign_retention,
-                            )
-                            .await
-                        },
-                    ))
-                    .await
+                run_with_maintenance_write_lease(
+                    &operation_database,
+                    "robin-highscores-api-hourly-maintenance",
+                    async {
+                        perform_storage_maintenance(
+                            &operation_database,
+                            &operation_store,
+                            &operation_campaign_store,
+                            &operation_config,
+                            campaign_retention,
+                        )
+                        .await
+                    },
+                )
+                .await
             });
             let result = operation
                 .await
@@ -366,15 +355,8 @@ async fn finish_api_components(
 ) -> anyhow::Result<()> {
     gc_task.abort();
     let _ = gc_task.await;
-    let close = database.close_fenced().await;
-    match (result, close) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(error)) => Err(error.context("closing fenced API database pool")),
-        (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(close)) => Err(error.context(format!(
-            "API failed and closing its fenced database pool also failed: {close:#}"
-        ))),
-    }
+    database.close().await;
+    result
 }
 
 async fn shutdown_signal() {

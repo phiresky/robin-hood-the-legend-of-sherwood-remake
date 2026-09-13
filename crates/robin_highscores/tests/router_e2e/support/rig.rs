@@ -412,7 +412,6 @@ impl TestRig {
             replay_store: replay_store.clone(),
             campaign_store: campaign_store.clone(),
             cursor_hmac_key: [0xa5; 32],
-            backup_authority_hmac_key: [0xa6; 32],
             competition_run_grant_secret_key: options.competition.then_some([0x47; 32]),
             run_preflight_grant_secret_key: Some([0x46; 32]),
             challenge_rate_limiter: ChallengeRateLimiter::new(1_000),
@@ -464,7 +463,6 @@ impl TestRig {
             replay_store: self.replay_store.clone(),
             campaign_store: self.campaign_store.clone(),
             cursor_hmac_key: [0xa5; 32],
-            backup_authority_hmac_key: [0xa6; 32],
             competition_run_grant_secret_key: self.competition.is_some().then_some([0x47; 32]),
             run_preflight_grant_secret_key: Some([0x46; 32]),
             challenge_rate_limiter: ChallengeRateLimiter::new(1_000),
@@ -481,25 +479,6 @@ impl TestRig {
             replay_store: self.replay_store.clone(),
             campaign_store: self.campaign_store.clone(),
             cursor_hmac_key: [0xa5; 32],
-            backup_authority_hmac_key: [0xa6; 32],
-            competition_run_grant_secret_key: self.competition.is_some().then_some([0x47; 32]),
-            run_preflight_grant_secret_key: Some([0x46; 32]),
-            challenge_rate_limiter: ChallengeRateLimiter::new(1_000),
-        })
-        .unwrap()
-    }
-
-    pub(crate) fn app_with_backup_status(&self, path: std::path::PathBuf) -> Router {
-        let mut config = self.config.clone();
-        config.backup_manifest_path = Some(path);
-        config.maximum_backup_age_hours = Some(1);
-        router(AppState {
-            config,
-            database: self.database.clone(),
-            replay_store: self.replay_store.clone(),
-            campaign_store: self.campaign_store.clone(),
-            cursor_hmac_key: [0xa5; 32],
-            backup_authority_hmac_key: [0xa6; 32],
             competition_run_grant_secret_key: self.competition.is_some().then_some([0x47; 32]),
             run_preflight_grant_secret_key: Some([0x46; 32]),
             challenge_rate_limiter: ChallengeRateLimiter::new(1_000),

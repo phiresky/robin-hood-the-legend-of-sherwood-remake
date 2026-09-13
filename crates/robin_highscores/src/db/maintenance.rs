@@ -504,9 +504,9 @@ impl Database {
         Ok(changed.rows_affected() == 1)
     }
 
-    /// Reconcile an outcome-uncertain backup-gate deletion while the caller
-    /// still owns the exclusive runtime fence. Unlike `backup_lock_active`,
-    /// this checks the exact token even after its TTL has elapsed.
+    /// Reconcile an outcome-uncertain backup-gate deletion. Unlike
+    /// `backup_lock_active`, this checks the exact token even after its TTL
+    /// has elapsed.
     pub async fn backup_lock_token_present(&self, token: &str) -> Result<bool, DbError> {
         Ok(sqlx::query_scalar::<_, i64>(
             "SELECT EXISTS(SELECT 1 FROM maintenance_locks WHERE name = 'backup' AND token = ?)",

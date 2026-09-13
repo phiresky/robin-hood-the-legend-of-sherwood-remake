@@ -1,0 +1,19 @@
+[Unit]
+Description=Robin Hood leaderboard backup
+After=local-fs.target
+
+[Service]
+Type=oneshot
+UMask=0077
+WorkingDirectory=%h/.local/share/robin-highscores
+ExecStart=%h/.local/opt/robin-highscores/current/ops/backup.sh
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# One writable mount for the whole state root: `cp -al` cannot hard-link across
+# separate ReadWritePaths bind mounts, and SQLite needs the live WAL index.
+ReadWritePaths=%h/.local/share/robin-highscores

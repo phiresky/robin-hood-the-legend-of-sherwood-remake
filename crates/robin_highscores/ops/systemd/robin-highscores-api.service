@@ -1,0 +1,51 @@
+[Unit]
+Description=Robin Hood verified leaderboard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=%h/.local/opt/robin-highscores/current/bin/robin-highscores-server --config %h/.config/robin-highscores/server.toml
+EnvironmentFile=-%h/.config/robin-highscores/api.env
+WorkingDirectory=%h/.local/share/robin-highscores
+Restart=on-failure
+RestartSec=5s
+# Startup reconciles and collects the replay and campaign stores before
+# binding its listener and announcing READY=1.
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+UMask=0077
+TasksMax=1024
+LimitNOFILE=16384
+MemoryMax=3G
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateUsers=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+# Host kernels without openat2 hardening support need this left off.
+RestrictSUIDSGID=no
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=%h/.local/share/robin-highscores/database
+ReadWritePaths=%h/.local/share/robin-highscores/replays
+ReadWritePaths=%h/.local/share/robin-highscores/campaign-states
+InaccessiblePaths=%h/.local/share/robin-highscores/backups
+InaccessiblePaths=%h/.local/share/robin-highscores/raw-content
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=robin-highscores.target

@@ -1,0 +1,52 @@
+[Unit]
+Description=Robin Hood isolated replay verification worker
+After=robin-highscores-api.service
+Requires=robin-highscores-api.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=%h/.local/opt/robin-highscores/current/bin/robin-highscores-worker --config %h/.config/robin-highscores/worker.toml
+EnvironmentFile=-%h/.config/robin-highscores/worker.env
+WorkingDirectory=%h/.local/share/robin-highscores
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=2min
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+TasksMax=512
+LimitNOFILE=8192
+# The verifier child stays in this cgroup and also receives the prlimit
+# ceilings from worker.toml.
+MemoryMax=2G
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateUsers=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=no
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# Do not add RestrictNamespaces or a narrow SystemCallFilter here: bubblewrap
+# needs unprivileged user/mount/PID/network namespaces. Its fixed argv, the
+# read-only mounts and the prlimit policy form the verifier sandbox.
+# The verifier binary, catalog and ranked content live under the `authority`
+# release, readable through ProtectHome=read-only.
+ReadWritePaths=%h/.local/share/robin-highscores/database
+ReadWritePaths=%h/.local/share/robin-highscores/replays
+ReadWritePaths=%h/.local/share/robin-highscores/campaign-states
+InaccessiblePaths=%h/.local/share/robin-highscores/api-secrets
+InaccessiblePaths=%h/.local/share/robin-highscores/backups
+
+[Install]
+WantedBy=robin-highscores.target

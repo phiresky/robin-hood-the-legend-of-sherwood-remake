@@ -9,7 +9,7 @@ use robin_highscores::verifier::{
 };
 use robin_highscores::{
     CampaignStore, Database, ReplayStore, ServerConfig,
-    deployment::validate_worker_authority_layout,
+    deployment::{validate_catalog_covers_server, validate_worker_authority_layout},
     garbage_collect_campaigns, reconcile_campaign_inventory,
     storage_admission::{ensure_worker_final_campaign_capacity, ensure_worker_lease_capacity},
 };
@@ -88,8 +88,8 @@ where
         .filter(|interval| !interval.is_zero())
         .ok_or_else(|| anyhow::anyhow!("maintenance-write lease TTL is too short"))?;
     // Catch unwind and join queued/running physical work before releasing the
-    // lease. The outer detached fence owner keeps this future alive even when
-    // its caller is cancelled.
+    // lease. The owned task from `run_owned_operation` keeps this future alive
+    // even when its caller is cancelled.
     let operation = robin_highscores::physical_work::drain(operation);
     tokio::pin!(operation);
     let result = loop {
@@ -109,7 +109,7 @@ where
                     Err(_) => anyhow::anyhow!("maintenance-write lease refresh panicked"),
                 };
                 // Dropping only the waiter cannot stop a queued hard link,
-                // rename, unlink or verifier process. Retain the fence until
+                // rename, unlink or verifier process. Retain the lease until
                 // terminal completion, while preserving the heartbeat error.
                 let drained = (&mut operation).await;
                 break Err(match drained {
@@ -136,24 +136,20 @@ where
     }
 }
 
-fn run_owned_fenced_operation<T, F>(
-    database: Database,
-    operation: F,
-) -> impl Future<Output = anyhow::Result<T>> + Send
+fn run_owned_operation<T, F>(operation: F) -> impl Future<Output = anyhow::Result<T>> + Send
 where
     T: Send + 'static,
     F: Future<Output = anyhow::Result<T>> + Send + 'static,
 {
-    // Keep the large replay-processing future out of each enclosing fence,
-    // task-local scope, and worker-loop future. Otherwise their construction
-    // can exhaust a Tokio worker thread's stack before the first job is leased.
+    // Keep the large replay-processing future out of each enclosing task-local
+    // scope and worker-loop future. Otherwise their construction can exhaust a
+    // Tokio worker thread's stack before the first job is leased. The owned
+    // task also survives cancellation of the caller.
     let operation = Box::pin(operation);
     async move {
-        tokio::spawn(async move { database.run_fenced_operation(operation).await })
-            .await
-            .map_err(|error| {
-                anyhow::anyhow!(error).context("owned database operation task failed")
-            })?
+        tokio::spawn(operation).await.map_err(|error| {
+            anyhow::anyhow!(error).context("owned database operation task failed")
+        })?
     }
 }
 
@@ -274,7 +270,6 @@ fn read_worker_config(path: &Path) -> anyhow::Result<Vec<u8>> {
     read_regular_file_no_symlinks(path, 1024 * 1024)
 }
 
-use robin_highscores::runtime_authority::validate_catalog_covers_server;
 use robin_highscores::service::{
     ServiceNotifier, StartupStatusNotifier, SystemdNotifier, wait_for_shutdown_signal,
 };
@@ -310,12 +305,8 @@ async fn run() -> anyhow::Result<()> {
     let notifier = SystemdNotifier::Worker;
     let runtime = initialize_worker(&arguments.config, &notifier).await?;
     if let Err(error) = notifier.ready() {
-        return match runtime.database.close_fenced().await {
-            Ok(()) => Err(error),
-            Err(close) => Err(error.context(format!(
-                "worker readiness failed and closing its fenced database pool also failed: {close:#}"
-            ))),
-        };
+        runtime.database.close().await;
+        return Err(error);
     }
     process_jobs(runtime).await
 }
@@ -362,7 +353,7 @@ async fn initialize_worker(
             .checked_mul(60 * 60)
             .ok_or_else(|| anyhow::anyhow!("campaign retention overflow"))?,
     );
-    notifier.status("Validating catalogs, authority, and raw Demo and Full content")?;
+    notifier.status("Validating catalogs, profiles, and source-tree manifests")?;
     let verifier_digest = worker.verifier_digest()?;
     let job_catalog = worker.load_job_catalog()?;
     validate_worker_authority_layout(
@@ -417,7 +408,7 @@ async fn initialize_worker(
     let startup_server = server.clone();
     let startup_owner = worker.worker_id.clone();
     let startup_lease_ttl = Duration::from_secs(worker.lease_seconds);
-    let storage_result = run_owned_fenced_operation(database.clone(), async move {
+    let storage_result = run_owned_operation(async move {
         initialize_worker_storage(
             &startup_database,
             &startup_server,
@@ -431,13 +422,8 @@ async fn initialize_worker(
     let (replay_store, campaign_store) = match storage_result {
         Ok(stores) => stores,
         Err(error) => {
-            let close = database.close_fenced().await;
-            return match close {
-                Ok(()) => Err(error),
-                Err(close) => Err(error.context(format!(
-                    "worker storage initialization failed and closing its fenced database pool also failed: {close:#}"
-                ))),
-            };
+            database.close().await;
+            return Err(error);
         }
     };
 
@@ -477,7 +463,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                 let operation_campaign_store = campaign_store.clone();
                 let operation_owner = worker.worker_id.clone();
                 let lease_ttl = Duration::from_secs(worker.lease_seconds);
-                if let Err(error) = run_owned_fenced_operation(database.clone(), async move {
+                if let Err(error) = run_owned_operation(async move {
                     let maintenance_lease = operation_database
                         .acquire_maintenance_write_lease(
                             robin_highscores::db::MaintenanceWriteClass::Worker,
@@ -540,7 +526,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                 {
                     tracing::warn!(
                         error_code = robin_highscores::safe_error_code(&error),
-                        "scheduled worker maintenance could not enter the database fence"
+                        "scheduled worker maintenance failed"
                     );
                 }
                 next_maintenance = tokio::time::Instant::now() + Duration::from_secs(60 * 60);
@@ -569,7 +555,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
             let operation_campaign_store = campaign_store.clone();
             let operation_verifier = verifier.clone();
             let operation_job_catalog = job_catalog.clone();
-            let processed = run_owned_fenced_operation(database.clone(), async move {
+            let processed = run_owned_operation(async move {
                 let write_lease = match operation_database
                     .acquire_maintenance_write_lease(
                         robin_highscores::db::MaintenanceWriteClass::Worker,
@@ -690,7 +676,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
         shutdown = wait_for_shutdown_signal() => {
             match shutdown {
                 Ok(()) => {
-                    tracing::info!("shutdown requested; draining database fence");
+                    tracing::info!("shutdown requested; stopping the worker loop");
                     worker_task.abort();
                     let _ = worker_task.await;
                     Ok(())
@@ -703,15 +689,8 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
             }
         }
     };
-    let close_result = database.close_fenced().await;
-    match (worker_result, close_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(error)) => Err(error.context("closing fenced worker database pool")),
-        (Err(error), Ok(())) => Err(error),
-        (Err(error), Err(close)) => Err(error.context(format!(
-            "worker failed and closing its fenced database pool also failed: {close:#}"
-        ))),
-    }
+    database.close().await;
+    worker_result
 }
 
 async fn process_job(
@@ -1135,27 +1114,22 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[tokio::test]
-    async fn owned_fence_keeps_large_operations_out_of_the_callers_future() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        let database = Database::migrate(&config).await.unwrap();
+    async fn owned_operation_keeps_large_operations_out_of_the_callers_future() {
         let payload = [7_u8; 256 * 1024];
         let operation = async move {
             tokio::task::yield_now().await;
             Ok(std::hint::black_box(payload)[0])
         };
         assert!(std::mem::size_of_val(&operation) >= 256 * 1024);
-        let owned = run_owned_fenced_operation(database.clone(), operation);
+        let owned = run_owned_operation(operation);
         assert!(
             std::mem::size_of_val(&owned) <= 1024,
-            "owned fence must not embed the replay operation in its caller"
+            "owned operation must not embed the replay operation in its caller"
         );
         assert_eq!(owned.await.unwrap(), 7);
-        database.close_fenced().await.unwrap();
     }
 
-    async fn assert_physical_work_is_fenced(mode: &'static str) {
+    async fn assert_physical_work_is_drained(mode: &'static str) {
         let directory = tempfile::tempdir().unwrap();
         let mut config = ServerConfig::default();
         config.database_path = directory.path().join("highscores.sqlite3");
@@ -1166,10 +1140,9 @@ mod tests {
         let (release, wait_release) = std::sync::mpsc::channel();
         let refresh_seen = Arc::new(tokio::sync::Notify::new());
         let notify_refresh = Arc::clone(&refresh_seen);
-        let owner_database = database.clone();
         let operation_database = database.clone();
         let mut caller = tokio::spawn(async move {
-            run_owned_fenced_operation(owner_database, async move {
+            run_owned_operation(async move {
                 let token = operation_database
                     .acquire_maintenance_write_lease(
                         robin_highscores::db::MaintenanceWriteClass::Worker,
@@ -1246,14 +1219,6 @@ mod tests {
             );
         }
         assert!(!mutation.exists());
-        assert!(
-            database
-                .runtime_fence()
-                .try_lock_exclusive_quiescence()
-                .unwrap()
-                .is_none(),
-            "physical work outlived the shared database fence"
-        );
         assert_eq!(
             database
                 .active_maintenance_write_lease_count()
@@ -1288,10 +1253,10 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 if database
-                    .runtime_fence()
-                    .try_lock_exclusive_quiescence()
+                    .active_maintenance_write_lease_count()
+                    .await
                     .unwrap()
-                    .is_some()
+                    == 0
                 {
                     break;
                 }
@@ -1312,45 +1277,45 @@ mod tests {
 
     #[tokio::test]
     async fn physical_work_is_drained_after_heartbeat_loss() {
-        assert_physical_work_is_fenced("heartbeat_lost").await;
+        assert_physical_work_is_drained("heartbeat_lost").await;
     }
 
     #[tokio::test]
     async fn physical_work_is_drained_after_heartbeat_error() {
-        assert_physical_work_is_fenced("heartbeat_error").await;
+        assert_physical_work_is_drained("heartbeat_error").await;
     }
 
     #[tokio::test]
     async fn physical_work_is_drained_after_operation_error() {
-        assert_physical_work_is_fenced("operation_error").await;
+        assert_physical_work_is_drained("operation_error").await;
     }
 
     #[tokio::test]
     async fn physical_work_is_drained_after_caller_cancellation() {
-        assert_physical_work_is_fenced("caller_cancelled").await;
+        assert_physical_work_is_drained("caller_cancelled").await;
     }
 
     #[tokio::test]
     async fn physical_work_is_drained_after_success() {
-        assert_physical_work_is_fenced("success").await;
+        assert_physical_work_is_drained("success").await;
     }
 
     #[tokio::test]
     #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
     async fn physical_work_is_drained_after_operation_panic() {
-        assert_physical_work_is_fenced("operation_panic").await;
+        assert_physical_work_is_drained("operation_panic").await;
     }
 
     #[tokio::test]
     #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
     async fn physical_work_is_drained_after_heartbeat_panic() {
-        assert_physical_work_is_fenced("heartbeat_panic").await;
+        assert_physical_work_is_drained("heartbeat_panic").await;
     }
 
     #[tokio::test]
     #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
     async fn physical_work_is_drained_after_heartbeat_then_operation_panic() {
-        assert_physical_work_is_fenced("heartbeat_then_operation_panic").await;
+        assert_physical_work_is_drained("heartbeat_then_operation_panic").await;
     }
 
     #[derive(Clone, Default)]

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Robin Hood leaderboard backup
+
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=45m
+Persistent=true
+Unit=robin-highscores-backup.service
+
+[Install]
+WantedBy=timers.target
