@@ -237,7 +237,6 @@ pub mod audio_bundle_cache;
 pub(crate) mod blob_store;
 pub mod cache_maintenance;
 pub mod combat_gesture_overlay;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod desktop_persistence;
 pub mod gfx_types;
 pub mod ingame_menu;

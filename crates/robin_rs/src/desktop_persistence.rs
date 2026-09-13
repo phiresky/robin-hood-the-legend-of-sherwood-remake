@@ -187,8 +187,14 @@ fn publish(
     before(Write)
         .and_then(|()| write(temporary.as_file_mut()))
         .map_err(|error| failure(Write, error))?;
-    before(SyncFile)
-        .and_then(|()| temporary.as_file().sync_all())
+    before(SyncFile).map_err(|error| failure(SyncFile, error))?;
+    // The browser (emscripten MEMFS/IDBFS) filesystem has no durable fsync;
+    // wasm persistence is flushed by the host, matching the previous
+    // `save_file::atomic_write` behaviour.
+    #[cfg(not(target_arch = "wasm32"))]
+    temporary
+        .as_file()
+        .sync_all()
         .map_err(|error| failure(SyncFile, error))?;
     before(Replace).map_err(|error| failure(Replace, error))?;
     let published = match options.mode {
@@ -197,7 +203,7 @@ fn publish(
     };
     published.map_err(|error| failure(Replace, error.error))?;
     before(SyncDirectory).map_err(|error| failure(SyncDirectory, error))?;
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| failure(SyncDirectory, error))?;
