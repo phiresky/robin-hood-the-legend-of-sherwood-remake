@@ -15,12 +15,15 @@ members = [
     "crates/robin_rs",
     "crates/robin_modding_tools",
     "crates/robin_engine",
+    "crates/robin_engine_types",
     "crates/robin_lua",
     "crates/robin_ranked_verification",
     "crates/robin_run_protocol",
     "crates/robin_spellforge",
+    "crates/robin_script_types",
     "crates/robin_util",
     "crates/robin_assets",
+    "crates/robin_asset_codecs",
     "crates/robin_state_hash_derive",
     "crates/robin_test_support",
     "crates/robin_replay_verifier",
@@ -60,7 +63,9 @@ robin_content = { path = "crates/robin_content" }
 robin_data_io = { path = "crates/robin_data_io" }
 robin_display_text = { path = "crates/robin_display_text" }
 robin_assets = { path = "crates/robin_assets" }
+robin_asset_codecs = { path = "crates/robin_asset_codecs" }
 robin_engine = { path = "crates/robin_engine" }
+robin_engine_types = { path = "crates/robin_engine_types" }
 robin_lua = { path = "crates/robin_lua" }
 robin_manifest_tool = { path = "crates/robin_manifest_tool" }
 robin_modding_tools = { path = "crates/robin_modding_tools" }
@@ -70,6 +75,7 @@ robin_ranked_verification = { path = "crates/robin_ranked_verification" }
 # opt into the protocol's authentication feature in their member manifest.
 robin_run_protocol = { path = "crates/robin_run_protocol", default-features = false }
 robin_spellforge = { path = "crates/robin_spellforge" }
+robin_script_types = { path = "crates/robin_script_types" }
 robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
 robin_test_support = { path = "crates/robin_test_support" }
 robin_util = { path = "crates/robin_util" }
@@ -278,14 +284,14 @@ opt-level = "z"
 # Fat LTO *and* a vectorized codec crate — normally contradictory: rustc
 # runs the LTO-stage LLVM pipeline at the root crate's opt-level, and the
 # "z"/"s" pipelines contain no vectorizer passes at all, so under LTO the
-# robin_assets O3 override below produced exactly zero SIMD (verified on
+# asset-crate O3 overrides below produced exactly zero SIMD (verified on
 # nightly-2026-08-25; raising the profile to 3 with per-package "z"
 # overrides instead lets the O3 LTO inliner balloon the module: 7.10 MB gz
 # vs 4.92 baseline). The escape hatch is in .cargo/config.toml: the wasm
 # target rustflags append `-C passes=loop-vectorize,slp-vectorizer,...` to
 # every pipeline, and the per-function optsize/minsize attributes that "z"
 # stamps on all other crates keep those passes size-conservative outside
-# the attribute-free O3 crate. Demo-corpus decode bench (wasm_decode_bench,
+# the attribute-free O3 crates. Demo-corpus decode bench (wasm_decode_bench,
 # node, single-thread, identical output hashes): 59.1 s old all-z fat LTO;
 # 28.2 s lto=false + O3+simd codec; 22.8 s this config. Adding loop-unroll
 # to the chain made it slower (32.9 s) — deliberately absent.
@@ -297,10 +303,13 @@ panic = "abort"
 # The deployed module is further shrunk with `wasm-opt -Oz` and
 # `wasm-strip` (wabt) — both as explicit post-build steps.
 
-# The sprite/asset codec is the wasm hot path (decode runs on every load);
+# The sprite/asset codecs are wasm hot paths (decode runs on every load);
 # O3 here both strips the size attributes (so the injected vectorizers act
-# on this crate) and raises its pre-link pipeline to O3.
+# on these crates) and raises their pre-link pipelines to O3. Keep the leaf
+# codec override alongside the mission-loading facade when moving code.
 [profile.wasm-release.package.robin_assets]
+opt-level = 3
+[profile.wasm-release.package.robin_asset_codecs]
 opt-level = 3
 # JXL map decode (~3 s of mission setup) and zstd chunk inflate are the
 # other measured load hot paths — same O3 treatment.

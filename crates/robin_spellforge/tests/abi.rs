@@ -1,4 +1,4 @@
-use robin_engine::spellforge::{
+use robin_script_types::spellforge::{
     SPELLFORGE_CONTRACT_VERSION, SpellforgeGuestErrorKind, SpellforgePackage, SpellforgeScriptMode,
 };
 use robin_spellforge::{compute_package_sha256, spellforge_vm_abi, validate_package};
@@ -10,9 +10,8 @@ use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn executable_abi_digest_is_stable() {
-    // Reviewed against 6cf411947593: registry-owned native routing/yield policy
-    // and checked index lookup changed signatures.rs; hex::encode replaced the
-    // engine/build-script encoders; runtime/abi.rs gained a provenance comment.
+    // Contract extraction changed runtime import paths, the build-script source
+    // root, and registry dispatch visibility. The source input scope is unchanged.
     // Raw source authentication deliberately includes these bytes (including
     // comments and build.rs). The 274 native signatures/IDs/exposure flags,
     // 51 aliases, vendored interpreter, limits and wire codec are unchanged.
@@ -20,7 +19,7 @@ fn executable_abi_digest_is_stable() {
     // the previous ABI merely because some edits are behavior-preserving.
     assert_eq!(
         spellforge_vm_abi(),
-        "spellforge-v1-sha256:eb7b23e8b0f7e62bf5756eadc1fcf93de03aa5293d9140d492b02b42816aa7bc"
+        "spellforge-v1-sha256:6714bc3c41e08bcf534c9e553f20a2298cb5629642e7b4b7b9f422b8770e6eaa"
     );
 }
 
@@ -40,7 +39,7 @@ fn previous_source_identity_is_not_admitted_after_package_roundtrip() {
     let current_hash = package.sha256;
 
     package.vm_abi =
-        "spellforge-v1-sha256:ef0f0b9cfd12b01cd3037fcde3622c4e4f5706ae669b0e43338837a743853d29"
+        "spellforge-v1-sha256:eb7b23e8b0f7e62bf5756eadc1fcf93de03aa5293d9140d492b02b42816aa7bc"
             .to_owned();
     package.sha256 = compute_package_sha256(&package);
     assert_ne!(

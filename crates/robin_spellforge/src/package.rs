@@ -4,7 +4,7 @@
 //! all construct packages through this byte-oriented path.  It deliberately
 //! does not extract archives to a filesystem.
 
-use robin_engine::spellforge::{
+use robin_script_types::spellforge::{
     SPELLFORGE_CONTRACT_VERSION, SpellforgePackage, SpellforgeScriptMode,
 };
 use serde::{Deserialize, Serialize};
@@ -18,13 +18,14 @@ pub const ARCHIVE_ENTRY_LIMIT: usize = 2_048;
 /// Maximum encoded ZIP central-directory bytes accepted before entry scans.
 pub const ARCHIVE_DIRECTORY_LIMIT: usize = 4 * 1024 * 1024;
 /// Maximum combined uncompressed Lua source retained by a package.
-pub const PACKAGE_SOURCE_LIMIT: usize = robin_engine::spellforge::SPELLFORGE_PACKAGE_SOURCE_LIMIT;
+pub const PACKAGE_SOURCE_LIMIT: usize =
+    robin_script_types::spellforge::SPELLFORGE_PACKAGE_SOURCE_LIMIT;
 pub(crate) const PACKAGE_FILE_LIMIT: usize =
-    robin_engine::spellforge::SPELLFORGE_PACKAGE_FILE_LIMIT;
+    robin_script_types::spellforge::SPELLFORGE_PACKAGE_FILE_LIMIT;
 pub(crate) const PACKAGE_PATH_LIMIT: usize =
-    robin_engine::spellforge::SPELLFORGE_PACKAGE_PATH_LIMIT;
+    robin_script_types::spellforge::SPELLFORGE_PACKAGE_PATH_LIMIT;
 pub(crate) const PACKAGE_METADATA_LIMIT: usize =
-    robin_engine::spellforge::SPELLFORGE_PACKAGE_METADATA_LIMIT;
+    robin_script_types::spellforge::SPELLFORGE_PACKAGE_METADATA_LIMIT;
 const CONTRACT_MANIFEST_LIMIT: usize = 64 * 1024;
 
 /// Stable package-admission categories suitable for UI and author tooling.

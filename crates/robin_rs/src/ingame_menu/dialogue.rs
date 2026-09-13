@@ -850,9 +850,12 @@ fn draw_dialogue_body(
     let renderer = &mut *io.renderer;
     let transform = screen.transform;
     // Resolve portraits before entering the modal render phase.
-    let current_portrait = io.resources.portrait(renderer, portrait_fade.current);
+    let current_portrait = io
+        .resources
+        .portrait(renderer, portrait_fade.current, mouth_frame);
     let previous_portrait = if portrait_fade.is_fading() {
-        io.resources.portrait(renderer, portrait_fade.previous)
+        io.resources
+            .portrait(renderer, portrait_fade.previous, mouth_frame)
     } else {
         None
     };
@@ -880,7 +883,6 @@ fn draw_dialogue_body(
                 w: PORTRAIT_W,
                 h: PORTRAIT_H,
             },
-            mouth_frame,
             100,
         );
     }
@@ -900,7 +902,6 @@ fn draw_dialogue_body(
                 w: PORTRAIT_W,
                 h: PORTRAIT_H,
             },
-            mouth_frame,
             alpha,
         );
     }
@@ -1067,19 +1068,17 @@ fn render_dropped_initial_text(
     }
 }
 
-/// Blit the `mouth_frame`-th sub-frame of a horizontal portrait strip
-/// with an optional constant alpha.
+/// Blit a complete portrait sub-picture with an optional constant alpha.
 ///
 /// `alpha_percent` is 0..=100 to match
 /// [`crate::renderer::Renderer::draw_surface_alpha`] — 0 skips the
 /// blit entirely, 100 uses the opaque fast path, and any value in
 /// between falls through to the alpha-modulated GPU blit.
-fn draw_portrait_frame_alpha(
+pub(super) fn draw_portrait_frame_alpha(
     renderer: &mut Renderer,
     transform: MenuTransform,
     portrait: &super::resources::MenuSurface,
     rect: MenuRect,
-    mouth_frame: u8,
     alpha_percent: u16,
 ) {
     if alpha_percent == 0 {
@@ -1093,13 +1092,8 @@ fn draw_portrait_frame_alpha(
     } = rect;
 
     let (sx, sy) = transform.to_screen(vx, vy);
-    // Portrait sprites are a horizontal strip of 5 frames (mouth 0..4).
-    const FRAMES: i32 = 5;
-    let frame_w = (portrait.width / FRAMES).max(1);
-    let frame_h = portrait.height;
-    let fx = (mouth_frame as i32 % FRAMES) * frame_w;
-
-    let src = BBox::from_coords(fx as f32, 0.0, (fx + frame_w) as f32, frame_h as f32);
+    // Each resource sub-picture is a whole face, not a horizontal frame strip.
+    let src = BBox::from_coords(0.0, 0.0, portrait.width as f32, portrait.height as f32);
     let dst = BBox::from_coords(sx as f32, sy as f32, (sx + vw) as f32, (sy + vh) as f32);
 
     if alpha_percent >= 100 {

@@ -107,6 +107,9 @@ fn enum_body(data: &DataEnum) -> syn::Result<TokenStream2> {
                         // shadow the generated hasher parameter `state`.
                         let binding = syn::Ident::new(&format!("__f_{id}"), id.span());
                         patterns.push(quote! { #id: #binding });
+                        // Matching the borrowed enum already borrows its fields.
+                        // Borrowing again would route through the blanket
+                        // `StateHash for &T` implementation unnecessarily.
                         calls.push(hash_call(quote! { #binding }));
                     }
                 }
@@ -189,7 +192,7 @@ fn struct_body(fields: &Fields) -> syn::Result<TokenStream2> {
                         .ident
                         .as_ref()
                         .expect("named field must have an identifier");
-                    calls.push(hash_call(quote! { self.#id }));
+                    calls.push(hash_call(quote! { &self.#id }));
                 }
             }
         }
@@ -202,7 +205,7 @@ fn struct_body(fields: &Fields) -> syn::Result<TokenStream2> {
                         index: index as u32,
                         span: field.span(),
                     };
-                    calls.push(hash_call(quote! { self.#index }));
+                    calls.push(hash_call(quote! { &self.#index }));
                 }
             }
         }
@@ -213,7 +216,7 @@ fn struct_body(fields: &Fields) -> syn::Result<TokenStream2> {
 
 fn hash_call(accessor: TokenStream2) -> TokenStream2 {
     quote! {
-        ::robin_util::state_hash::StateHash::state_hash(&#accessor, state);
+        ::robin_util::state_hash::StateHash::state_hash(#accessor, state);
     }
 }
 

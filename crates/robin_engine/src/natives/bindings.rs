@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
+
+pub use robin_script_types::natives::ScriptNameBindings;
 
 use crate::level_data::RawHikingPath;
 use crate::profiles::ProfileManager;
@@ -34,18 +35,6 @@ impl AttachedScriptBindings {
     pub fn view(&self) -> ScriptBindings<'_> {
         ScriptBindings { attached: self }
     }
-}
-
-/// Spellforge Lua name tables. Vanilla missions leave these empty.
-#[derive(
-    Clone, Debug, Default, serde::Serialize, serde::Deserialize, bitcode::Encode, bitcode::Decode,
-)]
-pub struct ScriptNameBindings {
-    pub actors: BTreeMap<String, i32>,
-    pub items: BTreeMap<String, i32>,
-    pub locations: BTreeMap<String, i32>,
-    pub patrols: BTreeMap<String, i32>,
-    pub scrolls: BTreeMap<String, i32>,
 }
 
 /// Short-lived borrowed view installed on one native dispatcher.

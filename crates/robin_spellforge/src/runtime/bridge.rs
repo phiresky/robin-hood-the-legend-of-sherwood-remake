@@ -17,7 +17,7 @@ pub(super) fn native_bridge_source() -> String {
         );
     }
     for (alias, native) in SPELLFORGE_NATIVE_ALIASES {
-        let canonical = robin_engine::natives::native_signature_by_index(*native as u32)
+        let canonical = robin_script_types::natives::native_signature_by_index(*native as u32)
             .expect("Spellforge alias target must have a signature")
             .name;
         source.push_str(alias);
@@ -32,7 +32,7 @@ fn append_native(
     source: &mut String,
     name: &str,
     native: NativeFn,
-    signature: &robin_engine::natives::NativeSignature,
+    signature: &robin_script_types::natives::NativeSignature,
 ) {
     source.push_str(name);
     source.push_str("=function(");

@@ -244,6 +244,8 @@ fn authoritative_rng_source_inventory_is_reviewed() {
         .expect("resolve repository root");
     let roots = [
         manifest.join("src"),
+        manifest.join("../robin_engine_types/src"),
+        manifest.join("../robin_script_types/src"),
         manifest.join("../robin_lua/src"),
         manifest.join("../robin_rs/src"),
     ];

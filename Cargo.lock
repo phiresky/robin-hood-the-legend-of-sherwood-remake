@@ -5888,6 +5888,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_asset_codecs"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "foldhash 0.2.0",
+ "serde",
+ "sha2 0.11.0",
+ "smallvec",
+]
+
+[[package]]
 name = "robin_assets"
 version = "0.0.0"
 dependencies = [
@@ -5898,7 +5910,6 @@ dependencies = [
  "clap",
  "crc32fast",
  "flate2",
- "foldhash 0.2.0",
  "futures-channel",
  "futures-util",
  "js-sys",
@@ -5906,6 +5917,7 @@ dependencies = [
  "memmap2",
  "png",
  "rayon",
+ "robin_asset_codecs",
  "robin_content",
  "robin_data_io",
  "robin_engine",
@@ -5914,7 +5926,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "smallvec",
  "spinning_top",
  "talc",
  "tempfile",
@@ -5976,7 +5987,9 @@ dependencies = [
  "rayon",
  "robin_content",
  "robin_data_io",
+ "robin_engine_types",
  "robin_run_protocol",
+ "robin_script_types",
  "robin_state_hash_derive",
  "robin_test_support",
  "robin_util",
@@ -5996,6 +6009,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "web-time",
+]
+
+[[package]]
+name = "robin_engine_types"
+version = "0.0.0"
+dependencies = [
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "geo",
+ "robin_data_io",
+ "robin_state_hash_derive",
+ "robin_util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -6322,12 +6349,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "robin_script_types"
+version = "0.0.0"
+dependencies = [
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "hex",
+ "num_enum",
+ "robin_engine_types",
+ "robin_state_hash_derive",
+ "robin_util",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "strum_macros",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "robin_spellforge"
 version = "0.0.0"
 dependencies = [
  "hex",
  "rilua",
- "robin_engine",
+ "robin_script_types",
  "serde",
  "serde_json",
  "sha2 0.11.0",

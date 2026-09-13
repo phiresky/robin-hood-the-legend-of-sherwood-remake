@@ -12,11 +12,11 @@ use rilua::vm::state::LuaState;
 use rilua::{
     Function, IntoLua, Lua, LuaApi, LuaApiMut, LuaError, RuntimeError, StdLib, Table, Val,
 };
-use robin_engine::natives::{
+use robin_script_types::natives::{
     NATIVE_REGISTRY, NativeAbiType, NativeFn, NativeNamespace, SPELLFORGE_NATIVE_ALIASES,
     ScriptNameBindings,
 };
-use robin_engine::spellforge::{
+use robin_script_types::spellforge::{
     SPELLFORGE_ARGUMENT_WORD_LIMIT, SPELLFORGE_CONTRACT_VERSION,
     SPELLFORGE_EVENT_NATIVE_CALL_LIMIT, SPELLFORGE_EVENT_TRANSCRIPT_ENTRY_LIMIT,
     SPELLFORGE_SNAPSHOT_BYTE_LIMIT, SPELLFORGE_TAPE_BYTE_LIMIT, SPELLFORGE_TAPE_EVENT_LIMIT,
@@ -198,8 +198,8 @@ impl SpellforgeRuntime51 {
         if installed != &self.package {
             return Err(format!(
                 "Spellforge runtime package {} does not exactly match tape package {}",
-                robin_engine::spellforge::hex_hash(&self.package.sha256),
-                robin_engine::spellforge::hex_hash(&installed.sha256),
+                robin_script_types::spellforge::hex_hash(&self.package.sha256),
+                robin_script_types::spellforge::hex_hash(&installed.sha256),
             )
             .into());
         }
@@ -554,11 +554,11 @@ fn append_nested_record(
 }
 
 fn validate_live_invocation(invocation: &SpellforgeInvocation) -> SpellforgeResult<()> {
-    robin_engine::spellforge::validate_invocation(invocation).map_err(resource_limit)
+    robin_script_types::spellforge::validate_invocation(invocation).map_err(resource_limit)
 }
 
 fn validate_live_arguments(label: &str, arguments: &[i32]) -> SpellforgeResult<()> {
-    robin_engine::spellforge::validate_arguments(label, arguments).map_err(resource_limit)
+    robin_script_types::spellforge::validate_arguments(label, arguments).map_err(resource_limit)
 }
 
 fn resource_limit(message: impl Into<String>) -> SpellforgeGuestError {

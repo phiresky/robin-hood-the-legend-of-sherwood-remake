@@ -13,15 +13,7 @@ mod script_core;
 mod sequences;
 mod world;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum NativeDomain {
-    ScriptCore,
-    Actors,
-    Ai,
-    Sequences,
-    World,
-    Campaign,
-}
+use robin_script_types::natives::NativeDomain;
 
 pub(super) fn call_immediate(
     context: &mut NativeContext<'_, '_>,

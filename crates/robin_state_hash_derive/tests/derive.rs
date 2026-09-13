@@ -2,7 +2,7 @@
 
 use robin_state_hash_derive::StateHash;
 use robin_util::state_hash::compute;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(StateHash)]
 struct Plain {
@@ -71,6 +71,12 @@ enum Mood {
     Happy,
     Sad(u8),
     Mixed { joy: f32, dread: u32 },
+}
+
+#[derive(StateHash, Serialize, Deserialize)]
+enum BorrowedFields<'a> {
+    Tuple(&'a str),
+    Named { value: &'a str },
 }
 
 #[test]
@@ -194,6 +200,27 @@ fn persisted_derive_schema_matches_independent_byte_fixtures() {
     );
     let bytes: [u8; 9] = [1, 0, 0, 0, 0, 0, 0, 0, 7]; // Mood::Sad(7)
     assert_eq!(compute(&Mood::Sad(7)), compute(&bytes));
+}
+
+#[test]
+fn enum_borrowed_fields_preserve_hash_bytes() {
+    // A reference-valued field is borrowed again by the enum pattern. Both
+    // variants must still hash the string length and contents after the tag.
+    let tuple_bytes: [u8; 19] = [
+        0, 0, 0, 0, 0, 0, 0, 0, // declaration index
+        3, 0, 0, 0, 0, 0, 0, 0, // string byte length
+        b'e', b'l', b'f',
+    ];
+    let mut named_bytes = tuple_bytes;
+    named_bytes[0] = 1;
+    assert_eq!(
+        compute(&BorrowedFields::Tuple("elf")),
+        compute(&tuple_bytes)
+    );
+    assert_eq!(
+        compute(&BorrowedFields::Named { value: "elf" }),
+        compute(&named_bytes)
+    );
 }
 
 #[test]

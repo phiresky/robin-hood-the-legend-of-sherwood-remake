@@ -1605,9 +1605,15 @@ impl IngameMenuResources {
         }
     }
 
-    /// Load a dialogue portrait sprite, caching it on first access.
-    pub fn portrait(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
-        self.default_picture(renderer, id)
+    /// Load one complete mouth frame from a dialogue portrait's sub-pictures.
+    pub fn portrait(
+        &mut self,
+        renderer: &mut Renderer,
+        id: i32,
+        mouth_frame: u8,
+    ) -> Option<MenuSurface> {
+        assert!(mouth_frame < 5, "dialogue mouth frame must be in 0..5");
+        self.default_picture_sub(renderer, id, usize::from(mouth_frame))
     }
 
     /// Load a picture from the caller-supplied resource manager (e.g.
@@ -2075,6 +2081,73 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         &[248, 252, 248, 255],
         "queued menu surface survives reload and retirement"
     );
+
+    // Dialogue mouths are separate full pictures. Distinct colors across
+    // each picture catch both loading frame zero repeatedly and strip cropping.
+    let mut bytes = b"SRES".to_vec();
+    bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"PICC");
+    bytes.extend_from_slice(&(resource_ids::RHID_DLG_ROBIN as u32).to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&5u32.to_le_bytes());
+    let pictures: Vec<_> = (0..5)
+        .map(|frame| Picture {
+            width: 3,
+            height: 2,
+            pitch: 6,
+            pixel_format: PixelFormat::Rgb16,
+            data: [0xf800u16, 0xffe0, 0xffff, 0xffe0, 0xffff, 0xf800]
+                .into_iter()
+                .map(|pixel| pixel ^ (frame << 6))
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+            palette: None,
+        })
+        .collect();
+    for picture in &pictures {
+        bytes.extend(
+            picture
+                .write_sixteen_to_bytes(SixteenPacking::None)
+                .unwrap(),
+        );
+    }
+    let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+    assets.install_preloaded_asset("faces.res", bytes).unwrap();
+    cache.res =
+        ResourceManager::with_files(Arc::new(robin_engine::sbfile::SbFileSystem::new(assets)));
+    cache.res.attach_resource_file("faces.res").unwrap();
+    for frame in [0, 4, 2, 1, 3, 0] {
+        let portrait = cache
+            .portrait(renderer, resource_ids::RHID_DLG_ROBIN, frame)
+            .unwrap();
+        super::dialogue::draw_portrait_frame_alpha(
+            renderer,
+            super::layout::MenuTransform {
+                origin_x: 0,
+                origin_y: 0,
+            },
+            &portrait,
+            super::layout::MenuRect {
+                x: 0,
+                y: 0,
+                w: 3,
+                h: 2,
+            },
+            100,
+        );
+        // Legacy menu uploads expand RGB565 by shifting (max 248/252),
+        // rather than the full-range conversion used by Picture's export API.
+        let red = [248, frame * 8, 0, 255];
+        let yellow = [248, 252 ^ (frame * 8), 0, 255];
+        let white = [248, 252 ^ (frame * 8), 248, 255];
+        assert_eq!(
+            renderer.try_capture_frame_rgba().unwrap().2,
+            [red, yellow, white, yellow, white, red].concat(),
+            "whole dialogue mouth frame {frame}"
+        );
+    }
+    cache.retire(renderer).unwrap();
 }
 
 #[cfg(test)]
